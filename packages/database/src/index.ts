@@ -15,7 +15,7 @@ export type { TenantSettingStatement } from './session.js';
 export { toDatabaseError } from './errors.js';
 export { toPoolConfig } from './pool.js';
 
-export { createMigrator, migrateToLatest, migrateDown, migrationStatus, MIGRATIONS_DIR } from './migrator.js';
+export { createMigrator, createFileMigrationProvider, migrateToLatest, migrateDown, migrationStatus, MIGRATIONS_DIR } from './migrator.js';
 
 export type { DatabaseSchema } from './schema.js';
 

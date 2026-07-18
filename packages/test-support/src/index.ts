@@ -3,3 +3,6 @@
 // tickets that need them. See docs/implementation/TESTING.md §"Shared test support".
 export const TEST_MARKER = 'acbp-test-support' as const;
 
+// Provider-adapter fakes (ACBP-P0-019) — deterministic, SDK-free test doubles for the contracts.
+export * from './adapters/fakes.js';
+

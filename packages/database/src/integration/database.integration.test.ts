@@ -5,7 +5,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { Migrator, sql } from 'kysely';
 import type { Kysely, MigrationProvider } from 'kysely';
-import { checkDatabaseHealth, closeDatabase, migrateToLatest, migrationStatus, withTransaction, withTenantTransaction, type DatabaseClient } from '../index.js';
+import { checkDatabaseHealth, closeDatabase, migrateToLatest, migrateDown, migrationStatus, withTransaction, withTenantTransaction, type DatabaseClient } from '../index.js';
 import { createTestDatabase, hasTestDatabase } from './harness.js';
 
 async function drop(client: DatabaseClient, table: string): Promise<void> {
@@ -13,7 +13,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 }
 
 async function cleanup(client: DatabaseClient): Promise<void> {
-  for (const t of ['_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock']) {
+  for (const t of ['_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -58,7 +58,20 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(status.some((m) => m.name.includes('platform_init') && m.executedAt !== undefined)).toBe(true);
   });
 
-  test('a deliberately failing migration stops progression (no partial apply past it)', async () => {
+  test('migration down reverses the technical migration and re-apply restores it', async () => {
+    await migrateToLatest(client); // ensure applied (idempotent)
+    const down = await migrateDown(client);
+    expect(down.error).toBeUndefined();
+    expect(down.results?.some((r) => r.direction === 'Down' && r.migrationName.includes('platform_init') && r.status === 'Success')).toBe(true);
+    const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = '_acbp_migration_probe'`.execute(client.kysely);
+    expect(afterDown.rows[0]?.n).toBe(0); // probe table dropped by down()
+    const reapply = await migrateToLatest(client);
+    expect(reapply.error).toBeUndefined();
+    const afterUp = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = '_acbp_migration_probe'`.execute(client.kysely);
+    expect(afterUp.rows[0]?.n).toBe(1); // restored by re-apply
+  });
+
+  test('a deliberately failing migration stops progression with no partial apply', async () => {
     const provider: MigrationProvider = {
       getMigrations: () =>
         Promise.resolve({
@@ -77,13 +90,16 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
           },
         }),
     };
-    const migrator = new Migrator({ db: client.kysely, provider });
+    // Isolated migration/lock tables so this failure experiment is independent of the real history.
+    const migrator = new Migrator({ db: client.kysely, provider, migrationTableName: '_it_migration', migrationLockTableName: '_it_migration_lock' });
     const res = await migrator.migrateToLatest();
-    expect(res.error).toBeDefined();
+    expect(res.error).toBeDefined(); // the batch failed at 9002_bad
+    // PostgreSQL has transactional DDL, so Kysely runs the batch in a transaction: a failure rolls
+    // back the ENTIRE batch — no partial apply (BACKLOG.csv: "Migration failure = no partial apply").
     const tables = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = tables.rows.map((r) => r.table_name);
-    expect(names).toContain('_it_a'); // migration before the failure applied
-    expect(names).not.toContain('_it_c'); // migration after the failure did NOT apply
+    expect(names).not.toContain('_it_a'); // pre-failure migration rolled back with the batch
+    expect(names).not.toContain('_it_c'); // post-failure migration never ran
   });
 
   test('concurrent migration runs are serialized (no double-apply / no error)', async () => {

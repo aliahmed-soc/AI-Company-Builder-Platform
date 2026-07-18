@@ -3,4 +3,5 @@
 // envelope vs internal report, normalization, and type guards.
 export * from './errors.js';
 export * from './correlation.js';
+export * from './adapters/index.js';
 
