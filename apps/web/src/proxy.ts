@@ -12,8 +12,11 @@
 // a handler opts in. Enforcement for protected surfaces is therefore performed explicitly and
 // server-side in the route (fail-closed), not inferred from any browser-supplied header or claim.
 import { clerkMiddleware } from '@clerk/nextjs/server';
+import { failClosed } from '@/server/auth/fail-closed-proxy';
 
-export default clerkMiddleware();
+// clerkMiddleware() establishes the auth context (making auth() available downstream). It is wrapped
+// so a credential Clerk cannot parse (malformed/tampered token) fails closed as 401, never a 500.
+export default failClosed(clerkMiddleware());
 
 export const config = {
   matcher: [

@@ -21,6 +21,10 @@ Clerk provides identity. Integration points:
   this app uses a `src/` directory, the proxy file must live in `src/` (co-located with `app`), not at
   the project root — otherwise Next.js ignores it and `auth()` throws at runtime. It protects nothing
   by default; protected routes enforce server-side. Guarded by `tools/tests/next-proxy-location.test.mjs`.
+  The middleware is wrapped by `failClosed` (`src/server/auth/fail-closed-proxy.ts`): a credential
+  Clerk cannot parse (malformed/tampered token) is denied cleanly as `401` instead of surfacing a
+  `500`, while provider/config/internal errors are re-thrown so they never masquerade as an auth
+  failure.
 - `src/server/auth/verified-identity.ts` — the **server-side request boundary**. Trusts only the
   server-verified session (`auth()`) plus the authoritative Backend User (`clerkClient()`), never
   browser-supplied input. Requires the primary email to be verified (fail-closed). Fetching the
