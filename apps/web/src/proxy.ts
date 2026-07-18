@@ -3,6 +3,11 @@
 // available inside Route Handlers / Server Components — it is the prerequisite for the real
 // server-side request boundary (see src/server/auth/verified-identity.ts).
 //
+// LOCATION IS LOAD-BEARING: because this app uses a `src/` directory (src/app), this file MUST live
+// at src/proxy.ts (co-located with `app`), NOT at the project root apps/web/proxy.ts. At the root
+// Next.js silently ignores it, clerkMiddleware() never runs, and auth() throws a 500 at runtime.
+// Guarded by tools/tests/next-proxy-location.test.mjs.
+//
 // By Clerk's default, clerkMiddleware() protects NOTHING automatically; every route is public until
 // a handler opts in. Enforcement for protected surfaces is therefore performed explicitly and
 // server-side in the route (fail-closed), not inferred from any browser-supplied header or claim.

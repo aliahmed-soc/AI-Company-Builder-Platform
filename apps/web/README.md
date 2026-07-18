@@ -17,8 +17,10 @@ Clerk provides identity. Integration points:
 
 - `src/app/layout.tsx` — `ClerkProvider` + signed-in/out header (state resolved server-side via `auth()`).
 - `src/app/sign-in/…`, `src/app/sign-up/…` — Clerk-hosted `<SignIn/>` / `<SignUp/>` surfaces.
-- `proxy.ts` — mounts `clerkMiddleware()` (Next 16 renamed `middleware.ts` → `proxy.ts`). It protects
-  nothing by default; protected routes enforce server-side.
+- `src/proxy.ts` — mounts `clerkMiddleware()` (Next 16 renamed `middleware.ts` → `proxy.ts`). Because
+  this app uses a `src/` directory, the proxy file must live in `src/` (co-located with `app`), not at
+  the project root — otherwise Next.js ignores it and `auth()` throws at runtime. It protects nothing
+  by default; protected routes enforce server-side. Guarded by `tools/tests/next-proxy-location.test.mjs`.
 - `src/server/auth/verified-identity.ts` — the **server-side request boundary**. Trusts only the
   server-verified session (`auth()`) plus the authoritative Backend User (`clerkClient()`), never
   browser-supplied input. Requires the primary email to be verified (fail-closed). Fetching the
