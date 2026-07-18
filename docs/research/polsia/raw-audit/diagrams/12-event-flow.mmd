@@ -1,0 +1,13 @@
+flowchart LR
+  EXT[Provider webhook/poll] --> V[Verify signature / cursor]
+  V --> N[Normalize + dedupe]
+  N --> Q[Event queue]
+  Q --> RULE[Detection rules]
+  RULE --> NAR[Narrative generator]
+  NAR --> DEL[Email / Slack delivery]
+  NAR --> DASH[Dashboard + document]
+  Q --> AUD[Audit log]
+  classDef documented fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class EXT,NAR,DEL,DASH documented;
+  class V,N,Q,RULE,AUD recommended;

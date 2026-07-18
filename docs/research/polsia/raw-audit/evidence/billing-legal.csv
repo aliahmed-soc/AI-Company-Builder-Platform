@@ -1,0 +1,13 @@
+surface,observed,classification,notes
+faq,40 questions across 9 categories,observed,First-party authenticated FAQ
+starter-plan,$25/month for one company plus 30 night shifts and 5 task credits,observed,FAQ pricing text
+extra-company-faq,$25/month each,observed,FAQ pricing text
+extra-company-upgrade,+$20/month each,observed,Upgrade sheet conflicts with FAQ
+platform-fee,20% fee for Polsia-run operations and ads,observed,FAQ text
+payments,No payments yet; Manage in Stripe,observed,Payments dialog; portal not opened
+cancellation,Pauses company without deleting data,observed,FAQ text
+company-delete,Permanent and irreversible,observed,FAQ text
+terms,Public Terms of Service reachable; last updated June 19 2026,observed,https://polsia.com/terms; Acceptable Use incorporated by reference
+privacy,Public Privacy Notice reachable; last updated June 24 2026,observed,https://polsia.com/privacy
+subprocessors,Public Subprocessors page reachable,observed,https://polsia.com/subprocessors
+acceptable-use,Standalone /acceptable-use URL returned 404,partial,Policy is referenced from Terms but standalone URL is unresolved

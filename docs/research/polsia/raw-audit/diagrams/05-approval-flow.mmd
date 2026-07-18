@@ -1,0 +1,11 @@
+flowchart TD
+  A[Agent proposes action] --> B[Risk + policy evaluation]
+  B -->|low risk| C[Execute with audit]
+  B -->|consequential| D[Preview diff, cost, recipients]
+  D --> E[User decision]
+  E -->|approve| F[Single-use approval token]
+  E -->|reject| G[Rejected + reason]
+  F --> H[Execute exact content hash]
+  H --> I[Provider receipt]
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class A,B,C,D,E,F,G,H,I recommended;

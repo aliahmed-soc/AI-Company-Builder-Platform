@@ -1,0 +1,8 @@
+integration_id,provider_or_surface,capability,evidence_status,evidence,confidence
+INT-01,Twitter,social profile/autotweet/tweet,observed UI; write not executed,02-application-map.md,high
+INT-02,Email,company mailbox and reports,observed UI; content redacted,06-integrations.md,high
+INT-03,Slack,narrative report delivery,roadmap/site documented; not connected,06-integrations.md,medium
+INT-04,Stripe,subscription portal/customer payments,FAQ/UI documented; no transaction,07-billing-and-pricing.md,high
+INT-05,OAuth platforms,social/analytics/CRM connections,roadmap documented; inventory unknown,06-integrations.md,medium
+INT-06,Render,hosting stack,FAQ documented; private topology unknown,08-technical-observations.md,medium
+INT-07,Custom domains,domain management,UI present; none connected,08-technical-observations.md,high

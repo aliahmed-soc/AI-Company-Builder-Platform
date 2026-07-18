@@ -1,0 +1,16 @@
+screen,route_or_context,observed_components,actions_not_taken,evidence_type,confidence
+Dashboard,/dashboard/<company-slug>,Mood Shipped; tasks; Twitter; business; docs; email; teams; website; ads; chat,Run task; God Mode; Tweet; Auto-tweet; Run ads,UI,99
+Portfolio,/dashboard,Company table and metrics,Company actions,UI,99
+New company sheet,dashboard overlay,$25 plan and capacity selectors,Subscribe,UI,99
+Company settings,dashboard overlay,Name; Pause; Advanced; Delete warning,Pause; Delete; Save,UI,99
+Profile settings,dashboard overlay,Profile fields; language; Deactivate,Save; Deactivate,UI,99
+Credits,dashboard overlay,Balance; expirable/permanent; ledger,Purchase or spend,UI,99
+Payments,dashboard overlay,Stripe portal; no payments yet,Manage in Stripe,UI,99
+Tasks,dashboard overlay,State tabs and task cards,Run now; Repeat; Delete,UI,99
+Documents,dashboard overlay,Roadmap; Mission; Research,No mutations,UI,99
+Domains,dashboard overlay,Polsia URL; custom domains,Edit URL,UI,99
+Versions,dashboard overlay,Rollback copy; no versions,Redeploy/Rollback,UI,99
+Secrets,dashboard overlay,Hidden user/provided values,Reveal/Add/Change,UI,99
+Team invite,dashboard overlay,Company-only access message,Send invite,UI,99
+FAQ,dashboard overlay,40 questions in 9 categories,No side effects,FAQ,99
+Public site,https://<company-slug>.polsia.app/,Rendered landing page,No CTA mailto, PUBLIC-SITE,99

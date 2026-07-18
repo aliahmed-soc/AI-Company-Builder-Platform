@@ -1,0 +1,18 @@
+---
+title: "04 — Milestones and Release Gates (solid = required progression, dashed = evidence feeds)"
+---
+%% Legend: gates from RELEASE-GATES.md; no gate passes on UI appearance.
+flowchart TB
+  M0["M0 foundation"] --> G1{"Development<br/>foundation gate"}
+  G1 --> M1["M1 secure boundary"] --> M2["M2 discovery"]
+  M2 --> G2{"Internal<br/>prototype gate"}
+  G2 --> M3["M3 understanding + strategy"] --> M4["M4 plan + tasks"]
+  M4 --> G3{"Alpha gate"}
+  G3 --> M5["M5 safe execution"] --> M6["M6 control + reliability"] --> M7["M7 release candidate"]
+  M7 --> G4{"Closed beta gate<br/>(PRD launch gates 1-15,<br/>residency-restricted audience)"}
+  G4 --> beta["Closed beta"]
+  beta --> G5{"General MVP gate<br/>(pen review, availability,<br/>D-02 commercial model)"}
+  M1 -.->|"isolation suite evidence"| G4
+  M5 -.->|"replay/resume evidence"| G4
+  M6 -.->|"trust-critical negative set"| G4
+  M7 -.->|"eval report + drill logs"| G4

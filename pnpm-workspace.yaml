@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+# Only these dependencies may run install/build lifecycle scripts (ACBP-P0-018).
+# esbuild ships a prebuilt platform binary consumed by tsx (the migration CLI runner).
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,9 @@
+area,check,status,evidence_required,owner_or_blocker
+pricing,Extra-company price is consistent across FAQ Upgrade checkout and invoice,pending,Single authoritative price and screenshots/receipts,Product owner
+legal,Terms Privacy and Subprocessors are reachable; standalone Acceptable Use URL is unresolved,partial,Terms updated 2026-06-19 and Privacy updated 2026-06-24; /acceptable-use returned 404,Product/legal owner
+auth,Session and membership authorization are enforced,pending,Redacted request/response and negative cross-tenant tests,Private staging access required
+tenant-isolation,Two users cannot read or mutate another company,pending,Two-tenant read/write matrix,Private staging access required
+csrf-rate-limit,Mutation protections and rate limits are verified,pending,Negative tests and response headers,Private staging access required
+tasks,Queued running completed failed cancelled and retry states are observable,pending,State timeline with error reason/correlation ID,Private staging access required
+billing-webhooks,Stripe signatures replay protection and reconciliation are idempotent,pending,Webhook fixtures and ledger comparison,Private staging access required
+secrets,Tokens are encrypted and redacted from logs,pending,Configuration and log evidence without secret values,Private staging access required

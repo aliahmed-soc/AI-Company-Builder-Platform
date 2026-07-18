@@ -1,0 +1,25 @@
+---
+title: "06 — Planning and Task Loop (proposed; solid = MVP; dashed = post-MVP scheduling)"
+---
+%% Legend: stateDiagram of TASK lifecycle (WORKFLOW-STATE-MACHINES §4). All transitions server-enforced.
+%% Req IDs: TASK-001..010, PLAN-001/002, NFR-005/007.
+stateDiagram-v2
+  [*] --> draft : planning generates (PLAN-001)<br/>or user steers via chat (PLAN-002)
+  draft --> planned : traces to milestone
+  planned --> queued : run request → preflight (credit cost,<br/>side-effect class) + policy №1 (TASK-004)
+  queued --> running : worker pickup → policy №3 (mandatory)<br/>+ stop-state clear + company active
+  running --> waiting_for_input : question for user
+  waiting_for_input --> running : answer given
+  running --> waiting_for_approval : gated tool call proposed
+  waiting_for_approval --> running : approved (hash-bound)
+  waiting_for_approval --> cancelled : rejected / expired / revoked
+  running --> blocked_by_policy : policy deny (fail closed)
+  running --> completed : artifact persisted (TASK-005)<br/>+ usage finalized
+  running --> failed : retries exhausted →<br/>failure detail mandatory (TASK-006)
+  running --> paused : company pause / emergency stop<br/>(safe-stop, held visibly)
+  paused --> running : resume after review (ADMIN-002)
+  queued --> cancelled : user cancel
+  running --> cancelled : stop request → safe-stop (TASK-007)
+  completed --> [*]
+  failed --> [*]
+  cancelled --> [*]

@@ -1,0 +1,29 @@
+requirement_id,requirement,source_type,evidence_location,status,confidence,acceptance_test_ids,notes
+PRD-001,Create company from idea/surprise/existing business,first-party FAQ + observed UI,03-onboarding-flow.md; 06-faq-redacted.png,partial,high,AT-001,New Company entry and FAQ were observed; subscribe was not completed.
+PRD-002,Provision workspace,observed activity stream,03-onboarding-flow.md,observed,high,AT-002,Stages include email/code/database/hosting/site/documents/tasks.
+PRD-003,Onboarding activity stream,observed,03-onboarding-flow.md; 01-onboarding-entry-redacted.png,observed,high,AT-003,Observed ordered stage history.
+PRD-004,Company dashboard,observed,02-application-map.md; 02-company-settings-redacted.png,observed,high,AT-004,Dashboard modules mapped from authenticated UI.
+PRD-005,Task lifecycle and controls,observed + FAQ,04-task-and-agent-system.md; 04-task-manager-redacted.png,partial,high,AT-005,Run now not clicked.
+PRD-006,Autonomous operating cycle,first-party FAQ,09-claim-verification.md,documented,medium,AT-006,Cycle internals not independently verified.
+PRD-007,Manual task execution,first-party FAQ,04-task-and-agent-system.md,documented,medium,AT-007,Credit spend path not executed.
+PRD-008,Task states,observed,04-task-and-agent-system.md,partial,high,AT-008,Empty state tabs observed; one failed task lacked error detail.
+PRD-009,Approval gates,first-party FAQ + inferred,05-approval-matrix.md,partial,medium,AT-009,No approval prompt was triggered in safe exploration.
+PRD-010,External connections,roadmap + site,06-integrations.md,partial,medium,AT-010,OAuth connectors not completed.
+PRD-011,Event detection and narratives,roadmap + public site,06-integrations.md,partial,medium,AT-011,Marketing/document claims; event payloads unknown.
+PRD-012,Email/Slack delivery,roadmap + public site,06-integrations.md,partial,medium,AT-012,Delivery controls not observed.
+PRD-013,Social publishing,observed dashboard,06-integrations.md,partial,high,AT-013,Twitter controls visible; publishing not executed.
+PRD-014,Company email,observed dashboard,06-integrations.md,partial,high,AT-014,Counts visible; message details redacted/not inspected.
+PRD-015,Generated public website,observed public site,02-application-map.md; 07-generated-site-redacted.png,observed,high,AT-015,Public site rendered in separate tab.
+PRD-016,Domains/versions/redeploy,observed dashboard,08-technical-observations.md,partial,high,AT-016,No custom domain or rollback performed.
+PRD-017,Secrets management,observed settings,08-technical-observations.md,observed,high,AT-017,Secret values were not revealed.
+PRD-018,Code export/chat deployment,FAQ + menu,08-technical-observations.md,partial,medium,AT-018,Download Code not clicked.
+PRD-019,Business metrics,observed dashboard,02-application-map.md,observed,high,AT-019,Visitors/revenue shown; source semantics unknown.
+PRD-020,Payments and fee model,FAQ + pricing UI,07-billing-and-pricing.md; 03-pricing-redacted.png,partial,high,AT-020,Stripe portal link visible; no payment made.
+PRD-021,Ads and budget limits,first-party FAQ,06-integrations.md,documented,medium,AT-021,No campaign created.
+PRD-022,Company-scoped team access,observed dialog,06-integrations.md,partial,high,AT-022,Invite form observed; not submitted.
+PRD-023,Documents/company memory,observed dashboard,02-application-map.md,observed,high,AT-023,Roadmap/mission/research visible.
+PRD-024,Planning chat,observed dashboard,04-task-and-agent-system.md,partial,high,AT-024,Activity/chat visible; complex command execution not tested.
+PRD-025,Credit ledger,observed dialog,07-billing-and-pricing.md,observed,high,AT-025,Balance and ledger observed.
+PRD-026,Pause/cancel/deactivate,FAQ + settings,07-billing-and-pricing.md; 08-technical-observations.md,documented,high,AT-026,No destructive or account-state action performed.
+PRD-027,Tenant isolation/security,FAQ + scoped invite,06-integrations.md; 09-claim-verification.md,partial,medium,AT-027,Encryption claims not independently verified.
+PRD-028,Uncertainty labeling,inferred from audit limits,09-claim-verification.md,inferred,medium,AT-028,Required design safeguard for comparable platform.

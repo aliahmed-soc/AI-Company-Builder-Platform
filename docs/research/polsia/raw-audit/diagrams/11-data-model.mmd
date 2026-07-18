@@ -1,0 +1,10 @@
+erDiagram
+  TENANT ||--o{ COMPANY : owns
+  COMPANY ||--o{ TASK : has
+  TASK ||--o{ TASK_RUN : runs
+  COMPANY ||--o{ CONNECTION : authorizes
+  CONNECTION ||--o{ EVENT : emits
+  COMPANY ||--o{ DOCUMENT : stores
+  COMPANY ||--o{ DEPLOYMENT : publishes
+  COMPANY ||--o{ APPROVAL : requests
+  COMPANY ||--o{ AUDIT_EVENT : records

@@ -1,0 +1,126 @@
+// ACBP-P0-017 — logger, correlation, and error-integration tests.
+import { describe, test, expect } from 'vitest';
+import { isCorrelationId, platformError } from '@acbp/contracts';
+import { createLogger, createTestLogger, createRootContext, newCorrelationId, type LogRecord } from './index.js';
+
+const SENTINEL = 'zz-sentinel-01';
+
+describe('correlation', () => {
+  test('correlation IDs are generated and validated', () => {
+    const id = newCorrelationId();
+    expect(isCorrelationId(id)).toBe(true);
+    expect(isCorrelationId('not-a-uuid')).toBe(false);
+  });
+
+  test('existing correlation id propagates unchanged', () => {
+    const id = newCorrelationId();
+    const ctx = createRootContext({ correlationId: id, companyId: 'company_1' });
+    expect(ctx.correlationId).toBe(id);
+  });
+
+  test('child contexts inherit trace + tenant identity', () => {
+    const { logger, records } = createTestLogger({ context: createRootContext({ correlationId: newCorrelationId(), companyId: 'company_1' }) });
+    logger.child({ taskRunId: 'run_1' }).info('child_event');
+    const ctx = records[0]?.context;
+    expect(ctx?.companyId).toBe('company_1');
+    expect(ctx?.taskRunId).toBe('run_1');
+    expect(isCorrelationId(ctx?.correlationId ?? '')).toBe(true);
+  });
+
+  test('child contexts may override only operation identifiers (not correlationId/tenant)', () => {
+    const rootId = newCorrelationId();
+    const { logger, records } = createTestLogger({ context: createRootContext({ correlationId: rootId, companyId: 'company_1' }) });
+    // @ts-expect-error correlationId/companyId are not permitted overrides on a child
+    logger.child({ taskId: 't1', correlationId: 'hacked', companyId: 'company_evil' }).info('e');
+    const ctx = records[0]?.context;
+    expect(ctx?.correlationId).toBe(rootId);
+    expect(ctx?.companyId).toBe('company_1');
+    expect(ctx?.taskId).toBe('t1');
+  });
+
+  test('concurrent operations do not leak context', async () => {
+    const a = createTestLogger({ context: createRootContext({ correlationId: newCorrelationId(), companyId: 'A' }) });
+    const b = createTestLogger({ context: createRootContext({ correlationId: newCorrelationId(), companyId: 'B' }) });
+    await Promise.all([
+      (async () => { await Promise.resolve(); a.logger.info('a'); })(),
+      (async () => { await Promise.resolve(); b.logger.info('b'); })(),
+    ]);
+    expect(a.records[0]?.context?.companyId).toBe('A');
+    expect(b.records[0]?.context?.companyId).toBe('B');
+  });
+});
+
+describe('logging', () => {
+  test('log-level filtering works; debug can be disabled', () => {
+    const { logger, records } = createTestLogger({ minLevel: 'info' });
+    logger.debug('should_be_dropped');
+    logger.info('kept');
+    expect(records.map((r) => r.event)).toEqual(['kept']);
+  });
+
+  test('debug enabled when minLevel=debug', () => {
+    const { logger, records } = createTestLogger({ minLevel: 'debug' });
+    logger.debug('d');
+    expect(records).toHaveLength(1);
+  });
+
+  test('test logger captures deterministic records (fixed clock)', () => {
+    const { logger, records } = createTestLogger();
+    logger.info('e', { metadata: { k: 'v' } });
+    expect(records[0]?.timestamp).toBe('1970-01-01T00:00:00.000Z');
+    expect(records[0]?.level).toBe('info');
+  });
+
+  test('structured logs are valid JSON', () => {
+    const { logger, records } = createTestLogger();
+    logger.warn('w', { message: 'hi', metadata: { a: 1, b: [true, 'x'] } });
+    const json = JSON.stringify(records[0]);
+    expect(() => JSON.parse(json) as unknown).not.toThrow();
+  });
+
+  test('sentinel secret never appears in emitted logs (metadata + error)', () => {
+    const { logger, records } = createTestLogger();
+    logger.error('failed', {
+      metadata: { password: SENTINEL, url: `https://x?token=${SENTINEL}`, headers: { authorization: `Bearer ${SENTINEL}` } },
+      error: new Error(`secret=${SENTINEL}`, { cause: { apiKey: SENTINEL } }),
+    });
+    expect(JSON.stringify(records)).not.toContain(SENTINEL);
+  });
+
+  test('malformed / unusual metadata does not throw and still emits', () => {
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    const { logger, records } = createTestLogger();
+    expect(() => logger.info('weird', { metadata: { circular, fn: () => 1, sym: Symbol('s') } })).not.toThrow();
+    expect(records).toHaveLength(1);
+  });
+
+  test('logging never throws even if the adapter throws', () => {
+    const logger = createLogger({ adapter: { emit: () => { throw new Error('adapter boom'); } }, minLevel: 'debug' });
+    expect(() => logger.error('x')).not.toThrow();
+  });
+
+  test('structured error integration: safe code/category logged, secret stays out', () => {
+    const { logger, records } = createTestLogger();
+    const err = platformError('provider_unavailable', { internalMessage: `secret=${SENTINEL}`, metadata: { tenantId: 'company_1' } });
+    logger.error('dep_failed', { error: err });
+    const errField = records[0]?.error;
+    expect(errField?.['code']).toBe('DEPENDENCY_UNAVAILABLE');
+    expect(errField?.['category']).toBe('provider_unavailable');
+    expect(JSON.stringify(records)).not.toContain(SENTINEL);
+  });
+});
+
+describe('public error correlation & tenant safety (P0-016 integration)', () => {
+  test('public errors include a safe correlation id but no tenant identifiers', () => {
+    const cid = newCorrelationId();
+    const err = platformError('authz', { correlationId: cid, metadata: { companyId: 'company_secret_42' } });
+    const pub = err.toPublic();
+    expect(pub.correlationId).toBe(cid);
+    expect(JSON.stringify(pub)).not.toContain('company_secret_42');
+  });
+});
+
+// Type sanity: LogRecord is structurally usable.
+const _typecheck: LogRecord = { timestamp: 't', level: 'info', component: 'c', event: 'e' };
+void _typecheck;

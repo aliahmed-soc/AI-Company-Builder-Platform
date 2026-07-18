@@ -1,0 +1,18 @@
+---
+title: "12 — Tenant Isolation Layers (proposed; MVP; two independent enforcement layers)"
+---
+%% Legend: request must pass EVERY layer; any single-layer bug alone cannot cross tenants (ADR-007).
+%% Req IDs: NFR-001, MEM-003, invariants 1/2/3/19; launch gates 1/2.
+flowchart TB
+  req["Request / job [tenant claim untrusted]"] --> l1["Layer 0 — Identity:<br/>tenant resolved from session MEMBERSHIP,<br/>never from client input (invariant 2)"]
+  l1 --> l2["Layer 1 — Application scoping:<br/>repository layer requires tenant context<br/>to construct any query"]
+  l2 --> l3["Layer 2 — Database row-level enforcement:<br/>per-connection tenant setting;<br/>app bug alone cannot cross (ADR-007)"]
+  l3 --> data[("Tenant rows:<br/>company_id NOT NULL, immutable<br/>(invariant 1)")]
+
+  l2 --> paths["Storage paths:<br/>company/{id}/... prefixes;<br/>scoped signed URLs"]
+  l2 --> cache["Cache keys:<br/>mandatory tenant prefix<br/>(single lint-enforced builder)"]
+  l2 --> logs["Logs: opaque tenant IDs;<br/>cross-tenant reads role-controlled"]
+  l2 --> jobs["Jobs/workers: explicit tenant context<br/>set before any query (invariant 3)"]
+
+  attack["Adversarial suite (CI + prod probes):<br/>ID substitution, forged membership, IDOR"] -.->|"must fail closed, denial leaks nothing"| l1
+  admin["Admin access: separate surface,<br/>reason-captured, audited; break-glass alarmed"] -.-> l3

@@ -1,0 +1,20 @@
+---
+title: "13 — Emergency Stop (proposed; MVP; stop wins every race)"
+---
+%% Legend: seven stop scopes; dispatcher checks stop-state before EVERY tool call (invariant 14).
+%% Req IDs: ADMIN-001/002; launch gate 8; stop-system failure = block platform-wide (fail closed).
+flowchart TB
+  owner["Owner [authenticated]"] -->|"activate stop (scope)"| ctrl["Emergency-stop controller"]
+  ctrl --> scopes["Scopes:<br/>task · worker · capability · integration ·<br/>company · external-actions-only · ACCOUNT-WIDE"]
+  scopes --> state[("Stop-state records<br/>(effective immediately)")]
+
+  disp["Tool dispatcher"] -->|"checks stop-state BEFORE every call<br/>(≤5s propagation — gate 8)"| state
+  state -->|"stopped scope"| block["New tool calls BLOCKED at scope<br/>+ audited"]
+  state -->|"clear"| allow["Call proceeds to policy/approval checks"]
+
+  inflight["In-flight tool call at stop time"] --> safestop["Safe-stop: current call completes/aborts safely,<br/>then halt (OQ-14 default)"]
+  safestop --> held[("Held-work queue<br/>(visible, nothing lost)")]
+
+  owner -->|"clear stop"| review["MANDATORY resume review (ADMIN-002):<br/>confirm/discard each held item;<br/>expired approvals NOT resurrected;<br/>nothing auto-fires"]
+  review --> resume["Confirmed items resume from checkpoints"]
+  failmode["Controller unavailable"] -.->|"fail closed: block execution platform-wide"| block

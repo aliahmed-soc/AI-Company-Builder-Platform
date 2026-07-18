@@ -1,0 +1,7 @@
+route_or_url,screen,evidence_type,observation_date,confidence,notes
+/dashboard/<company-slug>,Company dashboard,UI,2026-07-18,99,Authenticated dashboard; identifier redacted
+/dashboard,Portfolio,UI,2026-07-18,99,One company visible
+/about,About,UI,2026-07-18,99,Public first-party page
+/doctrine,Doctrine,UI,2026-07-18,95,Reached through menu; route normalized from visible navigation
+https://<company-slug>.polsia.app/,Public deployment,PUBLIC-SITE,2026-07-18,99,Rendered successfully; slug redacted
+dashboard overlays,FAQ/credits/payments/settings/tasks,UI,2026-07-18,99,Modal surfaces on dashboard

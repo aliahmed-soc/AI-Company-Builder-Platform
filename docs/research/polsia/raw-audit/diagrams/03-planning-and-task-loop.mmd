@@ -1,0 +1,14 @@
+flowchart LR
+  S[Review company state] --> E[Collect signals]
+  E --> P[Prioritize tasks]
+  P --> Q{Approval needed?}
+  Q -- no --> X[Execute allowed work]
+  Q -- yes --> A[Human approval]
+  A --> X
+  X --> U[Update dashboard/documents]
+  U --> R[Report result]
+  R --> S
+  classDef documented fill:#dff7e8,stroke:#238636;
+  classDef inferred fill:#fff4ce,stroke:#9a6700,stroke-dasharray: 5 5;
+  class S,E,P,R documented;
+  class Q,X,A,U inferred;

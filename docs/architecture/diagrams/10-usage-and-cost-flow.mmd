@@ -1,0 +1,24 @@
+---
+title: "10 — Usage and Cost Flow (proposed; MVP; ledgers append-only)"
+---
+%% Legend: five distinct numbers never merged (USAGE-AND-BILLING §1). Solid = MVP; dashed = Phase 7 billing.
+%% Req IDs: USAGE-001/002, BILL-002, NFR-015, ADR-013, invariants 9/10.
+flowchart TB
+  run["Task run"] --> pre["Preflight: credit cost +<br/>side-effect class shown (TASK-004)"]
+  pre --> reserve["Atomic credit reservation<br/>(final-credit race → exactly one wins)"]
+  reserve --> exec["Execution"]
+  exec --> mc["model.call_completed events<br/>(tokens, est. cost, model@version)"]
+  exec --> tc["tool.call events"]
+  mc --> ue[("Usage events<br/>APPEND-ONLY (invariant 9)")]
+  tc --> ue
+  ue --> comp["Per-company aggregation"]
+  ue --> acct["Per-ACCOUNT rollup<br/>(ADR-003 refinement; derived, rebuildable)"]
+  comp --> caps{"Hard caps / soft alerts<br/>(NFR-015, POL-001)"}
+  caps -->|"soft threshold"| alert["usage.limit_reached → notify + Decision Room"]
+  caps -->|"hard cap"| block["Execution halts ≤1 increment over"]
+  exec -->|"completed"| consume["Credit consumed (final)"]
+  exec -->|"failed (provider fault) / cancelled"| release["Reservation released<br/>(charging rules §4)"]
+  consume --> ct[("Credit transactions<br/>APPEND-ONLY; corrections =<br/>compensating entries (invariant 10)")]
+  release --> ct
+  ue -.->|"Phase 7"| recon["Reconciliation vs provider bills<br/>(drift alerts — launch gate 7)"]
+  ct -.->|"Phase 7"| bill["Billing module / entitlements (D-02 open)"]

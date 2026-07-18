@@ -1,0 +1,20 @@
+---
+title: "11 — Activity and Audit Flow (proposed; MVP)"
+---
+%% Legend: audit = append-only source of record; activity = tenant-facing projection. Proposed ≠ executed everywhere.
+%% Req IDs: ACT-001/002/003, NFR-008, ADR-015, invariants 11/20.
+flowchart LR
+  subgraph sources["Every module (api + worker)"]
+    m1["Mutations"]
+    m2["State transitions"]
+    m3["Tool / model calls"]
+    m4["Approvals / policy evaluations"]
+  end
+  sources -->|"high-risk: audit write IN-TRANSACTION<br/>(write fails → action blocked)"| audit[("Audit events<br/>APPEND-ONLY (invariant 11)<br/>actor · time · context · correlation_id")]
+  sources -->|"transactional outbox"| bus["Event distribution (in-process/outbox)"]
+  bus --> act[("Activity events<br/>(company-scoped projection)")]
+  act --> feed["Activity feed + SSE<br/>('as of' timestamp — honest lag)"]
+  act --> dr["Decision Room queues<br/>(needs-decision, executing, blocked, failed...)"]
+  feed --> marking["PROPOSED vs EXECUTED marking:<br/>'completed' requires run record<br/>(+receipt for external) — invariant 20"]
+  audit --> export["Range export (owner: own company;<br/>admin: reason-captured)"]
+  audit --> integrity["Integrity checks + audit-write-failure<br/>alerting (page-level)"]

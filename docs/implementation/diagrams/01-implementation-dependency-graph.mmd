@@ -1,0 +1,21 @@
+---
+title: "01 — Implementation Dependency Graph (solid = required dependency, dashed = parallel-safe)"
+---
+%% Legend: boxes = phases/epic clusters; D = decision blockers; solid = must precede; dashed = can run in parallel.
+flowchart TB
+  D["P0 Decision tickets 001-010<br/>(models, eval, Render, storage,<br/>Infisical, Clerk, caps, retention)"]
+  F["P0 Foundation 011-021<br/>(scaffold, boundaries, gates,<br/>config, errors, logging, DB, adapters)"]
+  D -.->|"parallel with foundation;<br/>gate Ready-pending tickets"| F
+  F --> P1["P1 Identity + tenancy<br/>(Clerk, mapping, membership,<br/>2-layer isolation, audit/activity)"]
+  P1 --> P2["P2 Discovery<br/>(sessions, gateway v1 + usage,<br/>memory, understanding)"]
+  D -->|"P0-001 pins models"| P2
+  P2 --> P3["P3 Strategy<br/>(options, distinctness,<br/>selection, decisions)"]
+  P3 --> P4["P4 Planning<br/>(roadmap objects,<br/>task state machine)"]
+  P4 --> P5["P5 Execution<br/>(jobs, dispatcher core, runtime,<br/>3 workers, artifacts, credits)"]
+  D -->|"P0-005 storage"| P5
+  P5 --> P6["P6 Trust layer<br/>(policy, approvals, stop,<br/>Decision Room, rollups, replay)"]
+  P6 --> P7["P7 Beta readiness<br/>(export, ops, validation passes,<br/>gates, disclosure)"]
+  P1 -.->|"admin access + activity<br/>parallel to companies"| P1
+  P5 -.->|"workers 006/007/008 parallel<br/>after runtime 005"| P5
+  P6 -.->|"Decision Room UI parallel<br/>to policy engine"| P6
+  P7 -.->|"runbooks/dashboards parallel<br/>to test passes"| P7

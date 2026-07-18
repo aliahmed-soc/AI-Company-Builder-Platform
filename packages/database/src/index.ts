@@ -1,0 +1,23 @@
+// @acbp/database — public API (ACBP-P0-018). PostgreSQL access + migration foundation.
+// No product-domain schema or repositories: those arrive with their owning tickets.
+export { createDatabase, closeDatabase, checkDatabaseHealth } from './client.js';
+export type { DatabaseClient, DatabaseHealth, CreateDatabaseDeps, DbCallOptions } from './client.js';
+
+export { withTransaction, withTenantTransaction, nestedTransactionError } from './transaction.js';
+export type { TxExecutor } from './transaction.js';
+
+export { TenantRepository } from './repository.js';
+export type { TenantContext, TenantScope } from './tenant.js';
+
+export { applyTenantSession, buildTenantSettings, TENANT_SETTINGS } from './session.js';
+export type { TenantSettingStatement } from './session.js';
+
+export { toDatabaseError } from './errors.js';
+export { toPoolConfig } from './pool.js';
+
+export { createMigrator, migrateToLatest, migrateDown, migrationStatus, MIGRATIONS_DIR } from './migrator.js';
+
+export type { DatabaseSchema } from './schema.js';
+
+// NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
+// withTenantTransaction so tenant context cannot be forged (ADR-007 invariant 2).

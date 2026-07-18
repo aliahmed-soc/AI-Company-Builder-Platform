@@ -1,0 +1,13 @@
+flowchart TD
+  G[Goal + audience] --> B[Budget cap]
+  B --> CR[Creative and disclosure]
+  CR --> A[Approval]
+  A --> LA[Launch through platform account]
+  LA --> M[Monitor spend / results]
+  M --> STOP{Cap or policy breach?}
+  STOP -- yes --> PAUSE[Pause campaign]
+  STOP -- no --> M
+  classDef documented fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class G,LA documented;
+  class B,CR,A,M,STOP,PAUSE recommended;

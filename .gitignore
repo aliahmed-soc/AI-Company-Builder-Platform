@@ -1,0 +1,35 @@
+# Secrets and credentials — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+auth-state/
+browser-profile/
+cookies/
+secrets/
+credentials/
+
+# Dependencies and build output (no app exists yet; guard for the future)
+node_modules/
+dist/
+build/
+coverage/
+
+# Temporary extracted archives
+*.zip.extracted/
+tmp-extract/
+*.tmp
+
+# Machine-local tool state
+.turbo/
+.next/
+.tools/
+.lean-ctx/
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db

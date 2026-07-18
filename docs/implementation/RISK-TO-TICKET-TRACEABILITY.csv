@@ -1,0 +1,22 @@
+Risk (PRD §23 / architecture),Preventive ticket,Detective ticket,Recovery ticket,Verification ticket,Milestone,Release gate,Remaining exposure,Owner
+Hallucinated business advice,ACBP-P5-006 (citations);ACBP-P2-008 (confidence),ACBP-P7-012 (eval);usefulness metric via ACBP-P5-015,ACBP-P5-012 (revision),ACBP-P2-011;ACBP-P7-012,M5,Closed beta,Model quality residual monitored by eval regression trigger,AI lead
+Weak research quality,ACBP-P5-006 (rubric),ACBP-P2-011,ACBP-P5-012,ACBP-P7-012,M5,Closed beta,Quality drift between eval runs,AI lead
+Prompt injection via researched content,ACBP-P2-007;ACBP-P5-003 (invariant 17),ACBP-P5-003 (quarantine events),ACBP-P5-013,ACBP-P7-007 (corpus),M5,Closed beta,Novel injection techniques,Security
+Excessive permissions,ACBP-P5-003 (allowlists);ACBP-P0-012 (boundaries),ACBP-P7-007 (allowlist audit),ACBP-P5-004 (disable),ACBP-P7-007,M5,Closed beta,Config review discipline,Security
+Cross-tenant exposure,ACBP-P1-005;ACBP-P1-006,ACBP-P1-014 (CI+probes),ACBP-P7-005 (incident runbook),ACBP-P1-014;ACBP-P7-007,M1,Every gate,Zero-tolerance; probes continuous,Security
+Duplicate external actions,ACBP-P5-003 (keys) — MVP has no external actions,ACBP-P6-011 (suppression counters),—,ACBP-P6-011,M6,Closed beta,Rig proven pre-external-capability,Platform
+Uncontrolled AI cost,ACBP-P6-010 (caps);ACBP-P5-005 (budgets),ACBP-P7-003 (cost dashboards),ACBP-P6-007 (stop),ACBP-P6-012,M6,Closed beta,Cap values need alpha tuning (IOQ-09),Platform
+Misleading autonomy perception,ACBP-P6-006 (plain levels);ACBP-P6-008 (ACT-003),trust-score survey (beta),ACBP-P7-011 (copy),ACBP-P6-012,M6,Closed beta,Perception risk persists; measured in beta,Product
+Poor generated code (future),—,—,—,—,—,—,No MVP exposure (no code generation),Eng
+Failed deployment (future),—,—,—,—,—,—,No MVP exposure,Eng
+Credential leakage,ACBP-P0-019;ACBP-P0-015 (Infisical pattern),ACBP-P0-013/P0-017 (scanners),ACBP-P7-005 (rotation runbook),ACBP-P7-007,M0,Closed beta,Third-party vault dependency,Security
+Email abuse (future),—,—,—,—,—,—,No MVP exposure (no email),Product
+Advertising violations (future),—,—,—,—,—,—,No MVP exposure,Legal
+Payment disputes (future),—,—,—,—,—,—,No MVP exposure,Legal
+Vendor lock-in,ACBP-P0-019 (contracts);ACBP-P0-012 (boundaries),architecture review cadence,exit paths per ADR-020/021/022,ACBP-P7-010 (gate review),M0,General MVP,Managed-provider coupling bounded by adapters,Architecture
+Model-provider outage,ACBP-P5-009 (fallback);ACBP-P2-003 (queue+status),ACBP-P7-003 (provider health),ACBP-P7-005 (outage runbook),ACBP-P7-008,M5,Closed beta,Dual-provider residual small,Platform
+Queue/workflow failure,ACBP-P5-001 (checkpoints),ACBP-P7-003 (queue health),ACBP-P7-005 (job-store runbook);dead-letter queue,ACBP-P7-008,M5,Closed beta,Postgres-single-store trade accepted (ADR-008 triggers),Platform
+Incorrect usage accounting,ACBP-P5-014 (append-only+race);ACBP-P6-009 (determinism),ACBP-P6-009 (reconciliation alerts),compensating entries (ACBP-P6-009),ACBP-P6-011,M6,Closed beta (gate 7),Estimate-vs-bill drift monitored,Platform
+Approval bypass,ACBP-P6-002;ACBP-P6-004,ACBP-P7-007 (negative suites in CI),incident + fix-before-external policy,ACBP-P6-005,M6,Closed beta (gates 3/4),Zero-tolerance,Security
+User misunderstanding of AI limits,ACBP-P6-008 (ACT-003);ACBP-P2-008 (confidence),trust survey (beta);support themes,ACBP-P7-011 (docs/onboarding),ACBP-P6-012,M6,Closed beta,Persistent; monitored via PRD §21 trust metric,Product
+Compliance risk (privacy/marketing/money),ACBP-P0-010 (retention);ACBP-P7-011 (honest copy),legal review checkpoints per gate,restrict markets/features (D-08),ACBP-P7-010,M7,Closed beta,D-08 remainder + legal review pre-beta,Legal

@@ -1,0 +1,35 @@
+---
+title: "07 — Worker Execution (proposed; all MVP; every step audited)"
+---
+%% Legend: dispatcher = single enforcement chokepoint; model/web content = untrusted data.
+%% Req IDs: WORK-001..006, TOOL-001..003, NFR-021, invariants 3/4/6/17.
+sequenceDiagram
+  participant C as Workflow coordinator
+  participant W as Worker runtime (tenant context, invariant 3)
+  participant D as Tool dispatcher (chokepoint)
+  participant P as Policy engine
+  participant G as Model gateway
+  participant S as Object storage
+  participant U as Usage ledger
+
+  C->>W: job (worker_id@version, task input, company_id)
+  W->>W: assemble context (memory provenance-ranked,<br/>secret blocklist — invariant 12, MEM-004 precedence)
+  loop each tool call in control flow
+    W->>D: propose tool call
+    D->>D: allowlist check (invariant 4, deny-by-default)
+    D->>P: policy evaluate №3 + stop-state + approval verify/consume
+    alt denied / stopped / approval invalid
+      D-->>W: fail closed + audited
+    else authorized
+      D->>G: model call (schema-validated, redacted logging)
+      G-->>D: validated output | normalized error
+      Note over G: external content returned is DATA —<br/>instructions inside it are inert (invariant 17)
+      D->>U: usage event (company + account)
+    end
+  end
+  W->>S: persist artifact (tenant-prefixed path)
+  alt persist fails
+    W->>C: task FAILED (no hollow success — TASK-005)
+  else persisted
+    W->>C: completed + artifact refs + provenance
+  end

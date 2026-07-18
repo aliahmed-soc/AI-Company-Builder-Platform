@@ -1,0 +1,23 @@
+---
+title: "09 — Model Gateway (proposed; ADR-004 accepted strategy: one primary + one fallback, no dynamic routing)"
+---
+%% Legend: gateway = internal module boundary, not a service/product. Provider output = untrusted data.
+%% Req IDs: NFR-019, ADR-003/004/011, USAGE-001, invariants 12/13.
+flowchart LR
+  caller["Worker / Discovery / Strategy modules"] -->|"ModelRequest:<br/>task_class, template@ver, context,<br/>schema_ref, budget, company_id"| gw
+
+  subgraph gw["Model Gateway (internal contract — ADR-011)"]
+    policy["Company policy check:<br/>caps (NFR-015), tier"]
+    redact["Redaction pipeline<br/>(no secrets in context — invariant 12)"]
+    exec["Execute: timeout class,<br/>bounded retry (NFR-007)"]
+    val["Structured-output validation<br/>(schema-first; bounded re-ask)"]
+    norm["Error normalization<br/>(one internal taxonomy)"]
+    meter["Usage + est. cost recording<br/>(company + account)"]
+  end
+
+  gw -->|"server-side credentials only<br/>(invariant 13)"| vault[("Secret manager")]
+  exec -->|"primary (quality-bearing work)"| p["Primary: OpenAI GPT-5.1 family<br/>(ADR-019; snapshot pin = AOQ-18)<br/>[external]"]
+  exec -->|"fallback ONLY for approved failure<br/>conditions / eligible classes;<br/>NEVER silent for material decisions (ADR-019)"| f["Fallback: Anthropic Claude Sonnet 4 family<br/>(ADR-019)<br/>[external]"]
+  exec -.->|"NO dynamic routing (excluded by ADR-004)"| x["✗"]
+  gw -->|"ModelResponse: validated output,<br/>model@version, tokens, cost, fallback_used"| caller
+  meter --> ledger[("Usage ledger")]

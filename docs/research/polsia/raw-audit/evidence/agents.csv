@@ -1,0 +1,6 @@
+agent_id,role_or_label,observed_or_documented,capabilities,evidence,confidence
+AG-01,autonomous operator,documented,review state; generate tasks; execute coding/content/outreach; report,09-claim-verification.md,medium
+AG-02,planning/task generator,observed + documented,review project; draft prioritized tasks,04-task-and-agent-system.md,high
+AG-03,codebase builder,observed activity + FAQ,edit files; run npm; commit; publish site,03-onboarding-flow.md; 09-claim-verification.md,high
+AG-04,communications operator,documented,send email; post social; handle inquiries,09-claim-verification.md,medium
+AG-05,review/approval gate,inferred from safety claims,block consequential actions pending human approval,05-approval-matrix.md,medium

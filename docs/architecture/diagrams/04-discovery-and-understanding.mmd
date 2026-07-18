@@ -1,0 +1,24 @@
+---
+title: "04 — Discovery and Understanding (proposed; all MVP)"
+---
+%% Legend: founder answers = trusted-as-input, still validated; model output = untrusted data until validated.
+%% Req IDs: DISC-001..008, UNDER-001..005, MEM-001..004.
+flowchart TB
+  start(["Interview starts (post-onboarding)"]) --> batch["Generate batch ≤3 questions<br/>(gateway, schema-validated)"]
+  batch --> ask["Present questions + 'why we ask' (DISC-006)"]
+  ask --> ans{"Founder response"}
+  ans -->|"answer"| check["Vague? Contradictory?<br/>(DISC-003/004)"]
+  ans -->|"'I don't know'"| assume["Suggest labeled assumption<br/>→ memory item (DISC-005)"]
+  ans -->|"pause"| resume["Session persists exactly<br/>(DISC-007)"]
+  resume -.-> ask
+  check -->|"vague"| clarify["One clarifying prompt + examples"]
+  clarify --> ans
+  check -->|"ok"| store["Store answer → typed memory items<br/>with provenance (MEM-001/003)"]
+  assume --> store
+  store --> more{"Required fields<br/>covered?"}
+  more -->|"no"| batch
+  more -->|"yes"| gen["Generate understanding document<br/>(items classified: fact/pref/constraint/<br/>assumption/research/open + confidence)"]
+  gen --> review["Owner review: approve / edit / reject /<br/>request evidence / request research (UNDER-003)"]
+  review -->|"corrections"| flag["Dependents flagged stale,<br/>re-evaluated (DISC-008)"]
+  flag --> review
+  review -->|"overall approval (owner only)"| confirmed(["Understanding confirmed →<br/>strategy unlocked"])

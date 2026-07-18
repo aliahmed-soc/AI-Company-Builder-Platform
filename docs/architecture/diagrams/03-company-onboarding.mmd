@@ -1,0 +1,27 @@
+---
+title: "03 — Company Onboarding (proposed; solid = MVP; async steps via durable workflow)"
+---
+%% Legend: participant order = trust order; founder input untrusted until validated.
+%% Req IDs: COMP-001/002/003, NFR-005. MVP provisioning = workspace/profile/docs only (no code/hosting).
+sequenceDiagram
+  actor F as Founder [untrusted]
+  participant A as api (Account & Company)
+  participant W as Workflow coordinator (async)
+  participant D as Discovery module
+  participant ACT as Activity feed
+
+  F->>A: Create company (mode: idea | suggested | existing) + brief
+  A->>A: validate, persist draft (tenant stamped)
+  A->>W: enqueue provisioning workflow (durable, resumable)
+  A-->>F: company created (state: onboarding)
+  loop each provisioning step (checkpointed)
+    W->>W: execute step (profile, mission draft, research area, roadmap area, docs, activity)
+    W->>ACT: ordered, timestamped step event (COMP-003)
+    ACT-->>F: SSE progress (honest, no fake success)
+  end
+  alt step fails
+    W->>ACT: explicit failed state + reason + retry control
+  end
+  W->>A: onboarding complete
+  A->>D: unlock interview (state: active)
+  D-->>F: interview begins (DISC-001)

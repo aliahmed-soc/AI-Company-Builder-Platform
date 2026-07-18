@@ -1,0 +1,19 @@
+# ADR-004 — Model-Provider Strategy
+
+1. **Title:** Provider-neutral internal model gateway with one primary and one fallback
+2. **Status:** Accepted
+3. **Date:** 2026-07-18
+4. **Decision owner:** Product owner
+5. **Context:** The platform's core loops run on model calls. Provider strategy determines outage behavior (NFR-019), output consistency, prompt/schema portability, and whether ADR-003's "BYOK later" stays cheap. Four strategies were analyzed in OWNER-DECISION-PACK.md (Decision 4) against 11 criteria.
+6. **Decision:** **Create a provider-neutral internal model gateway.** For MVP: configure exactly **one primary model** and **one fallback model**; use fallback only for approved failure conditions or explicitly supported task classes; **no dynamic price/quality/latency routing**; no multi-provider optimization platform; provider-specific behavior must not leak throughout product code. The gateway must support: stable internal request contracts; structured outputs; schema validation; timeouts; controlled retries; fallback eligibility; usage recording; cost recording; provider error normalization; redacted telemetry; model-version recording; company policy checks; and no provider secrets returned to clients. **The gateway is an internal architectural boundary, not a separate commercial product.**
+7. **Alternatives considered:** One provider/one model (simplest; provider outage = platform outage, violating NFR-019; total lock-in); one provider/several models (better economics, same single-vendor failure domain); full dynamic multi-provider routing (a product in itself; worst output consistency; testing burden explodes; premature per PRD §20 discipline). Full tables preserved in the decision pack.
+8. **Reasons:** The gateway is the cheapest option satisfying NFR-019, keeps ADR-003's BYOK door open (key origin = gateway configuration), and preserves output consistency by concentrating quality-bearing work on one primary model.
+9. **Positive consequences:** Outages degrade to fallback or honest queueing; centralized observability, usage, and cost recording; prompt/schema portability engineered from day one; model swaps become configuration plus regression suite.
+10. **Negative consequences:** Two provider adapters to build and test instead of one; fallback-path quality must be validated for its scoped workloads; golden-suite maintenance for the primary model.
+11. **Risks:** Gateway abstraction leaking provider dialects into product code; fallback silently degrading quality-bearing outputs; retry logic duplicating side effects.
+12. **Mitigations:** Schema-first structured outputs with provider adapters at the gateway edge; fallback eligibility rules exclude quality-bearing generation unless explicitly approved (prefer queueing per NFR-019); retries bounded and idempotent-safe per NFR-007; model-version stamped on every artifact for attribution.
+13. **Reversal cost:** **Low, because the gateway is itself the hedge** — swapping primary/fallback is configuration. Without the gateway, later provider changes would be High-cost rewrites; that asymmetry is the core argument.
+14. **PRD requirement IDs affected:** NFR-019, NFR-007, NFR-009, NFR-015, NFR-018, USAGE-001, TOOL-002, TOOL-003, POL-001, WORK-001, TASK-009.
+15. **Architecture areas affected:** Model-gateway service/module boundary; structured-output schema layer; usage/cost telemetry pipeline; policy-check integration point (gateway sits behind the TOOL-003 policy gate, never around it).
+16. **Follow-up decisions:** Which exact primary and fallback models (architecture phase — an implementation-facing ADR citing quality benchmarks per task type); fallback-eligible task classes; per-plan model-tier policy (with D-02).
+17. **Review trigger:** Primary-provider reliability or pricing regression; fallback quality complaints; scale or workload diversity that would genuinely justify revisiting dynamic routing.

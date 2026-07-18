@@ -1,0 +1,16 @@
+area,artifact_or_check,result,evidence,confidence,scope_limit
+frontend,Next.js/React generated app,verified,exported project package.json and src/app,high,generated company app only
+frontend,landing page and UI primitives,verified,src/app/(setup)/page.tsx; src/components/ui,high,generated company app only
+backend,example GET/POST route,verified,src/app/api/example/route.ts,high,reference route not production Polsia backend
+backend,health endpoint,verified,src/app/health/route.ts,high,generated app readiness only
+backend,Prisma client seam,verified,src/lib/db.ts,high,no application models exported
+backend,application schema,not present,prisma/schema/_base.prisma,high,only datasource/generator shipped
+deployment,Node/build/start/health manifest,verified,polsia.toml,high,template contract not private hosting topology
+security,CSP and security headers,verified,next.config.ts; proxy.ts; src/lib/csp.ts,high,exported app config only
+security,environment validation,verified,src/lib/env.ts; tests/unit/env-validation.test.ts,high,auth/session secrets not exported
+quality,Prisma generation,passed,local npm run db:generate,high,temporary extraction
+quality,typecheck,passed,local npm run typecheck,high,after Prisma generation
+quality,unit tests,passed,57 tests in 5 files,high,temporary extraction
+quality,production build,passed,local npm run build with dummy DATABASE_URL,high,no real database connection
+quality,lint,failed,5 Biome findings in setup page,high,generated page needs cleanup
+security,secret scan,passed,no env files/high-confidence secret patterns,medium,heuristic scan not formal DLP

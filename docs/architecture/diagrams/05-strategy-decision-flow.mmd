@@ -1,0 +1,21 @@
+---
+title: "05 — Strategy Decision Flow (proposed; all MVP)"
+---
+%% Legend: model output untrusted until similarity + field validation pass; owner is sole selecting actor.
+%% Req IDs: STRAT-001..006, DEC-001.
+flowchart TB
+  conf(["Understanding confirmed"]) --> gen["Strategy worker generates options<br/>(16-field standard, STRAT-002)"]
+  gen --> sim{"Similarity check:<br/>≥3 genuinely distinct?"}
+  sim -->|"no"| honest["State honestly why fewer<br/>(no padding — STRAT-001)"]
+  sim -->|"yes"| present["Present options side-by-side<br/>+ optional AI recommendation w/ rationale (STRAT-004)"]
+  honest --> present
+  present --> choice{"Owner action"}
+  choice -->|"select"| record
+  choice -->|"edit / combine"| rerender["Re-render combined option<br/>in standard format for confirmation"]
+  rerender --> choice
+  choice -->|"request another"| gen
+  choice -->|"reject all"| back["Route to understanding review<br/>with captured reasons"]
+  choice -->|"approve one phase only"| phase["Phase-limited approval<br/>(STRAT-005) — later phases marked not approved"]
+  phase --> record["Write immutable decision record<br/>(inputs + options considered + rationale)"]
+  record -->|"record write fails → transition blocked (STRAT-006)"| record
+  record --> plan(["Planning unlocked →<br/>roadmap + tasks (ROAD-001)"])

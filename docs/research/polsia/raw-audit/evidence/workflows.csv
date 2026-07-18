@@ -1,0 +1,7 @@
+workflow_id,name,entry_point,observed_steps,status,evidence,confidence
+WF-01,onboarding,New Company,brief->workspace->email->code->database->hosting->sandbox->site->documents->tasks,observed sequence,03-onboarding-flow.md,high
+WF-02,new-task-planning,+ New tasks,reviews project->drafts tasks->saves tasks,observed sequence; side effect created 3 tasks,04-task-and-agent-system.md,high
+WF-03,manual-task,Task detail,open->Run now (not executed),partial,04-task-and-agent-system.md,medium
+WF-04,autonomous-cycle,FAQ/documented,review->signals->prioritize->execute->update->report,documented only,09-claim-verification.md,medium
+WF-05,deployment,Website controls,versions->redeploy/rollback (not executed),partial,08-technical-observations.md,medium
+WF-06,billing,Upgrade/Payments,plan->Stripe portal (not executed),partial,07-billing-and-pricing.md,high

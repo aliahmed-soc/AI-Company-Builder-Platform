@@ -1,0 +1,15 @@
+flowchart LR
+  U[Founder] --> UI[Dashboard / public site]
+  UI --> API[Policy-aware API]
+  API --> WF[Durable workflows]
+  WF --> AG[Agent runtime]
+  WF --> CON[Connectors]
+  WF --> DEP[Build and deploy]
+  API --> DB[(Tenant data)]
+  API --> LOG[(Audit log)]
+  CON --> EXT[External platforms]
+  DEP --> HOST[Hosting]
+  classDef observed fill:#dff7e8,stroke:#238636;
+  classDef inferred fill:#fff4ce,stroke:#9a6700,stroke-dasharray: 5 5;
+  class UI,EXT,HOST observed;
+  class API,WF,AG,CON,DEP,DB,LOG inferred;

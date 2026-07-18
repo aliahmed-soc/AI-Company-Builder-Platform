@@ -1,0 +1,22 @@
+---
+title: "01 — System Context (proposed architecture; solid = MVP, dashed = future)"
+---
+%% Legend: [untrusted] = untrusted input source; solid arrow = required MVP; dashed = future/optional.
+%% Req IDs: NFR-001/002/019, ADR-002/003/004/005. Not a depiction of Polsia internals.
+flowchart LR
+  founder["Founder / Owner<br/>[untrusted input]"]
+  viewer["Viewer member<br/>[untrusted input]"]
+  platform["AI Company Builder Platform<br/>(trusted core: api + worker)"]
+  models["Model providers<br/>primary + fallback<br/>[external; output untrusted]"]
+  billing["Billing provider<br/>[external]"]
+  storage["Managed infra:<br/>Postgres · Object storage ·<br/>Secrets · Monitoring"]
+  genapps["Generated customer apps<br/>[separate trust zone]"]
+  integrations["External integrations<br/>(email/social/ads...)"]
+
+  founder -->|"HTTPS, sessions"| platform
+  viewer -->|"read-only"| platform
+  platform -->|"server-side keys only (ADR-003)"| models
+  platform --> storage
+  platform -.->|"Phase 7: portal + webhooks"| billing
+  platform -.->|"future: provision only, no platform internals (invariant 18)"| genapps
+  platform -.->|"post-MVP connectors"| integrations

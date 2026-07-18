@@ -1,0 +1,14 @@
+---
+title: "02 — MVP Vertical Slices (solid = slice path through components)"
+---
+%% Legend: each slice ticket (A-F) proves a full path; components from COMPONENT-CATALOG.md.
+flowchart LR
+  subgraph components["Component spine"]
+    idm["Identity/Clerk"] --- ten["Tenancy/RLS"] --- comp["Companies"] --- disc["Discovery"] --- und["Understanding"] --- strat["Strategy"] --- plan["Planning/Tasks"] --- exec["Jobs/Workers/Dispatcher"] --- gw["Model gateway"] --- docs["Artifacts"] --- trust["Policy/Approvals/Stop"] --- ledger["Usage/Audit/Activity"]
+  end
+  A["Slice A (P1-015)<br/>secure company creation"] --> idm & ten & comp & ledger
+  B["Slice B (P2-012)<br/>confirmed understanding"] --> disc & und & gw & ledger
+  C["Slice C (P3-007)<br/>strategy selection"] --> und & strat & gw & ledger
+  Dd["Slice D (P4-007)<br/>planned work"] --> strat & plan & ledger
+  E["Slice E (P5-015)<br/>safe internal execution"] --> plan & exec & gw & docs & ledger
+  Fs["Slice F (P6-012)<br/>safety and recovery"] --> exec & trust & ledger

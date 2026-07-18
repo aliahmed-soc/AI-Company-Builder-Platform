@@ -1,0 +1,20 @@
+---
+title: "14 — Failure and Recovery Paths (proposed; MVP; bounded retries only)"
+---
+%% Legend: every failure lands in a truthful user-visible state; no unlimited retries (NFR-007).
+%% Req IDs: TASK-006/009/010, NFR-005/006/019; FAILURE-AND-RECOVERY table has full matrix.
+flowchart TB
+  exec["Executing task run"] --> f{"Failure class"}
+  f -->|"model timeout /<br/>invalid output"| retry1["Bounded re-ask / backoff retry<br/>(per task-class cap)"]
+  retry1 -->|"exhausted"| failed["FAILED with category +<br/>plain-language reason +<br/>retry safety (TASK-006)"]
+  retry1 -->|"succeeds"| ok["Continue"]
+  f -->|"provider outage"| q["Queue + honest status banner<br/>(NFR-019); fallback only for<br/>eligible task classes"]
+  q -.->|"recovery"| drain["Drain queue — dedupe on<br/>idempotency keys (no duplicates)"]
+  f -->|"worker crash /<br/>heartbeat lost"| resume["Resume from checkpoint (NFR-005)"]
+  resume -->|"attempt cap hit"| dead["Dead-letter →<br/>Decision Room BLOCKED queue"]
+  f -->|"artifact persist fails"| failed
+  f -->|"usage-ledger write fails"| failclosed["Metered work BLOCKS<br/>(fail closed — USAGE-001)"]
+  f -->|"audit write fails (high-risk op)"| failclosed2["Action BLOCKED<br/>(invariant 11 discipline) + page alert"]
+  f -->|"stop / pause during run"| safestop["Safe-stop → held queue →<br/>review-to-resume (diagram 13)"]
+  failed --> user["User sees truthful state:<br/>failed ≠ unconfirmed ≠ completed<br/>(invariant 20)"]
+  dead --> manual["Manual recovery path +<br/>support bundle"]

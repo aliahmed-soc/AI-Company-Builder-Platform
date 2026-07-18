@@ -1,0 +1,14 @@
+flowchart TD
+  T[Task intent] --> PL[Planner]
+  PL --> RE[Researcher]
+  PL --> BU[Builder]
+  PL --> CO[Communicator]
+  RE --> RV[Reviewer / evidence checker]
+  BU --> RV
+  CO --> RV
+  RV --> PE[Policy engine]
+  PE -->|allow| EX[Tool executor]
+  PE -->|approval| AP[Approval queue]
+  AP --> EX
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class T,PL,RE,BU,CO,RV,PE,EX,AP recommended;

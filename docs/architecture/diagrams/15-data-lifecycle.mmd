@@ -1,0 +1,17 @@
+---
+title: "15 — Data Lifecycle (proposed; solid = MVP; dashed = post-MVP export/deletion phases)"
+---
+%% Legend: append-only stores never purge by UPDATE/DELETE in product paths; deletion = staged purge with retention.
+%% Req IDs: DATA-ARCHITECTURE §1, EXPORT-001, ACC-005, COMP-007, NFR-011/016, ADR-005.
+flowchart LR
+  create["Create<br/>(tenant stamped, immutable ownership)"] --> live["Live use<br/>(versioned docs, typed memory,<br/>append-only ledgers/audit)"]
+  live --> corrections["Corrections:<br/>memory: supersede pointers ·<br/>ledgers: compensating entries ·<br/>docs: new versions<br/>(never destructive overwrite)"]
+  corrections --> live
+  live -.->|"owner export (Post-MVP)"| export["Export archive + manifest<br/>(open formats, no secrets,<br/>ownership verified — invariant 19)"]
+  live --> pause["Company pause / cancel:<br/>data RETAINED (BILL-006)"]
+  pause --> live
+  pause -.-> deact["Deactivation: autonomous work off,<br/>data retained, reactivation documented"]
+  deact -.-> del["Deletion (COMP-007/ACC-005):<br/>two-step + cooling-off + export offer"]
+  del -.-> purge["Staged purge per retention schedule<br/>(NFR-016; legal holds honored)"]
+  purge -.-> residual["Residual: redacted audit trace only"]
+  doc["Documentation obligations (ADR-005):<br/>data locations · provider processing<br/>locations · subprocessor register"] --- live

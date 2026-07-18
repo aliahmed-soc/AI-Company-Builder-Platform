@@ -1,0 +1,13 @@
+flowchart TD
+  A[Idea / Surprise me / Existing business] --> B[Save brief]
+  B --> C[Provision email]
+  C --> D[Seed codebase]
+  D --> E[Provision database + hosting]
+  E --> F[Build public site]
+  F --> G[Create mission / roadmap / research]
+  G --> H[Create first tasks]
+  H --> I[Completed or recoverable failure]
+  classDef observed fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class A,B,C,D,E,F,G,H observed;
+  class I recommended;

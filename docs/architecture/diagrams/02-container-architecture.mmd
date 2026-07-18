@@ -1,0 +1,45 @@
+---
+title: "02 — Container Architecture (proposed; solid = MVP sync, thick label async, dashed = future)"
+---
+%% Legend: subgraphs = deployment units; [M] modules live inside api/worker processes.
+%% Req IDs: ADR-006/008/018, NFR-004/005. Async = durable jobs via Postgres (ADR-008).
+flowchart TB
+  subgraph browser["Browser [untrusted]"]
+    web["Web client (SPA/SSR)"]
+  end
+  subgraph api["api process (stateless, scalable)"]
+    idm["Identity & access"]
+    comp["Account & company"]
+    disc["Discovery / Understanding / Strategy / Planning"]
+    task["Task module"]
+    appr["Approval engine"]
+    pol["Policy engine"]
+    mem["Memory / Documents / Activity / Audit"]
+    usage["Usage ledger"]
+    stop["Emergency-stop controller"]
+  end
+  subgraph worker["worker process (separate, least-privilege)"]
+    coord["Workflow coordinator"]
+    wrun["Worker runtime (research/strategy/document)"]
+    disp["Tool registry + dispatcher"]
+    gw["Model gateway"]
+  end
+  pg[("PostgreSQL<br/>(incl. durable jobs)")]
+  os[("Object storage<br/>(tenant-prefixed)")]
+  sm[("Secret manager")]
+  mon["Monitoring / errors"]
+  llm["Model providers"]
+
+  web -->|"REST + SSE"| api
+  api -->|"tx: state + job + audit"| pg
+  worker -->|"job pickup w/ tenant context (invariant 3)"| pg
+  wrun --> disp
+  disp -->|"policy + approval + stop checks pre-exec (invariant 6/14)"| pol
+  disp --> gw
+  gw -->|"server-side creds"| sm
+  gw --> llm
+  wrun --> os
+  api --> os
+  api --> mon
+  worker --> mon
+  api -.->|"Phase 7 webhooks"| billing["Billing provider"]

@@ -1,0 +1,9 @@
+event_id,action_class,observed_or_documented,approval_expectation,evidence,confidence
+APR-01,phone calls,documented,not currently supported,09-claim-verification.md,high
+APR-02,bank accounts,documented,not currently supported,09-claim-verification.md,high
+APR-03,hiring,documented,not currently supported,09-claim-verification.md,high
+APR-04,legal commitments,documented,requires human boundary,09-claim-verification.md,high
+APR-05,irreversible actions,documented,requires approval,09-claim-verification.md,high
+APR-06,social/email publishing,observed controls + inferred safety,approval recommended before external write,05-approval-matrix.md,medium
+APR-07,ads/spend,documented,limits and human approval recommended,06-integrations.md,medium
+APR-08,delete/deactivate,observed controls,explicit confirmation and staged recovery recommended,08-technical-observations.md,high

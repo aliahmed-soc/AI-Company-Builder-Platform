@@ -1,0 +1,20 @@
+---
+title: "03 — Critical Path to First Complete MVP Demonstration (all solid = serial)"
+---
+%% Legend: shortest dependency chain; everything else parallelizes around it.
+flowchart TB
+  a["P0-011..018 repository foundation"] --> b["P1-001 Clerk integration"]
+  b --> c["P1-002/003 user + account mapping"]
+  c --> d["P1-005/006/007 tenant authorization"]
+  d --> e["P1-010 company data model"]
+  e --> f["P2-001/002 discovery persistence"]
+  f --> g["P2-003 model gateway v1"]
+  g --> h["P2-008/009 understanding generation + confirm"]
+  h --> i["P3-001..005 strategy generation + decision"]
+  i --> j["P4-001..003 planning objects + tasks"]
+  j --> k["P5-001/002 durable task execution"]
+  k --> l["P5-003/005 dispatcher core + worker runtime"]
+  l --> m["P5-006/011 document generation + artifacts"]
+  m --> n["P1-008 + P2-003 + P6-009 activity/audit/usage complete"]
+  n --> o["P6-001..007 approval + emergency controls"]
+  o --> p["P7-009/010 end-to-end release validation"]

@@ -1,0 +1,9 @@
+observation_id,area,observation,impact,priority,evidence_status
+FE-01,application-shell,Hashed module bundle and stylesheet loaded for dashboard SPA,compiled client shell and cacheable assets,informational,observed
+FE-02,accessibility,DialogContent warns missing Description/aria-describedby,screen-reader context may be incomplete,P2,observed runtime warning
+FE-03,analytics,faq_clicked rejected as unsupported event type,analytics taxonomy drift and lost measurement,P2,observed runtime warning
+FE-04,marketing-telemetry,TikTok Pixel warns missing content_id,provider event may be incomplete,P3,observed runtime warning
+FE-05,third-party-services,Meta/Facebook Pixel and Google Ads loaded,privacy consent and vendor inventory required,P1,observed asset
+FE-06,third-party-services,PostHog flags/recorder and Sentry envelope loaded,session recording/error data require retention and redaction,P1,observed asset
+FE-07,design-system,Custom Suisse and PP Editorial font assets loaded,typography is part of visual parity,informational,observed asset
+FE-08,forms,No HTML form elements in initial dashboard DOM,actions are dialog/button/API driven,informational,observed DOM

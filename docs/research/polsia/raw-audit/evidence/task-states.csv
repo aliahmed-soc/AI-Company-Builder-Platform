@@ -1,0 +1,7 @@
+state,observed,meaning_or_limit,evidence,confidence
+To Do,yes,queued task,04-task-and-agent-system.md,high
+Recurring,empty tab,existence observed; instances unknown,04-task-and-agent-system.md,medium
+In Progress,empty tab,existence observed; execution not tested,04-task-and-agent-system.md,medium
+Completed,empty tab,existence observed; completion receipt unknown,04-task-and-agent-system.md,medium
+Rejected,empty tab,existence observed; rejection reason unknown,04-task-and-agent-system.md,medium
+Failed,yes,one failed task; no error detail visible,04-task-and-agent-system.md,high

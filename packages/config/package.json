@@ -1,0 +1,16 @@
+{
+    "name": "@acbp/config",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "main": "src/index.ts",
+    "exports": {
+        ".": "./src/index.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "zod": "^3.25.76"
+    }
+}

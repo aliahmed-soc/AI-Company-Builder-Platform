@@ -1,0 +1,41 @@
+{
+  "name": "ai-company-builder-platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AI Company Builder Platform — monorepo scaffold (ACBP-P0-011). No product functionality yet.",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=11"
+  },
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "lint": "eslint .",
+    "check:secrets": "node tools/check-secrets.mjs",
+    "check:boundaries": "node tools/check-boundaries.mjs",
+    "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs",
+    "test:config": "vitest run packages/config",
+    "test:observability": "vitest run packages/observability",
+    "test:database": "vitest run packages/database",
+    "db:migrate": "tsx packages/database/src/cli.ts migrate",
+    "db:migrate:status": "tsx packages/database/src/cli.ts status",
+    "db:migrate:down": "tsx packages/database/src/cli.ts down",
+    "db:reset": "tsx packages/database/src/cli.ts reset",
+    "db:check": "tsx packages/database/src/cli.ts check",
+    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:boundaries && pnpm run test:boundaries",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm run check:static && pnpm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
+    "tsx": "^4.19.2",
+    "typescript": "5.7.3",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
+  }
+}

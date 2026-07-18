@@ -1,0 +1,19 @@
+# ADR-005 — Initial Data-Residency Position
+
+1. **Title:** Initial data-residency position for beta
+2. **Status:** Accepted
+3. **Date:** 2026-07-18
+4. **Decision owner:** Product owner
+5. **Context:** The decision pack flagged a narrow architecture-relevant sub-question inside D-08 (initial market/region, otherwise deferred): whether strict data residency must be designed for now, because retrofitting residency is expensive. The owner has answered the sub-question; the broader D-08 market/region decision remains open.
+6. **Decision:** **The initial beta does not promise strict EU, national, or customer-selected data residency.** However: architecture decisions must not unnecessarily prevent future regional deployment; data location must be documented; model-provider processing locations must be documented where available; subprocessors must be recorded; customers must never be told their information remains in a specific country unless the system actually guarantees it; strict residency requirements are post-MVP unless an early design partner makes them necessary. **Highly regulated customers requiring strict residency guarantees are not targets for the initial beta.**
+7. **Alternatives considered:** Design for strict residency now (safe but expensive: regional deployment topology, per-region provider selection, data-partitioning machinery — all for customers the ADR-001 segment choice does not target); treat-as-yes-for-safety (same cost without the certainty). Deferral with non-foreclosure discipline was the third path and was selected.
+8. **Reasons:** The ADR-001 segment (non-technical solo founders, self-serve) rarely carries strict-residency requirements; the expensive part of residency is *retrofit prevention*, which the non-foreclosure and documentation obligations address at near-zero MVP cost.
+9. **Positive consequences:** No regional-deployment machinery in MVP; architecture freedom on provider/hosting choice (interacts cleanly with ADR-002/ADR-004); honest posture — no residency claims the system cannot keep.
+10. **Negative consequences:** Some prospects (EU-regulated, public sector, health/finance-adjacent) are out of scope for beta; future regional expansion will still cost real work when it comes.
+11. **Risks:** Accidental residency *claims* in marketing or sales conversations; architecture choices that quietly hard-bind data to one region in ways that are expensive to unwind; undocumented subprocessor sprawl.
+12. **Mitigations:** The no-unsupported-claims rule is binding on all customer-facing copy (aligns with PRD principle 14, no fake capabilities); architecture review checklist item: "does this choice unnecessarily prevent regional deployment?"; data-location + subprocessor register maintained from the first deployed environment (feeds NFR-011's data map).
+13. **Reversal cost:** **Low for the position itself** (it is a scoping stance, reversible by later ADR); **High if the non-foreclosure discipline is ignored** — which is precisely why the discipline is part of the accepted decision.
+14. **PRD requirement IDs affected:** NFR-011 (data map, privacy baseline), NFR-016 (retention documentation), NFR-009 (telemetry locality documentation), EXPORT-001 (data export unaffected by residency posture), NFR-019 (provider processing-location documentation).
+15. **Architecture areas affected:** Deployment topology (single-region acceptable for beta); provider selection latitude; data-map and subprocessor-register tooling; terms/disclosure content (with ADR-003's data-path disclosure).
+16. **Follow-up decisions:** D-08 remainder — initial market and beta regions (before beta); strict-residency trigger review if a design partner requires it; regional-expansion ADR when justified.
+17. **Review trigger:** A design partner or regulator requirement for strict residency; selection of an initial market (D-08 remainder) in a strict-residency jurisdiction.

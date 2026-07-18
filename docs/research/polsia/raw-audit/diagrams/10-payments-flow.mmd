@@ -1,0 +1,11 @@
+flowchart LR
+  C[Customer payment] --> PSP[Payment processor]
+  PSP --> BAL[Company balance / ledger]
+  BAL --> F[Platform fee calculation]
+  BAL --> R[Refund / dispute handling]
+  U[Founder] --> BILL[Subscription + credits billing]
+  BILL --> PSP
+  classDef documented fill:#dff7e8,stroke:#238636;
+  classDef unknown fill:#ffe2e2,stroke:#cf222e,stroke-dasharray: 5 5;
+  class U,BILL,PSP documented;
+  class C,BAL,F,R unknown;

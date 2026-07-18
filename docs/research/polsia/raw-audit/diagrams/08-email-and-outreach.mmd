@@ -1,0 +1,13 @@
+flowchart LR
+  SIG[Signal / task] --> D[Draft message]
+  D --> C[Consent + recipient checks]
+  C --> A{Approval?}
+  A -- yes --> U[User approves exact draft]
+  A -- no --> S[Send if policy allows]
+  U --> S
+  S --> R[Provider receipt]
+  R --> M[Metric + audit event]
+  classDef documented fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class SIG,D documented;
+  class C,A,U,S,R,M recommended;

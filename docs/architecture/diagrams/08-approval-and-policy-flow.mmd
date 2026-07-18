@@ -1,0 +1,21 @@
+---
+title: "08 — Approval and Policy Flow (proposed; MVP mechanics, external actions future)"
+---
+%% Legend: the AI can propose (left) but authority flows only through policy + human decision (right).
+%% Req IDs: APPR-001..010, POL-005/006, invariants 5/6/7. Model actor has NO path to approval decisions.
+flowchart TB
+  rec["AI recommendation / proposed action<br/>[model output — no authority]"] --> norm["Normalize payload → canonical hash<br/>(APPR-004)"]
+  norm --> p1["Policy evaluation<br/>(deterministic, versioned, recorded)"]
+  p1 -->|"forbidden / limit breach"| blocked["BLOCKED — Decision Room<br/>(approval cannot override, POL-005)"]
+  p1 -->|"not required (risk class + level)"| pre
+  p1 -->|"approval required"| req["Approval request:<br/>action, reason, expected result, data,<br/>cost, risk, reversibility, preview (APPR-002)"]
+  req --> human{"Human / delegated decision<br/>(invariant 5 — never a model)"}
+  human -->|"approve"| bound["Approval bound: hash + scope +<br/>expiry + policy version"]
+  human -->|"edit-then-approve"| rebind["New payload → new hash → new approval"]
+  rebind --> bound
+  human -->|"reject"| rejected["Rejected — reason retained"]
+  bound --> pre["MANDATORY pre-execution check (invariant 6):<br/>hash match · not expired · not revoked ·<br/>stop-state clear · limits still ok"]
+  pre -->|"any check fails"| failclosed["FAIL CLOSED + audited"]
+  pre -->|"all pass"| consume["Consume approval (single-use)"]
+  consume --> exec["Tool execution<br/>(idempotency key for external classes)"]
+  exec --> receipt["Receipt stored — success claimable<br/>only with evidence (invariant 20)"]

@@ -1,0 +1,9 @@
+flowchart TD
+  R[Request] --> I[Authenticate identity]
+  I --> M[Resolve membership + company scope]
+  M --> P[Policy / row-level authorization]
+  P --> D[(Company-scoped data)]
+  P --> X[Denied and audited]
+  D --> L[Redacted logs / exports]
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class R,I,M,P,D,X,L recommended;

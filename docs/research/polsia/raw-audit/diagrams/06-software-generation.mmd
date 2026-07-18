@@ -1,0 +1,14 @@
+flowchart LR
+  B[Brief / chat request] --> P[Plan + acceptance tests]
+  P --> C[Edit isolated workspace]
+  C --> T[Run tests and scans]
+  T --> D[Review diff]
+  D --> A[Approval if external/production]
+  A --> AR[Immutable artifact]
+  AR --> PV[Preview deploy]
+  PV --> PR[Health check]
+  PR --> PROD[Production or rollback]
+  classDef observed fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class B,C observed;
+  class P,T,D,A,AR,PV,PR,PROD recommended;

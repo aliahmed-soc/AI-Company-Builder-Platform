@@ -1,0 +1,13 @@
+flowchart TD
+  W[Workflow step] --> O[Idempotency check]
+  O --> E[External action]
+  E --> R{Receipt?}
+  R -- yes --> C[Commit success]
+  R -- no --> RET[Retry with backoff]
+  RET --> R
+  RET --> DL[Dead letter + support bundle]
+  DL --> H[Human retry/compensate]
+  H --> O
+  C --> A[Audit event]
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class W,O,E,R,C,RET,DL,H,A recommended;

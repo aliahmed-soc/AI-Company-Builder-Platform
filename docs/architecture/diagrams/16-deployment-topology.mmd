@@ -1,0 +1,40 @@
+---
+title: "16 — MVP Deployment Topology (proposed; single region per ADR-005; no Kubernetes)"
+---
+%% Legend: solid = MVP; dashed = Phase 7 / future. One codebase → two process types.
+%% Req IDs: ADR-018, ADR-008, NFR-003/017; providers = AOQ-02/03/04/07.
+flowchart TB
+  subgraph internet["Internet"]
+    users["Browsers [untrusted]"]
+  end
+  subgraph region["Render — single region (ADR-020; region = AOQ-20; future regions not foreclosed — ADR-005)"]
+    subgraph app["Render services (no k8s; no Render Workflows; private networking)"]
+      api["Render web service: api ×N<br/>(web assets + REST + SSE)"]
+      wk["Render background worker ×M<br/>(separate, least-privilege)"]
+    end
+    pg[("Render PostgreSQL (standard Postgres)<br/>+ durable job tables (ADR-008)<br/>backups: RPO ≤24h")]
+    os[("Managed object storage<br/>tenant-prefixed (provider = AOQ-03)")]
+  end
+  sm[("Infisical Cloud (ADR-021)<br/>bootstrap-only env vars")]
+  clerk["Clerk (ADR-022)<br/>identity/sessions only —<br/>internal authz authoritative"]
+  users -.->|"authn"| clerk
+  clerk -.->|"signature-verified webhooks"| api
+  mon["Monitoring / error SaaS"]
+  llm1["Primary model provider"]
+  llm2["Fallback model provider"]
+  bill["Billing provider"]
+
+  users -->|"HTTPS"| api
+  api --> pg
+  wk --> pg
+  api --> os
+  wk --> os
+  api --> sm
+  wk --> sm
+  wk -->|"gateway, server-side keys"| llm1
+  wk -->|"fallback conditions only"| llm2
+  api --> mon
+  wk --> mon
+  api -.->|"Phase 7"| bill
+  genzone["Generated-app zone (FUTURE):<br/>separate trust zone, no platform<br/>credentials or internal network path<br/>(invariant 18)"]
+  region -.-> genzone

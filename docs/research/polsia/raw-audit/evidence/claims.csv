@@ -1,0 +1,33 @@
+claim_number,classification,evidence_type,confidence,summary
+1,Verified directly in app and FAQ,UI+FAQ,99,Portfolio and Add another company sheet; FAQ confirms multiple companies
+2,Verified directly in app,UI,99,Completed onboarding activity and roadmap document
+3,Partially verified,UI,95,Planning added tasks; execution not run
+4,Verified directly in app and FAQ,UI+FAQ,99,Night shifts; Tonight marker; daily cycle FAQ
+5,Verified directly in app and FAQ,UI+FAQ,99,Credits ledger and manual task credit answer
+6,Partially verified,UI,95,God Mode control visible but not activated
+7,Verified directly in app,UI+PUBLIC-SITE,99,Onboarding build/publish activity and live site
+8,Partially verified,UI,70,Seed repo/cloning activity; no GitHub link
+9,Verified through current first-party documentation,FAQ+UI,85,FAQ stack and provisioning labels
+10,Not found,UI,40,No mobile build surface
+11,Partially verified,UI+FAQ,85,Email widget and send-email claim; follow-ups untested
+12,Verified directly in app,UI,99,Twitter post and controls
+13,Partially verified,UI+FAQ,85,Ads control and budget/fee FAQ; not launched
+14,Partially verified,FAQ,70,Customer-inquiry claim without support workflow
+15,Verified directly in app,UI,99,Setup payments; Payments; Upgrade
+16,Verified directly in app,UI,99,Activity; tasks; credits; metrics
+17,Verified directly in app and FAQ,UI+FAQ,99,Download Code menu and FAQ
+18,Not found,UI,40,No ownership terms observed
+19,Partially verified,FAQ+UI,85,General irreversible-action claim and delete warning
+20,Partially verified,UI,70,Night shifts/God Mode visible; scope unknown
+21,Partially verified,FAQ+UI,85,Ads budgets and credit tiers
+22,Verified directly in app,UI,99,Pause and Deactivate controls
+23,Not found,UI,40,No strategic option preview
+24,Not found,UI,40,Onboarding interview not safely reachable
+25,Partially verified,UI,70,Task descriptions but no full action preview
+26,Partially verified,UI,70,Manual/night/God Mode surfaces
+27,Not found,UI,40,No memory editor
+28,Not found,UI,40,Failed/Repeat visible; auto-retry unknown
+29,Verified directly in app,UI,99,Versions rollback copy
+30,Contradicted,UI+FAQ,99,Current price is $25/month, not $49
+31,Verified through current first-party documentation,FAQ,85,FAQ states 20% generated revenue
+32,Partially verified,FAQ,85,Ads FAQ states 20% platform fee; no spend executed

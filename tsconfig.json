@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "comment": "Solution config used by editors and the dependency-boundary checker (ACBP-P0-012). Per-package typechecking uses each package's own tsconfig via 'pnpm -r exec tsc'.",
+  "include": ["apps/*/src", "packages/*/src"],
+  "exclude": ["node_modules", "**/dist", "**/build"]
+}

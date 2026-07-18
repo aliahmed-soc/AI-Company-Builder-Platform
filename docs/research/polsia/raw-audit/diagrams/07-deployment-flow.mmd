@@ -1,0 +1,14 @@
+flowchart TD
+  R[Revision] --> V[Build in isolated worker]
+  V --> S[Secret scan + dependency scan]
+  S --> ART[Immutable artifact]
+  ART --> PRE[Preview]
+  PRE --> H{Health check}
+  H -- pass --> DEP[Deploy]
+  H -- fail --> FIX[Failed with logs / retry]
+  DEP --> MON[Monitor]
+  MON --> RB[Rollback to prior healthy version]
+  classDef observed fill:#dff7e8,stroke:#238636;
+  classDef recommended fill:#e8dcff,stroke:#8250df,stroke-dasharray: 5 5;
+  class R,DEP observed;
+  class V,S,ART,PRE,H,FIX,MON,RB recommended;

@@ -1,0 +1,13 @@
+item,observed_value,source,evidence_status,notes
+starter_plan,$25/month,FAQ + upgrade sheet,documented/observed,1 company; 30 night shifts; 5 task credits; no subscription completed
+daily_shift,30/month (1/day),upgrade sheet,observed,UI wording
+task_credits,5 included,upgrade sheet,observed,plus 10 first month shown in sheet
+ai_credits,$5/month,upgrade sheet,observed,company allowance wording
+extra_company,+$20/month each,New Company sheet,observed,Contradicts FAQ $25/month each
+extra_tier_15,$19/month,upgrade sheet + FAQ,documented/observed,15 credits
+extra_tier_25,$29/month,upgrade sheet + FAQ,documented/observed,25 credits
+extra_tier_50,$49/month,upgrade sheet + FAQ,documented/observed,50 credits
+extra_tier_100,$99/month,upgrade sheet + FAQ,documented/observed,100 credits
+extra_tier_200,$199/month,upgrade sheet + FAQ,documented/observed,200 credits
+extra_tier_500,$499/month,upgrade sheet + FAQ,documented/observed,500 credits
+extra_tier_1000,$999/month,upgrade sheet + FAQ,documented/observed,1000 credits

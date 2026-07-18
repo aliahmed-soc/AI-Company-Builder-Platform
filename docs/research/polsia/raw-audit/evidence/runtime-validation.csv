@@ -1,0 +1,6 @@
+check,observed,classification,notes
+research-task-run,Audit 5 social listening rivals completed,observed,UI showed start search phases report writing and completion
+result-artifact,Competitive audit document created,observed,Document appeared in dashboard with report preview
+credits,Credits 1 visible after completion,observed,No purchase or subscription action taken
+external-side-effects,None intentionally exercised,observed,Research-only task
+private-api-boundary,Response bodies auth/CSRF/rate limits unavailable,unknown,Direct API navigation blocked by client and page fetch unavailable

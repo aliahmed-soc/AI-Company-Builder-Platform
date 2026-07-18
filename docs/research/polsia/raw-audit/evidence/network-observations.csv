@@ -1,0 +1,6 @@
+observation,route_or_context,status,evidence_type,notes
+User-visible URLs,Dashboard and public site,Observed,UI,Only normal visible links recorded; identifiers redacted
+Network endpoint capture,Authenticated session,Not performed,Safety boundary,No tokens/headers/private APIs inspected
+WebSocket/SSE behavior,Authenticated session,Unknown,Safety boundary,Not needed to answer visible requirements
+Polling/task requests,Authenticated session,Unknown,Safety boundary,Not replayed or enumerated
+Feature flags,Authenticated session,Unknown,Safety boundary,Not extracted from private responses

@@ -1,0 +1,44 @@
+route_group,method,normalized_route,observed_surface,requirement_implication,evidence_status
+identity,GET,/api/auth/session,authenticated dashboard session,session identity and expiry,observed route
+identity,GET,/api/admin/check,authenticated dashboard session,admin authorization gate,observed route
+identity,GET,/api/team/check,authenticated dashboard session,team authorization gate,observed route
+companies,GET,/api/companies/portfolio,portfolio/dashboard,company list and aggregate metrics,observed route
+companies,GET,/api/dashboard,dashboard shell,aggregate dashboard read model,observed route
+companies,GET,/api/companies/<companyId>/members,Teams module,company-scoped membership,observed route
+companies,GET,/api/companies/<companyId>/share-link,company sharing,scoped share-link policy,observed route
+operations,GET,/api/v2/engineering-v2/live?companyId=<companyId>,live/activity panel,workflow heartbeat and status,observed route
+operations,GET,/api/v2/companies/<companyId>/terminal/logs?limit=50,terminal/activity,redacted bounded logs,observed route
+operations,GET,/api/v2/companies/<companyId>/mood,Mood card,company operating status,observed route
+operations,GET,/api/v2/faces,Mood UI,avatar/face assets,observed route
+tasks,GET,/api/v2/companies/<companyId>/tasks?status=todo,in_progress,queued,Tasks module,filtered task queue,observed route
+tasks,GET,/api/v2/companies/<companyId>/tasks,Tasks module,task history/lifecycle,observed route
+tasks,GET,/api/v2/companies/<companyId>/tasks/recurring,Recurring tab,scheduled task definitions,observed route
+billing,GET,/api/subscription,Upgrade/Payments,subscription state,observed route
+billing,GET,/api/subscription/quantities,plan quantities,seat/company/credit quantities,observed route
+payments,GET,/api/v2/companies/<companyId>/payments/overview,Business card,payment overview and freshness,observed route
+analytics,GET,/api/analytics/latest,Business card,latest metrics,observed route
+boost,GET,/api/boost/active,subscription/growth UI,active boost state,observed route
+communications,GET,/api/v2/companies/<companyId>/inbox,Email module,inbox read model,observed route
+communications,GET,/api/companies/<companyId>/outreach/status,Outreach module,provider health/status,observed route
+communications,GET,/api/companies/<companyId>/outreach/stats,Outreach module,delivery/engagement metrics,observed route
+hosting,GET,/api/v2/hosted-apps/versions?companyId=<companyId>,Versions module,immutable versions and rollback metadata,observed route
+secrets,GET,/api/v2/hosted-app-secrets/<companyId>/keys,Secrets module,masked key inventory only,observed route
+ads,GET,/api/companies/<companyId>/ads/status,Ads module,campaign status and budget state,observed route
+ads,GET,/api/v2/companies/<companyId>/ads,Ads module,campaign list/configuration read model,observed route
+social,GET,/api/v2/companies/<companyId>/twitter/tweets,Twitter module,post history and receipts,observed route
+social,GET,/api/v2/companies/<companyId>/integrations/twitter/status,Twitter integration,connection health and scope state,observed route
+social,GET,/api/v2/companies/<companyId>/twitter/status,Twitter module,account publishing status,observed route
+documents,GET,/api/v2/company-documents,Documents module,company memory/document index,observed route
+reports,GET,/api/reports,Reports/document surfaces,generated report index and provenance,observed route
+chat,GET,/api/v2/chat/companies/<companyId>/conversations?latest=true,Chat panel,latest conversation read model,observed route
+chat,GET,/api/v2/chat/companies/<companyId>/conversations,Chat panel,conversation list and authorization,observed route
+chat,GET,/api/v2/chat/companies/<companyId>/proactive-greeting,Chat panel,proactive greeting state,observed route
+chat,GET,/api/v2/chat/conversations/<conversationId>,Chat panel,conversation detail and retention,observed route
+chat,GET,/api/v2/chat/conversations/<conversationId>/read,Chat panel,read/unread state,observed route
+onboarding,GET,/api/v2/onboarding/live?companyId=<companyId>,Onboarding/activity stream,resumable progress and failure state,observed route
+export,GET,/api/github-export,Download Code/export,secret-free signed export,observed route
+task-planning,GET,/api/v2/companies/<companyId>/tasks/plan,Tasks/planning,plan preview and evidence,observed route
+telemetry,GET,/api/track,frontend analytics,consent and schema validation,observed route
+telemetry,GET,/api/company/track-dashboard-visit,dashboard analytics,PII-minimized visit tracking,observed route
+telemetry,GET,/api/company/track-activity,activity analytics,PII-minimized activity tracking,observed route
+payments,GET,/api/stripe-connect/status,Payments setup,connection status and authorization,observed route
