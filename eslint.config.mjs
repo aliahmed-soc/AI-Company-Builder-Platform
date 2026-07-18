@@ -12,6 +12,8 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/build/**',
+      '**/.next/**',
+      '**/next-env.d.ts', // Next.js-generated, gitignored, and excluded from tsconfig (ACBP-P1-001).
       'docs/**',
       'evidence/**',
       'tooling/**',

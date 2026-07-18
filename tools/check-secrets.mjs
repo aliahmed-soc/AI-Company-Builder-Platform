@@ -25,8 +25,10 @@ const ROOT = resolve(process.argv[2] ?? process.env.ACBP_SECRET_ROOT ?? resolve(
 const CONTENT_SCAN_DIRS = ['apps', 'packages', 'tools', '.github'];
 const ROOT_CONFIG_FILES = ['package.json', 'pnpm-workspace.yaml', 'tsconfig.base.json', 'tsconfig.json', 'eslint.config.mjs'];
 const TEXT_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.txt'];
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build']);
-const ENV_SCAN_SKIP = new Set(['node_modules', '.git']);
+// Build output (gitignored, never committed) is out of scope. `.next` is the Next.js build directory
+// (ACBP-P1-001); it inlines public config (e.g. NEXT_PUBLIC_* placeholders) into client bundles.
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next']);
+const ENV_SCAN_SKIP = new Set(['node_modules', '.git', '.next']);
 
 const PATTERNS = [
   { id: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },

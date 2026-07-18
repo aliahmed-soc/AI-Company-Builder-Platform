@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@acbp/contracts": "workspace:*"
+    "@acbp/config": "workspace:*",
+    "@acbp/contracts": "workspace:*",
+    "@clerk/backend": "3.11.7"
   },
   "devDependencies": {
     "@acbp/test-support": "workspace:*"

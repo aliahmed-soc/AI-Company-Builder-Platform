@@ -7,3 +7,7 @@ packages:
 # esbuild's postinstall installs its platform binary, consumed by tsx (the migration CLI runner).
 allowBuilds:
   esbuild: true
+  # sharp is a Next.js OPTIONAL image-optimization native dep; apps/web (auth-only) does not use
+  # next/image, so its native build is intentionally skipped (ACBP-P1-001). Set true if image
+  # optimization is later required and a build toolchain is available.
+  sharp: false

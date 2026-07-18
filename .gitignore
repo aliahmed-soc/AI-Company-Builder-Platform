@@ -26,6 +26,8 @@ tmp-extract/
 # Machine-local tool state
 .turbo/
 .next/
+next-env.d.ts
+*.tsbuildinfo
 .tools/
 .lean-ctx/
 *.log

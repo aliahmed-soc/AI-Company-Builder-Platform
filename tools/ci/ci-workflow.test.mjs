@@ -66,9 +66,10 @@ describe('CI workflow safety and completeness', () => {
 
   test('contains no deployment / publish steps', () => {
     // Strip comments so explanatory prose can't trip the check; inspect actual YAML instructions only.
+    // CRLF-safe: split on \r?\n and strip from '#' to end-of-line (no `$`, which `.` won't reach past \r).
     const code = src
-      .split('\n')
-      .map((l) => l.replace(/#.*$/, ''))
+      .split(/\r?\n/)
+      .map((l) => l.replace(/#.*/, ''))
       .join('\n')
       .toLowerCase();
     for (const bad of ['deploy', 'render.com', 'docker push', 'peaceiris', 'aws-actions', 'npm publish', 'pnpm publish']) {

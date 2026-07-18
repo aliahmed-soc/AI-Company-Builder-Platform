@@ -60,6 +60,10 @@ const ALLOWED = {
 };
 const APP_LAYERS = new Set(['web', 'worker']);
 const PROVIDER_SDK_RE = /^(@clerk(\/|$)|@infisical(\/|$)|@anthropic-ai(\/|$)|@aws-sdk(\/|$)|@stripe(\/|$)|openai(\/|$)|clerk(\/|$)|infisical(\/|$)|stripe(\/|$)|pg(\/|$)|render(\/|$))/;
+// Web framework + its framework-specific glue: the Next.js runtime and @clerk/nextjs are a delivery
+// boundary and may be imported ONLY by apps/web (ADR-023 / ACBP-P1-001). Deliberately does NOT match
+// @clerk/backend, which is the framework-neutral SDK legitimately confined to @acbp/adapters.
+const WEB_FRAMEWORK_RE = /^(next(\/|$)|@clerk\/nextjs(\/|$))/;
 const TEST_FILE_RE = /\.(test|spec)\.[cm]?[jt]sx?$|(^|[/\\])__tests__[/\\]/;
 
 const IMPORT_RE = /(?:import|export)\s[^;'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)|import\(\s*['"]([^'"]+)['"]\s*\)/g;
@@ -152,6 +156,10 @@ for (const d of SCAN_DIRS) {
           addViolation('domain-no-npm', fileRel, line, spec, 'domain is pure: no external/SDK imports (rule 1)');
         } else if (fromLayer === 'core' && PROVIDER_SDK_RE.test(spec)) {
           addViolation('core-no-provider-sdk', fileRel, line, spec, 'core must not import provider SDKs directly (rule 2)');
+        }
+        // Next.js / @clerk/nextjs are the web delivery boundary: confined to apps/web (ADR-023).
+        if (WEB_FRAMEWORK_RE.test(spec) && fromLayer !== 'web') {
+          addViolation('web-framework-confined-to-web', fileRel, line, spec, 'next / @clerk/nextjs may be imported only by apps/web (ADR-023 / P1-001)');
         }
         continue;
       }

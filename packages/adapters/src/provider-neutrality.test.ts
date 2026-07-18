@@ -73,14 +73,15 @@ describe('provider-neutrality of adapter contracts', () => {
     }
   });
 
-  test('neither @acbp/contracts nor @acbp/adapters declares a provider SDK dependency', () => {
-    for (const pkg of ['contracts', 'adapters']) {
-      const manifest = readJson(resolve(REPO, 'packages', pkg, 'package.json'));
-      const deps = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
-      for (const dep of deps) {
-        for (const bad of FORBIDDEN_SPECIFIERS) {
-          expect(dep.startsWith(bad)).toBe(false);
-        }
+  test('the neutral @acbp/contracts leaf declares no provider SDK dependency', () => {
+    // Only the contracts leaf must be provider-SDK-free. @acbp/adapters is the IMPLEMENTATION layer
+    // and legitimately depends on provider SDKs (e.g., @clerk/backend for the ACBP-P1-001 identity
+    // adapter); the boundary checker still forbids core/domain from importing any provider SDK.
+    const manifest = readJson(resolve(REPO, 'packages', 'contracts', 'package.json'));
+    const deps = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
+    for (const dep of deps) {
+      for (const bad of FORBIDDEN_SPECIFIERS) {
+        expect(dep.startsWith(bad)).toBe(false);
       }
     }
   });
