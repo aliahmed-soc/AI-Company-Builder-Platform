@@ -8,6 +8,7 @@
                     ".":  "./src/index.ts"
                 },
     "scripts":  {
-                    "typecheck":  "tsc --noEmit"
+                    "typecheck":  "tsc --noEmit",
+                    "dev":  "tsx src/dev.ts"
                 }
 }

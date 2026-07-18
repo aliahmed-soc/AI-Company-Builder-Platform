@@ -18,10 +18,11 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, relative, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = resolve(process.argv[2] ?? process.env.ACBP_SECRET_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '..'));
 
-const CONTENT_SCAN_DIRS = ['apps', 'packages', 'tools'];
+const CONTENT_SCAN_DIRS = ['apps', 'packages', 'tools', '.github'];
 const ROOT_CONFIG_FILES = ['package.json', 'pnpm-workspace.yaml', 'tsconfig.base.json', 'tsconfig.json', 'eslint.config.mjs'];
 const TEXT_EXTS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.txt'];
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build']);
@@ -72,6 +73,16 @@ function walk(dir) {
   return out;
 }
 
+// A git-ignored file can never be committed, so it is out of scope for the "no committed .env"
+// rule (e.g., the P0-021 local-dev `.env.local`). Only NON-ignored .env files are a real risk.
+function isGitIgnored(abs) {
+  try {
+    return spawnSync('git', ['check-ignore', '--quiet', abs], { cwd: ROOT }).status === 0;
+  } catch {
+    return false; // git unavailable -> fail safe (treat as not ignored, i.e., still flag)
+  }
+}
+
 // Repository-wide .env walk (filenames only; no content).
 function walkAll(dir) {
   const out = [];
@@ -109,7 +120,7 @@ for (const fileAbs of contentFiles) {
 // 2) Repository-wide committed-.env prohibition (.env.example allowed)
 for (const fileAbs of walkAll(ROOT)) {
   const name = basename(fileAbs);
-  if (/^\.env(\..+)?$/.test(name) && name !== '.env.example') {
+  if (/^\.env(\..+)?$/.test(name) && name !== '.env.example' && !isGitIgnored(fileAbs)) {
     const rel = relative(ROOT, fileAbs).replace(/\\/g, '/');
     if (!ALLOW.has(`${rel}|committed-env-file`)) {
       findings.push({ id: 'committed-env-file', file: rel, line: 0, redacted: '(committed .env file — move values to the secret manager; commit .env.example only)' });
@@ -119,7 +130,7 @@ for (const fileAbs of walkAll(ROOT)) {
 
 // ---- Report ----
 if (findings.length === 0) {
-  console.log('✔ secret scan passed (0 findings; scanned apps/, packages/, tools/, root config; .env prohibition repo-wide).');
+  console.log('✔ secret scan passed (0 findings; scanned apps/, packages/, tools/, .github/, root config; .env prohibition repo-wide).');
   process.exit(0);
 }
 findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.id.localeCompare(b.id));

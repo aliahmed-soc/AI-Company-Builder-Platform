@@ -22,6 +22,9 @@ packages/   contracts, domain, core (module folders),           # domain/applica
             observability, config, test-support
 ```
 
+- **Local development:** see [`docs/LOCAL-DEVELOPMENT.md`](docs/LOCAL-DEVELOPMENT.md) for the full
+  clone→green-tests walkthrough, the WSL-PostgreSQL route (no Docker required), and
+  `pnpm local:doctor`.
 - **Install:** `pnpm install` (Node ≥ 22, pnpm ≥ 11; pinned via `packageManager`).
 - **Type-check the workspace:** `pnpm run typecheck`.
 - **Run the (empty) test runner:** `pnpm test` — the real test harness arrives in **ACBP-P0-014**.
