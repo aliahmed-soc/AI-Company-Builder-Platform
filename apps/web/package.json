@@ -1,14 +1,24 @@
-﻿{
-    "name":  "@acbp/web",
-    "version":  "0.0.0",
-    "private":  true,
-    "type":  "module",
-    "main":  "src/index.ts",
-    "exports":  {
-                    ".":  "./src/index.ts"
-                },
-    "scripts":  {
-                    "typecheck":  "tsc --noEmit",
-                    "dev":  "tsx src/dev.ts"
-                }
+{
+  "name": "@acbp/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@acbp/contracts": "workspace:*",
+    "@acbp/config": "workspace:*",
+    "@clerk/nextjs": "7.5.20",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3"
+  }
 }

@@ -1,3 +1,3 @@
-﻿// @acbp/adapters — scaffold entry point (ACBP-P0-011). No implementation yet.
-export {};
-
+// @acbp/adapters — concrete provider implementations of the @acbp/contracts adapter contracts.
+// ACBP-P1-001: Clerk identity provider (authentication boundary). Others arrive with their tickets.
+export * from './clerk/index.js';

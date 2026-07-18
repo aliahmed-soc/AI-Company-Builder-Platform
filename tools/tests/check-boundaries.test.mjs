@@ -67,7 +67,16 @@ forbidden('circular package dependency', {
   'packages/database/src/g.ts': "import '@acbp/core';\nexport {};\n",
 }, 'no-circular');
 
+// ---- Web-framework confinement (ADR-023 / ACBP-P1-001) -------------------------------
+forbidden('adapters -> @clerk/nextjs', { 'packages/adapters/src/f.ts': "import '@clerk/nextjs/server';\nexport {};\n" }, 'web-framework-confined-to-web');
+forbidden('core -> next runtime', { 'packages/core/src/f.ts': "import 'next/server';\nexport {};\n" }, 'web-framework-confined-to-web');
+forbidden('config -> @clerk/nextjs', { 'packages/config/src/f.ts': "import '@clerk/nextjs';\nexport {};\n" }, 'web-framework-confined-to-web');
+forbidden('worker -> next', { 'apps/worker/src/f.ts': "import 'next';\nexport {};\n" }, 'web-framework-confined-to-web');
+
 // ---- Allowed cases -------------------------------------------------------------------
+allowed('adapters -> @clerk/backend (framework-neutral SDK, not @clerk/nextjs)', { 'packages/adapters/src/f.ts': "import '@clerk/backend';\nexport {};\n" });
+allowed('web -> next runtime', { 'apps/web/src/f.ts': "import 'next/server';\nexport {};\n" });
+allowed('web -> @clerk/nextjs', { 'apps/web/src/f.ts': "import '@clerk/nextjs';\nexport {};\n" });
 allowed('domain -> contracts', { 'packages/domain/src/f.ts': "import '@acbp/contracts';\nexport {};\n" });
 allowed('core -> domain', { 'packages/core/src/f.ts': "import '@acbp/domain';\nexport {};\n" });
 allowed('gateway -> adapters', { 'packages/gateway/src/f.ts': "import '@acbp/adapters';\nexport {};\n" });

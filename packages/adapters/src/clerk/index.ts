@@ -1,3 +1,3 @@
-﻿// adapters/clerk — provider adapter stub (ACBP-P0-011). Implements a provider-neutral interface from @acbp/contracts. No implementation yet.
-export {};
-
+// @acbp/adapters — Clerk provider implementations (ACBP-P1-001). Identity only in P1-001;
+// internal user mapping + webhooks are ACBP-P1-002.
+export * from './identity.js';

@@ -68,6 +68,33 @@ export interface DatabaseConfig {
   readonly migrateOnStart: boolean;
 }
 
+/** Clerk instance kind, derived from the key prefix (test => development, live => production). */
+export type ClerkInstanceType = 'development' | 'production';
+
+/**
+ * Validated Clerk authentication configuration (ACBP-P1-001; ADR-022). Public vs server-only values
+ * are separated: `publishableKey` is client-safe; `secretKey`/`jwtKey` are {@link Secret}-wrapped and
+ * never logged, serialized, or returned to clients. Loaded only in trusted web/server processes.
+ */
+export interface ClerkConfig {
+  /**
+   * Client-safe publishable key (pk_test_… / pk_live_…). Supplied via the Next.js public-variable
+   * convention `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` so it is inlined into the browser bundle safely.
+   */
+  readonly publishableKey: string;
+  /** Server-only secret key (sk_test_… / sk_live_…). Required by @clerk/nextjs server helpers. */
+  readonly secretKey: Secret;
+  /** Optional PEM public key for networkless JWT verification (server-only). */
+  readonly jwtKey?: Secret;
+  /** Allowlisted frontend origins (azp) accepted on session tokens; empty = not enforced. */
+  readonly authorizedParties: readonly string[];
+  /** Optional custom sign-in route (NEXT_PUBLIC_CLERK_SIGN_IN_URL); Clerk defaults to /sign-in. */
+  readonly signInUrl?: string;
+  /** Optional custom sign-up route (NEXT_PUBLIC_CLERK_SIGN_UP_URL); Clerk defaults to /sign-up. */
+  readonly signUpUrl?: string;
+  readonly instanceType: ClerkInstanceType;
+}
+
 export interface ConfigIssue {
   readonly field: string;
   readonly message: string;
@@ -85,7 +112,7 @@ export class ConfigValidationError extends Error {
 
 // ---- shared zod building blocks --------------------------------------------------------
 type EnvRecord = Record<string, string | undefined>;
-const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL']);
+const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY']);
 
 const appEnv = z.enum(['development', 'test', 'staging', 'production']);
 const emptyToUndef = (v: unknown): unknown => (v === '' ? undefined : v);
@@ -223,6 +250,46 @@ const databaseSchema = z
     migrateOnStart: o.DATABASE_MIGRATE_ON_START,
   }));
 
+// Clerk authentication (ACBP-P1-001; ADR-022). publishable = public; secret/jwtKey = server-only.
+const clerkSchema = z
+  .object({
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.preprocess(
+      emptyToUndef,
+      z.string({ required_error: 'required (missing or empty)' }).regex(/^pk_(test|live)_/, 'must be a Clerk publishable key (pk_test_… / pk_live_…)'),
+    ),
+    CLERK_SECRET_KEY: z.preprocess(
+      emptyToUndef,
+      z.string({ required_error: 'required (missing or empty)' }).regex(/^sk_(test|live)_/, 'must be a Clerk secret key (sk_test_… / sk_live_…)'),
+    ),
+    CLERK_JWT_KEY: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+    CLERK_AUTHORIZED_PARTIES: z.preprocess(emptyToUndef, z.string().optional()),
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+  })
+  .superRefine((o, ctx) => {
+    // Publishable and secret keys must belong to the same instance (both test or both live).
+    const pubEnv = o.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.startsWith('pk_live_') ? 'live' : 'test';
+    const secEnv = o.CLERK_SECRET_KEY.startsWith('sk_live_') ? 'live' : 'test';
+    if (pubEnv !== secEnv) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CLERK_SECRET_KEY'], message: 'publishable and secret keys must be from the same Clerk instance (test vs live)' });
+    }
+  })
+  .transform((o) => {
+    const instanceType: ClerkInstanceType = o.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.startsWith('pk_live_') ? 'production' : 'development';
+    return {
+      publishableKey: o.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+      secretKey: new Secret(o.CLERK_SECRET_KEY),
+      ...(o.CLERK_JWT_KEY !== undefined ? { jwtKey: new Secret(o.CLERK_JWT_KEY) } : {}),
+      authorizedParties: (o.CLERK_AUTHORIZED_PARTIES ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+      ...(o.NEXT_PUBLIC_CLERK_SIGN_IN_URL !== undefined ? { signInUrl: o.NEXT_PUBLIC_CLERK_SIGN_IN_URL } : {}),
+      ...(o.NEXT_PUBLIC_CLERK_SIGN_UP_URL !== undefined ? { signUpUrl: o.NEXT_PUBLIC_CLERK_SIGN_UP_URL } : {}),
+      instanceType,
+    };
+  });
+
 // ---- parsers (pure) --------------------------------------------------------------------
 export function parseBootstrapConfig(env: EnvRecord): BootstrapConfig {
   const r = bootstrapSchema.safeParse(env);
@@ -263,6 +330,26 @@ export function parseDatabaseConfig(env: EnvRecord): DatabaseConfig {
   const r = databaseSchema.safeParse(env);
   if (!r.success) throw toError(r.error);
   return r.data;
+}
+
+/** Parse Clerk configuration (ACBP-P1-001). Secret fields are redacted in validation errors. */
+export function parseClerkConfig(env: EnvRecord): ClerkConfig {
+  const r = clerkSchema.safeParse(env);
+  if (!r.success) throw toError(r.error);
+  return r.data;
+}
+
+/**
+ * Deterministic Clerk config for tests using clearly-FAKE development placeholders (never real keys;
+ * hyphenated so the secret scanner's key-format patterns cannot match).
+ */
+export function loadTestClerkConfig(env: EnvRecord = {}): ClerkConfig {
+  return parseClerkConfig({
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] ?? 'pk_test_fake-local-publishable',
+    CLERK_SECRET_KEY: env['CLERK_SECRET_KEY'] ?? 'sk_test_fake-local-secret',
+    ...(env['CLERK_JWT_KEY'] !== undefined ? { CLERK_JWT_KEY: env['CLERK_JWT_KEY'] } : {}),
+    CLERK_AUTHORIZED_PARTIES: env['CLERK_AUTHORIZED_PARTIES'] ?? 'http://localhost:3000',
+  });
 }
 
 /**
@@ -311,4 +398,12 @@ export function loadBootstrapConfig(): BootstrapConfig {
  */
 export function loadDatabaseConfig(): DatabaseConfig {
   return parseDatabaseConfig(process.env);
+}
+/**
+ * Read validated Clerk configuration from process.env at a trusted web/server composition boundary.
+ * In staging/production the CLERK_* values are supplied by the runtime secret mechanism (Infisical per
+ * ADR-021); this loader only reads what the composition root placed in the environment. Fails fast.
+ */
+export function loadClerkConfig(): ClerkConfig {
+  return parseClerkConfig(process.env);
 }
