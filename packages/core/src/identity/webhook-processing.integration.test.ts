@@ -80,7 +80,9 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
 
   beforeAll(async () => {
     client = createTestDatabase();
-    for (const t of ['identity_webhook_receipts', 'users', 'kysely_migration', 'kysely_migration_lock']) {
+    // Full drop incl. _acbp_migration_probe so a re-migrate cannot conflict when another integration
+    // suite (shared CI database) created it first and this suite dropped kysely_migration.
+    for (const t of ['identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(client);
