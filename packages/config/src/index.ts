@@ -95,6 +95,19 @@ export interface ClerkConfig {
   readonly instanceType: ClerkInstanceType;
 }
 
+/**
+ * Validated Clerk WEBHOOK configuration (ACBP-P1-002; ADR-022 §13, CDR-007/008). Kept separate from
+ * {@link ClerkConfig} (CDR-008 #6): it is loaded only on the webhook composition path. The signing
+ * secret is server-only, {@link Secret}-wrapped, and never exposed via NEXT_PUBLIC. The optional
+ * expected instance id is a non-secret guard the verifier may check against the event `instance_id`.
+ */
+export interface ClerkWebhookConfig {
+  /** Server-only webhook signing secret (whsec_…). Redacted everywhere; revealed only at verify time. */
+  readonly signingSecret: Secret;
+  /** Optional expected provider instance id; when set, the verifier rejects events from other instances. */
+  readonly expectedInstanceId?: string;
+}
+
 export interface ConfigIssue {
   readonly field: string;
   readonly message: string;
@@ -112,7 +125,7 @@ export class ConfigValidationError extends Error {
 
 // ---- shared zod building blocks --------------------------------------------------------
 type EnvRecord = Record<string, string | undefined>;
-const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY']);
+const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY', 'CLERK_WEBHOOK_SIGNING_SECRET']);
 
 const appEnv = z.enum(['development', 'test', 'staging', 'production']);
 const emptyToUndef = (v: unknown): unknown => (v === '' ? undefined : v);
@@ -290,6 +303,20 @@ const clerkSchema = z
     };
   });
 
+// Clerk webhook config (ACBP-P1-002). Signing secret is server-only + Secret-wrapped + redacted.
+const clerkWebhookSchema = z
+  .object({
+    CLERK_WEBHOOK_SIGNING_SECRET: z.preprocess(
+      emptyToUndef,
+      z.string({ required_error: 'required (missing or empty)' }).regex(/^whsec_/, 'must be a Clerk webhook signing secret (whsec_…)'),
+    ),
+    CLERK_WEBHOOK_INSTANCE_ID: z.preprocess(emptyToUndef, z.string().min(1).optional()),
+  })
+  .transform((o) => ({
+    signingSecret: new Secret(o.CLERK_WEBHOOK_SIGNING_SECRET),
+    ...(o.CLERK_WEBHOOK_INSTANCE_ID !== undefined ? { expectedInstanceId: o.CLERK_WEBHOOK_INSTANCE_ID } : {}),
+  }));
+
 // ---- parsers (pure) --------------------------------------------------------------------
 export function parseBootstrapConfig(env: EnvRecord): BootstrapConfig {
   const r = bootstrapSchema.safeParse(env);
@@ -339,6 +366,13 @@ export function parseClerkConfig(env: EnvRecord): ClerkConfig {
   return r.data;
 }
 
+/** Parse Clerk webhook configuration (ACBP-P1-002). The signing secret is redacted in errors. */
+export function parseClerkWebhookConfig(env: EnvRecord): ClerkWebhookConfig {
+  const r = clerkWebhookSchema.safeParse(env);
+  if (!r.success) throw toError(r.error);
+  return r.data;
+}
+
 /**
  * Deterministic Clerk config for tests using clearly-FAKE development placeholders (never real keys;
  * hyphenated so the secret scanner's key-format patterns cannot match).
@@ -349,6 +383,17 @@ export function loadTestClerkConfig(env: EnvRecord = {}): ClerkConfig {
     CLERK_SECRET_KEY: env['CLERK_SECRET_KEY'] ?? 'sk_test_fake-local-secret',
     ...(env['CLERK_JWT_KEY'] !== undefined ? { CLERK_JWT_KEY: env['CLERK_JWT_KEY'] } : {}),
     CLERK_AUTHORIZED_PARTIES: env['CLERK_AUTHORIZED_PARTIES'] ?? 'http://localhost:3000',
+  });
+}
+
+/**
+ * Deterministic Clerk webhook config for tests using a clearly-FAKE signing secret (never a real
+ * whsec_; hyphenated so the secret scanner's key-format patterns cannot match).
+ */
+export function loadTestClerkWebhookConfig(env: EnvRecord = {}): ClerkWebhookConfig {
+  return parseClerkWebhookConfig({
+    CLERK_WEBHOOK_SIGNING_SECRET: env['CLERK_WEBHOOK_SIGNING_SECRET'] ?? 'whsec_fake-local-webhook-signing',
+    ...(env['CLERK_WEBHOOK_INSTANCE_ID'] !== undefined ? { CLERK_WEBHOOK_INSTANCE_ID: env['CLERK_WEBHOOK_INSTANCE_ID'] } : {}),
   });
 }
 
@@ -406,4 +451,12 @@ export function loadDatabaseConfig(): DatabaseConfig {
  */
 export function loadClerkConfig(): ClerkConfig {
   return parseClerkConfig(process.env);
+}
+/**
+ * Read validated Clerk webhook configuration from process.env at the webhook composition boundary.
+ * In staging/production the CLERK_WEBHOOK_* values come from the runtime secret mechanism (ADR-021).
+ * Fails fast if the signing secret is missing/invalid. (ACBP-P1-002.)
+ */
+export function loadClerkWebhookConfig(): ClerkWebhookConfig {
+  return parseClerkWebhookConfig(process.env);
 }
