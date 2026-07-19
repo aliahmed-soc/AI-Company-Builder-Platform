@@ -270,10 +270,13 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
   // TRUST-CRITICAL: whatever the delivery ORDER, the converged state must equal the state implied by
   // the highest-ordering-timestamp event. Every permutation runs against a freshly cleaned table.
   test('full-replay convergence is independent of delivery order (upserts)', async () => {
+    // These are provider-neutral events AFTER Clerk-adapter normalization (already trimmed/lowercased):
+    // the processor persists the neutral value verbatim and is NOT responsible for provider-specific
+    // email normalization, so the fixtures must carry the normalized (lowercase) form.
     const seq = [
-      upsert({ eventId: 'evt_t1', ts: '2026-01-01T10:00:00.000Z', hash: hex('a'), email: 'A@example.com', verified: false }),
-      upsert({ type: 'user.updated', eventId: 'evt_t2', ts: '2026-01-01T11:00:00.000Z', hash: hex('b'), email: 'B@example.com', verified: true }),
-      upsert({ type: 'user.updated', eventId: 'evt_t3', ts: '2026-01-01T12:00:00.000Z', hash: hex('c'), email: 'C@example.com', verified: false }),
+      upsert({ eventId: 'evt_t1', ts: '2026-01-01T10:00:00.000Z', hash: hex('a'), email: 'a@example.com', verified: false }),
+      upsert({ type: 'user.updated', eventId: 'evt_t2', ts: '2026-01-01T11:00:00.000Z', hash: hex('b'), email: 'b@example.com', verified: true }),
+      upsert({ type: 'user.updated', eventId: 'evt_t3', ts: '2026-01-01T12:00:00.000Z', hash: hex('c'), email: 'c@example.com', verified: false }),
     ];
     for (const perm of PERMS) {
       await client.kysely.deleteFrom('identity_webhook_receipts').execute();
@@ -287,9 +290,10 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
   });
 
   test('full-replay convergence is independent of delivery order (terminal delete)', async () => {
+    // Provider-neutral (already adapter-normalized) events; final state is a redacted tombstone.
     const seq = [
-      upsert({ eventId: 'evt_t1', ts: '2026-01-01T10:00:00.000Z', hash: hex('a'), email: 'A@example.com' }),
-      upsert({ type: 'user.updated', eventId: 'evt_t2', ts: '2026-01-01T11:00:00.000Z', hash: hex('b'), email: 'B@example.com' }),
+      upsert({ eventId: 'evt_t1', ts: '2026-01-01T10:00:00.000Z', hash: hex('a'), email: 'a@example.com' }),
+      upsert({ type: 'user.updated', eventId: 'evt_t2', ts: '2026-01-01T11:00:00.000Z', hash: hex('b'), email: 'b@example.com' }),
       del({ eventId: 'evt_t3', ts: '2026-01-01T12:00:00.000Z', hash: hex('c') }),
     ];
     for (const perm of PERMS) {
