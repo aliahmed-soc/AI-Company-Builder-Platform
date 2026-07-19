@@ -1,3 +1,4 @@
-// @acbp/adapters — Clerk provider implementations (ACBP-P1-001). Identity only in P1-001;
-// internal user mapping + webhooks are ACBP-P1-002.
+// @acbp/adapters — Clerk provider implementations. Session identity (ACBP-P1-001) + webhook
+// verification for internal user mapping (ACBP-P1-002).
 export * from './identity.js';
+export * from './webhook.js';

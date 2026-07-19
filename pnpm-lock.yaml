@@ -87,7 +87,21 @@ importers:
 
   packages/contracts: {}
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@acbp/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@acbp/database':
+        specifier: workspace:*
+        version: link:../database
+    devDependencies:
+      '@acbp/config':
+        specifier: workspace:*
+        version: link:../config
+      '@acbp/test-support':
+        specifier: workspace:*
+        version: link:../test-support
 
   packages/database:
     dependencies:

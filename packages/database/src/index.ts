@@ -9,6 +9,10 @@ export type { TxExecutor } from './transaction.js';
 export { TenantRepository } from './repository.js';
 export type { TenantContext, TenantScope } from './tenant.js';
 
+// Global identity-root repositories (ACBP-P1-002; NOT tenant-scoped — CDR-008).
+export { UserMappingRepository, WebhookReceiptRepository } from './identity-repositories.js';
+export type { IdentityExecutor, ProviderIdentityKey } from './identity-repositories.js';
+
 export { applyTenantSession, buildTenantSettings, TENANT_SETTINGS } from './session.js';
 export type { TenantSettingStatement } from './session.js';
 

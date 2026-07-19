@@ -35,6 +35,16 @@ export const ErrorCodes = {
   DEPENDENCY_UNAVAILABLE: 'DEPENDENCY_UNAVAILABLE',
   DEPENDENCY_TIMEOUT: 'DEPENDENCY_TIMEOUT',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+  // Identity-webhook verification classes (ACBP-P1-002). Distinct, stable public codes so a caller
+  // can tell verifier rejection classes apart — several share the 'authn' category, so the category
+  // alone is not enough. These carry NO dynamic/sensitive value (see the DOMAIN_REASON rule above).
+  WEBHOOK_SIGNATURE_HEADERS_MISSING: 'WEBHOOK_SIGNATURE_HEADERS_MISSING',
+  WEBHOOK_SIGNATURE_HEADERS_CONFLICT: 'WEBHOOK_SIGNATURE_HEADERS_CONFLICT',
+  WEBHOOK_SIGNATURE_INVALID: 'WEBHOOK_SIGNATURE_INVALID',
+  WEBHOOK_TIMESTAMP_INVALID: 'WEBHOOK_TIMESTAMP_INVALID',
+  WEBHOOK_PAYLOAD_MALFORMED: 'WEBHOOK_PAYLOAD_MALFORMED',
+  WEBHOOK_INSTANCE_MISMATCH: 'WEBHOOK_INSTANCE_MISMATCH',
+  WEBHOOK_VERIFIER_FAILED: 'WEBHOOK_VERIFIER_FAILED',
 } as const;
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
