@@ -7,3 +7,5 @@ export { createIdentityWebhookService } from './webhook-service.js';
 export type { IdentityWebhookService, IdentityWebhookServiceDeps, IdentityWebhookProcessingResult, IdentityEventProcessor } from './webhook-service.js';
 export { resolveOrReconcileInternalUser, reconcileWithStore } from './read-through.js';
 export type { InternalUserReconciliation, ReadThroughUserStore, ReconcileOptions } from './read-through.js';
+export { reconcileAllUsers, reconcileUsersWithStore } from './reconciliation.js';
+export type { ReconciliationSummary, ReconcileUserStore, ReconcileOptions as ReconcileAllOptions } from './reconciliation.js';

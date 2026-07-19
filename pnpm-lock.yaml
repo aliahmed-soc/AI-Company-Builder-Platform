@@ -67,7 +67,20 @@ importers:
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.17)
 
-  apps/worker: {}
+  apps/worker:
+    dependencies:
+      '@acbp/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@acbp/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@acbp/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@acbp/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
 
   packages/adapters:
     dependencies:

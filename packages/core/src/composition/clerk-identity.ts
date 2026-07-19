@@ -12,6 +12,7 @@ import { createDatabase, closeDatabase, type DatabaseClient, type ProviderIdenti
 import type { ClerkConfig, ClerkWebhookConfig, DatabaseConfig } from '@acbp/config';
 import { createIdentityWebhookService, type IdentityWebhookService } from '../identity/webhook-service.js';
 import { resolveOrReconcileInternalUser, type InternalUserReconciliation, type ReconcileOptions } from '../identity/read-through.js';
+import { reconcileAllUsers, type ReconciliationSummary, type ReconcileOptions as ReconcileAllOptions } from '../identity/reconciliation.js';
 
 export interface ClerkIdentityRuntimeConfig {
   readonly databaseConfig: DatabaseConfig;
@@ -38,6 +39,8 @@ export interface ClerkIdentityRuntime {
    * boundary). The provider instance id comes from configuration — never from the request/headers.
    */
   resolveInternalUser(providerUserId: string, options?: ReconcileOptions): Promise<InternalUserReconciliation>;
+  /** Nightly drift reconciliation over all active mappings (forward-drift repair; non-destructive). */
+  reconcile(options?: ReconcileAllOptions): Promise<ReconciliationSummary>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -54,6 +57,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     resolveInternalUser(providerUserId, options) {
       const key: ProviderIdentityKey = { provider: 'clerk', providerInstanceId: config.expectedInstanceId, providerUserId };
       return resolveOrReconcileInternalUser(client, reader, key, options);
+    },
+    reconcile(options) {
+      return reconcileAllUsers(client, reader, options);
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

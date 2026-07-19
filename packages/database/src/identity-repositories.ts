@@ -6,6 +6,7 @@
 // may be the base client's Kysely or a transaction handle, so the core processor can run the receipt
 // insert and the user mutation in ONE transaction. Kysely parameterized queries only — no raw SQL.
 import type { Kysely } from 'kysely';
+import type { AuthoritativeIdentitySnapshot } from '@acbp/contracts';
 import type { DatabaseSchema, UserRow, NewUser, UserUpdate, IdentityWebhookReceiptRow, NewIdentityWebhookReceipt } from './schema.js';
 
 /** Executor accepted by the identity repositories: the base client's Kysely or a Transaction. */
@@ -68,6 +69,43 @@ export class UserMappingRepository {
       throw new Error('insertIfAbsent: conflict reported but no existing identity row found');
     }
     return { row: existing, inserted: false };
+  }
+
+  /**
+   * Keyset-paginated enumeration of ACTIVE mappings ordered by immutable id (deterministic; stable
+   * under concurrent updates since id never changes). Used by nightly drift reconciliation. Tombstones
+   * are excluded (no resurrection, nothing to reconcile).
+   */
+  listActive(afterId: string | null, limit: number): Promise<UserRow[]> {
+    let q = this.#db.selectFrom('users').selectAll().where('status', '=', 'active');
+    if (afterId !== null) q = q.where('id', '>', afterId);
+    return q.orderBy('id', 'asc').limit(limit).execute();
+  }
+
+  /**
+   * Reconciliation repair (drift): apply an authoritative snapshot to the ACTIVE mapping ONLY when the
+   * snapshot is strictly newer than the stored `provider_updated_at`. Implemented as a single atomic
+   * conditional UPDATE so it is race-safe without a transaction: the `status='active'` guard prevents
+   * resurrecting a tombstone, and the `provider_updated_at < snapshot` guard prevents overwriting a
+   * newer concurrent webhook (no lost update). Returns true iff a row was repaired. `last_event_id` is
+   * intentionally left unchanged (reconciliation is not a webhook event). Never deletes.
+   */
+  async repairFromAuthoritativeSnapshot(snapshot: AuthoritativeIdentitySnapshot): Promise<boolean> {
+    const res = await this.#db
+      .updateTable('users')
+      .set({
+        primary_email: snapshot.primaryEmail,
+        email_verified: snapshot.emailVerified,
+        provider_updated_at: snapshot.providerUpdatedAt,
+        updated_at: new Date(),
+      })
+      .where('provider', '=', snapshot.provider)
+      .where('provider_instance_id', '=', snapshot.providerInstanceId)
+      .where('provider_user_id', '=', snapshot.providerUserId)
+      .where('status', '=', 'active')
+      .where('provider_updated_at', '<', snapshot.providerUpdatedAt)
+      .executeTakeFirst();
+    return (res.numUpdatedRows ?? 0n) > 0n;
   }
 
   /** Update the mapping row identified by its provider identity key. */
