@@ -3,3 +3,7 @@ export { resolveInternalUser, resolveWithStore } from './user-resolver.js';
 export type { InternalUserResolution } from './user-resolver.js';
 export { applyIdentityEvent, processVerifiedIdentityEvent } from './webhook-processor.js';
 export type { IdentityEventOutcome, IdentityEventProcessingResult, UserMappingStore, WebhookReceiptStore } from './webhook-processor.js';
+export { createIdentityWebhookService } from './webhook-service.js';
+export type { IdentityWebhookService, IdentityWebhookServiceDeps, IdentityWebhookProcessingResult, IdentityEventProcessor } from './webhook-service.js';
+export { resolveOrReconcileInternalUser, reconcileWithStore } from './read-through.js';
+export type { InternalUserReconciliation, ReadThroughUserStore, ReconcileOptions } from './read-through.js';

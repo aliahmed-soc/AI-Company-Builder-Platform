@@ -12,11 +12,24 @@
 // a handler opts in. Enforcement for protected surfaces is therefore performed explicitly and
 // server-side in the route (fail-closed), not inferred from any browser-supplied header or claim.
 import { clerkMiddleware } from '@clerk/nextjs/server';
+import type { NextMiddleware } from 'next/server';
 import { failClosed } from '@/server/auth/fail-closed-proxy';
+import { isClerkWebhookPath } from '@/server/webhooks/route-path';
 
 // clerkMiddleware() establishes the auth context (making auth() available downstream). It is wrapped
 // so a credential Clerk cannot parse (malformed/tampered token) fails closed as 401, never a 500.
-export default failClosed(clerkMiddleware());
+const sessionProxy = failClosed(clerkMiddleware());
+
+// ACBP-P1-002 Slice 3: the Clerk webhook endpoint is authenticated ONLY by signature verification in
+// its Route Handler. Bypass the interactive session proxy for EXACTLY that route so a stray/tampered
+// cookie can never 401 an authentic signed webhook. Every other route is unchanged (still fail-closed
+// session handling) — this narrow exclusion does not open any other route.
+const proxy: NextMiddleware = (request, event) => {
+  if (isClerkWebhookPath(new URL(request.url).pathname)) return undefined;
+  return sessionProxy(request, event);
+};
+
+export default proxy;
 
 export const config = {
   matcher: [

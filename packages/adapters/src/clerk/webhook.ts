@@ -16,6 +16,7 @@ import { verifyWebhook } from '@clerk/backend/webhooks';
 import type { WebhookEvent } from '@clerk/backend/webhooks';
 import { platformError, ErrorCodes, type ErrorCategory, type ErrorCode } from '@acbp/contracts';
 import type { ClerkWebhookConfig } from '@acbp/config';
+import { selectNormalizedPrimaryEmail } from './user-normalization.js';
 import type {
   AdapterCallOptions,
   IdentityWebhookRequest,
@@ -99,17 +100,12 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-/** Primary email is taken ONLY from the primary_email_address_id match; normalized (trim + lowercase). */
+/** Primary email selection/normalization via the shared adapter helper (no webhook/read-through drift). */
 function selectPrimaryEmail(data: ClerkUserData): { readonly primaryEmail: string | null; readonly emailVerified: boolean } {
-  const primaryId = data.primary_email_address_id;
-  if (typeof primaryId !== 'string' || primaryId.length === 0) return { primaryEmail: null, emailVerified: false };
-  const primary = data.email_addresses.find((e) => e.id === primaryId);
-  if (primary === undefined) return { primaryEmail: null, emailVerified: false };
-  const raw = primary.email_address;
-  const primaryEmail = typeof raw === 'string' && raw.trim().length > 0 ? raw.trim().toLowerCase() : null;
-  // emailVerified is true ONLY when THIS exact primary email's authoritative status is 'verified'.
-  const emailVerified = primaryEmail !== null && primary.verification?.status === 'verified';
-  return { primaryEmail, emailVerified };
+  return selectNormalizedPrimaryEmail(
+    data.primary_email_address_id,
+    data.email_addresses.map((e) => ({ id: e.id, email: e.email_address, verified: e.verification?.status === 'verified' })),
+  );
 }
 
 type SignatureField = 'id' | 'timestamp' | 'signature';

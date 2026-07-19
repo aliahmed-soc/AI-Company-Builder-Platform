@@ -40,6 +40,36 @@ export class UserMappingRepository {
     return this.#db.insertInto('users').values(values).returningAll().executeTakeFirstOrThrow();
   }
 
+  /**
+   * Race-safe insert used by read-through reconciliation: insert the identity, doing nothing ONLY on
+   * the (provider, provider_instance_id, provider_user_id) uniqueness conflict, then always return the
+   * live row. `inserted` is true when THIS call created it, false when a concurrent writer (another
+   * read-through OR a webhook) had already created it. Conflict handling is scoped to the exact
+   * identity constraint columns via ON CONFLICT DO NOTHING — NOT a blanket catch of every 23505, so an
+   * unrelated uniqueness/check violation still surfaces as a real failure.
+   */
+  async insertIfAbsent(values: NewUser): Promise<{ readonly row: UserRow; readonly inserted: boolean }> {
+    const key: ProviderIdentityKey = {
+      provider: values.provider,
+      providerInstanceId: values.provider_instance_id,
+      providerUserId: values.provider_user_id,
+    };
+    const inserted = await this.#db
+      .insertInto('users')
+      .values(values)
+      .onConflict((oc) => oc.columns(['provider', 'provider_instance_id', 'provider_user_id']).doNothing())
+      .returningAll()
+      .executeTakeFirst();
+    if (inserted !== undefined) return { row: inserted, inserted: true };
+    // Lost the race (or the row already existed): re-read the winner's row within the same transaction.
+    const existing = await this.findByProviderIdentity(key);
+    if (existing === undefined) {
+      // Should be unreachable: the conflict proves a row exists. Fail loudly rather than fabricate one.
+      throw new Error('insertIfAbsent: conflict reported but no existing identity row found');
+    }
+    return { row: existing, inserted: false };
+  }
+
   /** Update the mapping row identified by its provider identity key. */
   async updateByProviderIdentity(key: ProviderIdentityKey, patch: UserUpdate): Promise<void> {
     await this.#db

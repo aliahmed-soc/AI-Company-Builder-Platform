@@ -5,5 +5,6 @@ export * from './common.js';
 export * from './secret-provider.js';
 export * from './identity-provider.js';
 export * from './identity-webhook.js';
+export * from './authoritative-identity.js';
 export * from './storage-provider.js';
 export * from './model-provider.js';
