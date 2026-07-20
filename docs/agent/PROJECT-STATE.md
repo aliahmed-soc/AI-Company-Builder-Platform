@@ -47,7 +47,11 @@ Svix iframe that does not respond to synthetic clicks. Neither is a code defect.
 sync, live tombstone + no-resurrection, unsigned/invalid-signature rejection against a real signature,
 live read-through, live reconciliation) remain **UNPROVEN IN A LIVE CLERK ENVIRONMENT**. They are proven
 only by automated tests against real PostgreSQL with a fake/injected verifier + reader.
-**Awaiting an owner decision: defer live acceptance, or explicitly waive it and record the waiver.**
+**OWNER DECISION (2026-07-20) — Option A: live Clerk acceptance is DEFERRED.** It is NOT waived: the
+live checks above remain required before ACBP-P1-002 can be accepted as Done. PR #3 stays draft and
+unmerged; ACBP-P1-002 stays Planned; P1-003 does not start. Resume later via the Safe resume procedure
+below — no code changes are needed to resume, only the owner-supplied Clerk development credentials and
+the webhook endpoint.
 
 Verified end state: cloudflared terminated (0 processes; edge returns 502 = no connector); Next.js never
 started (port 3000 never listened); temp listener/logs/scripts deleted; all `CLERK_*` and
@@ -72,5 +76,7 @@ Local infra that survives and can be reused: WSL distro `acbp-local-dev` PG16 ru
    live acceptance checks, then the full cleanup + gate + hosted CI + final audit.
 
 ## Next executable action
-STOPPED AT OWNER GATE (live acceptance halted — see above; resume via the Safe resume procedure).
-All code-only P1-002 work is hosted-green. The remaining steps are all owner-gated: (1) live Clerk development acceptance — requires the owner to provide a Clerk **development** instance's config (webhook signing secret + instance id + secret key) via the runtime secret mechanism, create the webhook endpoint subscription in the Clerk dashboard, and authorize a temporary public tunnel for local delivery; (2) owner-authorized backlog ACBP-P1-002 → Done; (3) owner-authorized PR #3 ready-for-review; (4) owner-authorized merge to main. Do NOT proceed on these without explicit owner authorization (secrets/dashboard/tunnel/merge/backlog are all gates).
+**NONE — project execution is STOPPED at this owner gate by owner decision (Option A, 2026-07-20).**
+Do not resume autonomously. A future session must not start P1-003, must not mark P1-002 Done, and must
+not mark PR #3 ready or merge it. Resume only when the owner re-authorizes, starting from the Safe
+resume procedure above. For reference, the remaining owner-gated steps are: (1) live Clerk development acceptance — requires the owner to provide a Clerk **development** instance's config (webhook signing secret + instance id + secret key) via the runtime secret mechanism, create the webhook endpoint subscription in the Clerk dashboard, and authorize a temporary public tunnel for local delivery; (2) owner-authorized backlog ACBP-P1-002 → Done; (3) owner-authorized PR #3 ready-for-review; (4) owner-authorized merge to main. Do NOT proceed on these without explicit owner authorization (secrets/dashboard/tunnel/merge/backlog are all gates).
