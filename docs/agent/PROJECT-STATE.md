@@ -17,8 +17,10 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Owner-gated tail (BLOCKING, not started): live Clerk dev acceptance (needs credentials/dashboard/tunnel), final owner-authorized backlog→Done, PR ready-for-review, merge.
 
 ## Test baselines
-- Hosted baseline before Slice 3: 336 passed / 0 skipped / 0 failed. PG integration: database 10, user-mapping 15, webhook-processing 20.
-- Local after Slice 3 (PG suites skip without `ACBP_TEST_DATABASE_URL`): 351 passed / 56 skipped / 0 failed; +60 new unit/route tests; new PG suite `read-through.integration.test.ts` = 11 (skipped locally).
+- **Latest hosted (authoritative): 423 passed / 0 skipped / 0 failed** (41 files, run 29692293699) — all 5
+  PostgreSQL integration suites executed with zero skips; preflight OK; boundaries 0; secret scan 0;
+  High+ audit pass. This is AUTOMATED evidence only — it does not include live Clerk delivery.
+- Hosted baseline before Slice 3: 336 passed / 0 skipped / 0 failed.
 
 ## Guards
 - Secret scan: 0 findings. Boundaries: 0 violations. Audit high: 0 (1 pre-existing moderate, below gate).
@@ -30,16 +32,22 @@ _Read this first on resume, then continue automatically to "Next executable acti
 ## Current HEAD
 `cefa336`. PR #3 draft/open/unmerged. Hosted baseline 423/0/0. Working tree clean.
 
-## Live acceptance attempt — HALTED SAFELY (2026-07-19)
-A live Clerk DEVELOPMENT acceptance run was started and then safely torn down. **Nothing was created
-or changed in Clerk; no secret was ever written to disk; no application ever ran.**
+## Live acceptance — NOT COMPLETED; closed out safely (2026-07-19)
+**LIVE CLERK DEVELOPMENT ACCEPTANCE WAS NOT COMPLETED. NO LIVE ACCEPTANCE EVIDENCE MAY BE CLAIMED
+for ACBP-P1-002.** A run was started, blocked, and then fully torn down. **Nothing was created or
+changed in Clerk; no Clerk secret was ever written to disk; the application never ran.**
 
-Two hard blockers stopped it (both need an owner action, neither is a code defect):
-1. **Clerk secrets cannot be retrieved by automation.** Scripted extraction of the publishable/secret/
-   signing values from the dashboard was denied by the harness security classifier, and the agent's own
-   rules prohibit handling API keys/tokens directly. → The owner must paste the values into `.env.local`.
-2. **Clerk's webhook UI is an embedded Svix iframe.** It does not respond to synthetic CDP clicks
-   (`+ Add Endpoint` produced no dialog across repeated attempts). → The owner must create the endpoint.
+**Blocker:** the owner could not manually supply the Clerk development credentials
+(`pk_test_`/`sk_test_`/`whsec_`) nor create the Clerk webhook endpoint. Automation could not substitute:
+scripted extraction of the dashboard secrets was denied by the harness security classifier (and the
+agent's own rules prohibit handling API keys/tokens directly), and Clerk's webhook UI is an embedded
+Svix iframe that does not respond to synthetic clicks. Neither is a code defect.
+
+**Consequence:** all 18 live checks (real signed delivery, redelivery idempotency, live update/verification
+sync, live tombstone + no-resurrection, unsigned/invalid-signature rejection against a real signature,
+live read-through, live reconciliation) remain **UNPROVEN IN A LIVE CLERK ENVIRONMENT**. They are proven
+only by automated tests against real PostgreSQL with a fake/injected verifier + reader.
+**Awaiting an owner decision: defer live acceptance, or explicitly waive it and record the waiver.**
 
 Verified end state: cloudflared terminated (0 processes; edge returns 502 = no connector); Next.js never
 started (port 3000 never listened); temp listener/logs/scripts deleted; all `CLERK_*` and
