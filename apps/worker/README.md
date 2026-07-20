@@ -1,4 +1,4 @@
-﻿# @acbp/worker
+# @acbp/worker
 
 **Scaffold stub (ACBP-P0-011) — no product functionality yet.**
 

@@ -29,3 +29,27 @@ Append significant decisions. Format: decision — source — consequence.
 - **Reconciliation is NON-DESTRUCTIVE**: it repairs FORWARD drift only (provider snapshot newer than stored → last-write-wins update of email/verification/provider_updated_at), never deletes. A provider `not_found` (404) or `unavailable` during reconciliation is counted/logged, NOT auto-tombstoned. — Source: safer-reversible-interpretation rule; CDR-008 keeps deletion **webhook-first** (delete webhook is the deletion mechanism); 404-based auto-deletion is dangerous (a transient reader/pagination fault could mass-delete). Consequence: reconciliation does NOT change deletion semantics, so it needs no owner gate. Auto-tombstone-on-provider-missing is a DEFERRED owner-gated decision (deletion semantics) if the owner wants webhook-miss deletes reconciled.
 - Reconciliation reuses the existing convergence ordering (`isNewer` on `provider_updated_at`, tie-break by `last_event_id`); it enumerates only `active` rows (tombstones skipped → no resurrection) via keyset pagination on `id` (deterministic); re-reads the row inside a short transaction before updating (skips if it became deleted); leaves `last_event_id` unchanged (not a webhook event). Idempotent: a second run reports all `in_sync`.
 - Worker command is runnable (`apps/worker`) but wires **no scheduler** and performs no deployment (out of scope; owner-gated) — it runs once per invocation and exits with a bounded summary.
+
+## Live-acceptance fixes (2026-07-20) — three real defects only live runtime could surface
+- **Clerk webhook envelope contract corrected.** Verified against real signed deliveries: Clerk webhook
+  BODIES carry NO top-level `instance_id` or `timestamp` (only `type|object|data|event_attributes`). The
+  Slice-2 verifier read both from the body (per the CDR-008 assumption), so EVERY real event was rejected
+  as `WEBHOOK_PAYLOAD_MALFORMED`. Fix (`packages/adapters/src/clerk/webhook.ts`): `providerInstanceId`
+  now comes from the CONFIGURED expected instance id (the delivery is cryptographically bound to one
+  instance by the instance-specific signing secret; `CLERK_WEBHOOK_INSTANCE_ID` is now load-bearing on
+  the webhook path, fail-closed if unset), and `occurredAt` comes from the signed `svix-timestamp` header
+  (Unix seconds). Per-event ordering still uses the user's own `updated_at` (present in `data`). The
+  payload-instance-mismatch check was removed (nothing to compare; isolation is via the signing secret).
+  Not an owner gate: it corrects an internal normalization to the provider's real contract; it does not
+  change data ownership, authorization, tenant isolation, deletion semantics, or the neutral event shape.
+- **Web app pinned to the webpack bundler.** Next 16 defaults to Turbopack, which cannot resolve our
+  workspace-package barrels that re-export files importing OTHER workspace packages (returns "module has
+  no exports at all"). `apps/web` scripts pass `--webpack` and `next.config.ts` adds `transpilePackages`
+  (so Next transpiles the `@acbp/*` TS source) + a webpack `extensionAlias` (so NodeNext-style `.js`
+  specifiers resolve to `.ts` sources). The webhook route is the first path importing `@acbp/*` as runtime
+  VALUES, so this never surfaced before (P1-001 used only an erased type import).
+- **UTF-8 BOM stripped from 47 files + a guard added.** Several scaffold-written `package.json`/`.ts`
+  files began with a UTF-8 BOM. Node/tsc/vitest strip it silently (so all gates were green), but bundlers
+  reject a BOM'd `package.json` ("Unexpected token '﻿'"), which blocked the route at runtime. New
+  `tools/check-encoding.mjs` (wired into `check:static`) fails the build on any BOM — the regression
+  coverage CI was missing.

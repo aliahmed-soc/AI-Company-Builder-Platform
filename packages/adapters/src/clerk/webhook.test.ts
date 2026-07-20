@@ -40,8 +40,11 @@ function userData(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 const okVerify: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.created', userData()));
+// providerInstanceId now comes from the CONFIGURED expected instance (Clerk webhook bodies carry no
+// instance_id), so tests configure it. `occurredAt` comes from the svix-timestamp header (Unix seconds).
+const SVIX_TS_ISO = new Date(1700000000 * 1000).toISOString(); // svix-timestamp '1700000000' (seconds)
 function verifier(fake: ClerkWebhookVerifyFn, env: Record<string, string | undefined> = {}) {
-  return new ClerkIdentityWebhookVerifier({ config: loadTestClerkWebhookConfig(env), verifyWebhook: fake });
+  return new ClerkIdentityWebhookVerifier({ config: loadTestClerkWebhookConfig({ CLERK_WEBHOOK_INSTANCE_ID: 'ins_1', ...env }), verifyWebhook: fake });
 }
 
 describe('ClerkIdentityWebhookVerifier — §6 trust order (verify before parse)', () => {
@@ -104,11 +107,12 @@ describe('ClerkIdentityWebhookVerifier — §5 header aliases (case-insensitive)
 
   for (const field of pairs) {
     test(`${field}: only the webhook-${field} alias present is accepted`, async () => {
-      const r = await verifier(okVerify).verify({ rawBody: bytes('x'), headers: { ...others(field), [`webhook-${field}`]: 'value-a' } });
+      // Numeric value so it is also valid when the tested field is the (svix-)timestamp.
+      const r = await verifier(okVerify).verify({ rawBody: bytes('x'), headers: { ...others(field), [`webhook-${field}`]: '1700000000' } });
       expect(r.status).toBe('verified');
     });
     test(`${field}: both aliases present with identical values is accepted`, async () => {
-      const r = await verifier(okVerify).verify({ rawBody: bytes('x'), headers: { ...others(field), [`svix-${field}`]: 'same', [`webhook-${field}`]: 'same' } });
+      const r = await verifier(okVerify).verify({ rawBody: bytes('x'), headers: { ...others(field), [`svix-${field}`]: '1700000000', [`webhook-${field}`]: '1700000000' } });
       expect(r.status).toBe('verified');
     });
     test(`${field}: both aliases present with DIFFERENT values is a safe conflict`, async () => {
@@ -140,16 +144,16 @@ describe('ClerkIdentityWebhookVerifier — §5 header aliases (case-insensitive)
 
 describe('ClerkIdentityWebhookVerifier — §7 normalization', () => {
   test('user.created normalizes to a neutral envelope', async () => {
-    const fake: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.created', userData(), { instanceId: 'ins_9', timestamp: 1700000001000 }));
-    const r = await verifier(fake).verify(req(bytes('x')));
+    const fake: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.created', userData()));
+    const r = await verifier(fake, { CLERK_WEBHOOK_INSTANCE_ID: 'ins_9' }).verify(req(bytes('x')));
     if (r.status !== 'verified' || r.event.type === 'user.deleted') throw new Error('unreachable');
     expect(r.event.type).toBe('user.created');
     expect(r.event.provider).toBe('clerk');
-    expect(r.event.providerInstanceId).toBe('ins_9'); // from the authenticated envelope only
+    expect(r.event.providerInstanceId).toBe('ins_9'); // from CONFIGURED instance (bound by the signing secret)
     expect(r.event.eventId).toBe('msg_1'); // from the authenticated delivery headers only
     expect(r.event.providerUserId).toBe('user_1');
-    expect(r.event.occurredAt).toBe(new Date(1700000001000).toISOString()); // envelope timestamp
-    expect(r.event.orderingTimestamp).toBe(new Date(1700000000000).toISOString()); // = user.updated_at
+    expect(r.event.occurredAt).toBe(SVIX_TS_ISO); // from the signed svix-timestamp header (Unix seconds)
+    expect(r.event.orderingTimestamp).toBe(new Date(1700000000000).toISOString()); // = user.updated_at (ms)
     expect(r.event.user.primaryEmail).toBe('person@example.com'); // trim + lowercase
     expect(r.event.user.emailVerified).toBe(true);
     expect(r.event.user.providerCreatedAt).toBe(new Date(1699990000000).toISOString());
@@ -162,11 +166,11 @@ describe('ClerkIdentityWebhookVerifier — §7 normalization', () => {
   });
 
   test('user.deleted normalizes and exposes no PII', async () => {
-    const fake: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.deleted', { object: 'user', id: 'user_1', deleted: true }, { timestamp: 1700000009000 }));
+    const fake: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.deleted', { object: 'user', id: 'user_1', deleted: true }));
     const r = await verifier(fake).verify(req(bytes('x')));
     if (r.status !== 'verified') throw new Error('unreachable');
     expect(r.event.type).toBe('user.deleted');
-    expect(r.event.orderingTimestamp).toBe(new Date(1700000009000).toISOString()); // envelope timestamp
+    expect(r.event.orderingTimestamp).toBe(SVIX_TS_ISO); // deletes order by the signed svix-timestamp header
     expect('user' in r.event).toBe(false);
     expect(JSON.stringify(r.event)).not.toContain('@');
   });
@@ -237,18 +241,19 @@ describe('ClerkIdentityWebhookVerifier — §4 stable error-code matrix', () => 
     expect(r.error.category).toBe('validation');
   });
 
-  test('missing envelope instance_id → WEBHOOK_PAYLOAD_MALFORMED', async () => {
-    const evt = { type: 'user.created', object: 'event', data: userData(), event_attributes: {}, timestamp: 1700000000000 } as unknown as WebhookEvent;
-    const r = await verifier(() => Promise.resolve(evt)).verify(req(bytes('x')));
+  test('a non-numeric svix-timestamp → WEBHOOK_PAYLOAD_MALFORMED', async () => {
+    // Headers resolve, signature verifies, but the delivery timestamp is unusable → malformed envelope.
+    const r = await verifier(okVerify).verify({ rawBody: bytes('x'), headers: { ...SVIX, 'svix-timestamp': 'not-a-number' } });
     if (r.status !== 'invalid') throw new Error('unreachable');
     expect(r.error.code).toBe(ErrorCodes.WEBHOOK_PAYLOAD_MALFORMED);
   });
 
-  test('provider-instance mismatch → WEBHOOK_INSTANCE_MISMATCH', async () => {
-    const fake: ClerkWebhookVerifyFn = () => Promise.resolve(clerkEvent('user.created', userData(), { instanceId: 'ins_actual' }));
-    const r = await verifier(fake, { CLERK_WEBHOOK_INSTANCE_ID: 'ins_expected' }).verify(req(bytes('x')));
+  test('a webhook with no configured instance id fails closed (malformed, never a blank instance)', async () => {
+    // Clerk sends no instance_id in the body; without CLERK_WEBHOOK_INSTANCE_ID there is no instance to
+    // assign, so the verifier fails closed rather than emitting an empty providerInstanceId.
+    const r = await verifier(okVerify, { CLERK_WEBHOOK_INSTANCE_ID: undefined }).verify(req(bytes('x')));
     if (r.status !== 'invalid') throw new Error('unreachable');
-    expect(r.error.code).toBe(ErrorCodes.WEBHOOK_INSTANCE_MISMATCH);
+    expect(r.error.code).toBe(ErrorCodes.WEBHOOK_PAYLOAD_MALFORMED);
   });
 
   test('an unexpected verifier fault → WEBHOOK_VERIFIER_FAILED (internal), never invalid_signature', async () => {
@@ -268,14 +273,13 @@ describe('ClerkIdentityWebhookVerifier — §4 stable error-code matrix', () => 
       verifier(() => Promise.reject(new Error('signature verification failed'))).verify(req(bytes('x'))), // invalid sig
       verifier(() => Promise.reject(new Error('timestamp out of tolerance'))).verify(req(bytes('x'))), // stale
       verifier(() => Promise.resolve(clerkEvent('user.created', userData({ id: '' })))).verify(req(bytes('x'))), // malformed
-      verifier(() => Promise.resolve(clerkEvent('user.created', userData(), { instanceId: 'x' })), { CLERK_WEBHOOK_INSTANCE_ID: 'y' }).verify(req(bytes('x'))), // mismatch
       verifier(() => Promise.reject(new Error('totally unknown fault'))).verify(req(bytes('x'))), // unexpected
     ]);
     for (const r of results) {
       expect(r.status).toBe('invalid');
       if (r.status === 'invalid') seen.add(r.error.code);
     }
-    expect(seen.size).toBe(7); // all seven classes are distinguishable
+    expect(seen.size).toBe(6); // headers-missing, headers-conflict, signature-invalid, timestamp-invalid, payload-malformed, verifier-failed
   });
 
   test('a provider exception carrying a secret / email / signature / payload / stack leaks nothing', async () => {

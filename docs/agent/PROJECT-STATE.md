@@ -32,10 +32,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
 ## Current HEAD
 `cefa336`. PR #3 draft/open/unmerged. Hosted baseline 423/0/0. Working tree clean.
 
-## Live acceptance — NOT COMPLETED; closed out safely (2026-07-19)
-**LIVE CLERK DEVELOPMENT ACCEPTANCE WAS NOT COMPLETED. NO LIVE ACCEPTANCE EVIDENCE MAY BE CLAIMED
-for ACBP-P1-002.** A run was started, blocked, and then fully torn down. **Nothing was created or
-changed in Clerk; no Clerk secret was ever written to disk; the application never ran.**
+## Live acceptance — COMPLETED (2026-07-20)
+**LIVE CLERK DEVELOPMENT ACCEPTANCE IS COMPLETE.** All 18 checks passed end-to-end against a real
+Clerk development instance (real signed webhook delivery via a temporary cloudflared tunnel + local
+webpack dev server + local Postgres). Three real defects were found and fixed (BOM/bundler/webhook
+envelope — see DECISION-LOG + EXECUTION-LOG). Cleanup done except the temporary Clerk webhook endpoint
+(pending one owner click; inert — tunnel is dead). No Clerk secret remains on disk; no disposable Clerk
+user remains. This does NOT change gate status: P1-002 stays Planned and PR #3 stays draft/unmerged
+until owner authorizes backlog→Done + ready + merge.
+
+### (historical) 2026-07-19 deferred attempt
 
 **Blocker:** the owner could not manually supply the Clerk development credentials
 (`pk_test_`/`sk_test_`/`whsec_`) nor create the Clerk webhook endpoint. Automation could not substitute:

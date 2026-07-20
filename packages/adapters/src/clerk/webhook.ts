@@ -96,6 +96,14 @@ function isoFromMs(ms: unknown): string | null {
   return d.toISOString();
 }
 
+/** ISO-8601 from a Unix-SECONDS string — the Standard Webhooks `svix-timestamp` delivery header. */
+function isoFromUnixSeconds(value: string): string | null {
+  const secs = Number(value);
+  if (!Number.isFinite(secs) || secs <= 0) return null;
+  const d = new Date(secs * 1000);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
 function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -184,17 +192,16 @@ export class ClerkIdentityWebhookVerifier implements IdentityWebhookVerifier {
       return invalid(classifyVerifyError(e), cid);
     }
 
-    // (3) Only now inspect the AUTHENTICATED envelope. instance_id/timestamp are signed but omitted
-    // from the SDK's static type, so they are read via a runtime cast (still trusted — they are signed).
-    const envelope = evt as unknown as { readonly instance_id?: unknown; readonly timestamp?: unknown };
-    const providerInstanceId = typeof envelope.instance_id === 'string' ? envelope.instance_id : '';
-    const occurredAt = isoFromMs(envelope.timestamp);
+    // (3) Only now inspect the AUTHENTICATED event. Clerk webhook bodies carry NO top-level instance_id
+    // or timestamp (verified against live deliveries: the only top-level keys are type/object/data/
+    // event_attributes). The delivery is cryptographically bound to ONE Clerk instance by the
+    // instance-specific signing secret, so providerInstanceId is the CONFIGURED expected instance id
+    // (required on this path). The delivery time comes from the signed svix-timestamp header (Unix
+    // seconds). Per-event ordering still uses the user's own updated_at for create/update.
+    const providerInstanceId = this.#config.expectedInstanceId ?? '';
+    const occurredAt = isoFromUnixSeconds(sig.headers.timestamp);
     const eventId = sig.headers.id; // delivery id comes ONLY from the authenticated delivery headers
     if (eventId.length === 0 || providerInstanceId.length === 0 || occurredAt === null) return invalid('malformed_payload', cid);
-
-    if (this.#config.expectedInstanceId !== undefined && providerInstanceId !== this.#config.expectedInstanceId) {
-      return invalid('instance_mismatch', cid);
-    }
 
     // (4) Hash is computed from the exact verified bytes (never a re-encode of parsed fields).
     const payloadSha256 = sha256Hex(request.rawBody);
