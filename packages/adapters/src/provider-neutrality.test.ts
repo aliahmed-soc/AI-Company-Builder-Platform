@@ -19,7 +19,8 @@ const FORBIDDEN_SPECIFIERS = [
 const FORBIDDEN_LEAKS = ['rawResponse', 'sdkResponse', 'httpResponse', 'providerResponse', 'accessToken', 'apiKey'];
 
 function contractFiles(): string[] {
-  return readdirSync(CONTRACTS_ADAPTERS).filter((f) => f.endsWith('.ts'));
+  // Contract SOURCE files only — test files (which legitimately import vitest) are not the surface.
+  return readdirSync(CONTRACTS_ADAPTERS).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts') && !f.endsWith('.type-test.ts'));
 }
 
 /** Strip block + line comments so prose (e.g. "anything") cannot trip substring/pattern checks. */

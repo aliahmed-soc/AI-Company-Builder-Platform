@@ -1,4 +1,4 @@
-﻿# @acbp/contracts
+# @acbp/contracts
 
 Shared, transport-neutral contracts for the platform. Leaf package (no workspace dependencies;
 no provider SDK, web-framework, database, or logging dependency).

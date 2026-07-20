@@ -1,4 +1,4 @@
-﻿# @acbp/gateway
+# @acbp/gateway
 
 **Scaffold stub (ACBP-P0-011) — no product functionality yet.**
 

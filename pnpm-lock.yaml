@@ -41,6 +41,12 @@ importers:
       '@acbp/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@acbp/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@acbp/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       '@clerk/nextjs':
         specifier: 7.5.20
         version: 7.5.20(next@16.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -61,7 +67,20 @@ importers:
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.17)
 
-  apps/worker: {}
+  apps/worker:
+    dependencies:
+      '@acbp/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@acbp/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@acbp/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@acbp/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
 
   packages/adapters:
     dependencies:
@@ -87,7 +106,24 @@ importers:
 
   packages/contracts: {}
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@acbp/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@acbp/config':
+        specifier: workspace:*
+        version: link:../config
+      '@acbp/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@acbp/database':
+        specifier: workspace:*
+        version: link:../database
+    devDependencies:
+      '@acbp/test-support':
+        specifier: workspace:*
+        version: link:../test-support
 
   packages/database:
     dependencies:

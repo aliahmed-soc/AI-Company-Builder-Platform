@@ -4,14 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@acbp/contracts": "workspace:*",
     "@acbp/config": "workspace:*",
+    "@acbp/core": "workspace:*",
+    "@acbp/observability": "workspace:*",
     "@clerk/nextjs": "7.5.20",
     "next": "^16.2.10",
     "react": "^19.2.7",

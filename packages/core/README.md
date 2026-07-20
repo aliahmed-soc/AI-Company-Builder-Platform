@@ -1,4 +1,4 @@
-﻿# @acbp/core
+# @acbp/core
 
 **Scaffold stub (ACBP-P0-011) — no product functionality yet.**
 

@@ -1,4 +1,4 @@
-﻿# @acbp/adapters
+# @acbp/adapters
 
 **Concrete provider implementations — none exist yet.** The provider-neutral **contracts** these will
 implement were defined in ACBP-P0-019 and live in `@acbp/contracts` (`src/adapters/`); see that

@@ -1,14 +1,79 @@
-// @acbp/database — Kysely database schema type (ACBP-P0-018).
+// @acbp/database — Kysely database schema types.
 //
-// INTENTIONALLY EMPTY of product-domain tables. This ticket establishes the access + migration
-// FOUNDATION only; account/user/company/task/approval/usage/audit/etc. tables are introduced by
-// their own later tickets (DATA-ARCHITECTURE.md), each with tenant ownership + RLS. The only object
-// the foundation creates is a non-domain migration probe (see migrations/0001_platform_init.ts),
-// which is infrastructure, not part of the application query surface, so it is deliberately not
-// typed here.
+// Foundation (ACBP-P0-018) started this empty; ACBP-P1-002 introduces the first product-domain
+// tables: the global identity-root `users` mapping and the `identity_webhook_receipts` idempotency
+// ledger (see docs/decisions/ADR-022 §13, CDR-007, CDR-008). Kysely is generic over this interface,
+// so a query can only reference a table once its type is registered here.
 //
-// Kysely is generic over this interface; keeping it empty means no query can reference a
-// product-domain table until that table's migration + type are added by the owning ticket.
+// SCOPE (CDR-008): users only. NO tenant_id/account_id/company/membership/role/permission/display-name
+// columns — account membership and authorization are ACBP-P1-004.
+import type { ColumnType, Generated, Insertable, Selectable, Updateable } from 'kysely';
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- foundation has no domain tables yet (P0-018 non-scope)
-export interface DatabaseSchema {}
+/** timestamptz, required (no DB default) — must be supplied on insert/update. */
+type RequiredTimestamp = ColumnType<Date, Date | string, Date | string>;
+/** timestamptz, nullable, no default. */
+type NullableTimestamp = ColumnType<Date | null, Date | string | null, Date | string | null>;
+
+/**
+ * Global identity-root mapping: external provider identity → internal immutable user id.
+ * Not tenant-scoped (CDR-008 #1). Uniqueness is (provider, provider_instance_id, provider_user_id).
+ * `provider_updated_at` is the ordering guard for last-provider-write-wins convergence (CDR-007 (d)).
+ */
+export interface UsersTable {
+  /** Internal immutable user id (uuid, default gen_random_uuid()). Never derived from the provider. */
+  id: Generated<string>;
+  /** Identity provider discriminator (e.g. 'clerk'). Non-empty. */
+  provider: string;
+  /** Provider instance/tenant id (Clerk envelope `instance_id`). Non-empty — isolates instances. */
+  provider_instance_id: string;
+  /** Opaque provider subject/user id. Non-empty. Not a product identity or authorization grant. */
+  provider_user_id: string;
+  /** Normalized primary email (PII). Null when unknown or after soft-deletion redaction. Not unique. */
+  primary_email: string | null;
+  /** Authoritative primary-email verification state. Default false. */
+  email_verified: Generated<boolean>;
+  /** Lifecycle: 'active' | 'deleted'. Default 'active'. */
+  status: Generated<string>;
+  /** Provider-reported creation time (informational). */
+  provider_created_at: NullableTimestamp;
+  /** Provider-reported last-update time — the convergence ordering guard. Required. */
+  provider_updated_at: RequiredTimestamp;
+  /** Last applied provider webhook event id (diagnostics only). */
+  last_event_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  /** Set when soft-deleted; null while active. */
+  deleted_at: NullableTimestamp;
+}
+
+/**
+ * Durable idempotency ledger of SUCCESSFULLY processed identity webhooks (CDR-008 #13). Written in
+ * the SAME transaction as the user mutation; a failed mutation rolls this back. No raw payload, no
+ * PII, no failure/attempt bookkeeping. PK = (provider, provider_instance_id, event_id).
+ */
+export interface IdentityWebhookReceiptsTable {
+  provider: string;
+  provider_instance_id: string;
+  /** Provider event/message id (dedupe key). Non-empty. */
+  event_id: string;
+  event_type: string;
+  /** Provider event envelope timestamp. */
+  occurred_at: RequiredTimestamp;
+  /** Ordering timestamp used for last-write-wins (provider updated_at, or envelope time for deletes). */
+  ordering_timestamp: RequiredTimestamp;
+  /** Lowercase 64-char hex SHA-256 of the raw verified payload (the payload itself is never stored). */
+  payload_sha256: string;
+  processed_at: Generated<Date>;
+}
+
+export interface DatabaseSchema {
+  users: UsersTable;
+  identity_webhook_receipts: IdentityWebhookReceiptsTable;
+}
+
+// Repository-facing row shapes.
+export type UserRow = Selectable<UsersTable>;
+export type NewUser = Insertable<UsersTable>;
+export type UserUpdate = Updateable<UsersTable>;
+export type IdentityWebhookReceiptRow = Selectable<IdentityWebhookReceiptsTable>;
+export type NewIdentityWebhookReceipt = Insertable<IdentityWebhookReceiptsTable>;

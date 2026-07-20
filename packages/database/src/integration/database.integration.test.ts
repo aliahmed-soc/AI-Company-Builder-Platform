@@ -13,7 +13,9 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 }
 
 async function cleanup(client: DatabaseClient): Promise<void> {
-  for (const t of ['_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
+  // identity_webhook_receipts + users are the ACBP-P1-002 tables (migration 0002); dropped here so
+  // this foundation suite starts from a clean slate regardless of applied domain migrations.
+  for (const t of ['identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -58,17 +60,20 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(status.some((m) => m.name.includes('platform_init') && m.executedAt !== undefined)).toBe(true);
   });
 
-  test('migration down reverses the technical migration and re-apply restores it', async () => {
+  test('migrations reverse fully and re-apply restores every managed table', async () => {
     await migrateToLatest(client); // ensure applied (idempotent)
-    const down = await migrateDown(client);
-    expect(down.error).toBeUndefined();
-    expect(down.results?.some((r) => r.direction === 'Down' && r.migrationName.includes('platform_init') && r.status === 'Success')).toBe(true);
-    const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = '_acbp_migration_probe'`.execute(client.kysely);
-    expect(afterDown.rows[0]?.n).toBe(0); // probe table dropped by down()
+    // Reverse each applied migration batch until none remain (robust to any number of migrations).
+    for (let i = 0; i < 50; i++) {
+      const down = await migrateDown(client);
+      expect(down.error).toBeUndefined();
+      if ((down.results?.length ?? 0) === 0) break;
+    }
+    const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name in ('_acbp_migration_probe', 'users', 'identity_webhook_receipts')`.execute(client.kysely);
+    expect(afterDown.rows[0]?.n).toBe(0); // every migration-managed table dropped by down()
     const reapply = await migrateToLatest(client);
     expect(reapply.error).toBeUndefined();
-    const afterUp = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = '_acbp_migration_probe'`.execute(client.kysely);
-    expect(afterUp.rows[0]?.n).toBe(1); // restored by re-apply
+    const afterUp = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name in ('_acbp_migration_probe', 'users', 'identity_webhook_receipts')`.execute(client.kysely);
+    expect(afterUp.rows[0]?.n).toBe(3); // probe (0001) + users + receipts (0002) restored by re-apply
   });
 
   test('a deliberately failing migration stops progression with no partial apply', async () => {
@@ -140,11 +145,15 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(seen).toBe('co_9');
   });
 
-  test('no product-domain tables were introduced by the foundation', async () => {
+  test('only the ACBP-P1-002 domain tables (users + webhook receipts) exist; later-ticket tables do not', async () => {
     const r = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = r.rows.map((x) => x.table_name);
-    for (const domain of ['accounts', 'users', 'companies', 'memberships', 'tasks', 'task_runs', 'approvals', 'usage_events', 'audit_events', 'policies']) {
-      expect(names).not.toContain(domain);
+    // P1-002 introduces exactly these two domain tables.
+    expect(names).toContain('users');
+    expect(names).toContain('identity_webhook_receipts');
+    // Membership/company/authorization and other later-ticket tables must NOT exist yet (CDR-008 #7).
+    for (const notYet of ['accounts', 'companies', 'memberships', 'tasks', 'task_runs', 'approvals', 'usage_events', 'audit_events', 'policies']) {
+      expect(names).not.toContain(notYet);
     }
   });
 });

@@ -1,3 +1,11 @@
-﻿// core/identity — module public index (ACBP-P0-011 scaffold). Cross-module imports go through this index (spec rule 10). No implementation yet.
-export {};
-
+// core/identity — module public index (ACBP-P1-002). Internal user mapping via replay-safe webhooks.
+export { resolveInternalUser, resolveWithStore } from './user-resolver.js';
+export type { InternalUserResolution } from './user-resolver.js';
+export { applyIdentityEvent, processVerifiedIdentityEvent } from './webhook-processor.js';
+export type { IdentityEventOutcome, IdentityEventProcessingResult, UserMappingStore, WebhookReceiptStore } from './webhook-processor.js';
+export { createIdentityWebhookService } from './webhook-service.js';
+export type { IdentityWebhookService, IdentityWebhookServiceDeps, IdentityWebhookProcessingResult, IdentityEventProcessor } from './webhook-service.js';
+export { resolveOrReconcileInternalUser, reconcileWithStore } from './read-through.js';
+export type { InternalUserReconciliation, ReadThroughUserStore, ReconcileOptions } from './read-through.js';
+export { reconcileAllUsers, reconcileUsersWithStore } from './reconciliation.js';
+export type { ReconciliationSummary, ReconcileUserStore, ReconcileOptions as ReconcileAllOptions } from './reconciliation.js';

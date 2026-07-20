@@ -1,4 +1,4 @@
-﻿# @acbp/config
+# @acbp/config
 
 **Scaffold stub (ACBP-P0-011) — no product functionality yet.**
 
