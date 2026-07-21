@@ -11,3 +11,10 @@ allowBuilds:
   # next/image, so its native build is intentionally skipped (ACBP-P1-001). Set true if image
   # optimization is later required and a build toolchain is available.
   sharp: false
+
+# Transitive-dependency remediations. NOT ticket-feature scope — kept here so the required `pnpm audit
+# --audit-level high` gate stays green repo-wide.
+# sharp <0.35.0: inherited libvips advisories GHSA-f88m-g3jw-g9cj (CVE-2026-33327/33328/35590/35591).
+# apps/web does not use next/image, so sharp is an unused optional transitive dep; force the patched line.
+overrides:
+  sharp: ">=0.35.0"

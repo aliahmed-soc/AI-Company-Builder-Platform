@@ -112,7 +112,9 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
 ## Still deferred (later tickets)
 
 - **P1-007** generalizes authorization into `authz.check`.
-- **P1-008** adds the durable append-only audit store (the interim `tenant.context_denied` event is a structured log).
+- **P1-008** adds the durable append-only audit store — **implemented** for the account-scoped first cut
+  (`membership.invited`/`membership.revoked`, written in-transaction; see `docs/architecture/AUDIT.md`). The
+  interim `tenant.context_denied` event remains a structured log (denial persistence is deliberately deferred).
 - **P1-010** provides real company resolution + the company-level `TenantContext` and account-level company RLS;
   `app.current_company` is intentionally never set today, so company-owned RLS will fail closed until then.
   `companyId` on `TenantContext` remains required (not made optional).

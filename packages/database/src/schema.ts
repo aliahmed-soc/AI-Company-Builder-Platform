@@ -131,12 +131,49 @@ export interface MembershipsTable {
   revoked_at: NullableTimestamp;
 }
 
+/**
+ * Append-only audit event store (ACBP-P1-008; ADR-015; CDR-014 Option A). A-tenant, account-scoped:
+ * `account_id` is NOT NULL and RLS-confined to `app.current_account` (no `company_id` yet — expand-migration
+ * at P1-010; no FK to accounts so a redacted trace can survive account deletion). IMMUTABLE (invariant 11):
+ * the restricted role has INSERT + SELECT only — no UPDATE/DELETE grant or policy — so the Updateable type is
+ * `never` on every column. `event_id`, `actor_*`, and `occurred_at` are bound server-side by the writer from
+ * the caller's AccountScope; they are never client-supplied.
+ */
+export interface AuditEventsTable {
+  /** Server-generated ULID (26-char Crockford base32). Primary key. */
+  event_id: ColumnType<string, string, never>;
+  /** Registered, dot-namespaced, past-tense event name (deny-unregistered enforced in @acbp/contracts). */
+  name: ColumnType<string, string, never>;
+  /** Integer schema version per event name. */
+  schema_version: ColumnType<number, number, never>;
+  /** Owning account (tenant stamp). NOT NULL; RLS binds it to app.current_account. No FK (trace survives deletion). */
+  account_id: ColumnType<string, string, never>;
+  /** Actor type: 'user' | 'worker' | 'system' | 'admin'. */
+  actor_type: ColumnType<string, string, never>;
+  /** Actor internal id; null for system/provider actors. */
+  actor_id: ColumnType<string | null, string | null, never>;
+  /** Bounded subject/resource type + id the event is about. */
+  subject_type: ColumnType<string, string, never>;
+  subject_id: ColumnType<string, string, never>;
+  /** Bounded outcome code: 'success' | 'denied' | 'blocked'. */
+  outcome: ColumnType<string, string, never>;
+  correlation_id: ColumnType<string | null, string | null, never>;
+  causation_id: ColumnType<string | null, string | null, never>;
+  /** Dedupe key for idempotent producers; unique when present. */
+  idempotency_key: ColumnType<string | null, string | null, never>;
+  /** Bounded metadata (references/digests only) as jsonb. node-postgres serializes the object to jsonb. */
+  payload: ColumnType<Record<string, string | number | boolean>, Record<string, string | number | boolean>, never>;
+  /** Immutable server-set event timestamp (default now()). */
+  occurred_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
   accounts: AccountsTable;
   account_profiles: AccountProfilesTable;
   memberships: MembershipsTable;
+  audit_events: AuditEventsTable;
 }
 
 // Repository-facing row shapes.
@@ -154,3 +191,5 @@ export type AccountProfileUpdate = Updateable<AccountProfilesTable>;
 export type MembershipRow = Selectable<MembershipsTable>;
 export type NewMembership = Insertable<MembershipsTable>;
 export type MembershipUpdate = Updateable<MembershipsTable>;
+export type AuditEventRow = Selectable<AuditEventsTable>;
+export type NewAuditEvent = Insertable<AuditEventsTable>;

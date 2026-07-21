@@ -25,6 +25,10 @@ export type { AccountExecutor } from './account-repositories.js';
 export { MembershipRepository } from './membership-repositories.js';
 export type { MembershipExecutor } from './membership-repositories.js';
 
+// Append-only audit writer (ACBP-P1-008; ADR-015; CDR-014). Writes under the caller's AccountScope in-tx.
+export { writeAuditEvent } from './audit-repository.js';
+export type { AuditWriteContext } from './audit-repository.js';
+
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
 export type { BootstrapExecutor } from './bootstrap-functions.js';
@@ -58,6 +62,9 @@ export type {
   MembershipRow,
   NewMembership,
   MembershipUpdate,
+  AuditEventsTable,
+  AuditEventRow,
+  NewAuditEvent,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

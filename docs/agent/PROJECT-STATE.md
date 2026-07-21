@@ -3,125 +3,105 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-007** — Authorization middleware (status: **Planned/Ready**; owner-gated to Done).
-- Branch: `p1-007-authorization-middleware` (from `main` @ `012411e`).
+- Ticket: **ACBP-P1-008** — Audit event foundation (status: **Planned/Ready**; owner-gated to Done).
+- Branch: `p1-008-audit-event-foundation` (from `main` @ `340f9c2`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
-- Base main: `012411eb1c24b9375756fda80f1b9d50d9bc0c60` (P1-006 squash-merge PR #7; main CI green run 29860477369).
-- **STATUS: OWNER-AUTHORIZED FINALIZATION IN PROGRESS.** Profile-endpoint acceptance conclusively closed
-  (Step 2 commit `d6bab32`, CI 29867326118 green, zero-skip PG). Backlog ACBP-P1-007 flipped **Planned→Done**.
-  Next: PR #8 ready → squash-merge → verify main CI → branch cleanup. All 5 slices hosted-green; THREE
-  independent reviews PASS covering all 4 required concerns. Independent SECURITY review PASS (0 blocker/0 major/1 minor/2 info);
-  ARCHITECTURE/scope review PASS (0/0/3/2); focused CODE-REVIEW (integration-point inventory + confused-deputy
-  full checklist) PASS (0/0/1/3) — explicitly confirms confused-deputy/cross-account (14 vectors HANDLED) and
-  every route/use-case integration point covered. Reasonable minors fixed incl. the profile:read audit gap
-  (logger now threaded → all denials audited). Awaiting owner authorization for: (1) backlog ACBP-P1-007→Done,
-  (2) PR #8 ready, (3) squash-merge. Do NOT self-authorize / merge / delete branch / begin P1-008.
+- Base main: `340f9c2b11f5019b26ff8563aa4dbd4505866d49` (P1-007 squash-merge PR #8; main CI green run 29867863044).
+- **STATUS: OWNER-AUTHORIZED FINALIZATION IN PROGRESS.** Backlog ACBP-P1-008 flipped **Planned→Done**; next:
+  PR #9 ready → squash-merge → main CI → branch cleanup. All 5 slices complete; THREE independent reviews PASS; STOPPED AT OWNER GATE (superseded).
+  Reviews: audit-integrity/RLS-ACL PASS (0 blk/0 maj/2 min/1 info); tx-atomicity/completeness PASS (0/0/1/4);
+  architecture/scope+sharp PASS (0/0/0/5). All reasonable minors fixed (per-account idempotency index;
+  bounded ctx ids; automated compile-exhaustive per-op completeness test; ULID comment). Residuals documented
+  in AUDIT.md. An out-of-scope P1-004 last-owner concurrency race was flagged as a separate task, not fixed here.
+  Do NOT self-authorize: backlog→Done, PR ready, merge, branch delete, or begin P1-009.
 
 ## Prior tickets (closed)
-- **ACBP-P1-001..P1-006 — DONE & MERGED.** P1-006 squash `012411e` (PR #7). Main CI green on each squash.
+- **ACBP-P1-001..P1-007 — DONE & MERGED.** P1-007 squash `340f9c2` (PR #8). Main CI green on each squash.
 - Residual non-blocking owner cleanup: delete the inert P1-002 Clerk **Development** webhook endpoint. Do NOT touch it.
 
-## P1-007 scope (canonical) — derived from backlog + ADR-022 §8 + ADR-006 + SECURITY-ARCHITECTURE §1
-- Central **`authz.check`** implementing the ADR-022 flow's **internal role-check** step on every protected op.
-  Deny-by-default; forged Clerk org/role/UI values rejected; **denials audited**. Failure = deny.
-- **Behavior-preserving centralization:** today's owner/viewer gates are INLINE (`isOwner`/`isMember`) in each
-  core use case. P1-007 formalizes them into ONE deny-by-default role×action matrix, changing WHO-can-do-WHAT
-  for NOBODY. Because behavior is preserved and it is fully derived from accepted ADRs, **no new owner decision
-  and no CDR are required** (unlike P1-005/P1-006 which had genuine forks).
-- **Decision model:** role × action → allow/deny, deny-by-default. `authz.check` is a 4th INDEPENDENT control —
-  it is NOT tenant isolation (AccountContext P1-005 + RLS P1-006 decide WHICH account); it only answers "may
-  THIS role perform THIS action?" once the account is resolved. It mints no scope, selects no DB connection,
-  bypasses no RLS, consults no Clerk claim.
-- **Action matrix (from existing semantics):** `member:invite`→owner; `member:revoke`→owner;
-  `member:list`→owner|viewer; `member:read_invited_email`→owner (the viewer email-redaction rule, modeled
-  explicitly); `profile:read`→owner; `profile:update`→owner.
-- **Excluded from authz.check (pre-context bootstrap / public):** `acceptInvite`, `provisionPersonalAccount`
-  (no active-membership role yet), and the Clerk webhook (signature-only — NEVER behind account authz).
-- **Excludes (later tickets):** company-level authz (P1-010), general policy/approval ADR-009/010,
-  configurable/custom roles, durable audit store (P1-008), policy-admin UI, billing.
+## P1-008 scope (canonical) — CDR-014 (owner-accepted 2026-07-22, Option A)
+- ONE append-only **`audit_events`** table, **account-scoped now** (`account_id` NOT NULL; no `company_id`
+  column yet — expand-migration at P1-010; no FK to accounts so a redacted trace survives deletion). Envelope
+  columns (EVENT-CATALOG): server ULID `event_id` (PK), registered `name` + `schema_version`, `account_id`,
+  `actor_type`(user|worker|system|admin)+nullable `actor_id`, `subject_type`/`subject_id`, bounded `outcome`,
+  `correlation_id`, `causation_id`, `idempotency_key` (unique when present), bounded JSON `payload`, immutable
+  server `occurred_at`.
+- **FORCE RLS keyed to `app.current_account`; append-only.** `acbp_app` gets INSERT (WITH CHECK
+  account_id=current_account) + SELECT only — NO UPDATE/DELETE/TRUNCATE grant or policy (invariant 11 by
+  persistence constraint). Owner owns the table. Grants BYPASSRLS to no one; adds NO SECURITY DEFINER function
+  (allowlist stays exactly 3).
+- **In-tx write pattern**: an account-scoped audit writer inserts using the caller's `AccountScope` inside
+  `withAccountTransaction`; account/actor/event_id/occurred_at bound SERVER-SIDE (unforgeable). Write failure
+  rolls back the business tx → action blocked (ADR-015; FAILURE row 14).
+- **Events durably persisted now (high-risk, account-scoped, in-tx):** `membership.invited`, `membership.revoked`.
+- **Deferred (stay interim structured logs; CDR-014):** denials (authz.denied, tenant.context_denied — no
+  business tx / persistence-vs-rollback unresolved); global events (webhook.*, reconcile.* — no tenant predicate);
+  pre-context bootstrap events (account.created, membership.accepted — outside withAccountTransaction);
+  lower-risk (account.profile_updated — outbox is P1-009+).
+- **Out of P1-008 (canon):** company audit (P1-010), transactional outbox + activity feed (P1-009+), audit
+  read/export/admin API (separate contract), retention/purge job (CDR-009/later).
 
 ## Slices
-1. **DONE (local-green).** Authz contract in `@acbp/contracts` (`authz/authz.ts`): `AuthzRole`, closed
-   `AUTHZ_ACTIONS`, `isAuthzAction`, `AuthzDecision`/`AuthzDenialReason`, pure deny-by-default `authorize()`
-   matrix, `authorizationDeniedEnvelope()` (opaque authz/403). 20 exhaustive matrix + deny-by-default unit
-   tests green; static gate (typecheck/lint/secrets/encoding/boundaries) all EXIT 0. + agent state + draft PR.
-2. **DONE (local-green; Slice 1 CI 29863395097 success).** Core `authz` module (`@acbp/core` `authz/authz-service.ts`):
-   `checkAuthorization(role, action, {accountId, actorId}, {logger})` wraps the pure `authorize` matrix and
-   emits an interim `authz.denied` audit event (warn; non-PII `{action, reason, accountId, actorId}`, mirroring
-   `tenant.context_denied`) on deny; allows are silent. `isAuthorized` boolean helper. 8 unit tests; static gate
-   all EXIT 0. Role is caller-supplied (server-resolved) — the module loads no data / mints no scope.
-3. **DONE (local-green).** Integrated authz.check into the core use cases: `membership-service.ts`
-   invite/revoke/list now call `checkAuthorization` (acting role already loaded from the ACTIVE membership;
-   no new query), the email-redaction uses the non-auditing `authorize('member:read_invited_email')`, and
-   `listMembers` threads a logger (composition + web request layer updated) so a list denial audits.
-   `profile.ts` get/update call `checkAuthorization` for `profile:read`/`profile:update` (role loaded under
-   scope via `MembershipRepository`, RLS self-row). Behavior preserved (all prior tests green). Added: unit
-   tests that denials emit `authz.denied` (non-PII); real-PG test that a role change is reflected on the very
-   next decision (no caching). Full local suite 501 pass / 0 fail (150 integration skipped locally); `next
-   build` EXIT 0; static gate all EXIT 0.
-4. **DONE (local-green).** Web/request negative matrix + forged-claim tests. Established that core is the
-   AUTHORITATIVE enforcement (Slice 3) and the request→HTTP layers already fail-closed and map any
-   `forbidden`→403 (existing coverage), so NO separate route middleware is added (a route-only or duplicate
-   guard would add no security — the routes are thin mappers over the DI-injectable request use cases). Added
-   to `members-request.test.ts`: forged-claim safety (acting user + account are ALWAYS server-resolved; a body
-   `role` is only the INVITEE grant, never the caller's authority; a non-owner cannot self-elevate) and a
-   per-privileged-endpoint negative matrix (GET/POST/DELETE members × unauthenticated/unverified/non-role →
-   correct status). No Clerk role claim is consulted (identity resolution exposes only providerUserId + verified
-   email). Test-only slice (no runtime change → `next build` unaffected; last green in Slice 3). 507 local pass /
-   0 fail; static gate all EXIT 0.
-5. **DONE.** Adversarial + docs + reviews. Real-PG `member:read_invited_email` redaction test; direct-use-case
-   bypass structurally impossible; `docs/architecture/AUTHORIZATION.md`. Both independent reviews PASS. Applied
-   review fixes: removed now-dead `isOwner`/`isMember` (single source of truth = the authz matrix; arch MINOR-1);
-   corrected AUTHORIZATION.md wording on the members-surface wire envelope (`{error:'forbidden'}` uniform/opaque
-   vs the contracts-level `authorizationDeniedEnvelope`; sec INFO); clarified profile is a net-new-but-
-   behavior-preserving enforcement point (arch INFO-1). Full local suite 505 pass / 0 fail; static gate green.
-
-## Residual risks (accepted; not defects)
-- **FIXED (was sec/code-review MINOR): profile:read denial auditing.** A logger is now threaded
-  request→composition→`getProfileForOwner`, so `profile:read` denials emit `authz.denied` like every other
-  action. (The denial itself is still unreachable until P1-010 admits non-owner members.)
-- **Profile role-load is a redundant RLS-confined query** that can only deny once accounts admit non-owner
-  members (P1-010); today it passes by construction (arch MINOR-2). Kept as the uniform enforcement point.
-- **CLOSED (was arch MINOR-3): profile-endpoint negative coverage.** Endpoint negative REQUEST tests exist for
-  read + update (unauthenticated, deleted→forbidden, missing internal-user→not_found, unavailable, validation),
-  forged body role/account keys are dropped, and the HTTP denial mapping is tested (`profile-request.test.ts`,
-  `profile-http.test.ts`). The role-specific negative is proven at the trusted CORE seam on real PostgreSQL
-  (`accounts.integration.test.ts`: a non-owner active member is denied `profile:read` AND `profile:update`,
-  opaquely + audited, no write). An HTTP owner-vs-viewer scenario is unreachable by product construction (the
-  profile routes always resolve the caller's OWN single-owner personal account), so the role negative is at the
-  core seam by design — NOT claimed from the pure matrix test alone.
-- **`authz.check` lives in `@acbp/core/authz`**, not the literal "identity module" of SECURITY-ARCHITECTURE §1
-  — same package, cleaner separation, ADR-006 "single authz layer" satisfied (arch INFO-2).
-- **No live authenticated web-route acceptance performed** (requires a dev server + Clerk env — owner/external
-  gate); NOT claimed passed. Hosted CI (zero-skip PG) is the authoritative evidence.
+1. **DONE (local-green).** Audit contract in `@acbp/contracts` (`audit/`): server ULID `generateEventId`/`isUlid`;
+   `AuditActorType`, `AuditOutcome`, closed `AUDIT_EVENTS` registry (membership.invited/revoked, schema v1) +
+   `isAuditEventName` (deny unregistered); `boundedMetadata` (flat scalars only — rejects nesting/arrays/Error/
+   null/bigint/symbol/non-finite/over-long/too-many/over-large; key-name-only errors); typed factories
+   `membershipInvited`/`membershipRevoked` (no free-form events). 17 unit tests; static gate all EXIT 0.
+   + CDR-014 + agent state + draft PR.
+2. **DONE (local-green; Slice 1 CI 29872934993 success).** Migration `0007_audit_events` (append-only table,
+   ULID text PK, jsonb payload, check constraints on actor_type/outcome/schema_version, account+time index,
+   partial-unique idempotency_key; ENABLE+FORCE RLS; INSERT+SELECT policies keyed to app.current_account
+   fail-closed; grant INSERT+SELECT only to acbp_app — no UPDATE/DELETE/TRUNCATE; adds no SECURITY DEFINER fn,
+   no BYPASSRLS, no FK on account_id). `AuditEventsTable` schema type (Updateable=never per column). `writeAuditEvent`
+   (`audit-repository.ts`) appends under the caller's AccountScope in-tx; account/actor bound server-side, event_id
+   server ULID, occurred_at DB clock. Real-PG suite `audit.integration.test.ts` (write+server-bound fields+cross-
+   account isolation; UPDATE/DELETE/TRUNCATE denied; fail-closed no-GUC; forged-account WITH CHECK; catalog/ACL
+   INSERT+SELECT-only+FORCE-RLS+2-policies+no-BYPASSRLS; idempotency-key unique). Static gate + boundary tests EXIT 0.
+3. **DONE (local-green).** `inviteMember`/`revokeMember` write `membership.invited`/`membership.revoked` via
+   `writeAuditEvent` INSIDE `runInAccountScope` (same tx + AccountScope; account/actor/event_id/occurred_at
+   server-bound). Revoke made concurrency-safe (`MembershipRepository.revokeIfActive` conditional
+   `WHERE status='active'`; `RevokeResult.changed` distinguishes real revoke from idempotent no-op). Test-seam
+   `auditWriter?` on `MembershipOpOptions` (production never sets it; tests force failure). Completeness registry
+   `@acbp/core` `audit/audit-operations.ts` (`AUDITED_OPERATIONS` op→event, compile-exhaustive `factoryFor`,
+   no-orphan-registered-event test). Real-PG tests: invite/revoke each write exactly one server-bound PII-free
+   row; audit-write failure rolls back the mutation (fail-closed, no invite/revoke, no audit); write-then-throw
+   rolls BOTH back (atomicity); mutation-fail/last-owner/missing/no-op/cross-account write no success audit;
+   concurrent revoke → exactly one audit. Full local suite 528 pass / 0 fail.
+4. **DONE.** Adversarial suite extends `audit.integration.test.ts`:
+   ALTER/DROP/TRUNCATE/DISABLE-RLS denied; DROP/ALTER/permissive-ALL policy denied; self-GRANT/SET-ROLE/CREATE-ROLE
+   denied; pooled-context isolation (sequential + concurrent accounts don't cross-see); catalog (non-app owner,
+   acbp_app NOCREATEROLE/NOINHERIT/member-of-no-role, exactly 2 policies INSERT+SELECT, exactly 3 SECURITY DEFINER
+   fns). Docs: `docs/architecture/AUDIT.md` (logging-vs-audit, data model, write path, implemented/deferred,
+   supply-chain note), EVENT-CATALOG implementation-status note, TENANCY/AUTHORIZATION P1-008 pointers. Static gate
+   + boundary tests EXIT 0; full local suite 528 pass / 0 fail. — remaining: independent reviews (audit-integrity,
+   RLS/ACL/append-only, tx-atomicity, producer/completeness, architecture/scope, sharp-override) + apply fixes.
 
 ## Guards (must stay green every slice)
 - `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.
   real-PostgreSQL integration on hosted CI (zero-skip preflight) + `pnpm audit --audit-level high`. `next build`
-  only if web runtime changes. Endpoint×role negative matrix + forged-claim tests are trust-critical.
+  only if web runtime changes. Immutability (append-only) tests are trust-critical.
 
 ## Blockers / owner decisions
-- **None.** P1-007 DoR = Ready; no blocking questions; dependency P1-005 (Done). Evidence (ADR-022/006/007 +
-  SEC-ARCH) is clear and non-conflicting → proceeding autonomously.
-- Future owner gates (do NOT self-authorize): P1-007 backlog→Done, PR ready, merge, branch delete. Begin P1-008
+- **RESOLVED:** audit-store scope & shape → CDR-014 Option A (owner-accepted 2026-07-22). Account-scoped first cut.
+- Future owner gates (do NOT self-authorize): P1-008 backlog→Done, PR ready, merge, branch delete. Begin P1-009
   only on separate authorization.
 
 ## Authority limits (this ticket)
 - No production systems/credentials; no real customer data; no external DB; no public tunnel; no Clerk dashboard;
-  do not touch the inert P1-002 Clerk endpoint; no unrelated refactors. Do NOT: change the P1-006 role/RLS model
-  (except to repair a demonstrated in-scope defect); add a 4th SECURITY DEFINER function; grant BYPASSRLS; use the
-  owner DB connection for normal traffic; implement company lifecycle/authz; implement configurable roles; build a
-  policy-admin UI; implement P1-008 durable audit; add "temporary allow" behavior.
+  do not touch the inert P1-002 Clerk endpoint; no unrelated refactors. Do NOT: add a 4th SECURITY DEFINER
+  function; weaken/alter FORCE RLS or the P1-006 role model; grant BYPASSRLS; expose the owner connection to
+  normal runtime; build company audit / outbox / activity feed / read-export-admin API / retention job; create a
+  generic public audit-write API; persist arbitrary logger metadata, secrets, tokens, emails, SQL, or raw errors.
 
 ## Test baselines
-- Inherited from merged `main` (`012411e`): hosted CI green (zero-skip PG preflight + aggregate + audit).
+- Inherited from merged `main` (`340f9c2`): hosted CI green (zero-skip PG preflight + aggregate + audit).
   Integration files run serially (`vitest fileParallelism:false`) on one shared DB — keep new suites' cleanup
-  drop-lists inclusive.
+  drop-lists inclusive (add `audit_events`).
 - Local Windows→WSL PG forwarding unstable; hosted CI is the authoritative zero-skip integration gate.
-- The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads.
+- The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
 ## Next executable action
-**NONE — STOPPED at the owner gate.** All 5 slices implemented; both independent reviews PASS; review-fix
-commit pushed and its hosted CI verified green. Remaining steps are owner-gated: (1) backlog ACBP-P1-007→Done,
-(2) `gh pr ready 8`, (3) squash-merge PR #8, then verify main CI + delete branch. Begin ACBP-P1-008 only on
-separate explicit authorization.
+**NONE — STOPPED at the owner gate** (pending exact-final-HEAD CI on the review-fix commit). All 5 slices done;
+three independent reviews PASS; reasonable minors fixed; residuals documented in AUDIT.md. Owner-gated (do NOT
+self-authorize): (1) backlog ACBP-P1-008 → Done, (2) `gh pr ready 9`, (3) squash-merge PR #9, then verify main
+CI + delete branch. Begin ACBP-P1-009 only on separate explicit authorization.

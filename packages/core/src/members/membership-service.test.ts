@@ -20,7 +20,7 @@ function makeStore(overrides: Partial<MembershipStore> = {}): MembershipStore {
     insertInvite: () => Promise.resolve({ id: 'm_new' }),
     findInAccount: () => Promise.resolve(undefined),
     countActiveOwners: () => Promise.resolve(1),
-    revokeMembership: () => Promise.resolve(),
+    revokeMembership: () => Promise.resolve(true),
     listMembers: () => Promise.resolve([]),
     ...overrides,
   };
@@ -108,7 +108,7 @@ describe('revokeMemberWithStore', () => {
       findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'active' }),
       revokeMembership: (id) => {
         revoked.push(id);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     });
     const { logger, records } = createTestLogger({ component: 'members' });
@@ -125,7 +125,7 @@ describe('revokeMemberWithStore', () => {
       findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'revoked' }),
       revokeMembership: (id) => {
         revoked.push(id);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     });
     expect((await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' })).status).toBe('ok');

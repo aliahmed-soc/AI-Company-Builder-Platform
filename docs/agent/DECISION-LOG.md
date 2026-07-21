@@ -173,3 +173,24 @@ Append significant decisions. Format: decision — source — consequence.
   provisionPersonalAccount, Clerk webhook (signature-only). Deferred: company authz (P1-010), policy/approval
   (ADR-009/010), configurable roles, durable audit (P1-008). Source: BACKLOG ACBP-P1-007 + ADR-022/006/007 +
   SECURITY-ARCHITECTURE §1 + existing roles.ts/membership-service.ts/profile.ts semantics.
+
+## ACBP-P1-008 — Audit event foundation (opened 2026-07-22)
+- **Audit-store scope & shape → CDR-014 (owner-accepted, Option A).** ADR-015 mandates ONE append-only audit
+  store spanning company/account/global (C/A/G) rows, but the P1-006 RLS model keys only on
+  `app.current_account` (company GUC never set until P1-010; global rows have no tenant predicate under FORCE
+  RLS), so global/company rows can't be inserted under the restricted `acbp_app` role without a permissive
+  leaky policy or a **prohibited 4th SECURITY DEFINER function**; canon is also silent on global-row account_id
+  nullability and denial-persistence-vs-rollback. The owner scoped the P1-008 **first cut** to **account-scoped
+  only**: one `audit_events` table with `account_id` NOT NULL (no company_id yet; no FK so a redacted trace
+  survives deletion), FORCE RLS keyed to `app.current_account`, append-only (acbp_app gets INSERT+SELECT only,
+  NO UPDATE/DELETE/TRUNCATE — invariant 11 by persistence constraint), an in-tx account-scoped writer (account/
+  actor/event_id/occurred_at bound server-side, unforgeable) whose write failure rolls back the business tx and
+  blocks the action, and durable persistence of exactly the two account-scoped high-risk lifecycle successes
+  `membership.invited`/`membership.revoked`. **Deferred (stay interim logs):** denials, global (webhook/
+  reconcile), pre-context bootstrap (account.created, membership.accepted), lower-risk (profile_updated → outbox).
+  **Out of scope:** company audit (P1-010), outbox + activity feed (P1-009+), read/export/admin API, retention
+  job. **Rejected:** Option B (single C/A/G table with nullable tenant + global rows — needs a leaky global
+  policy or a prohibited privileged path); Option C (audit the 2 bootstrap events via the existing 3 SECURITY
+  DEFINER fns — expands elevated surface). Source: owner decision 2026-07-22 + ADR-015 + EVENT-CATALOG envelope +
+  DATA-ARCHITECTURE §2/`:41` + TECHNICAL-ARCHITECTURE-v1 invariant 11 + FAILURE-AND-RECOVERY row 14 +
+  ENGINEERING-STANDARDS `:20-21,35,47` + TENANCY/CDR-013 (RLS + 3-fn allowlist) + CDR-009 (retention).

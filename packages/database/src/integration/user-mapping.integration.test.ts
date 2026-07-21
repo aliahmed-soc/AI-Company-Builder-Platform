@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // account_profiles/accounts (0003) are dropped child-first so a re-migrate on the shared CI
   // database cannot hit a stale later-ticket table (the _acbp_migration_probe lesson).
-  for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+  for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
     await drop(client, t);
   }
 }
