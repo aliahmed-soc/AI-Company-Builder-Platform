@@ -52,8 +52,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
    tests that denials emit `authz.denied` (non-PII); real-PG test that a role change is reflected on the very
    next decision (no caching). Full local suite 501 pass / 0 fail (150 integration skipped locally); `next
    build` EXIT 0; static gate all EXIT 0.
-4. Web/request integration: reusable route guard mapping deny → opaque 403; endpoint×role NEGATIVE matrix +
-   forged-claim (header/cookie/body role) negatives; `next build`.
+4. **DONE (local-green).** Web/request negative matrix + forged-claim tests. Established that core is the
+   AUTHORITATIVE enforcement (Slice 3) and the request→HTTP layers already fail-closed and map any
+   `forbidden`→403 (existing coverage), so NO separate route middleware is added (a route-only or duplicate
+   guard would add no security — the routes are thin mappers over the DI-injectable request use cases). Added
+   to `members-request.test.ts`: forged-claim safety (acting user + account are ALWAYS server-resolved; a body
+   `role` is only the INVITEE grant, never the caller's authority; a non-owner cannot self-elevate) and a
+   per-privileged-endpoint negative matrix (GET/POST/DELETE members × unauthenticated/unverified/non-role →
+   correct status). No Clerk role claim is consulted (identity resolution exposes only providerUserId + verified
+   email). Test-only slice (no runtime change → `next build` unaffected; last green in Slice 3). 507 local pass /
+   0 fail; static gate all EXIT 0.
 5. Adversarial/bypass suite (direct-use-case invocation, cross-account, TOCTOU) + audit/observability
    verification + docs (authorization section) + independent security & architecture reviews.
 
@@ -83,10 +91,10 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads.
 
 ## Next executable action
-Continue **Slice 4** (web/request integration: a reusable route guard mapping any authz deny → the opaque
-`authorizationDeniedEnvelope` 403; endpoint×role NEGATIVE matrix per privileged endpoint [POST/GET/DELETE
-members]; forged-claim negatives — role in header/cookie/body ignored, only server-resolved membership counts;
-`next build`). Note: core use cases are already the AUTHORITATIVE enforcement (Slice 3); the route guard is
-defense-in-depth + the negative-test surface. Commit + push each green slice; verify hosted CI on the exact
-pushed commit. Stop only at the owner gate (all slices hosted-green + independently reviewed) or a new genuine
-owner decision.
+Continue **Slice 5** (adversarial/bypass suite: direct core use-case invocation cannot bypass authz [already
+true — enforcement is inside the use case]; cross-account + TOCTOU [role/membership changed before commit];
+audit/observability verification that `authz.denied` carries only non-PII; authorization docs [TENANCY.md or a
+new AUTHORIZATION.md]; then dispatch INDEPENDENT security + architecture/scope reviews). Commit + push each
+green slice; verify hosted CI on the exact pushed commit. **STOP at the owner gate** once all slices are
+hosted-green + independently reviewed. Do NOT self-authorize backlog→Done / PR ready / merge / branch delete /
+start P1-008.
