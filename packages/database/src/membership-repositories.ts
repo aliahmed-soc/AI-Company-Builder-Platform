@@ -36,6 +36,18 @@ export class MembershipRepository {
       .executeTakeFirst();
   }
 
+  /** Count of ACTIVE owner memberships in an account (used to guard against removing the last owner). */
+  async countActiveOwners(accountId: string): Promise<number> {
+    const row = await this.#db
+      .selectFrom('memberships')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('account_id', '=', accountId)
+      .where('role', '=', 'owner')
+      .where('status', '=', 'active')
+      .executeTakeFirstOrThrow();
+    return Number(row.n);
+  }
+
   /** A pending invite by its single-use token hash, or undefined. */
   findPendingByTokenHash(tokenHash: string): Promise<MembershipRow | undefined> {
     return this.#db.selectFrom('memberships').selectAll().where('invite_token_hash', '=', tokenHash).where('status', '=', 'invited').executeTakeFirst();

@@ -37,7 +37,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
    integration — **done, local gate green** (491/0/0; typecheck/lint/secrets/encoding/boundaries pass).
    Added `memberships` (child-first) to every suite's cleanup; flipped database.integration later-ticket
    assertion. Pending: push + hosted CI.
-3. Core role model + invite/accept/revoke/list use-cases + role-matrix enforcement + interim audit + unit.
+3. Core `members` module: role model + invite-token (hashed, single-use) + invite/accept/revoke/list
+   use-cases (owner-gated invite/revoke; email-bound accept; last-owner guard; immediate revoke) +
+   interim `membership.*` audit + owner-membership wired into account provisioning — **done, local gate
+   green** (520/0/0; unit fakes + real-PG trust-critical integration incl. role-matrix negatives +
+   cross-account isolation). Pending: push + hosted CI.
 4. Web members API routes (invite/accept/revoke/list) + fail-closed auth + role-negative tests.
 5. Backlog sync (owner-gated).
 
