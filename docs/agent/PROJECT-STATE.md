@@ -35,11 +35,12 @@ _Read this first on resume, then continue automatically to "Next executable acti
    **done, local gate green** (438/0/0 with real PG; typecheck/lint/secrets/encoding/boundaries all pass;
    audit 1 moderate below gate). Includes two infra fixes (serial integration files; DB-authoritative
    `updated_at`) — see DECISION-LOG. Pending: push + hosted CI.
-3. Provider-neutral account/profile contracts + core idempotent provisioning use-case + unit tests.
-4. Core profile read/update use-case (email read-only) + unit tests.
-5. Web profile API/route + first-sign-in provisioning wiring + tests.
-6. Interim structured-audit events (`account.created`, `account.profile_updated`).
-7. Backlog sync (owner-gated).
+3. Core accounts module: idempotent provisioning + profile get/update use-cases + interim audit events
+   (`account.created`, `account.profile_updated`) + unit tests (fakes) + real-PG integration —
+   **done, local gate green** (455/0/0). Pending: push + hosted CI. (Slices 4+6 from the original plan
+   folded in: audit events emitted inside the use-cases.)
+4. Web profile API/route (GET/PATCH) + first-sign-in provisioning wiring + tests.
+5. Backlog sync (owner-gated).
 
 ## Test baselines
 - Inherited from merged P1-002 main: hosted CI green at merge (`d1069f8`). New P1-003 suites TBD.
