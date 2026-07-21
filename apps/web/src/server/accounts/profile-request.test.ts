@@ -74,6 +74,13 @@ describe('getAccountProfileForRequest', () => {
     const r = await getAccountProfileForRequest({ identity: identityDeps({ status: 'active', userId: 'usr_1' }), accounts: ops });
     expect(r.status).toBe('not_found');
   });
+
+  test('missing internal-user mapping → not_found (no account touched) — ACBP-P1-007', async () => {
+    const { ops, calls } = fakeAccounts();
+    const r = await getAccountProfileForRequest({ identity: identityDeps({ status: 'not_found' }), accounts: ops });
+    expect(r.status).toBe('not_found');
+    expect(calls.ensured).toEqual([]);
+  });
 });
 
 describe('updateAccountProfileForRequest', () => {
@@ -102,6 +109,20 @@ describe('updateAccountProfileForRequest', () => {
     const { ops, calls } = fakeAccounts();
     const r = await updateAccountProfileForRequest({ displayName: 'X' }, { identity: { identity: { getUserId: () => Promise.resolve(null), getBackendUser: () => Promise.reject(new Error('unused')) } }, accounts: ops });
     expect(r.status).toBe('unauthenticated');
+    expect(calls.updated).toEqual([]);
+  });
+
+  test('deleted identity → forbidden (no write) — ACBP-P1-007', async () => {
+    const { ops, calls } = fakeAccounts();
+    const r = await updateAccountProfileForRequest({ displayName: 'X' }, { identity: identityDeps({ status: 'deleted' }), accounts: ops });
+    expect(r.status).toBe('forbidden');
+    expect(calls.updated).toEqual([]);
+  });
+
+  test('missing internal-user mapping → not_found (no write) — ACBP-P1-007', async () => {
+    const { ops, calls } = fakeAccounts();
+    const r = await updateAccountProfileForRequest({ displayName: 'X' }, { identity: identityDeps({ status: 'not_found' }), accounts: ops });
+    expect(r.status).toBe('not_found');
     expect(calls.updated).toEqual([]);
   });
 });

@@ -80,9 +80,14 @@ _Read this first on resume, then continue automatically to "Next executable acti
   action. (The denial itself is still unreachable until P1-010 admits non-owner members.)
 - **Profile role-load is a redundant RLS-confined query** that can only deny once accounts admit non-owner
   members (P1-010); today it passes by construction (arch MINOR-2). Kept as the uniform enforcement point.
-- **Profile endpoints are not in the end-to-end negative matrix** (their denial is unreachable now); the
-  `profile:read`/`profile:update` matrix DECISION is unit-tested via the contract matrix (arch MINOR-3 / info).
-  Add an e2e case when P1-010 makes profile denial reachable.
+- **CLOSED (was arch MINOR-3): profile-endpoint negative coverage.** Endpoint negative REQUEST tests exist for
+  read + update (unauthenticated, deleted→forbidden, missing internal-user→not_found, unavailable, validation),
+  forged body role/account keys are dropped, and the HTTP denial mapping is tested (`profile-request.test.ts`,
+  `profile-http.test.ts`). The role-specific negative is proven at the trusted CORE seam on real PostgreSQL
+  (`accounts.integration.test.ts`: a non-owner active member is denied `profile:read` AND `profile:update`,
+  opaquely + audited, no write). An HTTP owner-vs-viewer scenario is unreachable by product construction (the
+  profile routes always resolve the caller's OWN single-owner personal account), so the role negative is at the
+  core seam by design — NOT claimed from the pure matrix test alone.
 - **`authz.check` lives in `@acbp/core/authz`**, not the literal "identity module" of SECURITY-ARCHITECTURE §1
   — same package, cleaner separation, ADR-006 "single authz layer" satisfied (arch INFO-2).
 - **No live authenticated web-route acceptance performed** (requires a dev server + Clerk env — owner/external

@@ -95,6 +95,26 @@ Clerk identifier. Allows are silent (the criterion is "denials audited"). The pu
 same opaque 403 regardless of the private reason, so a denial is never a role/membership/existence oracle. The
 durable append-only audit store is **ACBP-P1-008**.
 
+## Negative-test coverage per privileged endpoint (acceptance)
+
+Each privileged endpoint has an actual negative REQUEST test, and each role-gated decision is proven at the
+trusted core/use-case seam:
+
+- **Members** (`member:invite`/`member:revoke`/`member:list`) — endpoint×principal negative matrix
+  (unauthenticated / unverified-email / non-role → denied) plus forged-claim safety in
+  `apps/web/src/server/members/members-request.test.ts`; the real role matrix (owner/viewer, cross-account,
+  redaction, revocation-immediate, role-change-no-cache) is proven on real PostgreSQL in
+  `packages/core/src/members/members.integration.test.ts`.
+- **Profile** (`profile:read`/`profile:update`) — endpoint negative REQUEST tests (unauthenticated,
+  deleted→forbidden, missing internal-user→not_found, unavailable, validation) in
+  `apps/web/src/server/accounts/profile-request.test.ts`; forged body `role`/`accountId` keys dropped and the
+  denial→HTTP mapping in `profile-http.test.ts`. An HTTP owner-vs-viewer scenario is **unreachable by product
+  construction** — the profile routes always resolve the caller's OWN single-owner personal account — so the
+  role-specific negative is proven at the CORE seam: `packages/core/src/accounts/accounts.integration.test.ts`
+  seeds a non-owner active membership and asserts `getProfileForOwner`/`updateProfileForOwner` deny opaquely
+  (undefined), write nothing, and emit non-PII `authz.denied`. A direct core call (not via the route) still
+  enforces. This is NOT asserted from the pure matrix test alone.
+
 ## What P1-007 does NOT do (later tickets)
 
 - **Company-level authorization** and real company roles — **P1-010** (this ticket is account-level only).
