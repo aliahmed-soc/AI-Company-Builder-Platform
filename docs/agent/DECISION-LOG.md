@@ -136,3 +136,19 @@ Append significant decisions. Format: decision — source — consequence.
   because resolution is keyed to the explicit requested account. Database scope is minted ONLY after
   membership validation. Interim `tenant.context_denied` structured audit event carries only non-PII
   (account id, actor id, coarse reason); durable store is P1-008.
+
+## ACBP-P1-006 — Database row-level security layer (opened 2026-07-21)
+- **RLS enforcement model → CDR-013 (owner-accepted, Option A + A1).** FORCE RLS on the three account-owned
+  tables (accounts, account_profiles, memberships); global users/receipts excluded. Normal app traffic runs
+  as a **restricted role** (`acbp_app`: NOSUPERUSER/NOBYPASSRLS/non-owner) subject to RLS; the migration/owner
+  role (BYPASSRLS in prod, superuser in CI) owns tables+functions and runs migrations only. Exactly **three**
+  narrow SECURITY DEFINER bootstrap functions form a closed allowlist — `acbp_provision_account`,
+  `acbp_resolve_own_membership`, `acbp_accept_invite` — each fixed-search_path, schema-qualified, no dynamic
+  SQL, EXECUTE revoked from PUBLIC + granted only to `acbp_app`, bypassing RLS only for its exact atomic
+  transition. **A1** (owner-approved): the accept bootstrap is required because the invitee is not yet an
+  active member and cannot obtain AccountScope pre-activation; it takes `(invite_token_hash, auth_user_id)`
+  and binds the email from **platform-authoritative** `users.primary_email` (active + verified), never a
+  caller parameter. **A token-bearing RLS policy/GUC was rejected** (owner); owner-role execution from normal
+  app code was rejected; ENABLE-only/latent was rejected. Fail-closed policies via TEXT comparison (no
+  uuid-cast exceptions). Company RLS deferred to P1-010. Source: owner decisions 2026-07-21 + ADR-007 +
+  DATA-ARCHITECTURE §2 + CDR-008/010/011/012.
