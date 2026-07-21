@@ -17,6 +17,13 @@ export default defineConfig({
     environment: 'node',
     globals: false,
     isolate: true,
+    // Run test FILES sequentially (one at a time). The real-PostgreSQL integration suites all target
+    // the SAME database (ACBP_TEST_DATABASE_URL) and each performs destructive setup — dropping every
+    // table in beforeAll and, in the migration suites, running migrate-down mid-test. Running those
+    // files concurrently lets one suite drop/rebuild tables another suite is mid-read on (flaky, timing-
+    // dependent). Serial files make the shared-database run deterministic on every core count; within a
+    // file tests still run in order. The suite is small, so the wall-clock cost is negligible.
+    fileParallelism: false,
     testTimeout: 10_000,
     hookTimeout: 10_000,
     // Deterministic timezone for all tests.
