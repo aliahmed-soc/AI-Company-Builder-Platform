@@ -62,8 +62,12 @@ _Read this first on resume, then continue automatically to "Next executable acti
    correct status). No Clerk role claim is consulted (identity resolution exposes only providerUserId + verified
    email). Test-only slice (no runtime change → `next build` unaffected; last green in Slice 3). 507 local pass /
    0 fail; static gate all EXIT 0.
-5. Adversarial/bypass suite (direct-use-case invocation, cross-account, TOCTOU) + audit/observability
-   verification + docs (authorization section) + independent security & architecture reviews.
+5. **IN PROGRESS.** Adversarial + docs + reviews. Added real-PG `member:read_invited_email` redaction test
+   (owner sees pending-invite emails; viewer redacted). Direct-use-case-invocation bypass is structurally
+   impossible (enforcement is inside the use case; cross-account + revocation-immediate already proven in
+   Slice 3). Authored `docs/architecture/AUTHORIZATION.md` (4-independent-controls model, matrix, enforcement
+   at core boundary, no request-supplied authority, freshness, audit, deferrals). Local green. — remaining:
+   independent SECURITY + ARCHITECTURE/scope reviews (subagents) on the full branch diff; then STOP at owner gate.
 
 ## Guards (must stay green every slice)
 - `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.
