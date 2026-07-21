@@ -137,4 +137,70 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
       withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_2', role: 'viewer' }), { idempotencyKey: 'idem-1' })),
     ).rejects.toThrow();
   });
+
+  // ── ACBP-P1-008 Slice 4: adversarial DDL/tamper + pooled-context isolation ────────────────────────────
+  test('tampering: the restricted role cannot ALTER, DROP, or DISABLE/UN-FORCE RLS on audit_events', async () => {
+    await expect(asApp({}, (k) => sql`alter table audit_events add column injected text`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`drop table audit_events`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`alter table audit_events disable row level security`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`alter table audit_events no force row level security`.execute(k))).rejects.toThrow();
+  });
+
+  test('tampering: the restricted role cannot DROP/ALTER the audit policies', async () => {
+    await expect(asApp({}, (k) => sql`drop policy audit_events_insert on audit_events`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`drop policy audit_events_select on audit_events`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`create policy evil_all on audit_events for all using (true) with check (true)`.execute(k))).rejects.toThrow();
+  });
+
+  test('escalation: the restricted role cannot grant itself UPDATE, nor SET ROLE / create a role', async () => {
+    // acbp_app is not the table owner and has no grant option → cannot GRANT.
+    await expect(asApp({}, (k) => sql`grant update on audit_events to acbp_app`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`grant all on audit_events to acbp_app`.execute(k))).rejects.toThrow();
+    // NOINHERIT + not a member of any role → cannot escalate via SET ROLE; NOCREATEROLE → cannot create one.
+    await expect(asApp({}, (k) => sql`create role acbp_evil`.execute(k))).rejects.toThrow();
+    // Even after the (failed) grant attempts, UPDATE remains denied.
+    await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_esc', role: 'viewer' })));
+    await expect(asApp({ 'app.current_account': ACCOUNT_A }, (k) => sql`update audit_events set outcome = 'blocked'`.execute(k))).rejects.toThrow();
+  });
+
+  test('pooled-context isolation: sequential accounts on the same pool do not leak audit visibility', async () => {
+    // Write as account A, then read as account B on the SAME app pool — B sees nothing (no GUC leak across txns).
+    await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_seq', role: 'viewer' })));
+    const bSees = await withAccountTransaction(app, { accountId: ACCOUNT_B, actorId: ACTOR_U }, (s) => s.db.selectFrom('audit_events').selectAll().execute());
+    expect(bSees).toHaveLength(0);
+    // And A still sees exactly its own row afterwards.
+    const aSees = await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => s.db.selectFrom('audit_events').selectAll().execute());
+    expect(aSees).toHaveLength(1);
+    expect(aSees[0]?.account_id).toBe(ACCOUNT_A);
+  });
+
+  test('pooled-context isolation: concurrent accounts each see only their own audit rows', async () => {
+    const [aRows, bRows] = await Promise.all([
+      withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, async (s) => {
+        await writeAuditEvent(s, membershipInvited({ membershipId: 'm_ca', role: 'viewer' }));
+        return s.db.selectFrom('audit_events').selectAll().execute();
+      }),
+      withAccountTransaction(app, { accountId: ACCOUNT_B, actorId: ACTOR_U }, async (s) => {
+        await writeAuditEvent(s, membershipRevoked({ membershipId: 'm_cb', role: 'owner' }));
+        return s.db.selectFrom('audit_events').selectAll().execute();
+      }),
+    ]);
+    expect(aRows.every((r) => r.account_id === ACCOUNT_A)).toBe(true);
+    expect(bRows.every((r) => r.account_id === ACCOUNT_B)).toBe(true);
+  });
+
+  test('catalog: audit_events is owned by a non-app role; acbp_app is NOCREATEROLE, NOINHERIT, member of no role', async () => {
+    const owner = await sql<{ tableowner: string }>`select tableowner from pg_tables where tablename = 'audit_events'`.execute(su.kysely);
+    expect(owner.rows[0]?.tableowner).not.toBe('acbp_app');
+    const attrs = await sql<{ rolcreaterole: boolean; rolinherit: boolean; rolcreatedb: boolean }>`select rolcreaterole, rolinherit, rolcreatedb from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
+    expect(attrs.rows[0]).toEqual({ rolcreaterole: false, rolinherit: false, rolcreatedb: false });
+    const memberships = await sql<{ n: number }>`select count(*)::int as n from pg_auth_members m join pg_roles r on r.oid = m.member where r.rolname = 'acbp_app'`.execute(su.kysely);
+    expect(memberships.rows[0]?.n).toBe(0); // acbp_app inherits no role's privileges
+    // No UPDATE/DELETE policy exists (append-only): only INSERT + SELECT.
+    const cmds = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = 'audit_events'`.execute(su.kysely);
+    expect(cmds.rows.map((r) => r.cmd).sort()).toEqual(['INSERT', 'SELECT']);
+    // Exactly three SECURITY DEFINER functions remain (P1-006 allowlist unchanged by P1-008).
+    const definers = await sql<{ n: number }>`select count(*)::int as n from pg_proc where prosecdef = true and proname like 'acbp_%'`.execute(su.kysely);
+    expect(definers.rows[0]?.n).toBe(3);
+  });
 });

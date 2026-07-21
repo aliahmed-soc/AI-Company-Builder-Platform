@@ -62,10 +62,14 @@ _Read this first on resume, then continue automatically to "Next executable acti
    row; audit-write failure rolls back the mutation (fail-closed, no invite/revoke, no audit); write-then-throw
    rolls BOTH back (atomicity); mutation-fail/last-owner/missing/no-op/cross-account write no success audit;
    concurrent revoke → exactly one audit. Full local suite 528 pass / 0 fail.
-4. Adversarial integrity (forge account/actor/event-id/timestamp/outcome/name; unregistered names; metadata
-   injection/limits; UPDATE/DELETE/TRUNCATE denied; direct-writer-without-scope; no owner connection) + catalog/
-   ACL audit + docs (audit README / AUDIT.md; logging-vs-audit distinction) + independent security & architecture
-   reviews.
+4. **IN PROGRESS (adversarial + docs done; reviews pending).** Adversarial suite extends `audit.integration.test.ts`:
+   ALTER/DROP/TRUNCATE/DISABLE-RLS denied; DROP/ALTER/permissive-ALL policy denied; self-GRANT/SET-ROLE/CREATE-ROLE
+   denied; pooled-context isolation (sequential + concurrent accounts don't cross-see); catalog (non-app owner,
+   acbp_app NOCREATEROLE/NOINHERIT/member-of-no-role, exactly 2 policies INSERT+SELECT, exactly 3 SECURITY DEFINER
+   fns). Docs: `docs/architecture/AUDIT.md` (logging-vs-audit, data model, write path, implemented/deferred,
+   supply-chain note), EVENT-CATALOG implementation-status note, TENANCY/AUTHORIZATION P1-008 pointers. Static gate
+   + boundary tests EXIT 0; full local suite 528 pass / 0 fail. — remaining: independent reviews (audit-integrity,
+   RLS/ACL/append-only, tx-atomicity, producer/completeness, architecture/scope, sharp-override) + apply fixes.
 
 ## Guards (must stay green every slice)
 - `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.

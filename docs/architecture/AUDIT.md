@@ -1,0 +1,108 @@
+# Audit event foundation (ACBP-P1-008)
+
+Status: implemented for the **account-scoped** first cut (CDR-014 Option A). This is the "audit README" for the
+ticket. Governing: ADR-015; EVENT-CATALOG.md (envelope); TECHNICAL-ARCHITECTURE-v1.md invariant 11 (audit
+immutability); FAILURE-AND-RECOVERY.md row 14 (fail-closed); ENGINEERING-STANDARDS §Transaction/Audit; CDR-009
+(retention); CDR-014 (scope decision).
+
+## Logging vs. durable audit — two separate systems
+
+| | Operational logging (`@acbp/observability`) | Durable audit (`audit_events`) |
+|---|---|---|
+| Purpose | human/operations visibility, telemetry | non-repudiable evidence for high-risk operations |
+| Delivery | best-effort, stdout/structured, may be sampled | mandatory, append-only DB row |
+| Durability | ephemeral | permanent (retention ≥ product data; 7-yr class, CDR-009) |
+| On failure | never blocks the business operation | **rolls back the operation (fail closed)** |
+| Transaction | none | **same transaction as the mutation it records** |
+
+The two are NOT the same system and are not merged: the Logger is never redirected into `audit_events`, and a
+durable audit row is never treated as a log line. For the two migrated operations both are emitted — the
+`logger.info` for operations, and the durable `audit_events` row as the authoritative record.
+
+## Data model — `audit_events` (migration 0007)
+
+One **append-only, account-scoped** table (CDR-014 Option A). Columns (EVENT-CATALOG envelope):
+
+| Column | Notes |
+|---|---|
+| `event_id` (text PK) | server-generated **ULID** (time-sortable; NOT a causal-ordering guarantee) |
+| `name` | dot-namespaced, past-tense; validated against the closed `@acbp/contracts` registry |
+| `schema_version` (int) | per event name |
+| `account_id` (uuid, NOT NULL) | tenant stamp; **no FK** (a redacted trace can survive account deletion) |
+| `actor_type` | `user` \| `worker` \| `system` \| `admin` (CHECK) |
+| `actor_id` (uuid, null) | null for system/provider actors |
+| `subject_type` / `subject_id` | bounded reference to the resource the event is about |
+| `outcome` | `success` \| `denied` \| `blocked` (CHECK) |
+| `correlation_id` / `causation_id` | request/job correlation |
+| `idempotency_key` (unique when present) | producer dedupe |
+| `payload` (jsonb) | bounded metadata — references/digests only, **no secrets/tokens/PII** |
+| `occurred_at` (timestamptz) | immutable server clock (default now()) |
+
+### Immutability (invariant 11) and RLS
+
+`ENABLE` + `FORCE ROW LEVEL SECURITY`, keyed to the per-transaction `app.current_account` GUC (fail-closed text
+comparison). The restricted `acbp_app` role is granted **INSERT + SELECT only** — there is **no UPDATE/DELETE
+grant and no UPDATE/DELETE policy**, and it cannot ALTER/DROP/TRUNCATE the table, drop/alter its policies,
+disable/un-force RLS, grant itself privileges, `SET ROLE`, or create a role (all proven in
+`audit.integration.test.ts`). Immutability is thus enforced by **persistence constraint**, not a runtime guard.
+The migration/owner role owns the table; the migration grants BYPASSRLS to no one and adds **no** SECURITY
+DEFINER function (the P1-006 allowlist stays exactly three).
+
+## Write path — same-transaction, fail-closed, unforgeable
+
+`writeAuditEvent(scope, event, ctx)` (`@acbp/database`) is the only write path. It runs on the caller's
+`AccountScope` **inside `withAccountTransaction`**, i.e. in the same transaction as the business mutation. It
+binds `account_id`, `actor_id`, `event_id`, and `occurred_at` **server-side from the validated scope and the
+server clock** — a caller cannot supply them (they are not parameters), so an audit row's account, actor,
+identity, and time cannot be forged through the API. The caller supplies only a typed `AuditEvent` built by a
+registered factory (`membershipInvited` / `membershipRevoked`) — there are no free-form event objects, and an
+unregistered name cannot be constructed. A write failure throws, rolling the whole transaction back so the
+business mutation is undone and the action is blocked.
+
+## Implemented in P1-008 (durable, in-transaction)
+
+- `membership.invited` — on a successful invite (owner-gated lifecycle transition).
+- `membership.revoked` — on a successful revocation only (a conditional `WHERE status='active'` transition;
+  `RevokeResult.changed` gates the write so an idempotent no-op / last-owner denial / missing or cross-account
+  target / rolled-back mutation / racing revoke produces **no** success audit).
+
+### Completeness
+
+`@acbp/core` `audit/audit-operations.ts` holds `AUDITED_OPERATIONS` (approved operation → event) with a
+compile-time-**exhaustive** `factoryFor`, so a new approved high-risk operation cannot be registered without a
+factory, and a unit test asserts every registered contract event is produced by an operation (no orphan). The
+real-PostgreSQL producer tests then prove each operation actually writes its event in-transaction, so a use case
+that loses its durable write fails CI. This is structural — not a source-grep.
+
+## Explicitly deferred (still interim structured logs — NOT durable)
+
+Recorded here and in CDR-014; these names are deliberately **not** in the audit registry, so nothing claims
+them durable:
+
+- **Denials:** `authz.denied`, `tenant.context_denied` — a denial has no business transaction to bundle with;
+  whether denial audits persist independently of rollback is a later decision.
+- **Pre-context bootstrap:** `account.created`, `membership.accepted` — run outside `withAccountTransaction`
+  (SECURITY DEFINER bootstraps); co-writing durably is a later decision (never a 4th SECURITY DEFINER function).
+- **Lower-risk:** `account.profile_updated` — ADR-015 routes it through the transactional **outbox**, not built
+  here.
+- **Global events:** `webhook.*`, `reconcile.*` — no tenant predicate under FORCE RLS; a global-audit isolation
+  model is a later decision.
+- **Company-scoped audit:** P1-010 (needs `app.current_company`, never set until then).
+
+## Out of P1-008 scope (later tickets)
+
+Transactional **outbox** + **activity feed** (P1-009+); audit **read/export/admin API** (separate
+API-CONTRACTS contract); **retention/purge** enforcement worker (CDR-009 / later); customer-visible history.
+
+## Recovery / operations
+
+An audit-write failure on a high-risk op fails the action closed (the user sees a safe error; no partial state).
+Audit-write failure is a page-level operational alert (OBSERVABILITY §2). No mutation of audit rows is possible
+through product paths; retention/redaction on account deletion is a controlled non-product path (later).
+
+## Supply-chain note (not a P1-008 feature)
+
+A cross-cutting remediation landed on this branch because it blocked the repo-wide `pnpm audit --audit-level
+high` gate: a `pnpm-workspace.yaml` override forcing transitive `sharp` to `>=0.35.0` (GHSA-f88m-g3jw-g9cj). It
+is a separate commit; `sharp` is an **unused optional** transitive dependency of Next.js (apps/web does not use
+`next/image`); `next build` compatibility was verified locally. This is not an audit feature.
