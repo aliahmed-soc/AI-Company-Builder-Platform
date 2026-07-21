@@ -10,9 +10,18 @@
 import { ClerkIdentityWebhookVerifier, ClerkAuthoritativeIdentityReader } from '@acbp/adapters';
 import { createDatabase, closeDatabase, type DatabaseClient, type ProviderIdentityKey } from '@acbp/database';
 import type { ClerkConfig, ClerkWebhookConfig, DatabaseConfig } from '@acbp/config';
+import type { Logger } from '@acbp/observability';
 import { createIdentityWebhookService, type IdentityWebhookService } from '../identity/webhook-service.js';
 import { resolveOrReconcileInternalUser, type InternalUserReconciliation, type ReconcileOptions } from '../identity/read-through.js';
 import { reconcileAllUsers, type ReconciliationSummary, type ReconcileOptions as ReconcileAllOptions } from '../identity/reconciliation.js';
+import { provisionPersonalAccount, type ProvisionResult } from '../accounts/provisioning.js';
+import { getProfileForOwner, updateProfileForOwner, type AccountProfileView, type ProfileUpdateInput } from '../accounts/profile.js';
+
+/** Options for account operations: an optional correlation id and audit/structured logger. */
+export interface AccountOpOptions {
+  readonly correlationId?: string;
+  readonly logger?: Logger;
+}
 
 export interface ClerkIdentityRuntimeConfig {
   readonly databaseConfig: DatabaseConfig;
@@ -41,6 +50,15 @@ export interface ClerkIdentityRuntime {
   resolveInternalUser(providerUserId: string, options?: ReconcileOptions): Promise<InternalUserReconciliation>;
   /** Nightly drift reconciliation over all active mappings (forward-drift repair; non-destructive). */
   reconcile(options?: ReconcileAllOptions): Promise<ReconciliationSummary>;
+  /**
+   * Idempotently ensure the personal account (+ profile) for a SERVER-VERIFIED internal user id
+   * (ACBP-P1-003). Safe to call on every authenticated request; creates on the first only.
+   */
+  ensurePersonalAccount(userId: string, options?: AccountOpOptions): Promise<ProvisionResult>;
+  /** Read the owner's profile view (email read-only), or undefined when the user has no account. */
+  getAccountProfile(userId: string): Promise<AccountProfileView | undefined>;
+  /** Apply a profile edit for the owner and return the resulting view (undefined when no account). */
+  updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -60,6 +78,15 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     reconcile(options) {
       return reconcileAllUsers(client, reader, options);
+    },
+    ensurePersonalAccount(userId, options) {
+      return provisionPersonalAccount(client, userId, options ?? {});
+    },
+    getAccountProfile(userId) {
+      return getProfileForOwner(client, userId);
+    },
+    updateAccountProfile(userId, input, options) {
+      return updateProfileForOwner(client, userId, input, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

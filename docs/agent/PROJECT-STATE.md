@@ -39,8 +39,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
    (`account.created`, `account.profile_updated`) + unit tests (fakes) + real-PG integration —
    **done, local gate green** (455/0/0). Pending: push + hosted CI. (Slices 4+6 from the original plan
    folded in: audit events emitted inside the use-cases.)
-4. Web profile API/route (GET/PATCH) + first-sign-in provisioning wiring + tests.
-5. Backlog sync (owner-gated).
+4. Web profile API route `GET/PATCH /api/account/profile` + first-sign-in provisioning wiring (runtime
+   `ensurePersonalAccount`/`getAccountProfile`/`updateAccountProfile`) + bounded-body/HTTP mapping +
+   unit tests — **done, local gate green** (478/0/0; `next build` OK, route bundles as `ƒ`; boundaries
+   0). Pending: push + hosted CI.
+5. Backlog sync (owner-gated) — **STOP; do not self-authorize backlog→Done / PR ready / merge.**
 
 ## Test baselines
 - Inherited from merged P1-002 main: hosted CI green at merge (`d1069f8`). New P1-003 suites TBD.
