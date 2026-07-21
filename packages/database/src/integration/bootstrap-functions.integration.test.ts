@@ -187,7 +187,9 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(names).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     for (const f of fns.rows) {
       expect(f.prosecdef).toBe(true);
-      expect((f.proconfig ?? []).some((c) => c.toLowerCase() === 'search_path=pg_catalog')).toBe(true);
+      // pg_catalog FIRST (so no pg_temp object can shadow a built-in); pg_temp pinned last, no writable schema.
+      const sp = (f.proconfig ?? []).find((c) => c.toLowerCase().startsWith('search_path='));
+      expect(sp?.replace(/\s/g, '').toLowerCase()).toBe('search_path=pg_catalog,pg_temp');
       expect(f.owner).not.toBe('acbp_app');
     }
   });

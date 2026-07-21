@@ -119,7 +119,13 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     expect(fns.rows.map((x) => x.proname)).toEqual([...BOOTSTRAP_FNS]);
     for (const f of fns.rows) {
       expect(f.prosecdef).toBe(true);
-      expect((f.proconfig ?? []).some((c) => c.toLowerCase() === 'search_path=pg_catalog')).toBe(true);
+      const sp = (f.proconfig ?? []).find((c) => c.toLowerCase().startsWith('search_path='));
+      expect(sp?.replace(/\s/g, '').toLowerCase()).toBe('search_path=pg_catalog,pg_temp'); // pg_temp pinned last
+    }
+    // pg_temp must never be FIRST (the shadowing guard); assert none is bare 'search_path=pg_temp...'.
+    for (const f of fns.rows) {
+      const sp = (f.proconfig ?? []).find((c) => c.toLowerCase().startsWith('search_path='));
+      expect(sp?.replace(/\s/g, '').toLowerCase().startsWith('search_path=pg_temp')).toBe(false);
     }
     const grants = await sql<{ routine_name: string; grantee: string }>`select routine_name, grantee from information_schema.routine_privileges where routine_schema = 'public' and routine_name like 'acbp\\_%'`.execute(admin.kysely);
     const grantees = new Set(grants.rows.map((x) => x.grantee));

@@ -3,8 +3,10 @@
 // These are the ONLY controlled crossings of the RLS boundary. Each runs as its owner (the migration/owner
 // role, which carries BYPASSRLS in production / is the superuser in CI), so it bypasses RLS for its ONE
 // exact atomic transition; the restricted `acbp_app` role can only invoke them via EXECUTE (revoked from
-// PUBLIC). Each has a fixed safe `search_path = pg_catalog` (no caller-writable application schema),
-// schema-qualifies every application object, uses no dynamic SQL, and returns the minimum fields. No token
+// PUBLIC). Each has a fixed safe `search_path = pg_catalog, pg_temp` — pg_catalog FIRST so no caller-created
+// pg_temp object can shadow a built-in, and pg_temp pinned LAST rather than implicitly first (the standard
+// SECURITY DEFINER trojan-horse guard) — schema-qualifies every application object AND every built-in call
+// (pg_catalog.now/lower/btrim), uses no dynamic SQL, and returns the minimum fields. No token
 // hash, invited email, or other sensitive data is ever returned. No fourth bootstrap function may be added
 // without another explicit owner decision.
 import { sql } from 'kysely';
@@ -21,7 +23,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     returns table (o_account_id uuid, o_created boolean)
     language plpgsql
     security definer
-    set search_path = pg_catalog
+    set search_path = pg_catalog, pg_temp
     as $fn$
     declare
       v_account_id uuid;
@@ -43,7 +45,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         on conflict (account_id) do nothing;
 
       insert into public.memberships (account_id, member_user_id, role, status, accepted_at)
-        values (v_account_id, p_user_id, 'owner', 'active', now())
+        values (v_account_id, p_user_id, 'owner', 'active', pg_catalog.now())
         on conflict (account_id, member_user_id) where status = 'active' do nothing;
 
       return query select v_account_id, v_created;
@@ -59,7 +61,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     returns text
     language plpgsql
     security definer
-    set search_path = pg_catalog
+    set search_path = pg_catalog, pg_temp
     stable
     as $fn$
     declare
@@ -86,7 +88,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     returns table (o_membership_id uuid, o_account_id uuid, o_role text)
     language plpgsql
     security definer
-    set search_path = pg_catalog
+    set search_path = pg_catalog, pg_temp
     as $fn$
     declare
       v_email text;
@@ -107,12 +109,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
          set status = 'active',
              member_user_id = p_user_id,
              invite_token_hash = null,
-             accepted_at = now(),
-             updated_at = now()
+             accepted_at = pg_catalog.now(),
+             updated_at = pg_catalog.now()
        where m.invite_token_hash = p_invite_token_hash
          and m.status = 'invited'
          and m.member_user_id is null
-         and lower(btrim(m.invited_email)) = lower(btrim(v_email))
+         and pg_catalog.lower(pg_catalog.btrim(m.invited_email)) = pg_catalog.lower(pg_catalog.btrim(v_email))
          -- never create a second active membership for the same (account, user)
          and not exists (
            select 1 from public.memberships m2
