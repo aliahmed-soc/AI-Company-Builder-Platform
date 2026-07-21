@@ -132,9 +132,10 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     const unv = await seedUser(su, 'unv@example.com', { verified: false });
     expect(await acceptInviteBootstrap(app.kysely, hUnverified, unv)).toBeNull();
 
-    // Deleted/tombstoned user.
+    // Deleted/tombstoned user — a real deleted user has its email redacted to NULL (CDR-008), so the
+    // function's active+verified-email requirement denies it.
     const hDeleted = await seedInvite(su, accountId, 'del@example.com');
-    const del = await seedUser(su, 'del@example.com', { verified: true, status: 'deleted' });
+    const del = await seedUser(su, null, { verified: false, status: 'deleted' });
     expect(await acceptInviteBootstrap(app.kysely, hDeleted, del)).toBeNull();
 
     // Single-use: a consumed invite cannot be re-accepted.
