@@ -38,9 +38,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
    `AUTHZ_ACTIONS`, `isAuthzAction`, `AuthzDecision`/`AuthzDenialReason`, pure deny-by-default `authorize()`
    matrix, `authorizationDeniedEnvelope()` (opaque authz/403). 20 exhaustive matrix + deny-by-default unit
    tests green; static gate (typecheck/lint/secrets/encoding/boundaries) all EXIT 0. + agent state + draft PR.
-2. Core `authz` module (`@acbp/core`): role-authoritative `checkAuthorization` that loads the caller's ACTIVE
-   membership role and calls `authorize`, emitting an interim `authz.denied` audit event (warn; non-PII
-   `{action, reason, accountId, actorId}`, mirroring `tenant.context_denied`) on deny. Exhaustive unit tests.
+2. **DONE (local-green; Slice 1 CI 29863395097 success).** Core `authz` module (`@acbp/core` `authz/authz-service.ts`):
+   `checkAuthorization(role, action, {accountId, actorId}, {logger})` wraps the pure `authorize` matrix and
+   emits an interim `authz.denied` audit event (warn; non-PII `{action, reason, accountId, actorId}`, mirroring
+   `tenant.context_denied`) on deny; allows are silent. `isAuthorized` boolean helper. 8 unit tests; static gate
+   all EXIT 0. Role is caller-supplied (server-resolved) — the module loads no data / mints no scope.
 3. Integrate authz.check into the core use cases (invite/revoke/list/profile) — replace inline `isOwner`/
    `isMember` with the central matrix; role loaded from active membership under the caller's scope (no cache).
    Real-PG integration: immediate revoke + role-change reflected on next decision.
@@ -75,6 +77,8 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads.
 
 ## Next executable action
-Continue **Slice 2** (core `authz` module: role-authoritative check + `authz.denied` audit + unit tests) under
-TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate
+Continue **Slice 3** (integrate `checkAuthorization` into the core use cases — replace inline `isOwner`/
+`isMember` in `membership-service.ts` [invite/revoke/list + the read_invited_email redaction] and `profile.ts`;
+role loaded from the ACTIVE membership under the caller's scope, no cache; real-PG immediate revoke/role-change
+tests). Commit + push each green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate
 (all slices hosted-green + independently reviewed) or a new genuine owner decision.
