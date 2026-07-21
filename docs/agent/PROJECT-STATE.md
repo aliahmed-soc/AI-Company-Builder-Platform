@@ -7,8 +7,10 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-006-database-rls` (from `main` @ `858407a`).
 - PR: **draft, open, unmerged**, base `main`.
 - Base main: `858407ad80f3be93dee365ae975e6d471c8f826a` (P1-005 squash-merge; main CI green run 29839939135).
-- **STATUS: in progress under explicit owner authorization (Option A + A1) to implement to the finalization gate.**
-  Do NOT mark Done / mark PR ready / merge / delete branch / begin P1-007 without separate owner auth.
+- **STATUS: all 5 slices complete + hosted-green (last code commit `cb9f848`, CI 29857890338). Independent
+  security/architecture reviews in progress → resolve then STOP AT OWNER GATE.** Awaiting owner authorization
+  for: (1) backlog ACBP-P1-006 → Done, (2) PR #7 ready-for-review, (3) squash-merge. Do NOT self-authorize /
+  merge / delete branch / begin P1-007.
 
 ## Prior tickets (closed)
 - **ACBP-P1-001..P1-005 — DONE & MERGED.** P1-005 squash `858407a` (PR #6). Main CI green.

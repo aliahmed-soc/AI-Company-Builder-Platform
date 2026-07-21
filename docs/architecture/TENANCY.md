@@ -45,12 +45,74 @@ Denials emit an interim structured `tenant.context_denied` event with **non-PII*
 actor id, coarse reason) — never an email, token, or raw Clerk identifier. The durable append-only audit
 store is ACBP-P1-008.
 
-## What P1-005 does NOT do (later tickets)
+# Row-level security — the second isolation layer (ACBP-P1-006; CDR-013)
 
-- **P1-006** adds row-level security policies keyed to `app.current_account` (and later `app.current_company`)
-  — the second, independent isolation layer. Company-owned RLS fails closed when `app.current_company` is
-  absent, which is exactly why account scope never sets it.
+P1-006 adds the **database-enforced** half of ADR-007's two-layer model: even if the application layer forgot
+to filter by account, RLS blocks a cross-tenant query. Proven with the restricted role and app filters removed
+(`packages/database/src/integration/rls*.integration.test.ts`, `rls-adversarial.integration.test.ts`).
+
+## Database role model (two connections)
+
+| | Migration/owner role | Restricted application role `acbp_app` |
+|---|---|---|
+| Connection var | `DATABASE_URL` (owner) | `DATABASE_APP_URL` (app) |
+| Loader | `loadDatabaseConfig()` / `parseDatabaseConfig(env,{role:'owner'})` | `loadAppDatabaseConfig()` / `{role:'app'}` |
+| Used by | migrations + explicit admin setup ONLY | ALL normal runtime traffic (web composition) |
+| Attributes | owns tables + functions; **BYPASSRLS in production** (superuser in CI) so its SECURITY DEFINER functions can perform their atomic bootstrap | `NOLOGIN`(created by migration)→login granted out-of-band; `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT`; non-owner; not a member of the owner role |
+
+The app-role selection is **fail-closed**: an `app` config missing `DATABASE_APP_URL` throws (no fallback to the
+owner URL), so a misconfigured production runtime cannot silently connect as the owner. Both URLs are
+`Secret`-wrapped and redacted from logs/errors. The migration grants `BYPASSRLS` to **no** role.
+
+## FORCE RLS + policy matrix
+
+`accounts`, `account_profiles`, `memberships` all have `ENABLE` **and** `FORCE ROW LEVEL SECURITY`. Policies
+compare on **text** (`id::text = nullif(current_setting('app.current_account', true), '')`) so missing / empty /
+malformed context yields no rows / a failed `WITH CHECK`, with no uuid-cast exception (fail-closed).
+
+| Table | SELECT | INSERT | UPDATE | DELETE |
+|---|---|---|---|---|
+| `accounts` | `id = current_account` | — (bootstrap only) | `id = current_account` (USING+CHECK; id/ownership immutable) | — (unsupported) |
+| `account_profiles` | `account_id = current_account` | — (bootstrap only) | `account_id = current_account` (USING+CHECK; no account move) | — (unsupported) |
+| `memberships` | `account_id = current_account` **OR** `member_user_id = current_actor` (self) | `account_id = current_account` | `account_id = current_account` (USING+CHECK; no account move) | — (unsupported) |
+
+`acbp_app` is granted only `SELECT,UPDATE` on the account/profile tables and `SELECT,INSERT,UPDATE` on
+memberships (plus CRUD on the global `users`/`identity_webhook_receipts`, which carry no RLS). No `DELETE`
+grant on any protected table.
+
+## The three-function bootstrap allowlist (the only pre-context exceptions)
+
+Some operations must run **before** an `AccountScope` can exist. Exactly three narrow `SECURITY DEFINER`
+functions (owner-owned, fixed `search_path=pg_catalog`, fully schema-qualified, no dynamic SQL, `EXECUTE`
+revoked from PUBLIC + granted only to `acbp_app`, minimal return) cross the RLS boundary — **no fourth may be
+added without another owner decision**:
+
+1. `acbp_provision_account(user_id)` — first-sign-in personal account + profile + owner membership (idempotent;
+   owner/role fixed; cannot claim another user's account).
+2. `acbp_resolve_own_membership(user_id, account_id)` — returns only the caller's own active membership role in
+   the explicitly requested account (never enumerates members; honours immediate revocation).
+3. `acbp_accept_invite(invite_token_hash, user_id)` — one atomic `invited→active` transition, binding the email
+   from **platform-authoritative** `users.primary_email` (active + verified) — never a caller parameter;
+   at-most-one activation under concurrency; no token/email in the result.
+
+## Normal request flow
+
+Server-verified internal user → active-membership `AccountContext` resolution (via `acbp_resolve_own_membership`)
+→ `runInAccountScope`/`withAccountTransaction` sets `app.current_account` + `app.current_actor` with `SET LOCAL`
+(never `app.current_company`) → account-owned repositories run under the restricted role, RLS-confined. A
+requested account id is never authority on its own; no header/cookie/body/Clerk claim is tenant authority.
+
+## Local development / testing
+
+Integration suites seed via a superuser/owner connection and run the actual application operations via an
+`acbp_app` connection (see `packages/core/src/tenancy/rls-integration-support.ts`), so RLS is exercised
+end-to-end. The test login is a synthetic throwaway; no real credentials appear anywhere. Local Windows→WSL
+Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is the authoritative gate.
+
+## Still deferred (later tickets)
+
 - **P1-007** generalizes authorization into `authz.check`.
-- **P1-008** adds the durable audit store.
-- **P1-010** provides real company resolution and the company-level `TenantContext`, and may attach the
-  `memberships.company_id` FK. `companyId` on `TenantContext` is **not** made optional by P1-005.
+- **P1-008** adds the durable append-only audit store (the interim `tenant.context_denied` event is a structured log).
+- **P1-010** provides real company resolution + the company-level `TenantContext` and account-level company RLS;
+  `app.current_company` is intentionally never set today, so company-owned RLS will fail closed until then.
+  `companyId` on `TenantContext` remains required (not made optional).
