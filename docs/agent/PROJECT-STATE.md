@@ -4,7 +4,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
 
 ## Active
 - Ticket: **ACBP-P1-004** — Membership and roles (owner+viewer) (status: **Planned**; owner-gated to Done).
-- Branch: `p1-004-membership-and-roles` (from `main` @ `ee2dc6a`). HEAD `a8d2430`.
+- Branch: `p1-004-membership-and-roles` (from `main` @ `ee2dc6a`). HEAD `9bfd1ee`.
 - PR: **#5 (DRAFT, open, unmerged)**, base `main` — all code slices committed + hosted-green.
 - Base main: `ee2dc6adcc2ee057a8b9240caa2cd675d95d7a8f`.
 - **STATUS: all code slices complete + hosted-green; independent review PASS. STOPPED AT OWNER GATE.**
@@ -74,7 +74,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
   authz middleware (P1-007), durable audit store (P1-008), or companies (P1-010) early.
 
 ## Current HEAD
-`a8d2430` on `p1-004-membership-and-roles`. Draft PR #5. Working tree clean. Hosted CI green on every
+`9bfd1ee` on `p1-004-membership-and-roles`. Draft PR #5. Working tree clean. Hosted CI green on every
 pushed slice; local full suite 551/0/0 with real PostgreSQL. Independent security/scope review PASS.
 
 ## Next executable action
