@@ -57,13 +57,13 @@ describe.skipIf(!hasTestDatabase)('nightly reconciliation (real PostgreSQL)', ()
 
   beforeAll(async () => {
     client = createTestDatabase();
-    for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+    for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     const r = await migrateToLatest(client);
     expect(r.error).toBeUndefined();
   });
   afterAll(async () => {
     if (client) {
-      for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(client);
     }
   });

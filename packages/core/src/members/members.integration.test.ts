@@ -28,7 +28,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
 
   beforeAll(async () => {
     seed = createSeedClient();
-    for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(seed);
@@ -40,7 +40,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     if (app) await closeDatabase(app);
     if (seed) {
       await disableAppLogin(seed);
-      for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(seed);
     }
   });
