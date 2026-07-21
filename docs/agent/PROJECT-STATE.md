@@ -43,10 +43,15 @@ _Read this first on resume, then continue automatically to "Next executable acti
    null/bigint/symbol/non-finite/over-long/too-many/over-large; key-name-only errors); typed factories
    `membershipInvited`/`membershipRevoked` (no free-form events). 17 unit tests; static gate all EXIT 0.
    + CDR-014 + agent state + draft PR.
-2. Migration 0007: `audit_events` table + FORCE RLS + insert/select policies + minimal grants (INSERT/SELECT,
-   no UPDATE/DELETE) + append-only; the `AuditWriter` repository (@acbp/database) taking `AccountScope`; real-PG
-   tests (append-only: UPDATE/DELETE/TRUNCATE denied; cross-account isolation; fail-closed GUC; forged-account
-   WITH CHECK; catalog/ACL).
+2. **DONE (local-green; Slice 1 CI 29872934993 success).** Migration `0007_audit_events` (append-only table,
+   ULID text PK, jsonb payload, check constraints on actor_type/outcome/schema_version, account+time index,
+   partial-unique idempotency_key; ENABLE+FORCE RLS; INSERT+SELECT policies keyed to app.current_account
+   fail-closed; grant INSERT+SELECT only to acbp_app — no UPDATE/DELETE/TRUNCATE; adds no SECURITY DEFINER fn,
+   no BYPASSRLS, no FK on account_id). `AuditEventsTable` schema type (Updateable=never per column). `writeAuditEvent`
+   (`audit-repository.ts`) appends under the caller's AccountScope in-tx; account/actor bound server-side, event_id
+   server ULID, occurred_at DB clock. Real-PG suite `audit.integration.test.ts` (write+server-bound fields+cross-
+   account isolation; UPDATE/DELETE/TRUNCATE denied; fail-closed no-GUC; forged-account WITH CHECK; catalog/ACL
+   INSERT+SELECT-only+FORCE-RLS+2-policies+no-BYPASSRLS; idempotency-key unique). Static gate + boundary tests EXIT 0.
 3. In-tx integration: wire the writer into `membership.invited`/`membership.revoked` inside `runInAccountScope`;
    real-PG tests (atomic success; forced audit-write failure rolls back the membership mutation → action blocked;
    idempotency; concurrency; no pooled-context leak); completeness check.
@@ -80,7 +85,9 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
 ## Next executable action
-Continue **Slice 2** (migration 0007 `audit_events` + FORCE RLS + append-only grants/policies + `AuditWriter`
-repository + real-PG immutability/RLS/catalog tests) under TDD. Commit + push each green slice; verify hosted CI
-on the exact pushed commit. Stop only at the owner gate (all slices hosted-green + independently reviewed) or a
-new genuine owner decision.
+Continue **Slice 3** (wire `writeAuditEvent` into `membership.invited`/`membership.revoked` inside
+`runInAccountScope`, in-tx with the mutation; real-PG tests: atomic success writes one row; a forced audit-write
+failure rolls back the membership mutation → action blocked; idempotency/concurrency; no pooled-context leak;
+completeness check that each high-risk op writes exactly one audit row). Keep the existing operational
+`logger.info` (separate system). Add `audit_events` to integration-suite cleanup drop-lists. Commit + push each
+green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate or a new owner decision.
