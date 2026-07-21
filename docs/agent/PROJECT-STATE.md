@@ -48,8 +48,17 @@ _Read this first on resume, then continue automatically to "Next executable acti
    accept→acbp_accept_invite. Accept dropped the caller `acceptingVerifiedEmail` across contracts/core/web/
    tests (email bound from users.primary_email in the fn); denials collapse to safe `invalid_or_used`.
    Removed acceptInviteWithStore + its store methods (covered by the real-PG bootstrap suite).
-4. Route remaining account-owned ops through restricted scoped transactions + profile/membership regressions
-   + pooling/commit/rollback/concurrency.
+4. Two-connection model + route remaining ops through restricted scoped transactions.
+   - **Config foundation DONE** (`385122d`; CI 29854667225 GREEN): `parseDatabaseConfig(env, {role})` selects
+     DATABASE_URL (owner) vs DATABASE_APP_URL (app), fail-closed, no fallback; `DatabaseConfig.role`;
+     `loadAppDatabaseConfig()`; DATABASE_APP_URL redacted; 7 tests (role/no-swap/fail-closed/redaction).
+   - **REMAINING:** (a) switch the web runtime composition (clerk-runtime.ts) to `loadAppDatabaseConfig()` so
+     runtime traffic runs as acbp_app; migrations keep `loadDatabaseConfig()` (owner). (b) Route profile.ts
+     getProfileForOwner/updateProfileForOwner and membership-service.ts inviteMember/revokeMember/listMembers
+     through `runInAccountScope` (pass scope.db to the repos/store; the caller's personal accountId comes from
+     provisioning which is idempotent). (c) Rewire the core integration suites (accounts/members/resolver) to
+     run app OPS as an acbp_app client while seeding via superuser (pattern in rls.integration). (d) Regression
+     + pooling/commit/rollback/concurrency; `next build`.
 5. Catalog inspection + adversarial bypass + migration up/down + docs + independent security & architecture reviews.
 
 ## Implementation notes (for continuation)
