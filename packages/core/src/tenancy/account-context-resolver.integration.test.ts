@@ -62,7 +62,7 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL) â€
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'viewer@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const viewerId = await seedUser(client, 'viewer@example.com');
-    await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId, acceptingVerifiedEmail: 'viewer@example.com' });
+    await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId });
 
     const r = await resolveAccountContext(client, { userId: viewerId, requestedAccountId: accountId });
     expect(isResolvedAccountContext(r) && r.context.actorId).toBe(viewerId);
@@ -96,7 +96,7 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL) â€
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'temp@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const viewerId = await seedUser(client, 'temp@example.com');
-    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId, acceptingVerifiedEmail: 'temp@example.com' });
+    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId });
     if (accepted.status !== 'ok') throw new Error('setup accept failed');
 
     // Active before revocation.

@@ -7,7 +7,6 @@ export {
   revokeMember,
   listMembers,
   inviteMemberWithStore,
-  acceptInviteWithStore,
   revokeMemberWithStore,
   listMembersWithStore,
   type MemberView,

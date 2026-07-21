@@ -65,7 +65,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL)', () =
     if (invite.status !== 'ok') return;
 
     const joinerId = await seedUser(client, 'joiner@example.com');
-    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: joinerId, acceptingVerifiedEmail: 'joiner@example.com' });
+    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: joinerId });
     expect(accepted).toMatchObject({ status: 'ok', accountId, role: 'viewer' });
 
     const list = await listMembers(client, { accountId, actingUserId: ownerId });
@@ -76,7 +76,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL)', () =
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'viewer@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const viewerId = await seedUser(client, 'viewer@example.com');
-    await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId, acceptingVerifiedEmail: 'viewer@example.com' });
+    await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId });
 
     expect((await inviteMember(client, { accountId, actingUserId: viewerId, invitedEmail: 'x@example.com', role: 'viewer' })).status).toBe('forbidden');
     const ownerMembership = (await listMembers(client, { accountId, actingUserId: viewerId }));
@@ -94,22 +94,23 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL)', () =
     expect((await revokeMember(client, { accountId, actingUserId: outsiderId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('forbidden');
   });
 
-  test('invite is email-bound: a mismatched verified email is rejected', async () => {
+  test('invite is email-bound: a user whose authoritative email differs is denied (no email param)', async () => {
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'intended@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const attackerId = await seedUser(client, 'attacker@example.com');
-    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: attackerId, acceptingVerifiedEmail: 'attacker@example.com' })).status).toBe('email_mismatch');
+    // The accept function binds the email from users.primary_email; a mismatch denies (collapsed, no oracle).
+    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: attackerId })).status).toBe('invalid_or_used');
   });
 
   test('invite token is single-use', async () => {
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'once@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const joinerId = await seedUser(client, 'once@example.com');
-    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: joinerId, acceptingVerifiedEmail: 'once@example.com' })).status).toBe('ok');
+    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: joinerId })).status).toBe('ok');
     // Reusing the now-consumed token fails.
     const joiner2 = await seedUser(client, 'once@example.com', true);
-    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: joiner2, acceptingVerifiedEmail: 'once@example.com' })).status).toBe('invalid_or_used');
-    expect((await acceptInvite(client, { token: 'totally-bogus', acceptingUserId: joinerId, acceptingVerifiedEmail: 'once@example.com' })).status).toBe('invalid_or_used');
+    expect((await acceptInvite(client, { token: invite.token, acceptingUserId: joiner2 })).status).toBe('invalid_or_used');
+    expect((await acceptInvite(client, { token: 'totally-bogus', acceptingUserId: joinerId })).status).toBe('invalid_or_used');
   });
 
   test('revocation is immediate and the last owner cannot be removed', async () => {
@@ -117,7 +118,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL)', () =
     const invite = await inviteMember(client, { accountId, actingUserId: ownerId, invitedEmail: 'temp@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const viewerId = await seedUser(client, 'temp@example.com');
-    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId, acceptingVerifiedEmail: 'temp@example.com' });
+    const accepted = await acceptInvite(client, { token: invite.token, acceptingUserId: viewerId });
     if (accepted.status !== 'ok') throw new Error('setup accept failed');
 
     expect((await revokeMember(client, { accountId, actingUserId: ownerId, membershipId: accepted.membershipId })).status).toBe('ok');

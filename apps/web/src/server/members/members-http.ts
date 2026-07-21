@@ -68,12 +68,8 @@ export function toMembersResponse(result: MembersRequestResult): Response {
       return jsonResponse(409, { error: 'conflict' });
     case 'last_owner':
       return jsonResponse(409, { error: 'last_owner' });
-    case 'already_member':
-      return jsonResponse(409, { error: 'already_member' });
     case 'invalid_token':
       return jsonResponse(400, { error: 'invalid_token' });
-    case 'email_mismatch':
-      return jsonResponse(403, { error: 'email_mismatch' });
     case 'email_unverified':
       return jsonResponse(403, { error: 'email_unverified' });
     case 'forbidden':

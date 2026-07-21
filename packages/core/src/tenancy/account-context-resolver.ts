@@ -9,7 +9,7 @@
 // requested account. Denials emit an interim `tenant.context_denied` structured event with non-PII ids
 // only (durable audit store is ACBP-P1-008). No global mutable state / AsyncLocalStorage — context is
 // explicit at the call boundary.
-import { MembershipRepository, withAccountTransaction, type AccountScope, type DatabaseClient } from '@acbp/database';
+import { resolveOwnMembershipBootstrap, withAccountTransaction, type AccountScope, type DatabaseClient } from '@acbp/database';
 import { resolvedAccountContext, deniedAccountContext, isResolvedAccountContext, type AccountAccessDenialReason, type AccountContextResolution } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 
@@ -69,25 +69,31 @@ export async function resolveAccountContextWithStore(
   return resolvedAccountContext({ accountId, actorId: userId });
 }
 
-/** Live store backed by the P1-004 MembershipRepository (active-only lookup on the server-verified user). */
-export function liveAccountMembershipStore(repo: MembershipRepository): AccountMembershipStore {
+/**
+ * Live store backed by the `acbp_resolve_own_membership` SECURITY DEFINER bootstrap function (ACBP-P1-006;
+ * CDR-013). Under RLS this pre-context read must go through the bootstrap function: it returns ONLY the
+ * caller's own active membership in the explicitly requested account (never enumerates members), so the
+ * restricted application role can resolve context before any AccountScope exists.
+ */
+export function liveAccountMembershipStore(client: DatabaseClient): AccountMembershipStore {
   return {
     async hasActiveMembership(accountId, userId) {
-      return (await repo.findActiveByAccountAndUser(accountId, userId)) !== undefined;
+      return (await resolveOwnMembershipBootstrap(client.kysely, userId, accountId)) !== null;
     },
   };
 }
 
 /**
- * Resolve account context using the live database client. A read (no transaction): the membership row is
- * the authority; the branded AccountScope is minted only AFTER this resolution succeeds (see runInAccountScope).
+ * Resolve account context using the live database client. A read (no transaction) via the own-membership
+ * bootstrap function; the branded AccountScope is minted only AFTER this resolution succeeds (see
+ * runInAccountScope).
  */
 export function resolveAccountContext(
   client: DatabaseClient,
   params: ResolveAccountContextParams,
   options: ResolveAccountContextOptions = {},
 ): Promise<AccountContextResolution> {
-  return resolveAccountContextWithStore(liveAccountMembershipStore(new MembershipRepository(client.kysely)), params, options);
+  return resolveAccountContextWithStore(liveAccountMembershipStore(client), params, options);
 }
 
 /** Outcome of {@link runInAccountScope}: the callback's value, or a deny (the callback never ran). */

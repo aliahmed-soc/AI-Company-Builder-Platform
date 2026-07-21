@@ -5,7 +5,7 @@
 // or viewer): list. Accept is self-service, bound to a single-use token AND the accepting user's
 // verified email. Interim structured audit events carry no PII (no email, no token). The company scope
 // is not exercised here (companies are P1-010); every P1-004 membership is account-level.
-import { withTransaction, MembershipRepository, type DatabaseClient } from '@acbp/database';
+import { withTransaction, MembershipRepository, acceptInviteBootstrap, type DatabaseClient } from '@acbp/database';
 import { validationError, type PublicErrorEnvelope } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 import { isMemberRole, isOwner, isMember, type MemberRole } from './roles.js';
@@ -29,11 +29,12 @@ export type InviteResult =
   | { readonly status: 'conflict' }
   | { readonly status: 'validation'; readonly error: PublicErrorEnvelope };
 
+// Accept denials collapse to a single opaque `invalid_or_used` (no email/existence/state oracle): under RLS
+// the `acbp_accept_invite` bootstrap function binds the email from platform-authoritative users data and
+// performs one atomic conditional transition, returning a row on success or nothing on any failure.
 export type AcceptResult =
   | { readonly status: 'ok'; readonly membershipId: string; readonly accountId: string; readonly role: MemberRole }
-  | { readonly status: 'invalid_or_used' }
-  | { readonly status: 'email_mismatch' }
-  | { readonly status: 'already_member' };
+  | { readonly status: 'invalid_or_used' };
 
 export type RevokeResult = { readonly status: 'ok' } | { readonly status: 'forbidden' } | { readonly status: 'not_found' } | { readonly status: 'last_owner' };
 
@@ -46,13 +47,15 @@ export interface MembershipOpOptions {
   readonly generateToken?: () => { token: string; tokenHash: string };
 }
 
-/** Narrow persistence seam so the use cases are unit-testable without a database. */
+/**
+ * Narrow persistence seam so the use cases are unit-testable without a database. Invite acceptance is NOT
+ * here — it is a pre-context bootstrap operation handled atomically by the `acbp_accept_invite` SECURITY
+ * DEFINER function (ACBP-P1-006; CDR-013), not by these store methods.
+ */
 export interface MembershipStore {
   resolveActiveRole(accountId: string, userId: string): Promise<MemberRole | null>;
   findPendingByAccountAndEmail(accountId: string, invitedEmail: string): Promise<{ readonly id: string } | undefined>;
   insertInvite(v: { readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole; readonly tokenHash: string; readonly invitedByUserId: string }): Promise<{ readonly id: string }>;
-  findPendingByTokenHash(tokenHash: string): Promise<{ readonly id: string; readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole } | undefined>;
-  activateInvite(id: string, memberUserId: string): Promise<void>;
   findInAccount(accountId: string, membershipId: string): Promise<{ readonly id: string; readonly role: MemberRole; readonly status: MembershipStatus } | undefined>;
   countActiveOwners(accountId: string): Promise<number>;
   revokeMembership(id: string): Promise<void>;
@@ -90,21 +93,6 @@ export async function inviteMemberWithStore(
   return { status: 'ok', membershipId: id, token, role };
 }
 
-export async function acceptInviteWithStore(
-  store: MembershipStore,
-  params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string },
-  options: MembershipOpOptions = {},
-): Promise<AcceptResult> {
-  const invite = await store.findPendingByTokenHash(hashInviteToken(params.token));
-  if (invite === undefined) return { status: 'invalid_or_used' };
-  // Bind to the invitee's verified email — a leaked/forwarded token cannot be used by someone else.
-  if (normalizeEmail(params.acceptingVerifiedEmail) !== invite.invitedEmail) return { status: 'email_mismatch' };
-  if ((await store.resolveActiveRole(invite.accountId, params.acceptingUserId)) !== null) return { status: 'already_member' };
-
-  await store.activateInvite(invite.id, params.acceptingUserId);
-  options.logger?.info('membership.accepted', { metadata: { accountId: invite.accountId, membershipId: invite.id, role: invite.role } });
-  return { status: 'ok', membershipId: invite.id, accountId: invite.accountId, role: invite.role };
-}
 
 export async function revokeMemberWithStore(
   store: MembershipStore,
@@ -163,13 +151,6 @@ function liveStore(repo: MembershipRepository): MembershipStore {
       const row = await repo.insert({ account_id: v.accountId, role: v.role, status: 'invited', invited_email: v.invitedEmail, invite_token_hash: v.tokenHash, invited_by_user_id: v.invitedByUserId });
       return { id: row.id };
     },
-    async findPendingByTokenHash(tokenHash) {
-      const row = await repo.findPendingByTokenHash(tokenHash);
-      return row === undefined || row.invited_email === null ? undefined : { id: row.id, accountId: row.account_id, invitedEmail: row.invited_email, role: row.role as MemberRole };
-    },
-    async activateInvite(id, memberUserId) {
-      await repo.update(id, { status: 'active', member_user_id: memberUserId, invite_token_hash: null, accepted_at: new Date() });
-    },
     async findInAccount(accountId, membershipId) {
       const row = await repo.findById(membershipId);
       return row === undefined || row.account_id !== accountId ? undefined : { id: row.id, role: row.role as MemberRole, status: row.status as MembershipStatus };
@@ -190,8 +171,19 @@ export function inviteMember(client: DatabaseClient, params: { accountId: string
   return withTransaction(client, (tx) => inviteMemberWithStore(liveStore(new MembershipRepository(tx.kysely)), params, options), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
 }
 
-export function acceptInvite(client: DatabaseClient, params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string }, options: MembershipOpOptions = {}): Promise<AcceptResult> {
-  return withTransaction(client, (tx) => acceptInviteWithStore(liveStore(new MembershipRepository(tx.kysely)), params, options), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+/**
+ * Accept a pending invite via the `acbp_accept_invite` SECURITY DEFINER bootstrap function (ACBP-P1-006;
+ * CDR-013). The caller supplies only the raw token + the SERVER-VERIFIED accepting user id; the function
+ * derives the authoritative email from `users.primary_email` (never a caller parameter), requires the user
+ * to be active + verified, and performs one atomic invited→active transition. Any failure returns
+ * `invalid_or_used` (no email/existence/state oracle). The raw token is hashed here; the hash never leaves
+ * the server and is never logged.
+ */
+export async function acceptInvite(client: DatabaseClient, params: { token: string; acceptingUserId: string }, options: MembershipOpOptions = {}): Promise<AcceptResult> {
+  const row = await acceptInviteBootstrap(client.kysely, hashInviteToken(params.token), params.acceptingUserId);
+  if (row === null) return { status: 'invalid_or_used' };
+  options.logger?.info('membership.accepted', { metadata: { accountId: row.accountId, membershipId: row.membershipId, role: row.role } });
+  return { status: 'ok', membershipId: row.membershipId, accountId: row.accountId, role: row.role as MemberRole };
 }
 
 export function revokeMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; membershipId: string }, options: MembershipOpOptions = {}): Promise<RevokeResult> {

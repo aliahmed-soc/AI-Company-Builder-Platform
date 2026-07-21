@@ -22,8 +22,6 @@ export type MembersRequestResult =
   | { readonly status: 'invited'; readonly membershipId: string; readonly role: MemberRole; readonly inviteToken: string }
   | { readonly status: 'accepted'; readonly membershipId: string; readonly accountId: string; readonly role: MemberRole }
   | { readonly status: 'invalid_token' }
-  | { readonly status: 'email_mismatch' }
-  | { readonly status: 'already_member' }
   | { readonly status: 'revoked' }
   | { readonly status: 'members'; readonly members: readonly MemberView[] };
 
@@ -32,7 +30,7 @@ export interface MemberRuntime {
   resolveInternalUser(providerUserId: string): Promise<InternalUserReconciliation>;
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
   inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: { logger?: Logger }): Promise<InviteResult>;
-  acceptInvite(params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string }, options?: { logger?: Logger }): Promise<AcceptResult>;
+  acceptInvite(params: { token: string; acceptingUserId: string }, options?: { logger?: Logger }): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: { logger?: Logger }): Promise<RevokeResult>;
   listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
 }
@@ -114,17 +112,14 @@ export async function acceptInviteForRequest(input: { token: unknown }, deps: Me
   const actor = await resolveActor(deps, runtime);
   if (actor.kind === 'result') return actor.result;
   if (typeof input.token !== 'string' || input.token.length === 0) return { status: 'invalid_token' };
-  if (actor.email === undefined) return { status: 'unavailable' }; // cannot email-bind without a verified email
-  const r = await runtime.acceptInvite({ token: input.token, acceptingUserId: actor.userId, acceptingVerifiedEmail: actor.email }, { logger: membersLogger() });
+  // The accepting email is bound server-side from platform-authoritative users data inside the bootstrap
+  // function (CDR-013) — never a caller-supplied value. Any failure collapses to a safe invalid_token.
+  const r = await runtime.acceptInvite({ token: input.token, acceptingUserId: actor.userId }, { logger: membersLogger() });
   switch (r.status) {
     case 'ok':
       return { status: 'accepted', membershipId: r.membershipId, accountId: r.accountId, role: r.role };
     case 'invalid_or_used':
       return { status: 'invalid_token' };
-    case 'email_mismatch':
-      return { status: 'email_mismatch' };
-    case 'already_member':
-      return { status: 'already_member' };
   }
 }
 
