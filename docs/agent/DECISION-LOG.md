@@ -73,3 +73,23 @@ Append significant decisions. Format: decision — source — consequence.
   (mirrors P1-002 `insertIfAbsent`), scoped to the exact unique constraint; unrelated violations sanitize.
 - **Interim audit** = structured `account.created`/`account.profile_updated` events (ADR-017/P0-017); the
   durable append-only store is P1-008. Tests assert emitted PII-safe shape, not a durable write.
+
+### Slice 2 (schema/migration/repositories) infra decisions
+- **Integration test files now run serially (`fileParallelism: false` in `vitest.config.ts`).** Every
+  real-PostgreSQL suite targets the ONE shared `ACBP_TEST_DATABASE_URL` and does destructive setup (drops
+  all tables in `beforeAll`; the migration suites run `migrate-down` mid-test). Running files concurrently
+  let one suite drop/rebuild tables another was mid-read on — latent timing-dependent flakiness that
+  P1-002 survived only on CI's low core count. Adding the 6th (accounts) suite made it deterministically
+  fail locally. Serial files make the shared-DB run deterministic on every core count; the suite is small
+  so wall-clock cost is negligible. Fixes the root cause for all current and future DB suites.
+- **`updated_at` is DB-authoritative (`sql\`now()\``) in `AccountProfileRepository.update`.** `created_at`
+  is DB-set (default `now()`); stamping `updated_at` from the app clock (`new Date()`) let app↔database
+  clock skew make `updated_at < created_at` (surfaced by a ~384 ms Windows↔WSL2 skew locally, and a real
+  production risk). Sourcing both timestamps from the database clock guarantees `updated_at >= created_at`.
+- **One migrate-down across the whole integration set.** Migration reversibility for `0003` is covered by
+  the existing database/user-mapping reversibility tests (made migration-count-agnostic: reverse batches
+  until the target tables are gone, then re-apply). The accounts suite deliberately runs no migrate-down,
+  keeping exactly one destructive migration cycle in the shared-DB run.
+- **All suites' cleanup drop-lists include `accounts`+`account_profiles`** (child-first) so a suite that
+  wipes `kysely_migration` and re-migrates cannot hit a stale later-ticket table (the P1-002
+  `_acbp_migration_probe` lesson).

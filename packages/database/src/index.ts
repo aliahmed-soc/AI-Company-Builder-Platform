@@ -13,6 +13,10 @@ export type { TenantContext, TenantScope } from './tenant.js';
 export { UserMappingRepository, WebhookReceiptRepository } from './identity-repositories.js';
 export type { IdentityExecutor, ProviderIdentityKey } from './identity-repositories.js';
 
+// Account-root repositories (ACBP-P1-003; CDR-010). Not tenant-scoped yet (RLS is P1-006).
+export { AccountRepository, AccountProfileRepository } from './account-repositories.js';
+export type { AccountExecutor } from './account-repositories.js';
+
 export { applyTenantSession, buildTenantSettings, TENANT_SETTINGS } from './session.js';
 export type { TenantSettingStatement } from './session.js';
 
@@ -30,6 +34,14 @@ export type {
   UserUpdate,
   IdentityWebhookReceiptRow,
   NewIdentityWebhookReceipt,
+  AccountsTable,
+  AccountProfilesTable,
+  AccountRow,
+  NewAccount,
+  AccountUpdate,
+  AccountProfileRow,
+  NewAccountProfile,
+  AccountProfileUpdate,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

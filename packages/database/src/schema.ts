@@ -66,9 +66,46 @@ export interface IdentityWebhookReceiptsTable {
   processed_at: Generated<Date>;
 }
 
+/**
+ * Account root (ACBP-P1-003; CDR-010). An A-tenant entity: NO `company_id`, no company RLS (that is
+ * ACBP-P1-006). `created_by_user_id` is the immutable, UNIQUE founding-owner link (bootstrap 1:1
+ * personal account) — provenance only, never an authorization source; ACBP-P1-004 layers the
+ * membership/role model on top. Lifecycle status: 'active' | 'suspended' | 'closed'.
+ */
+export interface AccountsTable {
+  /** Internal immutable account id (uuid, default gen_random_uuid()). */
+  id: Generated<string>;
+  /** Immutable founding-owner user id (FK → users.id), unique (one personal account per user). */
+  created_by_user_id: string;
+  /** Lifecycle: 'active' | 'suspended' | 'closed'. Default 'active'. */
+  status: Generated<string>;
+  /** Plan/entitlement state (matches the account.created event payload). Non-empty. Default 'free'. */
+  plan_state: Generated<string>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/**
+ * Mutable, user-facing account profile (ACBP-P1-003; CDR-010 #5). 1:1 with an account (PK =
+ * account_id, ON DELETE CASCADE). Email is NOT here — it stays Clerk-authoritative on `users`
+ * (read-only in the platform profile). Fields grow here without churning the account root.
+ */
+export interface AccountProfilesTable {
+  /** Owning account id (PK + FK → accounts.id, cascade). */
+  account_id: string;
+  /** Optional display name; when set, a bounded non-empty string. NULL = not yet set. */
+  display_name: string | null;
+  /** UI locale (BCP-47-ish, e.g. 'en', 'en-US'). Default 'en'. */
+  locale: Generated<string>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
+  accounts: AccountsTable;
+  account_profiles: AccountProfilesTable;
 }
 
 // Repository-facing row shapes.
@@ -77,3 +114,9 @@ export type NewUser = Insertable<UsersTable>;
 export type UserUpdate = Updateable<UsersTable>;
 export type IdentityWebhookReceiptRow = Selectable<IdentityWebhookReceiptsTable>;
 export type NewIdentityWebhookReceipt = Insertable<IdentityWebhookReceiptsTable>;
+export type AccountRow = Selectable<AccountsTable>;
+export type NewAccount = Insertable<AccountsTable>;
+export type AccountUpdate = Updateable<AccountsTable>;
+export type AccountProfileRow = Selectable<AccountProfilesTable>;
+export type NewAccountProfile = Insertable<AccountProfilesTable>;
+export type AccountProfileUpdate = Updateable<AccountProfilesTable>;

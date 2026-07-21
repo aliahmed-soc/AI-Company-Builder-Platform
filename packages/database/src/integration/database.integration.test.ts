@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // identity_webhook_receipts + users are the ACBP-P1-002 tables (migration 0002); dropped here so
   // this foundation suite starts from a clean slate regardless of applied domain migrations.
-  for (const t of ['identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
+  for (const t of ['account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -145,14 +145,17 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(seen).toBe('co_9');
   });
 
-  test('only the ACBP-P1-002 domain tables (users + webhook receipts) exist; later-ticket tables do not', async () => {
+  test('only the P1-002/P1-003 domain tables exist; later-ticket tables do not', async () => {
+    await migrateToLatest(client); // ensure applied (a prior test may have reversed then re-applied)
     const r = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = r.rows.map((x) => x.table_name);
-    // P1-002 introduces exactly these two domain tables.
+    // P1-002 (identity) + P1-003 (account root + profile) domain tables.
     expect(names).toContain('users');
     expect(names).toContain('identity_webhook_receipts');
-    // Membership/company/authorization and other later-ticket tables must NOT exist yet (CDR-008 #7).
-    for (const notYet of ['accounts', 'companies', 'memberships', 'tasks', 'task_runs', 'approvals', 'usage_events', 'audit_events', 'policies']) {
+    expect(names).toContain('accounts');
+    expect(names).toContain('account_profiles');
+    // Membership/company/authorization and other later-ticket tables must NOT exist yet.
+    for (const notYet of ['companies', 'memberships', 'tasks', 'task_runs', 'approvals', 'usage_events', 'audit_events', 'policies']) {
       expect(names).not.toContain(notYet);
     }
   });

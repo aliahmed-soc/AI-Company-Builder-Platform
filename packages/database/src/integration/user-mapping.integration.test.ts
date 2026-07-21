@@ -13,7 +13,9 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
   await sql.raw(`drop table if exists ${table} cascade`).execute(client.kysely);
 }
 async function cleanup(client: DatabaseClient): Promise<void> {
-  for (const t of ['identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+  // account_profiles/accounts (0003) are dropped child-first so a re-migrate on the shared CI
+  // database cannot hit a stale later-ticket table (the _acbp_migration_probe lesson).
+  for (const t of ['account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -147,14 +149,21 @@ describe.skipIf(!hasTestDatabase)('user-mapping foundation (real PostgreSQL)', (
     }
   });
 
-  test('migration down removes both tables and re-apply restores them', async () => {
-    const down = await migrateDown(client); // reverses 0002 (latest)
-    expect(down.error).toBeUndefined();
-    const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
-    expect(afterDown.rows[0]?.n).toBe(0);
+  test('migration down removes the user-mapping tables and re-apply restores them', async () => {
+    // Reverse one batch at a time until the user-mapping tables are gone. This stays correct as later
+    // migrations (0003+) are added on top of 0002 — they (which may FK-reference users) reverse first.
+    const usersTables = async () => {
+      const r = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
+      return r.rows[0]?.n ?? 0;
+    };
+    for (let i = 0; i < 50 && (await usersTables()) > 0; i++) {
+      const down = await migrateDown(client);
+      expect(down.error).toBeUndefined();
+      if ((down.results?.length ?? 0) === 0) break;
+    }
+    expect(await usersTables()).toBe(0);
     const reapply = await migrateToLatest(client);
     expect(reapply.error).toBeUndefined();
-    const afterUp = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
-    expect(afterUp.rows[0]?.n).toBe(2);
+    expect(await usersTables()).toBe(2);
   });
 });

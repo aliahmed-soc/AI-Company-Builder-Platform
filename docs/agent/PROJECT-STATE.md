@@ -30,8 +30,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   any in-app email mutation.
 
 ## Slices (planned)
-1. Docs: CDR-010 + agent state — **in progress**.
-2. `accounts` + `account_profiles` migration `0003` + `schema.ts` types + repository + PG integration.
+1. Docs: CDR-010 + agent state — **done** (`4412f5b`).
+2. `accounts` + `account_profiles` migration `0003` + `schema.ts` types + repositories + PG integration —
+   **done, local gate green** (438/0/0 with real PG; typecheck/lint/secrets/encoding/boundaries all pass;
+   audit 1 moderate below gate). Includes two infra fixes (serial integration files; DB-authoritative
+   `updated_at`) — see DECISION-LOG. Pending: push + hosted CI.
 3. Provider-neutral account/profile contracts + core idempotent provisioning use-case + unit tests.
 4. Core profile read/update use-case (email read-only) + unit tests.
 5. Web profile API/route + first-sign-in provisioning wiring + tests.
