@@ -152,3 +152,24 @@ Append significant decisions. Format: decision — source — consequence.
   app code was rejected; ENABLE-only/latent was rejected. Fail-closed policies via TEXT comparison (no
   uuid-cast exceptions). Company RLS deferred to P1-010. Source: owner decisions 2026-07-21 + ADR-007 +
   DATA-ARCHITECTURE §2 + CDR-008/010/011/012.
+
+## ACBP-P1-007 — Authorization middleware (opened 2026-07-21)
+- **No new owner decision / no CDR.** P1-007 introduces the central `authz.check` (ADR-022 flow's internal
+  role-check step) as a **behavior-preserving centralization** of the owner/viewer gates that already exist
+  inline in each core use case (`isOwner`/`isMember`). It changes WHO-can-do-WHAT for nobody, and is fully
+  derived from accepted decisions (ADR-022 §8 mandatory flow; ADR-006 "single authz layer"; ADR-007 tenant
+  authority; SECURITY-ARCHITECTURE §1 "Central `authz.check` in identity module; deny by default; denials
+  audited"). Because there is no fork and no change to authorization/data-ownership/tenant-isolation
+  semantics, this ticket records NO CDR (contrast CDR-012/CDR-013 which resolved genuine owner forks).
+- **Decision model (grounded, minimal):** role × action → allow/deny, deny-by-default, actions a CLOSED set
+  (`resource:verb`), resource implicit in the action. `authz.check` is a 4th INDEPENDENT control layered
+  above authn (Clerk session + verified identity), AccountContext (P1-005), and RLS (P1-006): it decides
+  "may THIS role perform THIS action?" only AFTER the account is resolved. It mints no scope, selects no DB
+  connection, bypasses no RLS, and consults no Clerk org/role claim. Role is loaded fresh from the ACTIVE
+  membership row at each decision (no caching) so revocation/role-change take effect on the next request.
+- **Action matrix** (mirrors existing semantics): member:invite→owner; member:revoke→owner;
+  member:list→owner|viewer; member:read_invited_email→owner (viewer email-redaction, modeled explicitly);
+  profile:read→owner; profile:update→owner. Excluded (pre-context/public, not role-gated): acceptInvite,
+  provisionPersonalAccount, Clerk webhook (signature-only). Deferred: company authz (P1-010), policy/approval
+  (ADR-009/010), configurable roles, durable audit (P1-008). Source: BACKLOG ACBP-P1-007 + ADR-022/006/007 +
+  SECURITY-ARCHITECTURE §1 + existing roles.ts/membership-service.ts/profile.ts semantics.
