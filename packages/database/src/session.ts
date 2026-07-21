@@ -6,6 +6,7 @@
 // reverting on commit/rollback — so a pooled connection never leaks tenant scope to the next user.
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
+import type { AccountContext } from '@acbp/contracts';
 import type { DatabaseSchema } from './schema.js';
 import type { TenantContext } from './tenant.js';
 
@@ -38,6 +39,29 @@ export function buildTenantSettings(tenant: TenantContext): readonly TenantSetti
  */
 export async function applyTenantSession(db: Kysely<DatabaseSchema>, tenant: TenantContext): Promise<void> {
   for (const s of buildTenantSettings(tenant)) {
+    await sql`select set_config(${s.name}, ${s.value}, ${s.local})`.execute(db);
+  }
+}
+
+/**
+ * Pure builder (unit-testable) of the ACCOUNT-level settings (ACBP-P1-005; CDR-012 #4/#5). Emits ONLY
+ * `app.current_account` and `app.current_actor` — deliberately NEVER `app.current_company`, so an
+ * account-scoped transaction leaves the company GUC unset and future company-owned RLS fails closed.
+ */
+export function buildAccountSettings(account: AccountContext): readonly TenantSettingStatement[] {
+  return [
+    { name: TENANT_SETTINGS.account, value: account.accountId, local: true },
+    { name: TENANT_SETTINGS.actor, value: account.actorId ?? '', local: true },
+  ];
+}
+
+/**
+ * Apply the ACCOUNT session settings on the given transaction connection. MUST run inside a transaction
+ * (is_local = true). Sets account + actor only; never touches `app.current_company` (CDR-012 #5). All
+ * values are bound parameters (no SQL injection surface).
+ */
+export async function applyAccountSession(db: Kysely<DatabaseSchema>, account: AccountContext): Promise<void> {
+  for (const s of buildAccountSettings(account)) {
     await sql`select set_config(${s.name}, ${s.value}, ${s.local})`.execute(db);
   }
 }

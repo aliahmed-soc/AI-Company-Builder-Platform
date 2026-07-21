@@ -39,8 +39,11 @@
    6. **`TenantContext` / `TenantScope` / `withTenantTransaction` / `TenantRepository` remain company-level
       and UNCHANGED**, reserved for company-level tenancy. In particular, `companyId` on `TenantContext`
       stays **required** — it is NOT made optional, nullable, or empty.
-   7. **`AccountRepository` requires an `AccountScope`** as a construction parameter (structural
-      enforcement); **`TenantRepository` continues to require a `TenantScope`**.
+   7. **The account-scoped repository base requires an `AccountScope`** as a construction parameter
+      (structural enforcement). It is named **`AccountScopedRepository`** (the plain `AccountRepository`
+      name is already the P1-003 concrete accounts-table repository — the owner's Option B text explicitly
+      allowed "`AccountRepository` **or equivalent** account-scoped repository base"). **`TenantRepository`
+      continues to require a `TenantScope`**.
    8. **`AccountScope` cannot be passed where a `TenantScope` is required, and vice-versa** — the distinct
       brands make the two mutually unassignable. **No compatibility alias, shared base brand, structural
       widening, or cast may collapse the two scopes into one type.** A company repository must never be
