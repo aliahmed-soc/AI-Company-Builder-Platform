@@ -8,7 +8,7 @@ import { createDatabase, closeDatabase, migrateToLatest, type DatabaseClient, ty
 import { isResolvedAccountContext, isDeniedAccountContext } from '@acbp/contracts';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { inviteMember, acceptInvite, revokeMember } from '../members/membership-service.js';
-import { resolveAccountContext } from './account-context-resolver.js';
+import { resolveAccountContext, runInAccountScope } from './account-context-resolver.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -110,5 +110,25 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL) â€
   test('a blank requested account id is denied as account_not_specified', async () => {
     const r = await resolveAccountContext(client, { userId: ownerId, requestedAccountId: '' });
     expect(isDeniedAccountContext(r) && r.reason).toBe('account_not_specified');
+  });
+
+  test('runInAccountScope runs the callback under a validated account scope for a member', async () => {
+    // The SET LOCAL GUC behavior itself is proven in the @acbp/database account-tenant integration suite;
+    // here we prove the composition mints a scope carrying the validated account and runs the callback.
+    const run = await runInAccountScope(client, { userId: ownerId, requestedAccountId: accountId }, (scope) => Promise.resolve(scope.account.accountId));
+    expect(run.kind).toBe('ran');
+    if (run.kind === 'ran') expect(run.value).toBe(accountId);
+  });
+
+  test('runInAccountScope denies and NEVER runs the callback for a non-member (fail-closed)', async () => {
+    const strangerId = await seedUser(client, 'stranger2@example.com');
+    let ran = false;
+    const run = await runInAccountScope(client, { userId: strangerId, requestedAccountId: accountId }, () => {
+      ran = true;
+      return Promise.resolve(1);
+    });
+    expect(run.kind).toBe('denied');
+    expect(ran).toBe(false);
+    if (run.kind === 'denied') expect(run.reason).toBe('membership_not_active');
   });
 });

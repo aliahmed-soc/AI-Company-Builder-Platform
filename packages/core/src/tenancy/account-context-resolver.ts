@@ -9,8 +9,8 @@
 // requested account. Denials emit an interim `tenant.context_denied` structured event with non-PII ids
 // only (durable audit store is ACBP-P1-008). No global mutable state / AsyncLocalStorage — context is
 // explicit at the call boundary.
-import { MembershipRepository, type DatabaseClient } from '@acbp/database';
-import { resolvedAccountContext, deniedAccountContext, type AccountAccessDenialReason, type AccountContextResolution } from '@acbp/contracts';
+import { MembershipRepository, withAccountTransaction, type AccountScope, type DatabaseClient } from '@acbp/database';
+import { resolvedAccountContext, deniedAccountContext, isResolvedAccountContext, type AccountAccessDenialReason, type AccountContextResolution } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 
 export interface ResolveAccountContextParams {
@@ -88,4 +88,30 @@ export function resolveAccountContext(
   options: ResolveAccountContextOptions = {},
 ): Promise<AccountContextResolution> {
   return resolveAccountContextWithStore(liveAccountMembershipStore(new MembershipRepository(client.kysely)), params, options);
+}
+
+/** Outcome of {@link runInAccountScope}: the callback's value, or a deny (the callback never ran). */
+export type AccountScopeRun<T> =
+  | { readonly kind: 'ran'; readonly value: T }
+  | { readonly kind: 'denied'; readonly reason: AccountAccessDenialReason };
+
+/**
+ * Trusted composition (CDR-012 #9): resolve account context from the caller's ACTIVE membership and — ONLY
+ * if that succeeds — mint the branded {@link AccountScope} via withAccountTransaction and run `fn` under it.
+ * On denial the callback NEVER runs and no scope is minted (fail-closed). This is the single boundary at
+ * which validated account context enters a database transaction; account-owned repositories take the scope
+ * `fn` receives. Context is explicit — no global/ambient tenant state.
+ */
+export async function runInAccountScope<T>(
+  client: DatabaseClient,
+  params: ResolveAccountContextParams,
+  fn: (scope: AccountScope) => Promise<T>,
+  options: ResolveAccountContextOptions = {},
+): Promise<AccountScopeRun<T>> {
+  const resolution = await resolveAccountContext(client, params, options);
+  if (!isResolvedAccountContext(resolution)) {
+    return { kind: 'denied', reason: resolution.reason };
+  }
+  const value = await withAccountTransaction(client, resolution.context, fn, options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+  return { kind: 'ran', value };
 }
