@@ -25,7 +25,12 @@ function appRoleClient(): DatabaseClient {
 let seq = 0;
 async function seedUser(su: DatabaseClient, email: string | null, opts: { verified?: boolean; status?: string } = {}): Promise<string> {
   seq += 1;
-  const row = await su.kysely.insertInto('users').values({ provider: 'clerk', provider_instance_id: 'ins_a', provider_user_id: `bs_user_${seq}`, primary_email: email, email_verified: opts.verified ?? true, status: opts.status ?? 'active', provider_updated_at: new Date().toISOString() }).returning('id').executeTakeFirstOrThrow();
+  const status = opts.status ?? 'active';
+  const row = await su.kysely
+    .insertInto('users')
+    .values({ provider: 'clerk', provider_instance_id: 'ins_a', provider_user_id: `bs_user_${seq}`, primary_email: email, email_verified: opts.verified ?? true, status, provider_updated_at: new Date().toISOString(), ...(status === 'deleted' ? { deleted_at: new Date().toISOString() } : {}) })
+    .returning('id')
+    .executeTakeFirstOrThrow();
   return row.id;
 }
 /** Seed a pending invite (superuser, bypassing RLS) and return its token hash. */
