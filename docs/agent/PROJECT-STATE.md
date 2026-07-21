@@ -38,10 +38,14 @@ _Read this first on resume, then continue automatically to "Next executable acti
 2. Restricted role `acbp_app` + grants + RLS enable/force + policies (accounts/account_profiles/memberships) +
    restricted-role real-PG isolation suite — **done** (`d07d3de`; CI 29845284782 GREEN, zero-skip PG). Migration
    `0005_row_level_security.ts` + `rls.integration.test.ts`. Existing superuser suites unaffected.
-3. The 3 SECURITY DEFINER bootstrap fns (migration `0006`) + provisioning/resolution/accept rewiring +
-   bootstrap-abuse tests — **NEXT**. Fns: `acbp_provision_account`, `acbp_resolve_own_membership`,
-   `acbp_accept_invite` (owned by owner role, EXECUTE only to acbp_app, fixed search_path, no dynamic SQL,
-   minimal return, bypass only their atomic transition). accept binds email from `users.primary_email`.
+3. The 3 SECURITY DEFINER bootstrap fns (migration `0006`) — **fns DONE** (`8411a8d`; CI 29850146215 GREEN,
+   zero-skip PG). `acbp_provision_account`, `acbp_resolve_own_membership`, `acbp_accept_invite` +
+   `bootstrap-functions.ts` callers + comprehensive real-PG behavior/abuse/catalog suite. accept binds email
+   from `users.primary_email` (active+verified), atomic, fail-closed. Fixes en route: CREATE OR REPLACE for
+   re-run idempotency; prefixed OUT columns (o_*) to avoid account_id ambiguity; deleted-user seed constraints.
+   **REMAINING in Slice 3: application REWIRING** — provisioning.ts→acbp_provision_account,
+   account-context-resolver.ts membership read→acbp_resolve_own_membership, membership-service.ts accept
+   →acbp_accept_invite (accept drops the caller-email param; derives from users). + rewiring tests.
 4. Route remaining account-owned ops through restricted scoped transactions + profile/membership regressions
    + pooling/commit/rollback/concurrency.
 5. Catalog inspection + adversarial bypass + migration up/down + docs + independent security & architecture reviews.
