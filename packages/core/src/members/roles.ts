@@ -13,12 +13,6 @@ export function isMemberRole(value: unknown): value is MemberRole {
   return value === 'owner' || value === 'viewer';
 }
 
-/** Owner-gated operations (invite/revoke/manage). Viewer is read-only. */
-export function isOwner(role: MemberRole | null): boolean {
-  return role === 'owner';
-}
-
-/** Any active member (owner or viewer) may perform member-gated read operations. */
-export function isMember(role: MemberRole | null): boolean {
-  return role !== null;
-}
+// Role→action authorization is decided centrally by `authorize(role, action)` (@acbp/contracts authz) and
+// enforced via `checkAuthorization` (ACBP-P1-007) — the single source of truth for what a role may do. The
+// former ad-hoc `isOwner`/`isMember` predicates were removed to avoid a second, matrix-bypassing gate.

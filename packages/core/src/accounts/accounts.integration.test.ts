@@ -115,6 +115,34 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
     expect(cleared?.displayName).toBeNull();
   });
 
+  test('profile:read and profile:update DENY for a non-owner active member, opaquely + audited (authz seam) — ACBP-P1-007', async () => {
+    const userId = await seedUser(seed);
+    const { accountId } = await provisionPersonalAccount(app, userId);
+    // Force the caller to be an ACTIVE but NON-owner (viewer) member of their own account, so the P1-005
+    // membership gate PASSES (runInAccountScope resolves) and the P1-007 role check is what denies. This
+    // state is unreachable by product construction today (provisioning always makes the founder an owner),
+    // so we seed the role directly via the superuser client to exercise the authz seam. Production code is
+    // unchanged; only the DB fixture forces the otherwise-unreachable role.
+    await seed.kysely.updateTable('memberships').set({ role: 'viewer' }).where('account_id', '=', accountId).where('member_user_id', '=', userId).execute();
+
+    const { logger, records } = createTestLogger({ component: 'accounts' });
+    // Both denials are OPAQUE (undefined — the request layer maps this to not_found/forbidden, never a role oracle).
+    expect(await getProfileForOwner(app, userId, { logger })).toBeUndefined();
+    expect(await updateProfileForOwner(app, userId, { displayName: 'Should Not Persist' }, { logger })).toBeUndefined();
+
+    // The update denied BEFORE any write — the profile row is untouched.
+    const row = await seed.kysely.selectFrom('account_profiles').select(['display_name']).where('account_id', '=', accountId).executeTakeFirst();
+    expect(row?.display_name ?? null).toBeNull();
+
+    // Both denials audited via non-PII authz.denied {action, reason, accountId, actorId}.
+    const denied = records.filter((r) => r.event === 'authz.denied');
+    expect(denied.map((d) => d.metadata?.['action']).sort()).toEqual(['profile:read', 'profile:update']);
+    for (const d of denied) {
+      expect(d.metadata).toMatchObject({ reason: 'insufficient_role', accountId, actorId: userId });
+      expect(JSON.stringify(d)).not.toContain('@'); // no email/PII in the denial audit
+    }
+  });
+
   test('profile access ensures the personal account (RLS requires the account id via provisioning)', async () => {
     // Under FORCE RLS (ACBP-P1-006) the profile ops obtain the account id from the idempotent provisioning
     // bootstrap function, so first access provisions the caller's own account rather than returning undefined.

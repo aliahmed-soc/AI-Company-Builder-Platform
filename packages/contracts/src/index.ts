@@ -5,4 +5,5 @@ export * from './errors.js';
 export * from './correlation.js';
 export * from './adapters/index.js';
 export * from './tenancy/index.js';
+export * from './authz/index.js';
 

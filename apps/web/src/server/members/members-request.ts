@@ -32,7 +32,7 @@ export interface MemberRuntime {
   inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: { logger?: Logger }): Promise<InviteResult>;
   acceptInvite(params: { token: string; acceptingUserId: string }, options?: { logger?: Logger }): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: { logger?: Logger }): Promise<RevokeResult>;
-  listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
+  listMembers(params: { accountId: string; actingUserId: string }, options?: { logger?: Logger }): Promise<ListResult>;
 }
 
 export interface MembersRequestDeps {
@@ -86,7 +86,7 @@ export async function listMembersForRequest(deps: MembersRequestDeps = {}): Prom
   const runtime = await runtimeOf(deps);
   const ctx = await resolveActorWithAccount(deps, runtime);
   if ('kind' in ctx) return ctx.result;
-  const r = await runtime.listMembers({ accountId: ctx.accountId, actingUserId: ctx.userId });
+  const r = await runtime.listMembers({ accountId: ctx.accountId, actingUserId: ctx.userId }, { logger: membersLogger() });
   return r.status === 'ok' ? { status: 'members', members: r.members } : { status: 'forbidden' };
 }
 

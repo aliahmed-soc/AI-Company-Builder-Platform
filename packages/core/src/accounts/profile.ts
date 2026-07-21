@@ -8,14 +8,28 @@
 import {
   AccountRepository,
   AccountProfileRepository,
+  MembershipRepository,
   provisionAccountBootstrap,
   type DatabaseClient,
   type AccountExecutor,
   type AccountProfileUpdate,
 } from '@acbp/database';
-import { validationError } from '@acbp/contracts';
+import { validationError, type AuthzAction, type AuthzRole } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 import { runInAccountScope } from '../tenancy/account-context-resolver.js';
+import { checkAuthorization, type AuthzCheckOptions } from '../authz/authz-service.js';
+
+/**
+ * Load the caller's SERVER-AUTHORITATIVE role in `accountId` from the ACTIVE membership row (RLS-confined to
+ * the caller's own row) and run the central authz.check for `action`. Returns `true` iff allowed; a denial is
+ * audited by checkAuthorization. Personal accounts have a single owner member, so this passes by construction
+ * today; it is the uniform enforcement point that gains meaning once accounts admit non-owner members.
+ */
+async function authorizeProfile(db: AccountExecutor, accountId: string, userId: string, action: AuthzAction, options: AuthzCheckOptions): Promise<boolean> {
+  const row = await new MembershipRepository(db).findActiveByAccountAndUser(accountId, userId);
+  const role = row === undefined ? null : (row.role as AuthzRole);
+  return checkAuthorization(role, action, { accountId, actorId: userId }, options).kind === 'allow';
+}
 
 /** The account profile as shown to its owner. Email/verification are read-only (Clerk-authoritative). */
 export interface AccountProfileView {
@@ -103,9 +117,12 @@ async function readProfileView(db: AccountExecutor, userId: string): Promise<Acc
  * then the join reads under `withAccountTransaction` (RLS confines it to `id = current_account`). Returns
  * undefined only if context resolution is denied (should not happen for the owner's own account).
  */
-export async function getProfileForOwner(client: DatabaseClient, userId: string): Promise<AccountProfileView | undefined> {
+export async function getProfileForOwner(client: DatabaseClient, userId: string, options: ProfileUpdateOptions = {}): Promise<AccountProfileView | undefined> {
   const { accountId } = await provisionAccountBootstrap(client.kysely, userId);
-  const run = await runInAccountScope(client, { userId, requestedAccountId: accountId }, (scope) => readProfileView(scope.db, userId));
+  const run = await runInAccountScope(client, { userId, requestedAccountId: accountId }, async (scope) => {
+    if (!(await authorizeProfile(scope.db, accountId, userId, 'profile:read', options))) return undefined;
+    return readProfileView(scope.db, userId);
+  });
   return run.kind === 'ran' ? run.value : undefined;
 }
 
@@ -127,6 +144,7 @@ export async function updateProfileForOwner(
     client,
     { userId, requestedAccountId: accountId },
     async (scope) => {
+      if (!(await authorizeProfile(scope.db, accountId, userId, 'profile:update', options))) return undefined;
       const account = await new AccountRepository(scope.db).findByOwner(userId);
       if (account === undefined) return undefined;
       if (Object.keys(patch).length > 0) {

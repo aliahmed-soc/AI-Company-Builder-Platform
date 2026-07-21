@@ -90,6 +90,73 @@ describe('acceptInviteForRequest', () => {
   });
 });
 
+// ACBP-P1-007 — the acting authority is ALWAYS the server-verified identity + the caller's own account
+// resolved server-side; NO role/account/actor supplied by the request body, a header, or a Clerk claim can
+// grant or elevate access. The core authz.check (modeled by the runtime here) is the sole authority.
+describe('ACBP-P1-007 — no request-supplied authority (forged-claim safety)', () => {
+  test('acting user + account are server-resolved; a forged body role is only the INVITEE grant, never the caller\'s authority', async () => {
+    const calls: Array<{ accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }> = [];
+    const runtime = fakeRuntime({
+      resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'server_user' }),
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'server_acc', created: false }),
+      inviteMember: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'forbidden' });
+      },
+    });
+    // The body asks to grant the invitee 'owner' — that is a GRANT to the invitee, not the caller's authority.
+    const r = await inviteMemberForRequest({ invitedEmail: 'x@example.com', role: 'owner' }, { identity: identityDeps(), runtime });
+    expect(r.status).toBe('forbidden'); // the membership-derived authz decision governs, not the request
+    // accountId + actingUserId came from SERVER resolution; the request cannot inject them.
+    expect(calls).toEqual([{ accountId: 'server_acc', actingUserId: 'server_user', invitedEmail: 'x@example.com', role: 'owner' }]);
+  });
+
+  test('a non-owner caller cannot self-elevate: a core forbidden is honored regardless of request content', async () => {
+    const r = await inviteMemberForRequest({ invitedEmail: 'y@example.com', role: 'viewer' }, { identity: identityDeps(), runtime: fakeRuntime({ inviteMember: () => Promise.resolve({ status: 'forbidden' }) }) });
+    expect(r.status).toBe('forbidden');
+  });
+
+  test('revoke authority is server-resolved: the caller cannot target another account (accountId is never request-supplied)', async () => {
+    const calls: Array<{ accountId: string; actingUserId: string; membershipId: string }> = [];
+    const runtime = fakeRuntime({
+      resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'server_user' }),
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'server_acc', created: false }),
+      revokeMember: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'forbidden' });
+      },
+    });
+    const r = await revokeMemberForRequest('m_target', { identity: identityDeps(), runtime });
+    expect(r.status).toBe('forbidden');
+    expect(calls).toEqual([{ accountId: 'server_acc', actingUserId: 'server_user', membershipId: 'm_target' }]);
+  });
+});
+
+// ACBP-P1-007 — a negative test per privileged endpoint: an unauthorized principal (unauthenticated,
+// unverified email, deleted identity, or a role the core authz.check denies) is refused on every endpoint.
+describe('ACBP-P1-007 — endpoint×principal negative matrix (request layer)', () => {
+  const forbiddenRuntime = () => fakeRuntime({ inviteMember: () => Promise.resolve({ status: 'forbidden' }), revokeMember: () => Promise.resolve({ status: 'forbidden' }), listMembers: () => Promise.resolve({ status: 'forbidden' }) });
+
+  test('GET /members (list): unauthenticated→unauthenticated, unverified→email_unverified, non-member→forbidden', async () => {
+    expect((await listMembersForRequest({ identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await listMembersForRequest({ identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await listMembersForRequest({ identity: identityDeps(), runtime: forbiddenRuntime() })).status).toBe('forbidden');
+  });
+
+  test('POST /members (invite): unauthenticated→unauthenticated, unverified→email_unverified, non-owner→forbidden', async () => {
+    const body = { invitedEmail: 'z@example.com', role: 'viewer' };
+    expect((await inviteMemberForRequest(body, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await inviteMemberForRequest(body, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await inviteMemberForRequest(body, { identity: identityDeps(), runtime: forbiddenRuntime() })).status).toBe('forbidden');
+  });
+
+  test('DELETE /members/[id] (revoke): unauthenticated→unauthenticated, unverified→email_unverified, non-owner→forbidden', async () => {
+    expect((await revokeMemberForRequest('m', { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await revokeMemberForRequest('m', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await revokeMemberForRequest('m', { identity: identityDeps(), runtime: forbiddenRuntime() })).status).toBe('forbidden');
+  });
+});
+
 describe('revokeMemberForRequest', () => {
   test('owner revoke → revoked (scoped to the caller\'s account)', async () => {
     const calls: unknown[] = [];

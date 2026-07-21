@@ -73,14 +73,14 @@ export interface ClerkIdentityRuntime {
    */
   ensurePersonalAccount(userId: string, options?: AccountOpOptions): Promise<ProvisionResult>;
   /** Read the owner's profile view (email read-only), or undefined when the user has no account. */
-  getAccountProfile(userId: string): Promise<AccountProfileView | undefined>;
+  getAccountProfile(userId: string, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Apply a profile edit for the owner and return the resulting view (undefined when no account). */
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Membership (ACBP-P1-004; CDR-011). Authorization is enforced inside the use case from the role. */
   inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: MembershipOpOptions): Promise<InviteResult>;
   acceptInvite(params: { token: string; acceptingUserId: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: MembershipOpOptions): Promise<RevokeResult>;
-  listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
+  listMembers(params: { accountId: string; actingUserId: string }, options?: MembershipOpOptions): Promise<ListResult>;
   /**
    * Resolve account-level tenant context (ACBP-P1-005; CDR-012) for a SERVER-VERIFIED internal user id and
    * a REQUESTED account id. Returns a resolved AccountContext only when the caller has an ACTIVE membership;
@@ -110,8 +110,8 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     ensurePersonalAccount(userId, options) {
       return provisionPersonalAccount(client, userId, options ?? {});
     },
-    getAccountProfile(userId) {
-      return getProfileForOwner(client, userId);
+    getAccountProfile(userId, options) {
+      return getProfileForOwner(client, userId, options ?? {});
     },
     updateAccountProfile(userId, input, options) {
       return updateProfileForOwner(client, userId, input, options ?? {});
@@ -125,8 +125,8 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     revokeMember(params, options) {
       return revokeMember(client, params, options ?? {});
     },
-    listMembers(params) {
-      return listMembers(client, params);
+    listMembers(params, options) {
+      return listMembers(client, params, options ?? {});
     },
     resolveAccountContext(params, options) {
       return resolveAccountContextUseCase(client, params, options ?? {});

@@ -134,6 +134,43 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
   });
 
+  test('member:read_invited_email — an owner sees pending-invite emails; a viewer gets them redacted — ACBP-P1-007', async () => {
+    // Owner creates a pending invite (an unaccepted row carrying an invited_email).
+    const pending = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending@example.com', role: 'viewer' });
+    if (pending.status !== 'ok') throw new Error('setup pending invite failed');
+
+    // Add a viewer member who can list.
+    const vInvite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'viewer@example.com', role: 'viewer' });
+    if (vInvite.status !== 'ok') throw new Error('setup viewer invite failed');
+    const viewerId = await seedUser(seed, 'viewer@example.com');
+    if ((await acceptInvite(app, { token: vInvite.token, acceptingUserId: viewerId })).status !== 'ok') throw new Error('setup viewer accept failed');
+
+    // Owner sees the pending invite's email; the viewer gets it redacted (member:read_invited_email → owner).
+    const asOwner = await listMembers(app, { accountId, actingUserId: ownerId });
+    const asViewer = await listMembers(app, { accountId, actingUserId: viewerId });
+    const ownerPendingRow = asOwner.status === 'ok' ? asOwner.members.find((m) => m.status === 'invited' && m.membershipId === pending.membershipId) : undefined;
+    const viewerPendingRow = asViewer.status === 'ok' ? asViewer.members.find((m) => m.status === 'invited' && m.membershipId === pending.membershipId) : undefined;
+    expect(ownerPendingRow?.invitedEmail).toBe('pending@example.com');
+    expect(viewerPendingRow?.invitedEmail).toBeNull();
+  });
+
+  test('a role change is reflected on the very next authorization decision (no caching) — ACBP-P1-007', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'promote@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup invite failed');
+    const memberId = await seedUser(seed, 'promote@example.com');
+    const accepted = await acceptInvite(app, { token: invite.token, acceptingUserId: memberId });
+    if (accepted.status !== 'ok') throw new Error('setup accept failed');
+
+    // As a viewer, inviting is denied by the central authz.check (role loaded from the membership row).
+    expect((await inviteMember(app, { accountId, actingUserId: memberId, invitedEmail: 'a@example.com', role: 'viewer' })).status).toBe('forbidden');
+
+    // Promote the member to owner directly in the database (seed/superuser) between two requests.
+    await seed.kysely.updateTable('memberships').set({ role: 'owner' }).where('id', '=', accepted.membershipId).execute();
+
+    // The VERY NEXT call sees the new role — the decision is not cached across requests.
+    expect((await inviteMember(app, { accountId, actingUserId: memberId, invitedEmail: 'a@example.com', role: 'viewer' })).status).toBe('ok');
+  });
+
   test('a duplicate outstanding invite to the same email is a conflict', async () => {
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup@example.com', role: 'viewer' })).status).toBe('ok');
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup@example.com', role: 'viewer' })).status).toBe('conflict');
