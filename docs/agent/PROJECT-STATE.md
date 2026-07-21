@@ -7,8 +7,10 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-007-authorization-middleware` (from `main` @ `012411e`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
 - Base main: `012411eb1c24b9375756fda80f1b9d50d9bc0c60` (P1-006 squash-merge PR #7; main CI green run 29860477369).
-- **STATUS: all 5 slices complete + hosted-green; THREE independent reviews PASS covering all 4 required
-  concerns. STOPPED AT OWNER GATE.** Independent SECURITY review PASS (0 blocker/0 major/1 minor/2 info);
+- **STATUS: OWNER-AUTHORIZED FINALIZATION IN PROGRESS.** Profile-endpoint acceptance conclusively closed
+  (Step 2 commit `d6bab32`, CI 29867326118 green, zero-skip PG). Backlog ACBP-P1-007 flipped **Planned→Done**.
+  Next: PR #8 ready → squash-merge → verify main CI → branch cleanup. All 5 slices hosted-green; THREE
+  independent reviews PASS covering all 4 required concerns. Independent SECURITY review PASS (0 blocker/0 major/1 minor/2 info);
   ARCHITECTURE/scope review PASS (0/0/3/2); focused CODE-REVIEW (integration-point inventory + confused-deputy
   full checklist) PASS (0/0/1/3) — explicitly confirms confused-deputy/cross-account (14 vectors HANDLED) and
   every route/use-case integration point covered. Reasonable minors fixed incl. the profile:read audit gap
