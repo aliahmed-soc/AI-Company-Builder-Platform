@@ -52,9 +52,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
    server ULID, occurred_at DB clock. Real-PG suite `audit.integration.test.ts` (write+server-bound fields+cross-
    account isolation; UPDATE/DELETE/TRUNCATE denied; fail-closed no-GUC; forged-account WITH CHECK; catalog/ACL
    INSERT+SELECT-only+FORCE-RLS+2-policies+no-BYPASSRLS; idempotency-key unique). Static gate + boundary tests EXIT 0.
-3. In-tx integration: wire the writer into `membership.invited`/`membership.revoked` inside `runInAccountScope`;
-   real-PG tests (atomic success; forced audit-write failure rolls back the membership mutation → action blocked;
-   idempotency; concurrency; no pooled-context leak); completeness check.
+3. **DONE (local-green).** `inviteMember`/`revokeMember` write `membership.invited`/`membership.revoked` via
+   `writeAuditEvent` INSIDE `runInAccountScope` (same tx + AccountScope; account/actor/event_id/occurred_at
+   server-bound). Revoke made concurrency-safe (`MembershipRepository.revokeIfActive` conditional
+   `WHERE status='active'`; `RevokeResult.changed` distinguishes real revoke from idempotent no-op). Test-seam
+   `auditWriter?` on `MembershipOpOptions` (production never sets it; tests force failure). Completeness registry
+   `@acbp/core` `audit/audit-operations.ts` (`AUDITED_OPERATIONS` op→event, compile-exhaustive `factoryFor`,
+   no-orphan-registered-event test). Real-PG tests: invite/revoke each write exactly one server-bound PII-free
+   row; audit-write failure rolls back the mutation (fail-closed, no invite/revoke, no audit); write-then-throw
+   rolls BOTH back (atomicity); mutation-fail/last-owner/missing/no-op/cross-account write no success audit;
+   concurrent revoke → exactly one audit. Full local suite 528 pass / 0 fail.
 4. Adversarial integrity (forge account/actor/event-id/timestamp/outcome/name; unregistered names; metadata
    injection/limits; UPDATE/DELETE/TRUNCATE denied; direct-writer-without-scope; no owner connection) + catalog/
    ACL audit + docs (audit README / AUDIT.md; logging-vs-audit distinction) + independent security & architecture

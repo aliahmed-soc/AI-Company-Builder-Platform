@@ -84,6 +84,24 @@ export class MembershipRepository {
     return { row: existing, inserted: false };
   }
 
+  /**
+   * Atomically revoke an ACTIVE membership. Returns true IFF this call performed the active→revoked
+   * transition (guarded by `WHERE status = 'active'`); false when the row was already revoked. Safe under
+   * concurrency — two racing revokes serialize on the row lock and only the one that flips `active→revoked`
+   * returns true, so exactly one durable `membership.revoked` audit is written (ACBP-P1-008). Clears the
+   * invite token hash and stamps revoked_at/updated_at from the DB clock.
+   */
+  async revokeIfActive(id: string): Promise<boolean> {
+    const row = await this.#db
+      .updateTable('memberships')
+      .set({ status: 'revoked', revoked_at: sql<Date>`now()`, invite_token_hash: null, updated_at: sql`now()` })
+      .where('id', '=', id)
+      .where('status', '=', 'active')
+      .returning('id')
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
   /** Apply a patch and return the updated row (or undefined if the id is unknown). Always stamps updated_at. */
   async update(id: string, patch: MembershipUpdate): Promise<MembershipRow | undefined> {
     const { id: _ignored, ...rest } = patch;

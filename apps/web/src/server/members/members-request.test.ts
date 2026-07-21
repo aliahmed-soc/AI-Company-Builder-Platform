@@ -18,7 +18,7 @@ function fakeRuntime(overrides: Partial<MemberRuntime> = {}): MemberRuntime {
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     inviteMember: () => Promise.resolve({ status: 'ok', membershipId: 'm1', token: 'tok', role: 'viewer' }),
     acceptInvite: () => Promise.resolve({ status: 'ok', membershipId: 'm1', accountId: 'acc_2', role: 'viewer' }),
-    revokeMember: () => Promise.resolve({ status: 'ok' }),
+    revokeMember: () => Promise.resolve({ status: 'ok', changed: true }),
     listMembers: () => Promise.resolve({ status: 'ok', members: [] }),
     ...overrides,
   };
@@ -160,7 +160,7 @@ describe('ACBP-P1-007 — endpoint×principal negative matrix (request layer)', 
 describe('revokeMemberForRequest', () => {
   test('owner revoke → revoked (scoped to the caller\'s account)', async () => {
     const calls: unknown[] = [];
-    const runtime = fakeRuntime({ ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }), revokeMember: (p) => { calls.push(p); return Promise.resolve({ status: 'ok' }); } });
+    const runtime = fakeRuntime({ ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }), revokeMember: (p) => { calls.push(p); return Promise.resolve({ status: 'ok', changed: true }); } });
     const r = await revokeMemberForRequest('m_target', { identity: identityDeps(), runtime });
     expect(r.status).toBe('revoked');
     expect(calls).toEqual([{ accountId: 'acc_mine', actingUserId: 'u1', membershipId: 'm_target' }]);
