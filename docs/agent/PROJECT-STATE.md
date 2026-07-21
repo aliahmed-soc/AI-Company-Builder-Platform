@@ -4,9 +4,12 @@ _Read this first on resume, then continue automatically to "Next executable acti
 
 ## Active
 - Ticket: **ACBP-P1-004** — Membership and roles (owner+viewer) (status: **Planned**; owner-gated to Done).
-- Branch: `p1-004-membership-and-roles` (from `main` @ `ee2dc6a`).
-- PR: **(to be opened as draft once slice 1 is pushed)**, base `main`.
+- Branch: `p1-004-membership-and-roles` (from `main` @ `ee2dc6a`). HEAD `a8d2430`.
+- PR: **#5 (DRAFT, open, unmerged)**, base `main` — all code slices committed + hosted-green.
 - Base main: `ee2dc6adcc2ee057a8b9240caa2cd675d95d7a8f`.
+- **STATUS: all code slices complete + hosted-green; independent review PASS. STOPPED AT OWNER GATE.**
+  Awaiting owner authorization for: (1) backlog ACBP-P1-004 → Done, (2) PR #5 ready-for-review,
+  (3) squash-merge to main. Do NOT self-authorize. Do NOT start P1-005.
 
 ## Prior tickets (closed)
 - **ACBP-P1-002 — DONE & MERGED** (`d1069f8`). Internal user mapping + replay-safe webhooks.
@@ -71,8 +74,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   authz middleware (P1-007), durable audit store (P1-008), or companies (P1-010) early.
 
 ## Current HEAD
-`ee2dc6a` (branch just created; first commit pending). Working tree: docs being written.
+`a8d2430` on `p1-004-membership-and-roles`. Draft PR #5. Working tree clean. Hosted CI green on every
+pushed slice; local full suite 551/0/0 with real PostgreSQL. Independent security/scope review PASS.
 
 ## Next executable action
-Commit slice-1 docs (CDR-011 + agent state), push, open the draft PR with the canonical ticket ID/title,
-then implement slice 2 (`memberships` migration + schema + repository + owner backfill + PG integration).
+**NONE — STOPPED at the owner gate.** Do not self-authorize. Remaining steps are owner-gated: (1) backlog
+ACBP-P1-004 → Done, (2) `gh pr ready 5`, (3) squash-merge PR #5, then verify main CI + delete branch. Only
+begin ACBP-P1-005 on separate explicit authorization. Optional/non-blocking: live authenticated-route
+acceptance needs a dev server + Clerk DEVELOPMENT env (owner/external-access gate).
