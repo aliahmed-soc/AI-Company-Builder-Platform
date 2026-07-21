@@ -7,7 +7,8 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-008-audit-event-foundation` (from `main` @ `340f9c2`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
 - Base main: `340f9c2b11f5019b26ff8563aa4dbd4505866d49` (P1-007 squash-merge PR #8; main CI green run 29867863044).
-- **STATUS: all 5 slices complete; THREE independent reviews PASS; STOPPED AT OWNER GATE (pending final CI).**
+- **STATUS: OWNER-AUTHORIZED FINALIZATION IN PROGRESS.** Backlog ACBP-P1-008 flipped **Planned→Done**; next:
+  PR #9 ready → squash-merge → main CI → branch cleanup. All 5 slices complete; THREE independent reviews PASS; STOPPED AT OWNER GATE (superseded).
   Reviews: audit-integrity/RLS-ACL PASS (0 blk/0 maj/2 min/1 info); tx-atomicity/completeness PASS (0/0/1/4);
   architecture/scope+sharp PASS (0/0/0/5). All reasonable minors fixed (per-account idempotency index;
   bounded ctx ids; automated compile-exhaustive per-op completeness test; ULID comment). Residuals documented
