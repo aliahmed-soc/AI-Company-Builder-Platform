@@ -17,7 +17,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //    membership. Idempotent and race-safe (scoped ON CONFLICT on the exact P1-003/P1-004 constraints).
   //    The owner and role are fixed (never caller-chosen); it can never claim another user's account.
   await sql`
-    create function public.acbp_provision_account(p_user_id uuid)
+    create or replace function public.acbp_provision_account(p_user_id uuid)
     returns table (account_id uuid, created boolean)
     language plpgsql
     security definer
@@ -55,7 +55,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //    requested account (or NULL). Cannot list members, enumerate accounts, or read invitation data.
   //    Honours immediate revocation via the status='active' filter.
   await sql`
-    create function public.acbp_resolve_own_membership(p_user_id uuid, p_account_id uuid)
+    create or replace function public.acbp_resolve_own_membership(p_user_id uuid, p_account_id uuid)
     returns text
     language plpgsql
     security definer
@@ -82,7 +82,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //    activation under concurrency; every later/invalid attempt returns no rows (fail closed). It never
   //    returns the token hash or email.
   await sql`
-    create function public.acbp_accept_invite(p_invite_token_hash text, p_user_id uuid)
+    create or replace function public.acbp_accept_invite(p_invite_token_hash text, p_user_id uuid)
     returns table (membership_id uuid, account_id uuid, role text)
     language plpgsql
     security definer
