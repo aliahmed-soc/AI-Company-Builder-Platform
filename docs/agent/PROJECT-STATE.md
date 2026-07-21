@@ -7,8 +7,9 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-005-tenant-context-primitives` (from `main` @ `3c3dded`).
 - PR: **draft, open, unmerged**, base `main`.
 - Base main: `3c3dded0728ee32ea1db3a4c0015dba81a41b48c` (P1-004 squash-merge; main CI green run 29831979133).
-- **STATUS: in progress under explicit owner authorization to implement to the finalization gate.**
-  Do NOT mark Done / mark PR ready / merge / delete branch / begin P1-006 without separate owner auth.
+- **STATUS: all 5 code slices complete + hosted-green; independent security + scope reviews PASS. STOPPED AT OWNER GATE.**
+  Awaiting owner authorization for: (1) backlog ACBP-P1-005 → Done, (2) PR #6 ready-for-review,
+  (3) squash-merge to main. Do NOT self-authorize. Do NOT start P1-006.
 
 ## Prior tickets (closed)
 - **ACBP-P1-001..P1-004 — DONE & MERGED.** P1-001 (`a2603b6`), P1-002 (`d1069f8`), P1-003 (`ee2dc6a`),
@@ -20,8 +21,8 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Separate, **type-distinct** account-level tenancy primitive; the company-level primitive stays UNCHANGED.
 - New `AccountContext {accountId, actorId?}` (NO companyId), branded `AccountScope` (unforgeable outside
   `@acbp/database`), `withAccountTransaction` (only scope-minting path; applies `app.current_account` +
-  `app.current_actor` via `SET LOCAL`; NEVER sets `app.current_company`), `AccountRepository` base requiring
-  `AccountScope`. `TenantContext`/`TenantScope`/`withTenantTransaction`/`TenantRepository` remain company-
+  `app.current_actor` via `SET LOCAL`; NEVER sets `app.current_company`), `AccountScopedRepository` base
+  requiring `AccountScope`. `TenantContext`/`TenantScope`/`withTenantTransaction`/`TenantRepository` remain company-
   level; `companyId` stays required. No alias may collapse the two scopes.
 - Membership-backed resolver: (server-verified `userId`, requested `accountId`) → active membership →
   resolved `AccountContext` or deny. requested account id is a REQUEST, never authority. invited/revoked/
@@ -35,7 +36,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
 ## Slices (planned)
 1. CDR-012 + agent state + provider-neutral account-context contract (`@acbp/contracts`) + draft PR — **done (this branch)**.
 2. Database account-scope primitive: `AccountContext`/branded `AccountScope`/`withAccountTransaction`/account
-   session GUCs/`AccountRepository` + compile-time isolation proofs (account-repo needs scope; Tenant↔Account
+   session GUCs/`AccountScopedRepository` + compile-time isolation proofs (account-repo needs scope; Tenant↔Account
    scopes mutually unassignable; neither forgeable).
 3. Membership-backed resolver (`@acbp/core`) + real-PG integration (active resolves; invited/revoked/missing/
    cross-account deny; immediate revocation).
@@ -66,6 +67,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
   (`vitest fileParallelism:false`) on one shared DB — keep new suites' cleanup drop-lists inclusive.
 
 ## Next executable action
-Continue Slice 2 (database account-scope primitive) under TDD. Commit + push each green slice; verify hosted
-CI on the exact pushed commit. Stop only at the owner gate (all slices hosted-green + independently reviewed)
-or a new genuine owner decision.
+**NONE — STOPPED at the owner gate.** All 5 slices are hosted-green (final run 29836370443, zero-skip PG +
+audit) and independently reviewed (security + scope PASS). Remaining steps are owner-gated: (1) backlog
+ACBP-P1-005 → Done, (2) `gh pr ready 6`, (3) squash-merge PR #6, then verify main CI + delete branch. Begin
+ACBP-P1-006 only on separate explicit authorization.

@@ -121,7 +121,7 @@ Append significant decisions. Format: decision — source — consequence.
   **Option B**: a SEPARATE, type-distinct account-level primitive — `AccountContext {accountId, actorId?}`
   (NO companyId), branded `AccountScope` (distinct brand; unforgeable outside `@acbp/database`),
   `withAccountTransaction` (only scope-minting path; applies `app.current_account` + `app.current_actor` via
-  `SET LOCAL`; NEVER sets `app.current_company`), and an `AccountRepository` base requiring `AccountScope`.
+  `SET LOCAL`; NEVER sets `app.current_company`), and an `AccountScopedRepository` base requiring `AccountScope`.
   The company primitive is left UNCHANGED and companyId stays required (Option A — making companyId optional
   — was rejected: it would put an empty-company state into the company primitive and make company fail-
   closure a runtime rather than a type-level guarantee). No alias/shared brand may collapse the two scopes;
