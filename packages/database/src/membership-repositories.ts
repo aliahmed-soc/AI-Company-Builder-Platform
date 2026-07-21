@@ -1,0 +1,85 @@
+// @acbp/database — account membership repository (ACBP-P1-004; CDR-011).
+//
+// Operates on the account-owned `memberships` table. Like the other P1-002/P1-003 repositories it takes
+// a plain executor (Kysely or a transaction) and is NOT tenant-scoped — the general tenant-context
+// primitives (P1-005) and RLS (P1-006) do not exist yet; authorization is enforced above using the
+// active membership's role, resolved from the SERVER-VERIFIED user id (never a Clerk claim). Kysely
+// parameterized queries only. Conflict handling is scoped to the exact partial-unique indexes.
+import { sql, type Kysely } from 'kysely';
+import type { DatabaseSchema, MembershipRow, NewMembership, MembershipUpdate } from './schema.js';
+
+export type MembershipExecutor = Kysely<DatabaseSchema>;
+
+export class MembershipRepository {
+  readonly #db: MembershipExecutor;
+  constructor(db: MembershipExecutor) {
+    this.#db = db;
+  }
+
+  /** All memberships of an account (any status), oldest first. */
+  listByAccount(accountId: string): Promise<MembershipRow[]> {
+    return this.#db.selectFrom('memberships').selectAll().where('account_id', '=', accountId).orderBy('created_at', 'asc').orderBy('id', 'asc').execute();
+  }
+
+  findById(id: string): Promise<MembershipRow | undefined> {
+    return this.#db.selectFrom('memberships').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /** The caller's ACTIVE membership in an account (the authorization row), or undefined. */
+  findActiveByAccountAndUser(accountId: string, userId: string): Promise<MembershipRow | undefined> {
+    return this.#db
+      .selectFrom('memberships')
+      .selectAll()
+      .where('account_id', '=', accountId)
+      .where('member_user_id', '=', userId)
+      .where('status', '=', 'active')
+      .executeTakeFirst();
+  }
+
+  /** A pending invite by its single-use token hash, or undefined. */
+  findPendingByTokenHash(tokenHash: string): Promise<MembershipRow | undefined> {
+    return this.#db.selectFrom('memberships').selectAll().where('invite_token_hash', '=', tokenHash).where('status', '=', 'invited').executeTakeFirst();
+  }
+
+  /** An outstanding invite for (account, email), or undefined. */
+  findPendingByAccountAndEmail(accountId: string, invitedEmail: string): Promise<MembershipRow | undefined> {
+    return this.#db.selectFrom('memberships').selectAll().where('account_id', '=', accountId).where('invited_email', '=', invitedEmail).where('status', '=', 'invited').executeTakeFirst();
+  }
+
+  /** Insert a row (pending invite or membership) and return it. */
+  insert(values: NewMembership): Promise<MembershipRow> {
+    return this.#db.insertInto('memberships').values(values).returningAll().executeTakeFirstOrThrow();
+  }
+
+  /**
+   * Race-safe owner-membership provisioning: insert an active owner membership, doing nothing ONLY on
+   * the active-per-(account,user) partial-unique conflict, then always return the live row. Scoped to
+   * that exact index predicate — an unrelated violation still surfaces as a real failure. Used by
+   * account provisioning so a new account's founder is a first-class owner member.
+   */
+  async insertOwnerIfAbsent(accountId: string, userId: string): Promise<{ readonly row: MembershipRow; readonly inserted: boolean }> {
+    const inserted = await this.#db
+      .insertInto('memberships')
+      .values({ account_id: accountId, member_user_id: userId, role: 'owner', status: 'active', accepted_at: sql<Date>`now()` })
+      .onConflict((oc) => oc.columns(['account_id', 'member_user_id']).where('status', '=', 'active').doNothing())
+      .returningAll()
+      .executeTakeFirst();
+    if (inserted !== undefined) return { row: inserted, inserted: true };
+    const existing = await this.findActiveByAccountAndUser(accountId, userId);
+    if (existing === undefined) {
+      throw new Error('MembershipRepository.insertOwnerIfAbsent: conflict reported but no existing active membership found');
+    }
+    return { row: existing, inserted: false };
+  }
+
+  /** Apply a patch and return the updated row (or undefined if the id is unknown). Always stamps updated_at. */
+  async update(id: string, patch: MembershipUpdate): Promise<MembershipRow | undefined> {
+    const { id: _ignored, ...rest } = patch;
+    return this.#db
+      .updateTable('memberships')
+      .set({ ...rest, updated_at: sql`now()` })
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirst();
+  }
+}

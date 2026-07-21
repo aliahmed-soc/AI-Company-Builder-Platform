@@ -32,8 +32,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   billing, deletion. Does NOT retrofit the P1-003 profile route (personal account, unaffected).
 
 ## Slices (planned)
-1. Docs: CDR-011 + agent state — **in progress**.
-2. `memberships` migration + schema types + repository + owner backfill + real-PG integration.
+1. Docs: CDR-011 + agent state — **done** (`2f85a84`); draft PR #5 open.
+2. `memberships` migration `0004` + schema types + `MembershipRepository` + owner backfill + real-PG
+   integration — **done, local gate green** (491/0/0; typecheck/lint/secrets/encoding/boundaries pass).
+   Added `memberships` (child-first) to every suite's cleanup; flipped database.integration later-ticket
+   assertion. Pending: push + hosted CI.
 3. Core role model + invite/accept/revoke/list use-cases + role-matrix enforcement + interim audit + unit.
 4. Web members API routes (invite/accept/revoke/list) + fail-closed auth + role-negative tests.
 5. Backlog sync (owner-gated).
