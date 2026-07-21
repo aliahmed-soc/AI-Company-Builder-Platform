@@ -27,6 +27,12 @@ import {
   type ListResult,
   type MembershipOpOptions,
 } from '../members/membership-service.js';
+import {
+  resolveAccountContext as resolveAccountContextUseCase,
+  type ResolveAccountContextParams,
+  type ResolveAccountContextOptions,
+} from '../tenancy/account-context-resolver.js';
+import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Options for account operations: an optional correlation id and audit/structured logger. */
 export interface AccountOpOptions {
@@ -75,6 +81,12 @@ export interface ClerkIdentityRuntime {
   acceptInvite(params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: MembershipOpOptions): Promise<RevokeResult>;
   listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
+  /**
+   * Resolve account-level tenant context (ACBP-P1-005; CDR-012) for a SERVER-VERIFIED internal user id and
+   * a REQUESTED account id. Returns a resolved AccountContext only when the caller has an ACTIVE membership;
+   * otherwise a coarse deny. The requested account id is never trusted without that membership.
+   */
+  resolveAccountContext(params: ResolveAccountContextParams, options?: ResolveAccountContextOptions): Promise<AccountContextResolution>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -115,6 +127,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     listMembers(params) {
       return listMembers(client, params);
+    },
+    resolveAccountContext(params, options) {
+      return resolveAccountContextUseCase(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

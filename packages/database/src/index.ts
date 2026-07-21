@@ -3,11 +3,15 @@
 export { createDatabase, closeDatabase, checkDatabaseHealth } from './client.js';
 export type { DatabaseClient, DatabaseHealth, CreateDatabaseDeps, DbCallOptions } from './client.js';
 
-export { withTransaction, withTenantTransaction, nestedTransactionError } from './transaction.js';
+export { withTransaction, withTenantTransaction, withAccountTransaction, nestedTransactionError } from './transaction.js';
 export type { TxExecutor } from './transaction.js';
 
-export { TenantRepository } from './repository.js';
+export { TenantRepository, AccountScopedRepository } from './repository.js';
 export type { TenantContext, TenantScope } from './tenant.js';
+// Account-level tenancy primitive (ACBP-P1-005; CDR-012). AccountContext is re-exported from @acbp/contracts
+// (the neutral currency). createAccountScope is intentionally NOT exported — an AccountScope must originate
+// from withAccountTransaction so account context cannot be forged (CDR-012 #2).
+export type { AccountScope, AccountContext } from './account-tenant.js';
 
 // Global identity-root repositories (ACBP-P1-002; NOT tenant-scoped — CDR-008).
 export { UserMappingRepository, WebhookReceiptRepository } from './identity-repositories.js';
@@ -21,7 +25,7 @@ export type { AccountExecutor } from './account-repositories.js';
 export { MembershipRepository } from './membership-repositories.js';
 export type { MembershipExecutor } from './membership-repositories.js';
 
-export { applyTenantSession, buildTenantSettings, TENANT_SETTINGS } from './session.js';
+export { applyTenantSession, buildTenantSettings, applyAccountSession, buildAccountSettings, TENANT_SETTINGS } from './session.js';
 export type { TenantSettingStatement } from './session.js';
 
 export { toDatabaseError } from './errors.js';

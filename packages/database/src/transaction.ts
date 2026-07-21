@@ -10,9 +10,11 @@ import { platformError, ErrorCodes, type PlatformError } from '@acbp/contracts';
 import type { Transaction } from 'kysely';
 import type { DatabaseClient, DbCallOptions } from './client.js';
 import type { DatabaseSchema } from './schema.js';
+import type { AccountContext } from '@acbp/contracts';
 import { toDatabaseError } from './errors.js';
-import { applyTenantSession } from './session.js';
+import { applyTenantSession, applyAccountSession } from './session.js';
 import { createTenantScope, type TenantContext, type TenantScope } from './tenant.js';
+import { createAccountScope, type AccountScope } from './account-tenant.js';
 
 /** Executor handed to a transaction callback. `inTransaction` guards against accidental nesting. */
 export interface TxExecutor {
@@ -76,6 +78,36 @@ export async function withTenantTransaction<T>(
     });
   } catch (e) {
     const err = toDatabaseError(e, { operation: 'tenant_transaction', ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}) });
+    log.warn('db.tx.rollback', { error: err });
+    throw err;
+  }
+}
+
+/**
+ * Run `fn` in a transaction whose ACCOUNT session settings are applied first (ACBP-P1-005; CDR-012). The
+ * callback receives an {@link AccountScope} — the only value account-owned repositories accept — so
+ * account-scoped work cannot run without an account context. Sets app.current_account + app.current_actor
+ * only; NEVER app.current_company. Same commit/rollback/release + error-normalization guarantees as
+ * {@link withTenantTransaction}. The AccountScope is brand-distinct from TenantScope (CDR-012 #8).
+ */
+export async function withAccountTransaction<T>(
+  client: DatabaseClient,
+  account: AccountContext,
+  fn: (scope: AccountScope) => Promise<T>,
+  options: DbCallOptions = {},
+): Promise<T> {
+  if ((client as ExecutorLike).inTransaction) throw nestedTransactionError(options.correlationId);
+  const log = options.logger ?? client.logger;
+  try {
+    return await client.kysely.transaction().execute(async (trx) => {
+      await applyAccountSession(trx, account);
+      log.debug('db.tx.begin', { metadata: { accountScoped: true } });
+      const result = await fn(createAccountScope(account, trx));
+      log.debug('db.tx.commit', { metadata: { accountScoped: true } });
+      return result;
+    });
+  } catch (e) {
+    const err = toDatabaseError(e, { operation: 'account_transaction', ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}) });
     log.warn('db.tx.rollback', { error: err });
     throw err;
   }

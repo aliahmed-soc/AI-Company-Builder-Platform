@@ -110,3 +110,29 @@ Append significant decisions. Format: decision — source — consequence.
   operates on the caller's own personal account and is unaffected). Interim audit via structured
   `membership.invited/accepted/revoked/role_changed` events (non-PII: account/membership id + role; never
   the invited email or token); durable store is P1-008.
+
+## ACBP-P1-005 — Tenant-context primitives (opened 2026-07-21)
+- **Account-vs-company tenancy-primitive seam → CDR-012 (owner-accepted, Option B).** P0-018 already
+  delivered the *company-level* primitive (`TenantContext {accountId, companyId, actorId?}`, branded
+  `TenantScope`, `withTenantTransaction`, `TenantRepository`, `app.current_account/company/actor` GUCs,
+  compile proof) — so "repos require tenant context structurally" is already true. P1-005 adds the missing
+  *membership-resolution* half, but memberships are account-level (CDR-011) and companies don't exist until
+  P1-010, so the company-level `TenantContext` (companyId required) can't carry account context. Owner chose
+  **Option B**: a SEPARATE, type-distinct account-level primitive — `AccountContext {accountId, actorId?}`
+  (NO companyId), branded `AccountScope` (distinct brand; unforgeable outside `@acbp/database`),
+  `withAccountTransaction` (only scope-minting path; applies `app.current_account` + `app.current_actor` via
+  `SET LOCAL`; NEVER sets `app.current_company`), and an `AccountScopedRepository` base requiring `AccountScope`.
+  The company primitive is left UNCHANGED and companyId stays required (Option A — making companyId optional
+  — was rejected: it would put an empty-company state into the company primitive and make company fail-
+  closure a runtime rather than a type-level guarantee). No alias/shared brand may collapse the two scopes;
+  an account-only scope must never construct a company repository. P1-006 adds account-level RLS keyed to
+  `app.current_account`; P1-010 provides real company resolution. Source: owner decision 2026-07-21 +
+  ADR-007 (two-layer isolation; membership is the tenant authority) + DATA-ARCHITECTURE §2 (A vs C tenancy).
+- **Resolution is membership-backed and deny-by-default.** The resolver takes a SERVER-VERIFIED internal
+  `userId` + a REQUESTED `accountId` (treated only as a request, never as authority) and returns a resolved
+  `AccountContext` only when the caller has an ACTIVE membership in that account; invited/revoked/missing/
+  inactive/cross-account all deny with a COARSE reason (no existence/state oracle). No Clerk org/role claim
+  is ever consulted; revocation is effective on the next resolution; multi-membership is deterministic
+  because resolution is keyed to the explicit requested account. Database scope is minted ONLY after
+  membership validation. Interim `tenant.context_denied` structured audit event carries only non-PII
+  (account id, actor id, coarse reason); durable store is P1-008.
