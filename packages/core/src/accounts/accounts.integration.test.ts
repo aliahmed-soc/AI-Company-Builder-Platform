@@ -98,6 +98,16 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
     expect(updatedEvents[0]?.metadata).toEqual({ accountId: updated?.accountId });
   });
 
+  test('a no-op update (empty patch) returns the current view and emits no audit event', async () => {
+    const userId = await seedUser(client);
+    await provisionPersonalAccount(client, userId);
+    await updateProfileForOwner(client, userId, { displayName: 'Ada' });
+    const { logger, records } = createTestLogger({ component: 'accounts' });
+    const view = await updateProfileForOwner(client, userId, {}, { logger });
+    expect(view?.displayName).toBe('Ada'); // unchanged
+    expect(records.filter((r) => r.event === 'account.profile_updated')).toHaveLength(0);
+  });
+
   test('clearing the display name via empty string sets it to null', async () => {
     const userId = await seedUser(client);
     await provisionPersonalAccount(client, userId);

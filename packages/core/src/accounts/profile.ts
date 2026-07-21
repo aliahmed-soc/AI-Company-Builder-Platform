@@ -118,12 +118,13 @@ export async function updateProfileForOwner(
     async (tx) => {
       const account = await new AccountRepository(tx.kysely).findByOwner(userId);
       if (account === undefined) return undefined;
-      if (Object.keys(patch).length > 0) {
+      const changed = Object.keys(patch).length > 0;
+      if (changed) {
         await new AccountProfileRepository(tx.kysely).update(account.id, patch);
+        // Audit only actual edits — a no-op PATCH (empty patch) emits nothing.
+        options.logger?.info('account.profile_updated', { metadata: { accountId: account.id } });
       }
-      const view = await readProfileView(tx.kysely, userId);
-      options.logger?.info('account.profile_updated', { metadata: { accountId: account.id } });
-      return view;
+      return readProfileView(tx.kysely, userId);
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
