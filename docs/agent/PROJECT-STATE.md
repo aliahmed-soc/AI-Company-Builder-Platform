@@ -42,8 +42,13 @@ _Read this first on resume, then continue automatically to "Next executable acti
    interim `membership.*` audit + owner-membership wired into account provisioning — **done, local gate
    green** (520/0/0; unit fakes + real-PG trust-critical integration incl. role-matrix negatives +
    cross-account isolation). Pending: push + hosted CI.
-4. Web members API routes (invite/accept/revoke/list) + fail-closed auth + role-negative tests.
-5. Backlog sync (owner-gated).
+4. Web members API: runtime member ops + `GET/POST /api/account/members`, `POST
+   /api/account/members/accept`, `DELETE /api/account/members/[membershipId]` — fail-closed auth →
+   internal user → caller's own account (accept scoped to the invite's account); bounded JSON bodies;
+   safe HTTP mapping; invite token exposed once. Unit tests. **done, local gate green** (550/0/0;
+   `next build` OK — 3 routes bundle as `ƒ`; lint/boundaries/encoding/secrets pass; audit 1 moderate
+   below gate). Pending: push + hosted CI.
+5. Backlog sync (owner-gated) — **STOP; do not self-authorize backlog→Done / PR ready / merge.**
 
 ## Test baselines
 - Inherited from merged `main` (`ee2dc6a`): hosted CI green. New P1-004 suites TBD. Integration test files

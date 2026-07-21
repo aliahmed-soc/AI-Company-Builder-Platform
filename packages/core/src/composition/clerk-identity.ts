@@ -16,6 +16,17 @@ import { resolveOrReconcileInternalUser, type InternalUserReconciliation, type R
 import { reconcileAllUsers, type ReconciliationSummary, type ReconcileOptions as ReconcileAllOptions } from '../identity/reconciliation.js';
 import { provisionPersonalAccount, type ProvisionResult } from '../accounts/provisioning.js';
 import { getProfileForOwner, updateProfileForOwner, type AccountProfileView, type ProfileUpdateInput } from '../accounts/profile.js';
+import {
+  inviteMember,
+  acceptInvite,
+  revokeMember,
+  listMembers,
+  type InviteResult,
+  type AcceptResult,
+  type RevokeResult,
+  type ListResult,
+  type MembershipOpOptions,
+} from '../members/membership-service.js';
 
 /** Options for account operations: an optional correlation id and audit/structured logger. */
 export interface AccountOpOptions {
@@ -59,6 +70,11 @@ export interface ClerkIdentityRuntime {
   getAccountProfile(userId: string): Promise<AccountProfileView | undefined>;
   /** Apply a profile edit for the owner and return the resulting view (undefined when no account). */
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
+  /** Membership (ACBP-P1-004; CDR-011). Authorization is enforced inside the use case from the role. */
+  inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: MembershipOpOptions): Promise<InviteResult>;
+  acceptInvite(params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
+  revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: MembershipOpOptions): Promise<RevokeResult>;
+  listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -87,6 +103,18 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     updateAccountProfile(userId, input, options) {
       return updateProfileForOwner(client, userId, input, options ?? {});
+    },
+    inviteMember(params, options) {
+      return inviteMember(client, params, options ?? {});
+    },
+    acceptInvite(params, options) {
+      return acceptInvite(client, params, options ?? {});
+    },
+    revokeMember(params, options) {
+      return revokeMember(client, params, options ?? {});
+    },
+    listMembers(params) {
+      return listMembers(client, params);
     },
     async close() {
       if (ownsClient) await closeDatabase(client);
