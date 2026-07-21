@@ -25,6 +25,10 @@ export type { AccountExecutor } from './account-repositories.js';
 export { MembershipRepository } from './membership-repositories.js';
 export type { MembershipExecutor } from './membership-repositories.js';
 
+// SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
+export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
+export type { BootstrapExecutor } from './bootstrap-functions.js';
+
 export { applyTenantSession, buildTenantSettings, applyAccountSession, buildAccountSettings, TENANT_SETTINGS } from './session.js';
 export type { TenantSettingStatement } from './session.js';
 
