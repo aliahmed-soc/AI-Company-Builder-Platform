@@ -36,8 +36,8 @@ function encodeRandom(): string {
   webCrypto.getRandomValues(bytes);
   let out = '';
   for (let i = 0; i < RANDOM_LEN; i++) {
-    // Map each byte into the 32-char alphabet (mod 32 — the top 3 bits are discarded; uniform enough for a
-    // collision-resistance role backed by a database primary-key uniqueness constraint).
+    // Map each byte into the 32-char alphabet. `byte % 32` is uniform (256 = 8 x 32), so each of the 16 chars
+    // carries full 5-bit entropy — 80 bits total, backed by the database primary-key uniqueness constraint.
     out += ENCODING[(bytes[i] as number) % ENCODING_LEN];
   }
   return out;

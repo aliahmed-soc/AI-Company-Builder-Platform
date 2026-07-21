@@ -8,9 +8,18 @@
 // caller-supplied); `event_id` is a server-generated ULID; `occurred_at` is the database clock. The caller
 // supplies only the typed AuditEvent (registered name + subject + outcome + bounded metadata). There is no
 // UPDATE/DELETE method — immutability is enforced by the table's grants/policies (invariant 11).
-import { generateEventId, type AuditEvent, type AuditActorType } from '@acbp/contracts';
+import { generateEventId, validationError, type AuditEvent, type AuditActorType } from '@acbp/contracts';
 import type { AccountScope } from './account-tenant.js';
 import type { NewAuditEvent } from './schema.js';
+
+/** Correlation/causation/idempotency ids must be bounded opaque strings (server-generated). Guards against a
+ *  future caller routing unbounded/user-derived data into these text columns (defense in depth). */
+const MAX_CTX_ID_LEN = 200;
+function boundedCtxId(value: string | undefined, field: string): string | null {
+  if (value === undefined) return null;
+  if (value.length > MAX_CTX_ID_LEN) throw validationError({ message: 'Audit context identifier is too long.', fields: [field] });
+  return value;
+}
 
 export interface AuditWriteContext {
   /** Actor type (EVENT-CATALOG). Defaults to 'user' — the account flows P1-008 audits are user-initiated. */
@@ -42,9 +51,9 @@ export async function writeAuditEvent(scope: AccountScope, event: AuditEvent, ct
     subject_type: event.subjectType,
     subject_id: event.subjectId,
     outcome: event.outcome,
-    correlation_id: ctx.correlationId ?? null,
-    causation_id: ctx.causationId ?? null,
-    idempotency_key: ctx.idempotencyKey ?? null,
+    correlation_id: boundedCtxId(ctx.correlationId, 'correlationId'),
+    causation_id: boundedCtxId(ctx.causationId, 'causationId'),
+    idempotency_key: boundedCtxId(ctx.idempotencyKey, 'idempotencyKey'),
     payload: event.metadata,
   };
   await scope.db.insertInto('audit_events').values(values).execute();

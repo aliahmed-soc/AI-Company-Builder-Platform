@@ -38,8 +38,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
   // Account-scoped lookups (future read surface); ULID PK already gives time-ordering.
   await sql`create index audit_events_account_idx on audit_events (account_id, occurred_at)`.execute(db);
-  // A producer's idempotency key identifies at most one audit row (dedupe for retried in-tx writers).
-  await sql`create unique index audit_events_idempotency_key_unique on audit_events (idempotency_key) where idempotency_key is not null`.execute(db);
+  // A producer's idempotency key identifies at most one audit row PER ACCOUNT (dedupe for retried in-tx
+  // writers). Scoped to (account_id, idempotency_key) so a key in one account cannot collide with — or leak
+  // the existence of — a key in another account (no cross-account availability coupling / existence oracle).
+  await sql`create unique index audit_events_idempotency_key_unique on audit_events (account_id, idempotency_key) where idempotency_key is not null`.execute(db);
 
   // 2) Least-privilege grants: INSERT + SELECT ONLY. No UPDATE/DELETE/TRUNCATE → append-only for the app role.
   await sql`grant select, insert on public.audit_events to ${APP_ROLE}`.execute(db);

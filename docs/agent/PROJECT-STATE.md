@@ -7,7 +7,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-008-audit-event-foundation` (from `main` @ `340f9c2`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
 - Base main: `340f9c2b11f5019b26ff8563aa4dbd4505866d49` (P1-007 squash-merge PR #8; main CI green run 29867863044).
-- **STATUS: owner decision made (CDR-014 Option A). Slice 1 complete + local-green. Implementing autonomously.**
+- **STATUS: all 5 slices complete; THREE independent reviews PASS; STOPPED AT OWNER GATE (pending final CI).**
+  Reviews: audit-integrity/RLS-ACL PASS (0 blk/0 maj/2 min/1 info); tx-atomicity/completeness PASS (0/0/1/4);
+  architecture/scope+sharp PASS (0/0/0/5). All reasonable minors fixed (per-account idempotency index;
+  bounded ctx ids; automated compile-exhaustive per-op completeness test; ULID comment). Residuals documented
+  in AUDIT.md. An out-of-scope P1-004 last-owner concurrency race was flagged as a separate task, not fixed here.
   Do NOT self-authorize: backlog→Done, PR ready, merge, branch delete, or begin P1-009.
 
 ## Prior tickets (closed)
@@ -62,7 +66,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
    row; audit-write failure rolls back the mutation (fail-closed, no invite/revoke, no audit); write-then-throw
    rolls BOTH back (atomicity); mutation-fail/last-owner/missing/no-op/cross-account write no success audit;
    concurrent revoke → exactly one audit. Full local suite 528 pass / 0 fail.
-4. **IN PROGRESS (adversarial + docs done; reviews pending).** Adversarial suite extends `audit.integration.test.ts`:
+4. **DONE.** Adversarial suite extends `audit.integration.test.ts`:
    ALTER/DROP/TRUNCATE/DISABLE-RLS denied; DROP/ALTER/permissive-ALL policy denied; self-GRANT/SET-ROLE/CREATE-ROLE
    denied; pooled-context isolation (sequential + concurrent accounts don't cross-see); catalog (non-app owner,
    acbp_app NOCREATEROLE/NOINHERIT/member-of-no-role, exactly 2 policies INSERT+SELECT, exactly 3 SECURITY DEFINER
@@ -96,9 +100,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
 ## Next executable action
-Continue **Slice 3** (wire `writeAuditEvent` into `membership.invited`/`membership.revoked` inside
-`runInAccountScope`, in-tx with the mutation; real-PG tests: atomic success writes one row; a forced audit-write
-failure rolls back the membership mutation → action blocked; idempotency/concurrency; no pooled-context leak;
-completeness check that each high-risk op writes exactly one audit row). Keep the existing operational
-`logger.info` (separate system). Add `audit_events` to integration-suite cleanup drop-lists. Commit + push each
-green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate or a new owner decision.
+**NONE — STOPPED at the owner gate** (pending exact-final-HEAD CI on the review-fix commit). All 5 slices done;
+three independent reviews PASS; reasonable minors fixed; residuals documented in AUDIT.md. Owner-gated (do NOT
+self-authorize): (1) backlog ACBP-P1-008 → Done, (2) `gh pr ready 9`, (3) squash-merge PR #9, then verify main
+CI + delete branch. Begin ACBP-P1-009 only on separate explicit authorization.

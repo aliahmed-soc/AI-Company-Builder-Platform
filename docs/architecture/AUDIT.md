@@ -100,6 +100,28 @@ An audit-write failure on a high-risk op fails the action closed (the user sees 
 Audit-write failure is a page-level operational alert (OBSERVABILITY §2). No mutation of audit rows is possible
 through product paths; retention/redaction on account deletion is a controlled non-product path (later).
 
+## Residual risks (accepted; from independent review)
+
+- **`name`/`subject_type` are enforced at the app layer, not by a DB CHECK.** The closed event registry lives in
+  `@acbp/contracts` and the only write path is the typed `writeAuditEvent` (registered factories only). A DB
+  CHECK on `name` is deliberately omitted so the registry can grow without a per-event migration; the residual —
+  a hypothetical compromised app path appending a spurious own-account row with an unregistered name — is
+  inherent to granting the app role INSERT, is RLS-bound to the caller's own account, and does not affect the
+  immutability of existing rows.
+- **`correlation_id`/`causation_id`/`idempotency_key` are opaque server identifiers** — the writer now rejects
+  any that exceed 200 chars (defense against a future caller routing user-derived data into these columns).
+- **`actor_type` is caller-supplied** (defaults `'user'`, DB-CHECK-bound to the enum); `actor_id`/`account_id`
+  remain server-bound from the scope, so this is not a forgery vector. The two P1-008 producers never override it.
+- **Completeness for FUTURE operations** is enforced by a compile-time-exhaustive per-operation producer test
+  plus the no-orphan/`factoryFor` checks — a new approved op cannot be registered without a driver that proves
+  its in-transaction write.
+- **The operational `logger.info` fires before the in-tx audit write commits**; on an audit-write failure the
+  stdout log persists though the transaction rolls back (best-effort log; the durable `audit_events` row is the
+  authoritative record and correctly shows nothing).
+- **No live authenticated web-route acceptance was performed** (owner/external gate); hosted CI (zero-skip
+  PostgreSQL) is the authoritative evidence. Out-of-scope P1-004 finding flagged separately: a last-owner
+  concurrency race in `revokeMemberWithStore` (two concurrent revokes of different owners) — its own ticket.
+
 ## Supply-chain note (not a P1-008 feature)
 
 A cross-cutting remediation landed on this branch because it blocked the repo-wide `pnpm audit --audit-level

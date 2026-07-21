@@ -6,6 +6,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { closeDatabase, migrateToLatest, writeAuditEvent, type DatabaseClient, type NewUser } from '@acbp/database';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { inviteMember, acceptInvite, revokeMember, listMembers, type AuditWriteFn } from './membership-service.js';
+import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, type AuditedOperation } from '../audit/audit-operations.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 // The membership use cases run as the restricted `acbp_app` role (subject to FORCE RLS); schema + user
@@ -288,5 +289,34 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     const ownerRow = list.status === 'ok' ? list.members[0] : undefined;
     expect((await revokeMember(app, { accountId, actingUserId: outsiderId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('forbidden');
     expect(await seed.kysely.selectFrom('audit_events').selectAll().where('account_id', '=', accountId).execute()).toHaveLength(0);
+  });
+
+  // Automated completeness: a driver per APPROVED operation, exhaustive over AUDITED_OPERATION_IDS at compile
+  // time (a new operation without a driver fails to compile). Each driver runs the REAL use case and must
+  // leave exactly one durable audit row of its mapped event — so a use case that ever loses its in-tx write
+  // fails CI here, not just review discipline (closes the "parallel bookkeeping" gap).
+  const OP_DRIVERS: Record<AuditedOperation, () => Promise<void>> = {
+    'membership.invite': async () => {
+      const r = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'op-invite@example.com', role: 'viewer' });
+      if (r.status !== 'ok') throw new Error('invite driver setup failed');
+    },
+    'membership.revoke': async () => {
+      const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'op-revoke@example.com', role: 'viewer' });
+      if (invite.status !== 'ok') throw new Error('revoke driver setup failed');
+      const vId = await seedUser(seed, 'op-revoke@example.com');
+      const acc = await acceptInvite(app, { token: invite.token, acceptingUserId: vId });
+      if (acc.status !== 'ok') throw new Error('revoke driver setup failed');
+      await seed.kysely.deleteFrom('audit_events').execute(); // isolate: only the revoke event should remain
+      const r = await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId });
+      if (r.status !== 'ok') throw new Error('revoke driver failed');
+    },
+  };
+
+  test.each(AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event — ACBP-P1-008', async (op) => {
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await OP_DRIVERS[op]();
+    const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.name).toBe(AUDITED_OPERATIONS[op]);
   });
 });
