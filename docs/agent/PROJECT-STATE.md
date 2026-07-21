@@ -4,9 +4,12 @@ _Read this first on resume, then continue automatically to "Next executable acti
 
 ## Active
 - Ticket: **ACBP-P1-003** — Account creation and profile (status: **Planned**; owner-gated to move to Done).
-- Branch: `p1-003-account-creation-and-profile` (from `main` @ `d1069f8`).
-- PR: **(to be opened as draft once slice 1 is pushed)**, base `main`.
+- Branch: `p1-003-account-creation-and-profile` (from `main` @ `d1069f8`). HEAD `678b84b`.
+- PR: **#4 (DRAFT, open, unmerged)**, base `main` — all code slices committed + hosted-green.
 - Base main: `d1069f81e6c1f5c457d1883cd83835a1fa0e031f`.
+- **STATUS: all code slices complete + hosted-green; independent review PASS. STOPPED AT OWNER GATE.**
+  Awaiting owner authorization for: (1) backlog ACBP-P1-003 → Done, (2) PR #4 ready-for-review,
+  (3) squash-merge to main. Do NOT self-authorize. Do NOT start P1-004.
 
 ## Prior ticket (closed)
 - **ACBP-P1-002 — DONE & MERGED.** Squash-merged as `d1069f8` (PR #3, merged 2026-07-20). Main CI green.
@@ -63,8 +66,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   no public tunnel without explicit authorization; no unrelated architectural changes.
 
 ## Current HEAD
-`d1069f8` (branch just created; first commit pending). Working tree: docs being written.
+`678b84b` on `p1-003-account-creation-and-profile`. Draft PR #4. Working tree clean. Hosted CI green on
+every pushed slice; local full suite 479/0/0 with real PostgreSQL. Independent security/scope review PASS.
 
 ## Next executable action
-Commit slice-1 docs (CDR-010 + agent state), push, open the draft PR with the canonical ticket ID/title,
-then implement slice 2 (migration `0003` + schema + repository + PG integration) and run full CI.
+**NONE — STOPPED at the owner gate.** Do not self-authorize. The remaining steps are owner-gated:
+(1) mark backlog ACBP-P1-003 → Done, (2) `gh pr ready 4`, (3) squash-merge PR #4 to main, then verify
+main CI + delete branch. Only begin ACBP-P1-004 on separate explicit authorization. Optional, non-blocking:
+live authenticated-route acceptance needs a dev server + Clerk DEVELOPMENT env (owner/external-access gate).
