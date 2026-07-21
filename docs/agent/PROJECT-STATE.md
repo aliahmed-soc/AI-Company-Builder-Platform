@@ -34,11 +34,27 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - **Excludes:** company lifecycle + company RLS (P1-010), general authz middleware (P1-007), durable audit (P1-008), billing.
 
 ## Slices (planned)
-1. CDR-013 + config contracts + agent state + draft PR — **in progress**.
-2. Restricted role + grants + RLS enable/force + policies (accounts/account_profiles/memberships) + restricted-role integration.
-3. The 3 SECURITY DEFINER bootstrap fns + provisioning/resolution/accept rewiring + bootstrap-abuse tests.
-4. Route remaining account-owned ops through restricted scoped transactions + profile/membership regressions + pooling/commit/rollback/concurrency.
+1. CDR-013 + agent state + draft PR **#7** — **done** (`9c42d03`; CI 29844551561 GREEN).
+2. Restricted role `acbp_app` + grants + RLS enable/force + policies (accounts/account_profiles/memberships) +
+   restricted-role real-PG isolation suite — **done** (`d07d3de`; CI 29845284782 GREEN, zero-skip PG). Migration
+   `0005_row_level_security.ts` + `rls.integration.test.ts`. Existing superuser suites unaffected.
+3. The 3 SECURITY DEFINER bootstrap fns (migration `0006`) + provisioning/resolution/accept rewiring +
+   bootstrap-abuse tests — **NEXT**. Fns: `acbp_provision_account`, `acbp_resolve_own_membership`,
+   `acbp_accept_invite` (owned by owner role, EXECUTE only to acbp_app, fixed search_path, no dynamic SQL,
+   minimal return, bypass only their atomic transition). accept binds email from `users.primary_email`.
+4. Route remaining account-owned ops through restricted scoped transactions + profile/membership regressions
+   + pooling/commit/rollback/concurrency.
 5. Catalog inspection + adversarial bypass + migration up/down + docs + independent security & architecture reviews.
+
+## Implementation notes (for continuation)
+- Restricted-role test pattern (proven in `rls.integration.test.ts`): seed via superuser client (bypasses RLS),
+  assert via a second `acbp_app` client; give the role LOGIN+throwaway password in `beforeAll`
+  (`alter role acbp_app login password ...`). `asApp(gucs, fn)` sets GUCs via `set_config(...,true)` in a tx.
+- Policy set (restricted role): accounts SELECT/UPDATE; account_profiles SELECT/UPDATE; memberships
+  SELECT(+self-branch)/INSERT/UPDATE. Creation of account+profile+owner-membership, pre-context resolution,
+  and accept are RLS-bypassed via the 3 SECURITY DEFINER fns (Slice 3), NOT via restricted-role policies.
+- Bootstrap fns bypass RLS via owner-role ownership (owner has BYPASSRLS in prod / superuser in CI); the
+  migration grants BYPASSRLS to no one.
 
 ## Guards (must stay green every slice)
 - `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.
