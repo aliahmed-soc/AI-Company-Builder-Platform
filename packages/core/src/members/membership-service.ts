@@ -7,9 +7,10 @@
 // is not exercised here (companies are P1-010); every P1-004 membership is account-level.
 import { MembershipRepository, acceptInviteBootstrap, type DatabaseClient } from '@acbp/database';
 import { runInAccountScope } from '../tenancy/account-context-resolver.js';
-import { validationError, type PublicErrorEnvelope } from '@acbp/contracts';
+import { checkAuthorization } from '../authz/authz-service.js';
+import { authorize, isAllowed, validationError, type PublicErrorEnvelope } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
-import { isMemberRole, isOwner, isMember, type MemberRole } from './roles.js';
+import { isMemberRole, type MemberRole } from './roles.js';
 import { generateInviteToken, hashInviteToken } from './invite-token.js';
 
 export type MembershipStatus = 'invited' | 'active' | 'revoked';
@@ -82,9 +83,12 @@ export async function inviteMemberWithStore(
   const invitedEmail = normalizeEmail(params.invitedEmail);
   const role = params.role;
 
-  // Owner-only. Role comes from the acting user's active membership, never from the request.
+  // Central authz.check (ACBP-P1-007). The acting role comes from the caller's ACTIVE membership row,
+  // never from the request; a denial is audited by checkAuthorization and mapped to a coarse `forbidden`.
   const actingRole = await store.resolveActiveRole(params.accountId, params.actingUserId);
-  if (!isOwner(actingRole)) return { status: 'forbidden' };
+  if (checkAuthorization(actingRole, 'member:invite', { accountId: params.accountId, actorId: params.actingUserId }, options).kind === 'deny') {
+    return { status: 'forbidden' };
+  }
 
   if ((await store.findPendingByAccountAndEmail(params.accountId, invitedEmail)) !== undefined) return { status: 'conflict' };
 
@@ -100,8 +104,11 @@ export async function revokeMemberWithStore(
   params: { accountId: string; actingUserId: string; membershipId: string },
   options: MembershipOpOptions = {},
 ): Promise<RevokeResult> {
+  // Central authz.check (ACBP-P1-007). Owner-gated; role from the active membership, denial audited.
   const actingRole = await store.resolveActiveRole(params.accountId, params.actingUserId);
-  if (!isOwner(actingRole)) return { status: 'forbidden' };
+  if (checkAuthorization(actingRole, 'member:revoke', { accountId: params.accountId, actorId: params.actingUserId }, options).kind === 'deny') {
+    return { status: 'forbidden' };
+  }
 
   const target = await store.findInAccount(params.accountId, params.membershipId);
   if (target === undefined) return { status: 'not_found' };
@@ -116,12 +123,17 @@ export async function revokeMemberWithStore(
   return { status: 'ok' };
 }
 
-export async function listMembersWithStore(store: MembershipStore, params: { accountId: string; actingUserId: string }): Promise<ListResult> {
+export async function listMembersWithStore(store: MembershipStore, params: { accountId: string; actingUserId: string }, options: MembershipOpOptions = {}): Promise<ListResult> {
+  // Central authz.check (ACBP-P1-007). Any active member may list; a non-member denial is audited.
   const actingRole = await store.resolveActiveRole(params.accountId, params.actingUserId);
-  if (!isMember(actingRole)) return { status: 'forbidden' };
+  if (checkAuthorization(actingRole, 'member:list', { accountId: params.accountId, actorId: params.actingUserId }, options).kind === 'deny') {
+    return { status: 'forbidden' };
+  }
   const members = await store.listMembers(params.accountId);
-  // Only owners see pending-invite email addresses; viewers get them redacted (least data exposure).
-  const projected = isOwner(actingRole) ? members : members.map((m) => (m.invitedEmail === null ? m : { ...m, invitedEmail: null }));
+  // Only owners see pending-invite email addresses; viewers get them redacted (least data exposure). This
+  // is a projection capability, not a request gate, so it consults the matrix WITHOUT auditing a denial.
+  const canSeeInvitedEmails = isAllowed(authorize(actingRole, 'member:read_invited_email'));
+  const projected = canSeeInvitedEmails ? members : members.map((m) => (m.invitedEmail === null ? m : { ...m, invitedEmail: null }));
   return { status: 'ok', members: projected };
 }
 
@@ -207,11 +219,12 @@ export async function revokeMember(client: DatabaseClient, params: { accountId: 
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
-export async function listMembers(client: DatabaseClient, params: { accountId: string; actingUserId: string }): Promise<ListResult> {
+export async function listMembers(client: DatabaseClient, params: { accountId: string; actingUserId: string }, options: MembershipOpOptions = {}): Promise<ListResult> {
   const run = await runInAccountScope(
     client,
     { userId: params.actingUserId, requestedAccountId: params.accountId },
-    (scope) => listMembersWithStore(liveStore(new MembershipRepository(scope.db)), params),
+    (scope) => listMembersWithStore(liveStore(new MembershipRepository(scope.db)), params, options),
+    options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }

@@ -55,6 +55,17 @@ describe('inviteMemberWithStore', () => {
     expect(JSON.stringify(ev[0])).not.toContain('raw-token'); // no token in the audit event
   });
 
+  test('a forbidden invite is audited via the central authz.denied event (non-PII) — ACBP-P1-007', async () => {
+    const store = makeStore({ resolveActiveRole: () => Promise.resolve('viewer') });
+    const { logger, records } = createTestLogger({ component: 'members' });
+    const r = await inviteMemberWithStore(store, { accountId: 'acc_1', actingUserId: 'u_v', invitedEmail: 'x@example.com', role: 'viewer' }, { logger });
+    expect(r.status).toBe('forbidden');
+    const ev = records.filter((x) => x.event === 'authz.denied');
+    expect(ev).toHaveLength(1);
+    expect(ev[0]?.metadata).toEqual({ action: 'member:invite', reason: 'insufficient_role', accountId: 'acc_1', actorId: 'u_v' });
+    expect(JSON.stringify(ev[0])).not.toContain('example.com'); // no email in the denial audit
+  });
+
   test('invalid email or role is rejected with a safe validation envelope', async () => {
     const store = makeStore({ resolveActiveRole: () => Promise.resolve('owner') });
     const badEmail = await inviteMemberWithStore(store, { accountId: 'a', actingUserId: 'o', invitedEmail: 'not-an-email', role: 'viewer' });
@@ -127,6 +138,15 @@ describe('listMembersWithStore', () => {
 
   test('a non-member cannot list (forbidden)', async () => {
     expect((await listMembersWithStore(makeStore({ resolveActiveRole: () => Promise.resolve(null) }), { accountId: 'a', actingUserId: 'stranger' })).status).toBe('forbidden');
+  });
+
+  test('a non-member list denial is audited via authz.denied (not_a_member) — ACBP-P1-007', async () => {
+    const { logger, records } = createTestLogger({ component: 'members' });
+    const r = await listMembersWithStore(makeStore({ resolveActiveRole: () => Promise.resolve(null) }), { accountId: 'a', actingUserId: 'stranger' }, { logger });
+    expect(r.status).toBe('forbidden');
+    const ev = records.filter((x) => x.event === 'authz.denied');
+    expect(ev).toHaveLength(1);
+    expect(ev[0]?.metadata).toEqual({ action: 'member:list', reason: 'not_a_member', accountId: 'a', actorId: 'stranger' });
   });
 
   test('a viewer (member) may list', async () => {

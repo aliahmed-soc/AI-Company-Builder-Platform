@@ -80,7 +80,7 @@ export interface ClerkIdentityRuntime {
   inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: MembershipOpOptions): Promise<InviteResult>;
   acceptInvite(params: { token: string; acceptingUserId: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: MembershipOpOptions): Promise<RevokeResult>;
-  listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
+  listMembers(params: { accountId: string; actingUserId: string }, options?: MembershipOpOptions): Promise<ListResult>;
   /**
    * Resolve account-level tenant context (ACBP-P1-005; CDR-012) for a SERVER-VERIFIED internal user id and
    * a REQUESTED account id. Returns a resolved AccountContext only when the caller has an ACTIVE membership;
@@ -125,8 +125,8 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     revokeMember(params, options) {
       return revokeMember(client, params, options ?? {});
     },
-    listMembers(params) {
-      return listMembers(client, params);
+    listMembers(params, options) {
+      return listMembers(client, params, options ?? {});
     },
     resolveAccountContext(params, options) {
       return resolveAccountContextUseCase(client, params, options ?? {});

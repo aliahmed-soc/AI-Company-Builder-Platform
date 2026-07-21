@@ -43,9 +43,15 @@ _Read this first on resume, then continue automatically to "Next executable acti
    emits an interim `authz.denied` audit event (warn; non-PII `{action, reason, accountId, actorId}`, mirroring
    `tenant.context_denied`) on deny; allows are silent. `isAuthorized` boolean helper. 8 unit tests; static gate
    all EXIT 0. Role is caller-supplied (server-resolved) — the module loads no data / mints no scope.
-3. Integrate authz.check into the core use cases (invite/revoke/list/profile) — replace inline `isOwner`/
-   `isMember` with the central matrix; role loaded from active membership under the caller's scope (no cache).
-   Real-PG integration: immediate revoke + role-change reflected on next decision.
+3. **DONE (local-green).** Integrated authz.check into the core use cases: `membership-service.ts`
+   invite/revoke/list now call `checkAuthorization` (acting role already loaded from the ACTIVE membership;
+   no new query), the email-redaction uses the non-auditing `authorize('member:read_invited_email')`, and
+   `listMembers` threads a logger (composition + web request layer updated) so a list denial audits.
+   `profile.ts` get/update call `checkAuthorization` for `profile:read`/`profile:update` (role loaded under
+   scope via `MembershipRepository`, RLS self-row). Behavior preserved (all prior tests green). Added: unit
+   tests that denials emit `authz.denied` (non-PII); real-PG test that a role change is reflected on the very
+   next decision (no caching). Full local suite 501 pass / 0 fail (150 integration skipped locally); `next
+   build` EXIT 0; static gate all EXIT 0.
 4. Web/request integration: reusable route guard mapping deny → opaque 403; endpoint×role NEGATIVE matrix +
    forged-claim (header/cookie/body role) negatives; `next build`.
 5. Adversarial/bypass suite (direct-use-case invocation, cross-account, TOCTOU) + audit/observability
@@ -77,8 +83,10 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads.
 
 ## Next executable action
-Continue **Slice 3** (integrate `checkAuthorization` into the core use cases — replace inline `isOwner`/
-`isMember` in `membership-service.ts` [invite/revoke/list + the read_invited_email redaction] and `profile.ts`;
-role loaded from the ACTIVE membership under the caller's scope, no cache; real-PG immediate revoke/role-change
-tests). Commit + push each green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate
-(all slices hosted-green + independently reviewed) or a new genuine owner decision.
+Continue **Slice 4** (web/request integration: a reusable route guard mapping any authz deny → the opaque
+`authorizationDeniedEnvelope` 403; endpoint×role NEGATIVE matrix per privileged endpoint [POST/GET/DELETE
+members]; forged-claim negatives — role in header/cookie/body ignored, only server-resolved membership counts;
+`next build`). Note: core use cases are already the AUTHORITATIVE enforcement (Slice 3); the route guard is
+defense-in-depth + the negative-test surface. Commit + push each green slice; verify hosted CI on the exact
+pushed commit. Stop only at the owner gate (all slices hosted-green + independently reviewed) or a new genuine
+owner decision.
