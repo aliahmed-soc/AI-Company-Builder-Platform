@@ -6,15 +6,16 @@
 // (which re-verifies) and syncs back via the P1-002 user.updated webhook. Every mutation resolves the
 // account from the SERVER-VERIFIED internal user id (`created_by_user_id`), never a client-supplied id.
 import {
-  withTransaction,
   AccountRepository,
   AccountProfileRepository,
+  provisionAccountBootstrap,
   type DatabaseClient,
   type AccountExecutor,
   type AccountProfileUpdate,
 } from '@acbp/database';
 import { validationError } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
+import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 
 /** The account profile as shown to its owner. Email/verification are read-only (Clerk-authoritative). */
 export interface AccountProfileView {
@@ -96,15 +97,23 @@ async function readProfileView(db: AccountExecutor, userId: string): Promise<Acc
   };
 }
 
-/** Read the owner's profile view, or undefined if the user has no account yet. */
-export function getProfileForOwner(client: DatabaseClient, userId: string): Promise<AccountProfileView | undefined> {
-  return readProfileView(client.kysely, userId);
+/**
+ * Read the owner's profile view. Runs under the caller's validated AccountScope on the restricted role
+ * (ACBP-P1-006): the personal account id is obtained from the idempotent provisioning bootstrap function,
+ * then the join reads under `withAccountTransaction` (RLS confines it to `id = current_account`). Returns
+ * undefined only if context resolution is denied (should not happen for the owner's own account).
+ */
+export async function getProfileForOwner(client: DatabaseClient, userId: string): Promise<AccountProfileView | undefined> {
+  const { accountId } = await provisionAccountBootstrap(client.kysely, userId);
+  const run = await runInAccountScope(client, { userId, requestedAccountId: accountId }, (scope) => readProfileView(scope.db, userId));
+  return run.kind === 'ran' ? run.value : undefined;
 }
 
 /**
- * Apply a profile edit for the owning user and return the resulting view. Returns undefined when the
- * user has no account (caller provisions first). Validation runs before any write. Emits an interim
- * `account.profile_updated` audit event (non-PII: account id only). Email is never modified here.
+ * Apply a profile edit for the owning user and return the resulting view, under the caller's validated
+ * AccountScope on the restricted role (ACBP-P1-006). Validation runs before any write. Emits an interim
+ * `account.profile_updated` audit event (non-PII: account id only) on an actual edit. Email is never
+ * modified here. Returns undefined only if context resolution is denied.
  */
 export async function updateProfileForOwner(
   client: DatabaseClient,
@@ -113,19 +122,21 @@ export async function updateProfileForOwner(
   options: ProfileUpdateOptions = {},
 ): Promise<AccountProfileView | undefined> {
   const patch = normalizeProfileUpdate(input);
-  return withTransaction(
+  const { accountId } = await provisionAccountBootstrap(client.kysely, userId);
+  const run = await runInAccountScope(
     client,
-    async (tx) => {
-      const account = await new AccountRepository(tx.kysely).findByOwner(userId);
+    { userId, requestedAccountId: accountId },
+    async (scope) => {
+      const account = await new AccountRepository(scope.db).findByOwner(userId);
       if (account === undefined) return undefined;
-      const changed = Object.keys(patch).length > 0;
-      if (changed) {
-        await new AccountProfileRepository(tx.kysely).update(account.id, patch);
+      if (Object.keys(patch).length > 0) {
+        await new AccountProfileRepository(scope.db).update(account.id, patch);
         // Audit only actual edits — a no-op PATCH (empty patch) emits nothing.
         options.logger?.info('account.profile_updated', { metadata: { accountId: account.id } });
       }
-      return readProfileView(tx.kysely, userId);
+      return readProfileView(scope.db, userId);
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
+  return run.kind === 'ran' ? run.value : undefined;
 }

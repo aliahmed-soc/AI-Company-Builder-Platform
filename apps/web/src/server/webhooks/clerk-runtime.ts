@@ -5,7 +5,7 @@
 // runtime holds one database client (pool); it is created lazily and reused across requests. Config is
 // loaded from the environment at this trusted server boundary (fails fast on invalid config).
 import { createClerkIdentityRuntime, type ClerkIdentityRuntime } from '@acbp/core';
-import { loadClerkConfig, loadClerkWebhookConfig, loadDatabaseConfig } from '@acbp/config';
+import { loadClerkConfig, loadClerkWebhookConfig, loadAppDatabaseConfig } from '@acbp/config';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
 
 let runtime: ClerkIdentityRuntime | undefined;
@@ -15,7 +15,9 @@ export function getClerkIdentityRuntime(): ClerkIdentityRuntime {
   if (runtime === undefined) {
     const clerkWebhookConfig = loadClerkWebhookConfig();
     const clerkConfig = loadClerkConfig();
-    const databaseConfig = loadDatabaseConfig();
+    // Normal runtime uses the RESTRICTED application connection (acbp_app) — never the owner/migration
+    // connection (ACBP-P1-006; CDR-013). Fails closed if DATABASE_APP_URL is absent (no owner fallback).
+    const databaseConfig = loadAppDatabaseConfig();
     // The expected instance id (read-through providerInstanceId) comes from configuration only; when
     // absent, the read-through provider call fails safe (unavailable) inside the adapter.
     const expectedInstanceId = clerkWebhookConfig.expectedInstanceId ?? '';

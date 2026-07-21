@@ -116,9 +116,14 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
     expect(cleared?.displayName).toBeNull();
   });
 
-  test('profile access for a user with no account returns undefined', async () => {
+  test('profile access ensures the personal account (RLS requires the account id via provisioning)', async () => {
+    // Under FORCE RLS (ACBP-P1-006) the profile ops obtain the account id from the idempotent provisioning
+    // bootstrap function, so first access provisions the caller's own account rather than returning undefined.
     const userId = await seedUser(client, { provider_user_id: 'user_no_acct' });
-    expect(await getProfileForOwner(client, userId)).toBeUndefined();
-    expect(await updateProfileForOwner(client, userId, { locale: 'en' })).toBeUndefined();
+    const view = await getProfileForOwner(client, userId);
+    expect(view?.accountId).toBeDefined();
+    expect(view?.locale).toBe('en');
+    const updated = await updateProfileForOwner(client, userId, { locale: 'en-GB' });
+    expect(updated?.locale).toBe('en-GB');
   });
 });

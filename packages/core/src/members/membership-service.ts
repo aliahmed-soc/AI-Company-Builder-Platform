@@ -5,7 +5,8 @@
 // or viewer): list. Accept is self-service, bound to a single-use token AND the accepting user's
 // verified email. Interim structured audit events carry no PII (no email, no token). The company scope
 // is not exercised here (companies are P1-010); every P1-004 membership is account-level.
-import { withTransaction, MembershipRepository, acceptInviteBootstrap, type DatabaseClient } from '@acbp/database';
+import { MembershipRepository, acceptInviteBootstrap, type DatabaseClient } from '@acbp/database';
+import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { validationError, type PublicErrorEnvelope } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 import { isMemberRole, isOwner, isMember, type MemberRole } from './roles.js';
@@ -167,8 +168,18 @@ function liveStore(repo: MembershipRepository): MembershipStore {
   };
 }
 
-export function inviteMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options: MembershipOpOptions = {}): Promise<InviteResult> {
-  return withTransaction(client, (tx) => inviteMemberWithStore(liveStore(new MembershipRepository(tx.kysely)), params, options), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+// Live wrappers run under the caller's validated AccountScope on the restricted role (ACBP-P1-006): the
+// acting user's ACTIVE membership is resolved first (a non-member is denied → forbidden), then the store
+// op runs under `withAccountTransaction` so every memberships query/mutation is RLS-confined to the
+// caller's account. The store's own role check (owner vs viewer) still runs under the scope.
+export async function inviteMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options: MembershipOpOptions = {}): Promise<InviteResult> {
+  const run = await runInAccountScope(
+    client,
+    { userId: params.actingUserId, requestedAccountId: params.accountId },
+    (scope) => inviteMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options),
+    options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
 /**
@@ -186,10 +197,21 @@ export async function acceptInvite(client: DatabaseClient, params: { token: stri
   return { status: 'ok', membershipId: row.membershipId, accountId: row.accountId, role: row.role as MemberRole };
 }
 
-export function revokeMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; membershipId: string }, options: MembershipOpOptions = {}): Promise<RevokeResult> {
-  return withTransaction(client, (tx) => revokeMemberWithStore(liveStore(new MembershipRepository(tx.kysely)), params, options), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+export async function revokeMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; membershipId: string }, options: MembershipOpOptions = {}): Promise<RevokeResult> {
+  const run = await runInAccountScope(
+    client,
+    { userId: params.actingUserId, requestedAccountId: params.accountId },
+    (scope) => revokeMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options),
+    options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
-export function listMembers(client: DatabaseClient, params: { accountId: string; actingUserId: string }): Promise<ListResult> {
-  return listMembersWithStore(liveStore(new MembershipRepository(client.kysely)), params);
+export async function listMembers(client: DatabaseClient, params: { accountId: string; actingUserId: string }): Promise<ListResult> {
+  const run = await runInAccountScope(
+    client,
+    { userId: params.actingUserId, requestedAccountId: params.accountId },
+    (scope) => listMembersWithStore(liveStore(new MembershipRepository(scope.db)), params),
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
