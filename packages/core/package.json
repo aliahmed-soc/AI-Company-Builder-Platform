@@ -17,6 +17,7 @@
     "@acbp/database": "workspace:*"
   },
   "devDependencies": {
-    "@acbp/test-support": "workspace:*"
+    "@acbp/test-support": "workspace:*",
+    "kysely": "^0.28.17"
   }
 }
