@@ -130,7 +130,10 @@ export async function revokeMemberWithStore(
 export async function listMembersWithStore(store: MembershipStore, params: { accountId: string; actingUserId: string }): Promise<ListResult> {
   const actingRole = await store.resolveActiveRole(params.accountId, params.actingUserId);
   if (!isMember(actingRole)) return { status: 'forbidden' };
-  return { status: 'ok', members: await store.listMembers(params.accountId) };
+  const members = await store.listMembers(params.accountId);
+  // Only owners see pending-invite email addresses; viewers get them redacted (least data exposure).
+  const projected = isOwner(actingRole) ? members : members.map((m) => (m.invitedEmail === null ? m : { ...m, invitedEmail: null }));
+  return { status: 'ok', members: projected };
 }
 
 // ── Live wrappers (repositories + transactions) ───────────────────────────────────────────────────

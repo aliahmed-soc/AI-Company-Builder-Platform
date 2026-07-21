@@ -172,4 +172,12 @@ describe('listMembersWithStore', () => {
     const r = await listMembersWithStore(store, { accountId: 'a', actingUserId: 'u2' });
     expect(r).toEqual({ status: 'ok', members });
   });
+
+  test('only owners see pending-invite emails; viewers get them redacted', async () => {
+    const pending: MemberView[] = [{ membershipId: 'inv1', role: 'viewer', status: 'invited', memberUserId: null, invitedEmail: 'pending@example.com', createdAt: '2026-01-01T00:00:00.000Z' }];
+    const asOwner = await listMembersWithStore(makeStore({ resolveActiveRole: () => Promise.resolve('owner'), listMembers: () => Promise.resolve(pending) }), { accountId: 'a', actingUserId: 'o' });
+    expect(asOwner.status === 'ok' && asOwner.members[0]?.invitedEmail).toBe('pending@example.com');
+    const asViewer = await listMembersWithStore(makeStore({ resolveActiveRole: () => Promise.resolve('viewer'), listMembers: () => Promise.resolve(pending) }), { accountId: 'a', actingUserId: 'v' });
+    expect(asViewer.status === 'ok' && asViewer.members[0]?.invitedEmail).toBeNull();
+  });
 });
