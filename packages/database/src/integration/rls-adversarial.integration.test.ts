@@ -128,12 +128,15 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
   });
 
   // ── Adversarial: unfiltered access / fail-closed ────────────────────────────────────────────────────
-  test('unfiltered SELECT/UPDATE/DELETE with NO context returns/affects nothing (fail closed)', async () => {
+  test('unfiltered SELECT/UPDATE with NO context affects nothing; DELETE is denied at the grant level', async () => {
     const a = await seedAccount(admin);
     const seen = await asApp({}, (db) => sql<{ n: number }>`select count(*)::int as n from accounts`.execute(db).then((x) => x.rows[0]?.n));
-    expect(seen).toBe(0);
-    await asApp({}, (db) => sql`update accounts set plan_state = 'x'`.execute(db)); // affects 0 rows (all hidden)
-    await asApp({}, (db) => sql`delete from account_profiles`.execute(db)); // no DELETE policy → affects nothing
+    expect(seen).toBe(0); // RLS hides all rows without context
+    await asApp({}, (db) => sql`update accounts set plan_state = 'x'`.execute(db)); // acbp_app has UPDATE, but RLS matches 0 rows
+    // acbp_app was granted NO DELETE on the protected tables — a delete is denied before RLS even applies.
+    await expect(asApp({}, (db) => sql`delete from accounts`.execute(db))).rejects.toBeDefined();
+    await expect(asApp({}, (db) => sql`delete from account_profiles`.execute(db))).rejects.toBeDefined();
+    await expect(asApp({}, (db) => sql`delete from memberships`.execute(db))).rejects.toBeDefined();
     const still = await sql<{ plan: string; profiles: number }>`select (select plan_state from accounts where id = ${a.accountId}) as plan, (select count(*)::int from account_profiles where account_id = ${a.accountId}) as profiles`.execute(admin.kysely);
     expect(still.rows[0]).toMatchObject({ plan: 'free', profiles: 1 });
   });
@@ -177,13 +180,21 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
   });
 
   // ── Adversarial: privilege / escalation attempts ────────────────────────────────────────────────────
-  test('acbp_app cannot SET ROLE, CREATE ROLE, ALTER the functions/policies, or GRANT', async () => {
+  test('acbp_app cannot SET ROLE, CREATE ROLE, ALTER the functions/policies/tables', async () => {
     await expect(asApp({}, (db) => sql`set role postgres`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`create role attacker_role login`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`alter function public.acbp_resolve_own_membership(uuid, uuid) security invoker`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`drop policy accounts_select on public.accounts`.execute(db))).rejects.toBeDefined();
-    await expect(asApp({}, (db) => sql`grant all on public.accounts to acbp_app`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`alter table public.accounts no force row level security`.execute(db))).rejects.toBeDefined();
+  });
+
+  test('a self-GRANT does not escalate (PostgreSQL grants nothing without grant option; DELETE stays denied)', async () => {
+    // GRANT without grant option is a no-op warning (not an error), so it resolves — but it confers nothing:
+    // acbp_app still has no DELETE privilege afterward, and has no grant option on the protected tables.
+    await asApp({}, (db) => sql`grant all on public.accounts to acbp_app`.execute(db)).catch(() => undefined);
+    await expect(asApp({}, (db) => sql`delete from accounts`.execute(db))).rejects.toBeDefined();
+    const grantable = await sql<{ n: number }>`select count(*)::int as n from information_schema.role_table_grants where grantee = 'acbp_app' and table_name = any(${sql.val([...PROTECTED])}) and is_grantable = 'YES'`.execute(admin.kysely);
+    expect(grantable.rows[0]?.n).toBe(0); // no grant option on any protected table
   });
 
   test('acbp_app cannot directly mutate a pending invite it has no context for (RLS hides it)', async () => {
