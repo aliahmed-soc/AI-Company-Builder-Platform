@@ -59,8 +59,14 @@ export interface MembershipStore {
   findPendingByAccountAndEmail(accountId: string, invitedEmail: string): Promise<{ readonly id: string } | undefined>;
   insertInvite(v: { readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole; readonly tokenHash: string; readonly invitedByUserId: string }): Promise<{ readonly id: string }>;
   findInAccount(accountId: string, membershipId: string): Promise<{ readonly id: string; readonly role: MemberRole; readonly status: MembershipStatus } | undefined>;
-  countActiveOwners(accountId: string): Promise<number>;
-  revokeMembership(id: string): Promise<void>;
+  /**
+   * Atomically revoke a membership (an active member OR a pending invite), refusing to remove the account's
+   * LAST active owner (CDR-011). The owner-count decision and the revoke are one operation so concurrent
+   * revocations of different owners cannot both slip past a stale count and drain the account to zero owners.
+   * Outcomes: `'revoked'` (this call flipped the row to revoked), `'last_owner'` (refused — target is the sole
+   * active owner), `'noop'` (nothing to flip — already revoked, e.g. a concurrent revoke won → idempotent).
+   */
+  revokeActiveMembership(accountId: string, id: string): Promise<'revoked' | 'noop' | 'last_owner'>;
   listMembers(accountId: string): Promise<readonly MemberView[]>;
 }
 
@@ -114,12 +120,16 @@ export async function revokeMemberWithStore(
   if (target === undefined) return { status: 'not_found' };
   if (target.status === 'revoked') return { status: 'ok' }; // idempotent
 
-  // Never leave an account without an owner.
-  if (target.role === 'owner' && target.status === 'active' && (await store.countActiveOwners(params.accountId)) <= 1) {
-    return { status: 'last_owner' };
+  // Revoke ATOMICALLY, upholding the last-owner invariant (CDR-011) in one locked operation. Doing the
+  // owner-count check and the flip as separate steps is a read-then-act race: two concurrent revocations
+  // of DIFFERENT active owners could each read "2 owners", both pass, and both flip — draining the account
+  // to zero owners. The store performs the check + flip as a single serialized unit.
+  const outcome = await store.revokeActiveMembership(params.accountId, target.id);
+  if (outcome === 'last_owner') return { status: 'last_owner' };
+  if (outcome === 'revoked') {
+    options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
   }
-  await store.revokeMembership(target.id);
-  options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
+  // 'revoked' or 'noop' (a concurrent revoke won the flip) → the revocation is idempotently in effect.
   return { status: 'ok' };
 }
 
@@ -168,11 +178,8 @@ function liveStore(repo: MembershipRepository): MembershipStore {
       const row = await repo.findById(membershipId);
       return row === undefined || row.account_id !== accountId ? undefined : { id: row.id, role: row.role as MemberRole, status: row.status as MembershipStatus };
     },
-    countActiveOwners(accountId) {
-      return repo.countActiveOwners(accountId);
-    },
-    async revokeMembership(id) {
-      await repo.update(id, { status: 'revoked', revoked_at: new Date(), invite_token_hash: null });
+    revokeActiveMembership(accountId, id) {
+      return repo.revokeActiveMembershipPreservingLastOwner(accountId, id);
     },
     async listMembers(accountId) {
       return (await repo.listByAccount(accountId)).map(toMemberView);

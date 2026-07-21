@@ -134,6 +134,51 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
   });
 
+  test('revoking a pending invite cancels it: the token can no longer be accepted — preserved revoke semantics', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending-cancel@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup invite failed');
+    // Revoke the still-pending invite by its membership id (never an active member).
+    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: invite.membershipId })).status).toBe('ok');
+    // The cancelled invite's token is no longer acceptable.
+    const joinerId = await seedUser(seed, 'pending-cancel@example.com');
+    expect((await acceptInvite(app, { token: invite.token, acceptingUserId: joinerId })).status).toBe('invalid_or_used');
+  });
+
+  test('last-owner invariant holds under concurrency: two parallel revokes of DIFFERENT owners keep >=1 owner — CDR-011', async () => {
+    // Promote the account to TWO active owners (founder + an invited/accepted owner).
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'owner2@example.com', role: 'owner' });
+    if (invite.status !== 'ok') throw new Error('setup owner invite failed');
+    const owner2Id = await seedUser(seed, 'owner2@example.com');
+    const accepted = await acceptInvite(app, { token: invite.token, acceptingUserId: owner2Id });
+    if (accepted.status !== 'ok') throw new Error('setup owner accept failed');
+
+    const list = await listMembers(app, { accountId, actingUserId: ownerId });
+    const owner1 = list.status === 'ok' ? list.members.find((m) => m.memberUserId === ownerId && m.role === 'owner' && m.status === 'active') : undefined;
+    if (owner1 === undefined) throw new Error('setup: founder owner membership not found');
+
+    // Two owners revoke EACH OTHER at the same instant. Each call opens its own transaction on a distinct
+    // pooled connection, so the revocations race for real. Without the atomic owner-lock guard, both would
+    // observe "2 owners", both pass, and both flip — leaving ZERO active owners (the CDR-011 violation).
+    const [r1, r2] = await Promise.all([
+      revokeMember(app, { accountId, actingUserId: ownerId, membershipId: accepted.membershipId }),
+      revokeMember(app, { accountId, actingUserId: owner2Id, membershipId: owner1.membershipId }),
+    ]);
+
+    // At most one revocation may succeed; the other must be refused (last_owner) or lose authorization
+    // (its own actor row was concurrently revoked) — never both 'ok'.
+    expect([r1.status, r2.status].filter((s) => s === 'ok').length).toBeLessThanOrEqual(1);
+
+    // The invariant, asserted against authoritative DB state via the superuser seed client.
+    const remaining = await seed.kysely
+      .selectFrom('memberships')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('account_id', '=', accountId)
+      .where('role', '=', 'owner')
+      .where('status', '=', 'active')
+      .executeTakeFirstOrThrow();
+    expect(Number(remaining.n)).toBeGreaterThanOrEqual(1);
+  });
+
   test('member:read_invited_email — an owner sees pending-invite emails; a viewer gets them redacted — ACBP-P1-007', async () => {
     // Owner creates a pending invite (an unaccepted row carrying an invited_email).
     const pending = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending@example.com', role: 'viewer' });

@@ -7,7 +7,9 @@ import {
   listMembersWithStore,
   type MembershipStore,
   type MemberView,
+  type MembershipStatus,
 } from './membership-service.js';
+import type { MemberRole } from './roles.js';
 import { hashInviteToken } from './invite-token.js';
 
 // Invite acceptance is a pre-context bootstrap operation handled atomically by the `acbp_accept_invite`
@@ -19,8 +21,7 @@ function makeStore(overrides: Partial<MembershipStore> = {}): MembershipStore {
     findPendingByAccountAndEmail: () => Promise.resolve(undefined),
     insertInvite: () => Promise.resolve({ id: 'm_new' }),
     findInAccount: () => Promise.resolve(undefined),
-    countActiveOwners: () => Promise.resolve(1),
-    revokeMembership: () => Promise.resolve(),
+    revokeActiveMembership: () => Promise.resolve('revoked'),
     listMembers: () => Promise.resolve([]),
     ...overrides,
   };
@@ -92,44 +93,92 @@ describe('revokeMemberWithStore', () => {
     expect((await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm' })).status).toBe('not_found');
   });
 
-  test('the last active owner cannot be revoked', async () => {
+  test('the last active owner cannot be revoked (the store refuses atomically)', async () => {
     const store = makeStore({
       resolveActiveRole: () => Promise.resolve('owner'),
       findInAccount: () => Promise.resolve({ id: 'm_owner', role: 'owner', status: 'active' }),
-      countActiveOwners: () => Promise.resolve(1),
+      revokeActiveMembership: () => Promise.resolve('last_owner'),
     });
     expect((await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_owner' })).status).toBe('last_owner');
   });
 
   test('an owner can revoke a viewer (immediate) and it audits', async () => {
-    const revoked: string[] = [];
+    const revoked: Array<[string, string]> = [];
     const store = makeStore({
       resolveActiveRole: () => Promise.resolve('owner'),
       findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'active' }),
-      revokeMembership: (id) => {
-        revoked.push(id);
-        return Promise.resolve();
+      revokeActiveMembership: (accountId, id) => {
+        revoked.push([accountId, id]);
+        return Promise.resolve('revoked');
       },
     });
     const { logger, records } = createTestLogger({ component: 'members' });
     const r = await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' }, { logger });
     expect(r.status).toBe('ok');
-    expect(revoked).toEqual(['m_v']);
+    expect(revoked).toEqual([['a', 'm_v']]);
     expect(records.filter((x) => x.event === 'membership.revoked')).toHaveLength(1);
   });
 
-  test('revoking an already-revoked membership is an idempotent no-op', async () => {
+  test('revoking an already-revoked membership is an idempotent no-op (store not touched)', async () => {
     const revoked: string[] = [];
     const store = makeStore({
       resolveActiveRole: () => Promise.resolve('owner'),
       findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'revoked' }),
-      revokeMembership: (id) => {
+      revokeActiveMembership: (_accountId, id) => {
         revoked.push(id);
-        return Promise.resolve();
+        return Promise.resolve('noop');
       },
     });
     expect((await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' })).status).toBe('ok');
-    expect(revoked).toEqual([]); // no second revoke
+    expect(revoked).toEqual([]); // short-circuited before the store; no revoke attempted
+  });
+
+  test('a revoke that loses the race (noop) is a successful idempotent no-op and does NOT re-audit', async () => {
+    const store = makeStore({
+      resolveActiveRole: () => Promise.resolve('owner'),
+      findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'active' }),
+      revokeActiveMembership: () => Promise.resolve('noop'),
+    });
+    const { logger, records } = createTestLogger({ component: 'members' });
+    const r = await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' }, { logger });
+    expect(r.status).toBe('ok');
+    expect(records.filter((x) => x.event === 'membership.revoked')).toHaveLength(0); // only the actual flip audits
+  });
+
+  // CDR-011 (last-owner invariant), concurrency. Because the service delegates the owner-count decision AND
+  // the revoke to ONE store call (revokeActiveMembership), two concurrent revocations of DIFFERENT active
+  // owners cannot both drain the account: the fake models the store's atomicity by reading the count and
+  // mutating within a single synchronous body (no await between them), exactly as the real repository's
+  // `FOR UPDATE` lock does. A read-then-act service (two awaits) would interleave here and reach zero owners.
+  // The real-PostgreSQL row-lock proof is in members.integration.test.ts.
+  test('concurrent revokes of two different active owners never leave the account with zero owners', async () => {
+    const owners = new Map<string, { role: MemberRole; status: MembershipStatus }>([
+      ['m_o1', { role: 'owner', status: 'active' }],
+      ['m_o2', { role: 'owner', status: 'active' }],
+    ]);
+    const activeOwnerCount = () => [...owners.values()].filter((o) => o.role === 'owner' && o.status === 'active').length;
+    const store = makeStore({
+      resolveActiveRole: () => Promise.resolve('owner'),
+      findInAccount: (_accountId, id) => Promise.resolve(owners.has(id) ? { id, role: owners.get(id)!.role, status: owners.get(id)!.status } : undefined),
+      // Atomic (single synchronous decision + flip), like the repository's locked owner-set operation.
+      revokeActiveMembership: (_accountId, id) => {
+        const m = owners.get(id);
+        if (m === undefined || m.status === 'revoked') return Promise.resolve('noop');
+        if (m.role === 'owner' && activeOwnerCount() <= 1) return Promise.resolve('last_owner');
+        m.status = 'revoked';
+        return Promise.resolve('revoked');
+      },
+    });
+
+    const [r1, r2] = await Promise.all([
+      revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o1', membershipId: 'm_o1' }),
+      revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o2', membershipId: 'm_o2' }),
+    ]);
+
+    expect(activeOwnerCount()).toBeGreaterThanOrEqual(1);
+    // Exactly one revocation succeeds; the other is refused as last_owner.
+    expect([r1.status, r2.status].filter((s) => s === 'ok')).toHaveLength(1);
+    expect([r1.status, r2.status]).toContain('last_owner');
   });
 });
 

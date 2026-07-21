@@ -36,16 +36,46 @@ export class MembershipRepository {
       .executeTakeFirst();
   }
 
-  /** Count of ACTIVE owner memberships in an account (used to guard against removing the last owner). */
-  async countActiveOwners(accountId: string): Promise<number> {
-    const row = await this.#db
+  /**
+   * Atomically revoke an ACTIVE membership while UPHOLDING the last-owner invariant (CDR-011): an account
+   * must never be drained of its last active owner. The owner-count decision and the revoke are ONE locked
+   * operation, closing the read-then-act race in which two concurrent revocations of DIFFERENT owners each
+   * read "2 owners", both pass a separate guard, and both flip — leaving ZERO active owners.
+   *
+   * Serialization: lock this account's active-owner rows with `SELECT … FOR UPDATE` (ordered by id, so
+   * competing owner revocations acquire the locks in the same order and cannot deadlock) BEFORE deciding.
+   * A racing revocation of another owner blocks on that lock; when it proceeds it re-reads the now-smaller
+   * owner set and correctly refuses if only one remains. MUST run inside the caller's account transaction
+   * so the locks are held until commit.
+   *
+   * The conditional flip targets any non-revoked row (an ACTIVE member OR a pending INVITE), preserving the
+   * pre-fix revoke semantics: revoking a pending invite cancels it (status→revoked, token cleared). Returns:
+   *   - `'last_owner'` the target is the sole remaining active owner → refused; nothing changed
+   *   - `'revoked'`    the target was revocable (active or invited) and this call flipped it to revoked
+   *   - `'noop'`       nothing to flip (the row was already revoked, e.g. a concurrent revoke won) → idempotent
+   */
+  async revokeActiveMembershipPreservingLastOwner(accountId: string, id: string): Promise<'revoked' | 'noop' | 'last_owner'> {
+    const activeOwners = await this.#db
       .selectFrom('memberships')
-      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .select('id')
       .where('account_id', '=', accountId)
       .where('role', '=', 'owner')
       .where('status', '=', 'active')
-      .executeTakeFirstOrThrow();
-    return Number(row.n);
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    // Refuse only when the target itself is that sole remaining ACTIVE owner (never for a viewer or a pending
+    // invite — an unaccepted owner invite is not yet an active owner and cannot satisfy the invariant).
+    if (activeOwners.length <= 1 && activeOwners.some((o) => o.id === id)) return 'last_owner';
+    // Conditional flip: succeeds only while the row is not already revoked, so a lost race is an idempotent no-op.
+    const flipped = await this.#db
+      .updateTable('memberships')
+      .set({ status: 'revoked', revoked_at: sql<Date>`now()`, invite_token_hash: null, updated_at: sql`now()` })
+      .where('id', '=', id)
+      .where('status', '<>', 'revoked')
+      .returning('id')
+      .executeTakeFirst();
+    return flipped === undefined ? 'noop' : 'revoked';
   }
 
   /** A pending invite by its single-use token hash, or undefined. */
