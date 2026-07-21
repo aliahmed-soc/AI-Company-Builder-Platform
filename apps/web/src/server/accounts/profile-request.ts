@@ -23,7 +23,7 @@ export type ProfileRequestResult =
 /** The account operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface AccountOps {
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
-  getAccountProfile(userId: string): Promise<AccountProfileView | undefined>;
+  getAccountProfile(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<AccountProfileView | undefined>;
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: { correlationId?: string; logger?: Logger }): Promise<AccountProfileView | undefined>;
 }
 
@@ -75,7 +75,7 @@ export async function getAccountProfileForRequest(deps: ProfileRequestDeps = {})
   const ops = await accountOps(deps);
   const logger = accountsLogger();
   await ops.ensurePersonalAccount(resolved.userId, { logger });
-  const profile = await ops.getAccountProfile(resolved.userId);
+  const profile = await ops.getAccountProfile(resolved.userId, { logger });
   if (profile === undefined) return { status: 'not_found' };
   return { status: 'ok', profile };
 }

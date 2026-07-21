@@ -73,7 +73,7 @@ export interface ClerkIdentityRuntime {
    */
   ensurePersonalAccount(userId: string, options?: AccountOpOptions): Promise<ProvisionResult>;
   /** Read the owner's profile view (email read-only), or undefined when the user has no account. */
-  getAccountProfile(userId: string): Promise<AccountProfileView | undefined>;
+  getAccountProfile(userId: string, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Apply a profile edit for the owner and return the resulting view (undefined when no account). */
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Membership (ACBP-P1-004; CDR-011). Authorization is enforced inside the use case from the role. */
@@ -110,8 +110,8 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     ensurePersonalAccount(userId, options) {
       return provisionPersonalAccount(client, userId, options ?? {});
     },
-    getAccountProfile(userId) {
-      return getProfileForOwner(client, userId);
+    getAccountProfile(userId, options) {
+      return getProfileForOwner(client, userId, options ?? {});
     },
     updateAccountProfile(userId, input, options) {
       return updateProfileForOwner(client, userId, input, options ?? {});

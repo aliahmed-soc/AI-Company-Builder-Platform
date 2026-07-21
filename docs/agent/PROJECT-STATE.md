@@ -7,11 +7,13 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-007-authorization-middleware` (from `main` @ `012411e`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
 - Base main: `012411eb1c24b9375756fda80f1b9d50d9bc0c60` (P1-006 squash-merge PR #7; main CI green run 29860477369).
-- **STATUS: all 5 slices complete + hosted-green; both independent reviews PASS. STOPPED AT OWNER GATE.**
-  Slices 1–5 CI green (latest full-branch verify pending on the review-fix commit). Independent SECURITY review
-  PASS (0 blocker/0 major/1 minor/2 info); ARCHITECTURE/scope review PASS (0 blocker/0 major/3 minor/2 info).
-  Reasonable minors fixed (see below). Awaiting owner authorization for: (1) backlog ACBP-P1-007→Done, (2) PR #8
-  ready, (3) squash-merge. Do NOT self-authorize / merge / delete branch / begin P1-008.
+- **STATUS: all 5 slices complete + hosted-green; THREE independent reviews PASS covering all 4 required
+  concerns. STOPPED AT OWNER GATE.** Independent SECURITY review PASS (0 blocker/0 major/1 minor/2 info);
+  ARCHITECTURE/scope review PASS (0/0/3/2); focused CODE-REVIEW (integration-point inventory + confused-deputy
+  full checklist) PASS (0/0/1/3) — explicitly confirms confused-deputy/cross-account (14 vectors HANDLED) and
+  every route/use-case integration point covered. Reasonable minors fixed incl. the profile:read audit gap
+  (logger now threaded → all denials audited). Awaiting owner authorization for: (1) backlog ACBP-P1-007→Done,
+  (2) PR #8 ready, (3) squash-merge. Do NOT self-authorize / merge / delete branch / begin P1-008.
 
 ## Prior tickets (closed)
 - **ACBP-P1-001..P1-006 — DONE & MERGED.** P1-006 squash `012411e` (PR #7). Main CI green on each squash.
@@ -73,13 +75,14 @@ _Read this first on resume, then continue automatically to "Next executable acti
    behavior-preserving enforcement point (arch INFO-1). Full local suite 505 pass / 0 fail; static gate green.
 
 ## Residual risks (accepted; not defects)
+- **FIXED (was sec/code-review MINOR): profile:read denial auditing.** A logger is now threaded
+  request→composition→`getProfileForOwner`, so `profile:read` denials emit `authz.denied` like every other
+  action. (The denial itself is still unreachable until P1-010 admits non-owner members.)
 - **Profile role-load is a redundant RLS-confined query** that can only deny once accounts admit non-owner
   members (P1-010); today it passes by construction (arch MINOR-2). Kept as the uniform enforcement point.
-- **Profile read denial is unaudited when no logger is supplied** (`getAccountProfile` passes none); the path
-  is unreachable today (single-owner). Wire a logger through `getAccountProfile` + the profile route before
-  P1-010 admits non-owner members so "denials audited" holds there too (sec MINOR).
 - **Profile endpoints are not in the end-to-end negative matrix** (their denial is unreachable now); the
-  `profile:read`/`profile:update` matrix DECISION is unit-tested via the contract matrix (arch MINOR-3).
+  `profile:read`/`profile:update` matrix DECISION is unit-tested via the contract matrix (arch MINOR-3 / info).
+  Add an e2e case when P1-010 makes profile denial reachable.
 - **`authz.check` lives in `@acbp/core/authz`**, not the literal "identity module" of SECURITY-ARCHITECTURE §1
   — same package, cleaner separation, ADR-006 "single authz layer" satisfied (arch INFO-2).
 - **No live authenticated web-route acceptance performed** (requires a dev server + Clerk env — owner/external
