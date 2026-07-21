@@ -65,7 +65,7 @@ describe('inviteMemberForRequest', () => {
 });
 
 describe('acceptInviteForRequest', () => {
-  test('binds the accepting user\'s VERIFIED email and accepts', async () => {
+  test('passes only the token + server-verified user id (email is bound server-side, not a caller value)', async () => {
     const calls: unknown[] = [];
     const runtime = fakeRuntime({
       acceptInvite: (p) => {
@@ -75,7 +75,8 @@ describe('acceptInviteForRequest', () => {
     });
     const r = await acceptInviteForRequest({ token: 'the-token' }, { identity: identityDeps({ email: 'invitee@example.com' }), runtime });
     expect(r).toEqual({ status: 'accepted', membershipId: 'm1', accountId: 'acc_other', role: 'viewer' });
-    expect(calls).toEqual([{ token: 'the-token', acceptingUserId: 'u1', acceptingVerifiedEmail: 'invitee@example.com' }]);
+    // No acceptingVerifiedEmail is forwarded — the bootstrap function derives it from users.
+    expect(calls).toEqual([{ token: 'the-token', acceptingUserId: 'u1' }]);
   });
   test('a missing token is invalid_token without calling the runtime', async () => {
     let called = false;
@@ -83,9 +84,9 @@ describe('acceptInviteForRequest', () => {
     expect(r.status).toBe('invalid_token');
     expect(called).toBe(false);
   });
-  test('an email mismatch is surfaced', async () => {
-    const r = await acceptInviteForRequest({ token: 't' }, { identity: identityDeps(), runtime: fakeRuntime({ acceptInvite: () => Promise.resolve({ status: 'email_mismatch' }) }) });
-    expect(r.status).toBe('email_mismatch');
+  test('any acceptance failure collapses to a safe invalid_token (no email/state oracle)', async () => {
+    const r = await acceptInviteForRequest({ token: 't' }, { identity: identityDeps(), runtime: fakeRuntime({ acceptInvite: () => Promise.resolve({ status: 'invalid_or_used' }) }) });
+    expect(r.status).toBe('invalid_token');
   });
 });
 

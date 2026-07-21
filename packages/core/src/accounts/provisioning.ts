@@ -1,12 +1,13 @@
-// @acbp/core — personal-account provisioning use case (ACBP-P1-003; CDR-010).
+// @acbp/core — personal-account provisioning use case (ACBP-P1-003; CDR-010; rewired for RLS in ACBP-P1-006).
 //
 // Provider-neutral: given a SERVER-VERIFIED internal user id, idempotently ensure the user's personal
-// account (and its 1:1 profile) exist. Called from the authenticated web path on first sign-in — never
-// from the identity webhook path (CDR-008 keeps webhooks users-only). The account/profile inserts are
-// race-safe (ON CONFLICT DO NOTHING, scoped to the exact constraints) so concurrent first requests
-// converge to one account. Emits an interim `account.created` structured audit event (durable
-// append-only audit is ACBP-P1-008) carrying only non-PII fields (account id + plan state).
-import { withTransaction, AccountRepository, AccountProfileRepository, MembershipRepository, type DatabaseClient } from '@acbp/database';
+// account (+ its 1:1 profile + owner membership) exist. Under FORCE RLS (CDR-013) the creation happens
+// before any account context exists, so it goes through the `acbp_provision_account` SECURITY DEFINER
+// bootstrap function — the ONLY approved provisioning path — which creates ONLY that server-verified user's
+// personal account (owner + role are fixed inside the function; a caller cannot claim another user's
+// account or choose a role). Emits an interim `account.created` structured audit event (durable append-only
+// audit is ACBP-P1-008) carrying only non-PII fields.
+import { provisionAccountBootstrap, type DatabaseClient } from '@acbp/database';
 import type { Logger } from '@acbp/observability';
 
 /** Outcome of ensuring a personal account. `created` is true only when THIS call inserted the account. */
@@ -15,12 +16,10 @@ export interface ProvisionResult {
   readonly created: boolean;
 }
 
-/** Minimal persistence seam so provisioning is unit-testable without a real database. */
+/** Minimal seam so provisioning's audit orchestration is unit-testable without a real database. */
 export interface AccountProvisioningStore {
-  insertAccountIfAbsent(values: { readonly created_by_user_id: string }): Promise<{ readonly row: { readonly id: string; readonly plan_state: string }; readonly inserted: boolean }>;
-  insertProfileIfAbsent(values: { readonly account_id: string }): Promise<{ readonly row: { readonly account_id: string }; readonly inserted: boolean }>;
-  /** Idempotently ensure the founder is an active owner MEMBER of the account (ACBP-P1-004; CDR-011 #3). */
-  ensureOwnerMembership(accountId: string, userId: string): Promise<void>;
+  /** Idempotently ensure the user's personal account (+ profile + owner membership) exist. */
+  provision(userId: string): Promise<{ readonly accountId: string; readonly created: boolean }>;
 }
 
 export interface ProvisionOptions {
@@ -30,48 +29,28 @@ export interface ProvisionOptions {
 }
 
 /**
- * Store-based provisioning (unit-testable with fakes). Ensures the account then its 1:1 profile, both
- * idempotently. Emits `account.created` ONLY when this call created the account. Returns the account id
- * and whether it was newly created. Interim audit is a structured log — the durable in-transaction
- * audit write is ACBP-P1-008; a rare commit-failure-after-log yields at most a spurious info line.
+ * Store-based provisioning (unit-testable with a fake). Ensures the account idempotently and emits
+ * `account.created` ONLY when this call created it. Interim audit is a structured log — the durable
+ * in-transaction audit write is ACBP-P1-008.
  */
 export async function provisionPersonalAccountWithStore(
   store: AccountProvisioningStore,
   userId: string,
   options: ProvisionOptions = {},
 ): Promise<ProvisionResult> {
-  const account = await store.insertAccountIfAbsent({ created_by_user_id: userId });
-  // A pre-existing account may already have its profile; insertIfAbsent no-ops in that case.
-  await store.insertProfileIfAbsent({ account_id: account.row.id });
-  // The founder is a first-class owner MEMBER of their account (idempotent).
-  await store.ensureOwnerMembership(account.row.id, userId);
-  if (account.inserted) {
-    options.logger?.info('account.created', { metadata: { accountId: account.row.id, planState: account.row.plan_state } });
+  const { accountId, created } = await store.provision(userId);
+  if (created) {
+    // plan_state defaults to 'free' (CDR-010; the only value in P1-003) — matches the account.created payload.
+    options.logger?.info('account.created', { metadata: { accountId, planState: 'free' } });
   }
-  return { accountId: account.row.id, created: account.inserted };
+  return { accountId, created };
 }
 
 /**
- * Ensure the personal account for an internal user using the live database client. The account and its
- * profile are created in ONE transaction, so a failure leaves neither. Idempotent across calls and
- * race-safe across concurrent first requests.
+ * Ensure the personal account for an internal user using the live database client, via the
+ * `acbp_provision_account` bootstrap function. Idempotent across calls and race-safe across concurrent
+ * first requests (the function uses scoped ON CONFLICT on the exact P1-003/P1-004 constraints).
  */
 export function provisionPersonalAccount(client: DatabaseClient, userId: string, options: ProvisionOptions = {}): Promise<ProvisionResult> {
-  return withTransaction(
-    client,
-    (tx) => {
-      const accounts = new AccountRepository(tx.kysely);
-      const profiles = new AccountProfileRepository(tx.kysely);
-      const members = new MembershipRepository(tx.kysely);
-      const store: AccountProvisioningStore = {
-        insertAccountIfAbsent: (v) => accounts.insertIfAbsent(v),
-        insertProfileIfAbsent: (v) => profiles.insertIfAbsent(v),
-        ensureOwnerMembership: async (accountId, uid) => {
-          await members.insertOwnerIfAbsent(accountId, uid);
-        },
-      };
-      return provisionPersonalAccountWithStore(store, userId, options);
-    },
-    options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
-  );
+  return provisionPersonalAccountWithStore({ provision: (uid) => provisionAccountBootstrap(client.kysely, uid) }, userId, options);
 }

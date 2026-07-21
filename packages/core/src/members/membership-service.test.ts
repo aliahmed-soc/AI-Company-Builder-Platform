@@ -3,7 +3,6 @@ import { describe, test, expect } from 'vitest';
 import { createTestLogger } from '@acbp/observability';
 import {
   inviteMemberWithStore,
-  acceptInviteWithStore,
   revokeMemberWithStore,
   listMembersWithStore,
   type MembershipStore,
@@ -11,13 +10,14 @@ import {
 } from './membership-service.js';
 import { hashInviteToken } from './invite-token.js';
 
+// Invite acceptance is a pre-context bootstrap operation handled atomically by the `acbp_accept_invite`
+// SECURITY DEFINER function (ACBP-P1-006; CDR-013) — it is covered by the real-PG bootstrap suite, not
+// these store-based unit tests.
 function makeStore(overrides: Partial<MembershipStore> = {}): MembershipStore {
   return {
     resolveActiveRole: () => Promise.resolve(null),
     findPendingByAccountAndEmail: () => Promise.resolve(undefined),
     insertInvite: () => Promise.resolve({ id: 'm_new' }),
-    findPendingByTokenHash: () => Promise.resolve(undefined),
-    activateInvite: () => Promise.resolve(),
     findInAccount: () => Promise.resolve(undefined),
     countActiveOwners: () => Promise.resolve(1),
     revokeMembership: () => Promise.resolve(),
@@ -67,44 +67,6 @@ describe('inviteMemberWithStore', () => {
     const store = makeStore({ resolveActiveRole: () => Promise.resolve('owner'), findPendingByAccountAndEmail: () => Promise.resolve({ id: 'm_existing' }) });
     const r = await inviteMemberWithStore(store, { accountId: 'a', actingUserId: 'o', invitedEmail: 'x@example.com', role: 'viewer' }, { generateToken: fixedToken });
     expect(r.status).toBe('conflict');
-  });
-});
-
-describe('acceptInviteWithStore', () => {
-  const invite = { id: 'm_1', accountId: 'acc_1', invitedEmail: 'joiner@example.com', role: 'viewer' as const };
-
-  test('an unknown/used token is invalid_or_used', async () => {
-    const r = await acceptInviteWithStore(makeStore(), { token: 'nope', acceptingUserId: 'u2', acceptingVerifiedEmail: 'joiner@example.com' });
-    expect(r.status).toBe('invalid_or_used');
-  });
-
-  test('a mismatched verified email is rejected (a leaked token cannot be used by another person)', async () => {
-    const store = makeStore({ findPendingByTokenHash: () => Promise.resolve(invite) });
-    const r = await acceptInviteWithStore(store, { token: 'raw-token', acceptingUserId: 'u2', acceptingVerifiedEmail: 'someone-else@example.com' });
-    expect(r.status).toBe('email_mismatch');
-  });
-
-  test('already-active member is not re-added', async () => {
-    const store = makeStore({ findPendingByTokenHash: () => Promise.resolve(invite), resolveActiveRole: () => Promise.resolve('viewer') });
-    const r = await acceptInviteWithStore(store, { token: 'raw-token', acceptingUserId: 'u2', acceptingVerifiedEmail: 'joiner@example.com' });
-    expect(r.status).toBe('already_member');
-  });
-
-  test('a matching verified email activates the membership and audits', async () => {
-    const activated: string[] = [];
-    const store = makeStore({
-      findPendingByTokenHash: () => Promise.resolve(invite),
-      resolveActiveRole: () => Promise.resolve(null),
-      activateInvite: (id, uid) => {
-        activated.push(`${id}:${uid}`);
-        return Promise.resolve();
-      },
-    });
-    const { logger, records } = createTestLogger({ component: 'members' });
-    const r = await acceptInviteWithStore(store, { token: 'raw-token', acceptingUserId: 'u2', acceptingVerifiedEmail: 'Joiner@Example.com' }, { logger });
-    expect(r).toEqual({ status: 'ok', membershipId: 'm_1', accountId: 'acc_1', role: 'viewer' });
-    expect(activated).toEqual(['m_1:u2']);
-    expect(records.filter((x) => x.event === 'membership.accepted')).toHaveLength(1);
   });
 });
 

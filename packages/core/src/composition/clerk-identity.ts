@@ -78,7 +78,7 @@ export interface ClerkIdentityRuntime {
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: AccountOpOptions): Promise<AccountProfileView | undefined>;
   /** Membership (ACBP-P1-004; CDR-011). Authorization is enforced inside the use case from the role. */
   inviteMember(params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options?: MembershipOpOptions): Promise<InviteResult>;
-  acceptInvite(params: { token: string; acceptingUserId: string; acceptingVerifiedEmail: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
+  acceptInvite(params: { token: string; acceptingUserId: string }, options?: MembershipOpOptions): Promise<AcceptResult>;
   revokeMember(params: { accountId: string; actingUserId: string; membershipId: string }, options?: MembershipOpOptions): Promise<RevokeResult>;
   listMembers(params: { accountId: string; actingUserId: string }): Promise<ListResult>;
   /**

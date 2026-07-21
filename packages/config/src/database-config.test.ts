@@ -86,5 +86,60 @@ describe('parseDatabaseConfig', () => {
     expect(cfg.ssl).toBe('disable');
     expect(cfg.applicationName).toBe('acbp-test');
     expect(cfg.url.reveal()).toContain('localhost');
+    expect(cfg.role).toBe('owner');
+  });
+});
+
+describe('parseDatabaseConfig — two-connection role model (ACBP-P1-006; CDR-013)', () => {
+  const twoUrlEnv = (over: Record<string, string | undefined> = {}): Record<string, string | undefined> => ({
+    APP_ENV: 'development',
+    DATABASE_URL: `postgresql://acbp_owner:${PW}@localhost:5432/acbp_dev`,
+    DATABASE_APP_URL: `postgresql://acbp_app:${PW}@localhost:5432/acbp_dev`,
+    ...over,
+  });
+
+  test('owner role uses DATABASE_URL and is tagged role=owner', () => {
+    const cfg = parseDatabaseConfig(twoUrlEnv(), { role: 'owner' });
+    expect(cfg.role).toBe('owner');
+    expect(cfg.url.reveal()).toContain('acbp_owner');
+    expect(cfg.url.reveal()).not.toContain('acbp_app');
+  });
+
+  test('app role uses DATABASE_APP_URL and is tagged role=app (URLs are not swapped)', () => {
+    const cfg = parseDatabaseConfig(twoUrlEnv(), { role: 'app' });
+    expect(cfg.role).toBe('app');
+    expect(cfg.url.reveal()).toContain('acbp_app');
+    expect(cfg.url.reveal()).not.toContain('acbp_owner');
+  });
+
+  test('default role is owner (backward compatible)', () => {
+    expect(parseDatabaseConfig(twoUrlEnv()).role).toBe('owner');
+  });
+
+  test('app role FAILS CLOSED when DATABASE_APP_URL is absent — no fallback to the owner DATABASE_URL', () => {
+    expect(() => parseDatabaseConfig(twoUrlEnv({ DATABASE_APP_URL: undefined }), { role: 'app' })).toThrow(ConfigValidationError);
+  });
+
+  test('app role in production fails closed when DATABASE_APP_URL is absent even though DATABASE_URL is present', () => {
+    const env = { APP_ENV: 'production', DATABASE_URL: `postgresql://acbp_owner:${PW}@db:5432/acbp`, DATABASE_SSL: 'require' };
+    expect(() => parseDatabaseConfig(env, { role: 'app' })).toThrow(ConfigValidationError);
+  });
+
+  test('a bad DATABASE_APP_URL is reported under its own field and redacted', () => {
+    try {
+      parseDatabaseConfig(twoUrlEnv({ DATABASE_APP_URL: 'not-a-url' }), { role: 'app' });
+      throw new Error('expected failure');
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigValidationError);
+      const err = e as ConfigValidationError;
+      expect(err.issues.some((i) => i.field === 'DATABASE_APP_URL' && i.message === 'invalid (redacted)')).toBe(true);
+      expect(JSON.stringify(err.issues) + err.message).not.toContain('not-a-url');
+    }
+  });
+
+  test('the app URL is Secret-wrapped (never leaks via toString/JSON)', () => {
+    const cfg = parseDatabaseConfig(twoUrlEnv(), { role: 'app' });
+    expect(String(cfg.url)).not.toContain(PW);
+    expect(JSON.stringify(cfg)).not.toContain(PW);
   });
 });

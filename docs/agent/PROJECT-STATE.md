@@ -3,71 +3,97 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-005** — Tenant-context primitives (status: **Planned**; owner-gated to Done).
-- Branch: `p1-005-tenant-context-primitives` (from `main` @ `3c3dded`).
+- Ticket: **ACBP-P1-006** — Database row-level security layer (status: **Planned**; owner-gated to Done).
+- Branch: `p1-006-database-rls` (from `main` @ `858407a`).
 - PR: **draft, open, unmerged**, base `main`.
-- Base main: `3c3dded0728ee32ea1db3a4c0015dba81a41b48c` (P1-004 squash-merge; main CI green run 29831979133).
-- **STATUS: all 5 code slices complete + hosted-green; independent security + scope reviews PASS. STOPPED AT OWNER GATE.**
-  Awaiting owner authorization for: (1) backlog ACBP-P1-005 → Done, (2) PR #6 ready-for-review,
-  (3) squash-merge to main. Do NOT self-authorize. Do NOT start P1-006.
+- Base main: `858407ad80f3be93dee365ae975e6d471c8f826a` (P1-005 squash-merge; main CI green run 29839939135).
+- **STATUS: all 5 slices complete + hosted-green; all 3 independent reviews PASS (one MAJOR search_path
+  trojan-horse fix applied `64b484a`, CI 29858847641). STOPPED AT OWNER GATE.** Awaiting owner authorization
+  for: (1) backlog ACBP-P1-006 → Done, (2) PR #7 ready-for-review, (3) squash-merge. Do NOT self-authorize /
+  merge / delete branch / begin P1-007.
 
 ## Prior tickets (closed)
-- **ACBP-P1-001..P1-004 — DONE & MERGED.** P1-001 (`a2603b6`), P1-002 (`d1069f8`), P1-003 (`ee2dc6a`),
-  P1-004 (`3c3dded`, PR #5). Main CI green on each squash.
-- Residual non-blocking owner cleanup (no P1-005 impact): delete the inert temporary Clerk **Development**
-  webhook endpoint (tunnel dead → inert). Not confirmed deleted. Do NOT touch it.
+- **ACBP-P1-001..P1-005 — DONE & MERGED.** P1-005 squash `858407a` (PR #6). Main CI green.
+- Residual non-blocking owner cleanup: delete the inert P1-002 Clerk **Development** webhook endpoint. Do NOT touch it.
 
-## P1-005 scope (canonical) — CDR-012 (owner-accepted 2026-07-21, Option B)
-- Separate, **type-distinct** account-level tenancy primitive; the company-level primitive stays UNCHANGED.
-- New `AccountContext {accountId, actorId?}` (NO companyId), branded `AccountScope` (unforgeable outside
-  `@acbp/database`), `withAccountTransaction` (only scope-minting path; applies `app.current_account` +
-  `app.current_actor` via `SET LOCAL`; NEVER sets `app.current_company`), `AccountScopedRepository` base
-  requiring `AccountScope`. `TenantContext`/`TenantScope`/`withTenantTransaction`/`TenantRepository` remain company-
-  level; `companyId` stays required. No alias may collapse the two scopes.
-- Membership-backed resolver: (server-verified `userId`, requested `accountId`) → active membership →
-  resolved `AccountContext` or deny. requested account id is a REQUEST, never authority. invited/revoked/
-  missing/inactive/cross-account → deny; no Clerk claim consulted; revocation effective next resolution;
-  deterministic under multiple memberships (keyed to the explicit requested account).
-- Interim `tenant.context_denied` audit event (non-PII: account id, actor id, coarse reason); durable store
-  is P1-008.
-- **Excludes:** company lifecycle / real company ids (P1-010), RLS policies (P1-006), general `authz.check`
-  middleware (P1-007), durable audit store (P1-008), billing. Do NOT make companyId optional on TenantContext.
+## P1-006 scope (canonical) — CDR-013 (owner-accepted 2026-07-21, Option A + A1)
+- FORCE RLS on **accounts, account_profiles, memberships** (account-owned). `users` +
+  `identity_webhook_receipts` are global (excluded). Policies keyed to `app.current_account` (+ `app.current_actor`
+  self-branch for memberships), fail-closed via TEXT comparison (no uuid-cast exceptions).
+- **Restricted app role `acbp_app`**: NOSUPERUSER/NOBYPASSRLS/NOCREATEDB/NOCREATEROLE/NOREPLICATION/NOINHERIT,
+  non-owner, not a member of the owner role. Created NOLOGIN by the migration (no password in code); tests/deploy
+  grant LOGIN+password out-of-band. Grants: USAGE on public; CRUD on the 5 app tables; EXECUTE on the 3 bootstrap
+  fns. **The migration grants BYPASSRLS to NO ONE.**
+- **Migration/owner role** owns tables+functions, runs migrations, carries BYPASSRLS in production (superuser in CI);
+  never used for normal app traffic.
+- **Exactly 3 SECURITY DEFINER bootstrap fns** (closed allowlist; no 4th without owner decision):
+  `acbp_provision_account`, `acbp_resolve_own_membership`, `acbp_accept_invite`. Each: owned by owner role, fixed
+  safe search_path, schema-qualified, no dynamic SQL, EXECUTE revoked PUBLIC + granted only `acbp_app`, minimal
+  return, bypasses RLS only for its exact atomic transition. `acbp_accept_invite(invite_token_hash, auth_user_id)`
+  binds email from platform-authoritative `users.primary_email` (active + verified), NEVER a caller param.
+- **No token authority in any GUC or RLS policy.** Rewire provisioning/resolver/accept to the bootstrap fns;
+  all other account-owned work runs under `AccountScope` (`runInAccountScope`/`withAccountTransaction`) as `acbp_app`.
+- **Excludes:** company lifecycle + company RLS (P1-010), general authz middleware (P1-007), durable audit (P1-008), billing.
 
 ## Slices (planned)
-1. CDR-012 + agent state + provider-neutral account-context contract (`@acbp/contracts`) + draft PR — **done (this branch)**.
-2. Database account-scope primitive: `AccountContext`/branded `AccountScope`/`withAccountTransaction`/account
-   session GUCs/`AccountScopedRepository` + compile-time isolation proofs (account-repo needs scope; Tenant↔Account
-   scopes mutually unassignable; neither forgeable).
-3. Membership-backed resolver (`@acbp/core`) + real-PG integration (active resolves; invited/revoked/missing/
-   cross-account deny; immediate revocation).
-4. Trusted composition wiring (resolve → mint scope only after validation) + interim denial audit.
-5. Security hardening + trust-critical negative suite + DB GUC integration (SET LOCAL account/actor; no
-   fabricated company GUC; no cross-tx leak; rollback/concurrency) + tenancy README + independent review.
+1. CDR-013 + agent state + draft PR **#7** — **done** (`9c42d03`; CI 29844551561 GREEN).
+2. Restricted role `acbp_app` + grants + RLS enable/force + policies (accounts/account_profiles/memberships) +
+   restricted-role real-PG isolation suite — **done** (`d07d3de`; CI 29845284782 GREEN, zero-skip PG). Migration
+   `0005_row_level_security.ts` + `rls.integration.test.ts`. Existing superuser suites unaffected.
+3. The 3 SECURITY DEFINER bootstrap fns (migration `0006`) — **fns DONE** (`8411a8d`; CI 29850146215 GREEN,
+   zero-skip PG). `acbp_provision_account`, `acbp_resolve_own_membership`, `acbp_accept_invite` +
+   `bootstrap-functions.ts` callers + comprehensive real-PG behavior/abuse/catalog suite. accept binds email
+   from `users.primary_email` (active+verified), atomic, fail-closed. Fixes en route: CREATE OR REPLACE for
+   re-run idempotency; prefixed OUT columns (o_*) to avoid account_id ambiguity; deleted-user seed constraints.
+   Slice 3 REWIRING — **DONE** (`804294f`; CI 29852760492 GREEN, zero-skip PG): provisioning.ts→
+   acbp_provision_account, resolver own-membership read→acbp_resolve_own_membership, membership-service.ts
+   accept→acbp_accept_invite. Accept dropped the caller `acceptingVerifiedEmail` across contracts/core/web/
+   tests (email bound from users.primary_email in the fn); denials collapse to safe `invalid_or_used`.
+   Removed acceptInviteWithStore + its store methods (covered by the real-PG bootstrap suite).
+4. Two-connection model + route remaining ops through restricted scoped transactions.
+   - **Config foundation DONE** (`385122d`; CI 29854667225 GREEN): `parseDatabaseConfig(env, {role})` selects
+     DATABASE_URL (owner) vs DATABASE_APP_URL (app), fail-closed, no fallback; `DatabaseConfig.role`;
+     `loadAppDatabaseConfig()`; DATABASE_APP_URL redacted; 7 tests (role/no-swap/fail-closed/redaction).
+   - **REMAINING:** (a) switch the web runtime composition (clerk-runtime.ts) to `loadAppDatabaseConfig()` so
+     runtime traffic runs as acbp_app; migrations keep `loadDatabaseConfig()` (owner). (b) Route profile.ts
+     getProfileForOwner/updateProfileForOwner and membership-service.ts inviteMember/revokeMember/listMembers
+     through `runInAccountScope` (pass scope.db to the repos/store; the caller's personal accountId comes from
+     provisioning which is idempotent). (c) Rewire the core integration suites (accounts/members/resolver) to
+     run app OPS as an acbp_app client while seeding via superuser (pattern in rls.integration). (d) Regression
+     + pooling/commit/rollback/concurrency; `next build`.
+5. Catalog inspection + adversarial bypass + migration up/down + docs + independent security & architecture reviews.
+
+## Implementation notes (for continuation)
+- Restricted-role test pattern (proven in `rls.integration.test.ts`): seed via superuser client (bypasses RLS),
+  assert via a second `acbp_app` client; give the role LOGIN+throwaway password in `beforeAll`
+  (`alter role acbp_app login password ...`). `asApp(gucs, fn)` sets GUCs via `set_config(...,true)` in a tx.
+- Policy set (restricted role): accounts SELECT/UPDATE; account_profiles SELECT/UPDATE; memberships
+  SELECT(+self-branch)/INSERT/UPDATE. Creation of account+profile+owner-membership, pre-context resolution,
+  and accept are RLS-bypassed via the 3 SECURITY DEFINER fns (Slice 3), NOT via restricted-role policies.
+- Bootstrap fns bypass RLS via owner-role ownership (owner has BYPASSRLS in prod / superuser in CI); the
+  migration grants BYPASSRLS to no one.
 
 ## Guards (must stay green every slice)
-- `check:static` (typecheck, lint, `check:secrets` 0, `check:encoding` 0 BOM, `check:boundaries` 0, boundary
-  tests) + full `vitest` incl. real-PostgreSQL integration on hosted CI (zero-skip preflight) + `pnpm audit
-  --audit-level high`. `next build` only if web runtime changes. Compile-time isolation proofs + trust-
-  critical negatives (forged account, revoked-between-resolutions, cross-account, scope-mismatch).
+- `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.
+  real-PostgreSQL integration on hosted CI (zero-skip preflight) + `pnpm audit --audit-level high`. `next build`
+  only if web runtime changes. Restricted-role RLS trust-critical suite + catalog inspection.
 
 ## Blockers / owner decisions
-- **RESOLVED:** account-vs-company tenancy-primitive seam → CDR-012 Option B (owner-accepted 2026-07-21).
-- Future owner gates (do NOT self-authorize): P1-005 backlog→Done, PR ready, merge, branch delete. Begin
-  P1-006 only on separate authorization.
+- **RESOLVED:** RLS enforcement model → CDR-013 (Option A + A1, owner-accepted 2026-07-21).
+- Future owner gates (do NOT self-authorize): P1-006 backlog→Done, PR ready, merge, branch delete. Begin P1-007 only on separate authorization.
 
 ## Authority limits (this ticket)
-- No production systems/credentials; no real customer data; no public tunnel; no Clerk dashboard; do not
-  touch the inert P1-002 Clerk endpoint; no unrelated refactors; do not implement companies (P1-010), RLS
-  (P1-006), general authz middleware (P1-007), or the durable audit store (P1-008) early; do not make
-  companyId optional on TenantContext.
+- No production systems/credentials; no real customer data; no external DB; no public tunnel; no Clerk dashboard; do
+  not touch the inert P1-002 Clerk endpoint; no unrelated refactors. Do NOT: add a 4th bootstrap fn; make a generic
+  privileged membership API; place token authority in a GUC/policy; run accept via the owner connection from app code;
+  weaken memberships RLS; trust caller email/identity; grant the app role BYPASSRLS/ownership; implement company RLS.
 
 ## Test baselines
-- Inherited from merged `main` (`3c3dded`): hosted CI green (448 pass / 0 fail / 103 skipped locally without
-  a DB; hosted runs integration zero-skip). New P1-005 suites TBD. Integration files run serially
-  (`vitest fileParallelism:false`) on one shared DB — keep new suites' cleanup drop-lists inclusive.
+- Inherited from merged `main` (`858407a`): hosted CI green. P1-006 RLS suites run under the restricted role.
+  Integration files run serially (`vitest fileParallelism:false`) on one shared DB — keep new suites' cleanup drop-lists inclusive.
+- Local Windows→WSL PG forwarding unstable; hosted CI is the authoritative zero-skip integration gate.
 
 ## Next executable action
-**NONE — STOPPED at the owner gate.** All 5 slices are hosted-green (final run 29836370443, zero-skip PG +
-audit) and independently reviewed (security + scope PASS). Remaining steps are owner-gated: (1) backlog
-ACBP-P1-005 → Done, (2) `gh pr ready 6`, (3) squash-merge PR #6, then verify main CI + delete branch. Begin
-ACBP-P1-006 only on separate explicit authorization.
+Continue Slice 2 (restricted role + RLS migration + policies) under TDD. Commit + push each green slice; verify hosted
+CI on the exact pushed commit. Stop only at the owner gate (all slices hosted-green + independently reviewed) or a new
+genuine owner decision.

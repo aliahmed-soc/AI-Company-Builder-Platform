@@ -124,6 +124,9 @@ importers:
       '@acbp/test-support':
         specifier: workspace:*
         version: link:../test-support
+      kysely:
+        specifier: ^0.28.17
+        version: 0.28.17
 
   packages/database:
     dependencies:
