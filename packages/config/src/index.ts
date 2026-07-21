@@ -45,12 +45,22 @@ export interface WorkerConfig {
 export type DatabaseSslMode = 'disable' | 'require' | 'verify-full';
 
 /**
+ * Which database role a connection uses (ACBP-P1-006; CDR-013). `owner` = the migration/owner role
+ * (`DATABASE_URL`) used ONLY by migrations and explicit administrative setup; `app` = the restricted,
+ * non-owner, NOBYPASSRLS application role (`DATABASE_APP_URL`) used for all ordinary runtime traffic. The
+ * two URLs are never interchanged and the app path never silently falls back to the owner URL.
+ */
+export type DatabaseRole = 'owner' | 'app';
+
+/**
  * Validated, server-only PostgreSQL access configuration (ACBP-P0-018; ADR-020).
  * `url` is wrapped in {@link Secret} — it carries credentials and must never be logged or returned
  * to clients. Production defaults are safe (SSL required) rather than development-convenient.
  */
 export interface DatabaseConfig {
   readonly appEnv: AppEnv;
+  /** Which role this connection uses (ACBP-P1-006; CDR-013): `owner` (migrations) or `app` (runtime). */
+  readonly role: DatabaseRole;
   /** Full `postgresql://` connection string, including credentials. Redacted everywhere. */
   readonly url: Secret;
   readonly poolMin: number;
@@ -125,7 +135,7 @@ export class ConfigValidationError extends Error {
 
 // ---- shared zod building blocks --------------------------------------------------------
 type EnvRecord = Record<string, string | undefined>;
-const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY', 'CLERK_WEBHOOK_SIGNING_SECRET']);
+const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'DATABASE_APP_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY', 'CLERK_WEBHOOK_SIGNING_SECRET']);
 
 const appEnv = z.enum(['development', 'test', 'staging', 'production']);
 const emptyToUndef = (v: unknown): unknown => (v === '' ? undefined : v);
@@ -353,10 +363,28 @@ export function parseWorkerConfig(env: EnvRecord): WorkerConfig {
   };
 }
 
-export function parseDatabaseConfig(env: EnvRecord): DatabaseConfig {
-  const r = databaseSchema.safeParse(env);
-  if (!r.success) throw toError(r.error);
-  return r.data;
+/**
+ * Parse validated database configuration for a specific role (ACBP-P1-006; CDR-013). The connection URL
+ * is selected STRICTLY by role — `owner` reads `DATABASE_URL`, `app` reads `DATABASE_APP_URL` — with NO
+ * silent fallback between them: an `app` config whose `DATABASE_APP_URL` is missing/empty fails closed
+ * (rather than borrowing the owner URL). Both URLs are SECRET_FIELDS, so validation errors are redacted.
+ */
+export function parseDatabaseConfig(env: EnvRecord, opts: { role?: DatabaseRole } = {}): DatabaseConfig {
+  const role = opts.role ?? 'owner';
+  const urlVar = role === 'app' ? 'DATABASE_APP_URL' : 'DATABASE_URL';
+  // Feed the role-selected URL into the schema's DATABASE_URL slot; the OTHER url variable is ignored, so
+  // the two can never be interchanged and the app path cannot inherit the owner URL.
+  const normalized: EnvRecord = { ...env, DATABASE_URL: env[urlVar] };
+  const r = databaseSchema.safeParse(normalized);
+  if (!r.success) {
+    // Re-label the DATABASE_URL field as the role's actual variable so the error names the right knob.
+    const issues = r.error.issues.map((i) => ({
+      field: String(i.path[0]) === 'DATABASE_URL' ? urlVar : i.path.join('.') || '(root)',
+      message: SECRET_FIELDS.has(String(i.path[0]) === 'DATABASE_URL' ? urlVar : String(i.path[0])) ? 'invalid (redacted)' : i.message,
+    }));
+    throw new ConfigValidationError(issues);
+  }
+  return { ...r.data, role };
 }
 
 /** Parse Clerk configuration (ACBP-P1-001). Secret fields are redacted in validation errors. */
@@ -442,7 +470,16 @@ export function loadBootstrapConfig(): BootstrapConfig {
  * reads whatever the composition root has placed in the environment. Fails fast on invalid input.
  */
 export function loadDatabaseConfig(): DatabaseConfig {
-  return parseDatabaseConfig(process.env);
+  return parseDatabaseConfig(process.env, { role: 'owner' });
+}
+/**
+ * Read the RESTRICTED APPLICATION database configuration (ACBP-P1-006; CDR-013) from process.env at the
+ * runtime composition boundary. Uses `DATABASE_APP_URL` (the non-owner, NOBYPASSRLS `acbp_app` connection)
+ * and fails fast if it is missing — normal runtime traffic must NEVER use the owner/migration connection,
+ * and there is no fallback from the app URL to the owner URL.
+ */
+export function loadAppDatabaseConfig(): DatabaseConfig {
+  return parseDatabaseConfig(process.env, { role: 'app' });
 }
 /**
  * Read validated Clerk configuration from process.env at a trusted web/server composition boundary.
