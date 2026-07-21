@@ -120,4 +120,6 @@ trusted core/use-case seam:
 - **Company-level authorization** and real company roles — **P1-010** (this ticket is account-level only).
 - **General policy / approval** enforcement (ADR-009/010) — later.
 - **Configurable / custom roles** and a policy-administration surface — later.
-- **Durable audit storage** — **P1-008** (P1-007 emits interim structured events only).
+- **Durable audit storage** — **P1-008** (implemented for the account-scoped first cut: `membership.invited`/
+  `membership.revoked`, in-transaction; see `docs/architecture/AUDIT.md`). The `authz.denied` denial event
+  remains an interim structured log — denial persistence is deliberately deferred past P1-008.

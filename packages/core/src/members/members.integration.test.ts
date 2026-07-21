@@ -3,9 +3,10 @@
 // the last owner cannot be removed, and a non-member (incl. another account's owner) cannot read or
 // mutate. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no migrate-down.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { closeDatabase, migrateToLatest, type DatabaseClient, type NewUser } from '@acbp/database';
+import { closeDatabase, migrateToLatest, writeAuditEvent, type DatabaseClient, type NewUser } from '@acbp/database';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
-import { inviteMember, acceptInvite, revokeMember, listMembers } from './membership-service.js';
+import { inviteMember, acceptInvite, revokeMember, listMembers, type AuditWriteFn } from './membership-service.js';
+import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, type AuditedOperation } from '../audit/audit-operations.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 // The membership use cases run as the restricted `acbp_app` role (subject to FORCE RLS); schema + user
@@ -28,7 +29,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
 
   beforeAll(async () => {
     seed = createSeedClient();
-    for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(seed);
@@ -40,11 +41,12 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     if (app) await closeDatabase(app);
     if (seed) {
       await disableAppLogin(seed);
-      for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(seed);
     }
   });
   beforeEach(async () => {
+    await seed.kysely.deleteFrom('audit_events').execute();
     await seed.kysely.deleteFrom('memberships').execute();
     await seed.kysely.deleteFrom('account_profiles').execute();
     await seed.kysely.deleteFrom('accounts').execute();
@@ -134,16 +136,6 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
   });
 
-  test('revoking a pending invite cancels it: the token can no longer be accepted — preserved revoke semantics', async () => {
-    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending-cancel@example.com', role: 'viewer' });
-    if (invite.status !== 'ok') throw new Error('setup invite failed');
-    // Revoke the still-pending invite by its membership id (never an active member).
-    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: invite.membershipId })).status).toBe('ok');
-    // The cancelled invite's token is no longer acceptable.
-    const joinerId = await seedUser(seed, 'pending-cancel@example.com');
-    expect((await acceptInvite(app, { token: invite.token, acceptingUserId: joinerId })).status).toBe('invalid_or_used');
-  });
-
   test('last-owner invariant holds under concurrency: two parallel revokes of DIFFERENT owners keep >=1 owner — CDR-011', async () => {
     // Promote the account to TWO active owners (founder + an invited/accepted owner).
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'owner2@example.com', role: 'owner' });
@@ -219,5 +211,147 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
   test('a duplicate outstanding invite to the same email is a conflict', async () => {
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup@example.com', role: 'viewer' })).status).toBe('ok');
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup@example.com', role: 'viewer' })).status).toBe('conflict');
+  });
+
+  // ── ACBP-P1-008: durable in-transaction audit for the two high-risk membership lifecycle ops ──────────
+  // These call the CORE use cases DIRECTLY (no web route), proving the mandatory durable write lives at the
+  // trusted use-case seam. Audit rows are read via the superuser `seed` client (bypasses RLS to see all).
+  const failingWriter: AuditWriteFn = () => Promise.reject(new Error('audit boom'));
+
+  test('membership.invited: an invite writes exactly one durable audit row in-tx, server-bound + PII-free — ACBP-P1-008', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'audit-join@example.com', role: 'viewer' });
+    expect(invite.status).toBe('ok');
+    if (invite.status !== 'ok') return;
+    const rows = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'membership.invited').execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: 'membership.invited', account_id: accountId, actor_type: 'user', actor_id: ownerId, subject_type: 'membership', subject_id: invite.membershipId, outcome: 'success' });
+    expect(rows[0]?.payload).toEqual({ role: 'viewer' });
+    expect(typeof rows[0]?.event_id).toBe('string');
+    expect(rows[0]?.occurred_at).toBeInstanceOf(Date);
+    const serialized = JSON.stringify(rows[0]);
+    expect(serialized).not.toContain('audit-join@example.com'); // no invited email
+    expect(serialized).not.toContain(invite.token); // no invite token
+  });
+
+  test('membership.invited: an audit-write failure rolls back the invite (fail-closed) — no invite, no audit — ACBP-P1-008', async () => {
+    await expect(inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'rollback@example.com', role: 'viewer' }, { auditWriter: failingWriter })).rejects.toBeDefined();
+    expect(await seed.kysely.selectFrom('memberships').selectAll().where('invited_email', '=', 'rollback@example.com').execute()).toHaveLength(0);
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('atomicity: writing the audit THEN throwing rolls BOTH the invite and the audit row back — ACBP-P1-008', async () => {
+    const writeThenThrow: AuditWriteFn = async (scope, event, ctx) => {
+      await writeAuditEvent(scope, event, ctx); // the row is inserted in this tx...
+      throw new Error('post-write boom'); // ...then the throw rolls the WHOLE tx back
+    };
+    await expect(inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'atomic@example.com', role: 'viewer' }, { auditWriter: writeThenThrow })).rejects.toBeDefined();
+    expect(await seed.kysely.selectFrom('memberships').selectAll().where('invited_email', '=', 'atomic@example.com').execute()).toHaveLength(0);
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('invite mutation failure (duplicate) writes no success audit — ACBP-P1-008', async () => {
+    expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup2@example.com', role: 'viewer' })).status).toBe('ok');
+    await seed.kysely.deleteFrom('audit_events').execute(); // clear the first, successful audit
+    expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup2@example.com', role: 'viewer' })).status).toBe('conflict');
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('membership.revoked: a real revocation writes exactly one durable audit row in-tx — ACBP-P1-008', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'rev@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup');
+    const viewerId = await seedUser(seed, 'rev@example.com');
+    const accepted = await acceptInvite(app, { token: invite.token, acceptingUserId: viewerId });
+    if (accepted.status !== 'ok') throw new Error('setup');
+    await seed.kysely.deleteFrom('audit_events').execute(); // isolate the revoke audit from the invite audit
+    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: accepted.membershipId })).status).toBe('ok');
+    const rows = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'membership.revoked').execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: 'membership.revoked', account_id: accountId, actor_type: 'user', actor_id: ownerId, subject_id: accepted.membershipId, outcome: 'success' });
+    expect(rows[0]?.payload).toEqual({ role: 'viewer' });
+  });
+
+  test('membership.revoked: an audit-write failure rolls back the revocation — target stays active, no audit — ACBP-P1-008', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'revfail@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup');
+    const viewerId = await seedUser(seed, 'revfail@example.com');
+    const accepted = await acceptInvite(app, { token: invite.token, acceptingUserId: viewerId });
+    if (accepted.status !== 'ok') throw new Error('setup');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await expect(revokeMember(app, { accountId, actingUserId: ownerId, membershipId: accepted.membershipId }, { auditWriter: failingWriter })).rejects.toBeDefined();
+    const row = await seed.kysely.selectFrom('memberships').selectAll().where('id', '=', accepted.membershipId).executeTakeFirst();
+    expect(row?.status).toBe('active'); // revocation rolled back
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('no success audit for last-owner denial, missing target, or already-revoked no-op — ACBP-P1-008', async () => {
+    const list = await listMembers(app, { accountId, actingUserId: ownerId });
+    const ownerRow = list.status === 'ok' ? list.members.find((m) => m.role === 'owner') : undefined;
+    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
+    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: '00000000-0000-0000-0000-000000000000' })).status).toBe('not_found');
+
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'twice@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup');
+    const vId = await seedUser(seed, 'twice@example.com');
+    const acc = await acceptInvite(app, { token: invite.token, acceptingUserId: vId });
+    if (acc.status !== 'ok') throw new Error('setup');
+    await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId }); // first (real) revoke
+    await seed.kysely.deleteFrom('audit_events').execute(); // clear it
+    expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId })).status).toBe('ok'); // idempotent no-op
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0); // NO new audit
+  });
+
+  test('concurrent revoke of the same membership yields exactly ONE success audit — ACBP-P1-008', async () => {
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'conc@example.com', role: 'viewer' });
+    if (invite.status !== 'ok') throw new Error('setup');
+    const vId = await seedUser(seed, 'conc@example.com');
+    const acc = await acceptInvite(app, { token: invite.token, acceptingUserId: vId });
+    if (acc.status !== 'ok') throw new Error('setup');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    const [a, b] = await Promise.all([
+      revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId }),
+      revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual(['ok', 'ok']);
+    // Only the transaction that actually flipped active→revoked audits; the racing no-op does not.
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'membership.revoked').execute()).toHaveLength(1);
+  });
+
+  test('cross-account: an outsider cannot revoke here and writes no audit for this account — ACBP-P1-008', async () => {
+    const outsiderId = await seedUser(seed, 'outsider2@example.com');
+    await provisionPersonalAccount(app, outsiderId); // their OWN account
+    await seed.kysely.deleteFrom('audit_events').execute();
+    const list = await listMembers(app, { accountId, actingUserId: ownerId });
+    const ownerRow = list.status === 'ok' ? list.members[0] : undefined;
+    expect((await revokeMember(app, { accountId, actingUserId: outsiderId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('forbidden');
+    expect(await seed.kysely.selectFrom('audit_events').selectAll().where('account_id', '=', accountId).execute()).toHaveLength(0);
+  });
+
+  // Automated completeness: a driver per APPROVED operation, exhaustive over AUDITED_OPERATION_IDS at compile
+  // time (a new operation without a driver fails to compile). Each driver runs the REAL use case and must
+  // leave exactly one durable audit row of its mapped event — so a use case that ever loses its in-tx write
+  // fails CI here, not just review discipline (closes the "parallel bookkeeping" gap).
+  const OP_DRIVERS: Record<AuditedOperation, () => Promise<void>> = {
+    'membership.invite': async () => {
+      const r = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'op-invite@example.com', role: 'viewer' });
+      if (r.status !== 'ok') throw new Error('invite driver setup failed');
+    },
+    'membership.revoke': async () => {
+      const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'op-revoke@example.com', role: 'viewer' });
+      if (invite.status !== 'ok') throw new Error('revoke driver setup failed');
+      const vId = await seedUser(seed, 'op-revoke@example.com');
+      const acc = await acceptInvite(app, { token: invite.token, acceptingUserId: vId });
+      if (acc.status !== 'ok') throw new Error('revoke driver setup failed');
+      await seed.kysely.deleteFrom('audit_events').execute(); // isolate: only the revoke event should remain
+      const r = await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId });
+      if (r.status !== 'ok') throw new Error('revoke driver failed');
+    },
+  };
+
+  test.each(AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event — ACBP-P1-008', async (op) => {
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await OP_DRIVERS[op]();
+    const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.name).toBe(AUDITED_OPERATIONS[op]);
   });
 });

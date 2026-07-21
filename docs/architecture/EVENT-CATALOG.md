@@ -2,6 +2,12 @@
 
 Status: Proposed. **These are proposed contracts for this product — not observed Polsia internals** (no event system was ever visible in the reference product; PRD §10).
 
+**Implementation status (ACBP-P1-008; CDR-014 Option A):** the durable append-only audit store exists for the
+account-scoped first cut. Two events are persisted in-transaction today — `membership.invited` and
+`membership.revoked` (registered in `@acbp/contracts` `audit/`; written by `writeAuditEvent`). All other events
+in this catalog remain **proposed / interim structured logs only** and are NOT durable yet (see
+`docs/architecture/AUDIT.md` for the implemented model, the deferred list, and the logging-vs-audit distinction).
+
 ## Common envelope (all events)
 
 | Field | Rule |

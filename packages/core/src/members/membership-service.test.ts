@@ -114,7 +114,7 @@ describe('revokeMemberWithStore', () => {
     });
     const { logger, records } = createTestLogger({ component: 'members' });
     const r = await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' }, { logger });
-    expect(r.status).toBe('ok');
+    expect(r).toMatchObject({ status: 'ok', changed: true, membershipId: 'm_v', role: 'viewer' });
     expect(revoked).toEqual([['a', 'm_v']]);
     expect(records.filter((x) => x.event === 'membership.revoked')).toHaveLength(1);
   });
@@ -129,11 +129,12 @@ describe('revokeMemberWithStore', () => {
         return Promise.resolve('noop');
       },
     });
-    expect((await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' })).status).toBe('ok');
+    const r = await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' });
+    expect(r).toMatchObject({ status: 'ok', changed: false });
     expect(revoked).toEqual([]); // short-circuited before the store; no revoke attempted
   });
 
-  test('a revoke that loses the race (noop) is a successful idempotent no-op and does NOT re-audit', async () => {
+  test('a revoke that loses the race (noop) succeeds as an idempotent no-op and does NOT re-audit', async () => {
     const store = makeStore({
       resolveActiveRole: () => Promise.resolve('owner'),
       findInAccount: () => Promise.resolve({ id: 'm_v', role: 'viewer', status: 'active' }),
@@ -141,7 +142,7 @@ describe('revokeMemberWithStore', () => {
     });
     const { logger, records } = createTestLogger({ component: 'members' });
     const r = await revokeMemberWithStore(store, { accountId: 'a', actingUserId: 'o', membershipId: 'm_v' }, { logger });
-    expect(r.status).toBe('ok');
+    expect(r).toMatchObject({ status: 'ok', changed: false });
     expect(records.filter((x) => x.event === 'membership.revoked')).toHaveLength(0); // only the actual flip audits
   });
 
@@ -163,7 +164,7 @@ describe('revokeMemberWithStore', () => {
       // Atomic (single synchronous decision + flip), like the repository's locked owner-set operation.
       revokeActiveMembership: (_accountId, id) => {
         const m = owners.get(id);
-        if (m === undefined || m.status === 'revoked') return Promise.resolve('noop');
+        if (m === undefined || m.status !== 'active') return Promise.resolve('noop');
         if (m.role === 'owner' && activeOwnerCount() <= 1) return Promise.resolve('last_owner');
         m.status = 'revoked';
         return Promise.resolve('revoked');

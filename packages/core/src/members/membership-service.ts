@@ -5,13 +5,22 @@
 // or viewer): list. Accept is self-service, bound to a single-use token AND the accepting user's
 // verified email. Interim structured audit events carry no PII (no email, no token). The company scope
 // is not exercised here (companies are P1-010); every P1-004 membership is account-level.
-import { MembershipRepository, acceptInviteBootstrap, type DatabaseClient } from '@acbp/database';
+import { MembershipRepository, acceptInviteBootstrap, writeAuditEvent, type DatabaseClient, type AccountScope, type AuditWriteContext } from '@acbp/database';
 import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
-import { authorize, isAllowed, validationError, type PublicErrorEnvelope } from '@acbp/contracts';
+import { authorize, isAllowed, validationError, membershipInvited, membershipRevoked, type PublicErrorEnvelope, type AuditEvent } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 import { isMemberRole, type MemberRole } from './roles.js';
 import { generateInviteToken, hashInviteToken } from './invite-token.js';
+
+/**
+ * The in-transaction audit-write seam (ACBP-P1-008). Production ALWAYS uses the real `writeAuditEvent`, which
+ * appends the durable audit row on the caller's AccountScope inside the same transaction as the membership
+ * mutation — an audit-write failure rolls the mutation back (fail-closed). This is NOT a "skip audit" flag:
+ * it is only overridden in tests to force the write to FAIL, proving the roll-back. It is never set from a
+ * request; the request layer constructs options as `{ logger }` only.
+ */
+export type AuditWriteFn = (scope: AccountScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
 
 export type MembershipStatus = 'invited' | 'active' | 'revoked';
 
@@ -38,7 +47,14 @@ export type AcceptResult =
   | { readonly status: 'ok'; readonly membershipId: string; readonly accountId: string; readonly role: MemberRole }
   | { readonly status: 'invalid_or_used' };
 
-export type RevokeResult = { readonly status: 'ok' } | { readonly status: 'forbidden' } | { readonly status: 'not_found' } | { readonly status: 'last_owner' };
+// `changed` distinguishes an ACTUAL state transition (which must emit a durable `membership.revoked` audit)
+// from the idempotent already-revoked no-op (which must NOT). `membershipId`/`role` identify the revoked
+// membership for the audit subject/metadata; they are present only when `changed` is true.
+export type RevokeResult =
+  | { readonly status: 'ok'; readonly changed: boolean; readonly membershipId?: string; readonly role?: MemberRole }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'not_found' }
+  | { readonly status: 'last_owner' };
 
 export type ListResult = { readonly status: 'ok'; readonly members: readonly MemberView[] } | { readonly status: 'forbidden' };
 
@@ -47,6 +63,13 @@ export interface MembershipOpOptions {
   readonly logger?: Logger;
   /** Injectable token generator (deterministic in tests); production uses a CSPRNG. */
   readonly generateToken?: () => { token: string; tokenHash: string };
+  /** TEST SEAM ONLY (ACBP-P1-008): override the in-tx audit writer to force a failure. Never set in production. */
+  readonly auditWriter?: AuditWriteFn;
+}
+
+/** Build the non-PII audit context from op options (correlation id only; account/actor come from the scope). */
+function auditContext(options: MembershipOpOptions): AuditWriteContext {
+  return options.correlationId !== undefined ? { correlationId: options.correlationId } : {};
 }
 
 /**
@@ -60,11 +83,11 @@ export interface MembershipStore {
   insertInvite(v: { readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole; readonly tokenHash: string; readonly invitedByUserId: string }): Promise<{ readonly id: string }>;
   findInAccount(accountId: string, membershipId: string): Promise<{ readonly id: string; readonly role: MemberRole; readonly status: MembershipStatus } | undefined>;
   /**
-   * Atomically revoke a membership (an active member OR a pending invite), refusing to remove the account's
-   * LAST active owner (CDR-011). The owner-count decision and the revoke are one operation so concurrent
-   * revocations of different owners cannot both slip past a stale count and drain the account to zero owners.
-   * Outcomes: `'revoked'` (this call flipped the row to revoked), `'last_owner'` (refused — target is the sole
-   * active owner), `'noop'` (nothing to flip — already revoked, e.g. a concurrent revoke won → idempotent).
+   * Atomically revoke an ACTIVE membership, refusing to remove the account's LAST active owner (CDR-011).
+   * The owner-count decision and the flip are one operation so concurrent revocations of different owners
+   * cannot both slip past a stale count and drain the account to zero owners. Outcomes: `'revoked'` (this
+   * call performed active→revoked), `'last_owner'` (refused — target is the sole active owner), `'noop'`
+   * (not active — already revoked / a concurrent revoke won → idempotent no-op, writes NO new audit).
    */
   revokeActiveMembership(accountId: string, id: string): Promise<'revoked' | 'noop' | 'last_owner'>;
   listMembers(accountId: string): Promise<readonly MemberView[]>;
@@ -118,19 +141,20 @@ export async function revokeMemberWithStore(
 
   const target = await store.findInAccount(params.accountId, params.membershipId);
   if (target === undefined) return { status: 'not_found' };
-  if (target.status === 'revoked') return { status: 'ok' }; // idempotent
+  if (target.status === 'revoked') return { status: 'ok', changed: false }; // idempotent no-op → no new audit
 
-  // Revoke ATOMICALLY, upholding the last-owner invariant (CDR-011) in one locked operation. Doing the
-  // owner-count check and the flip as separate steps is a read-then-act race: two concurrent revocations
-  // of DIFFERENT active owners could each read "2 owners", both pass, and both flip — draining the account
-  // to zero owners. The store performs the check + flip as a single serialized unit.
+  // Uphold the last-owner invariant (CDR-011) ATOMICALLY. Checking the owner count and revoking as separate
+  // steps is a read-then-act race: two concurrent revocations of DIFFERENT active owners could each read
+  // "2 owners", both pass, and both flip — draining the account to zero owners. The store performs the
+  // owner-count decision and the flip as one serialized (row-locked) operation.
   const outcome = await store.revokeActiveMembership(params.accountId, target.id);
   if (outcome === 'last_owner') return { status: 'last_owner' };
-  if (outcome === 'revoked') {
-    options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
-  }
-  // 'revoked' or 'noop' (a concurrent revoke won the flip) → the revocation is idempotently in effect.
-  return { status: 'ok' };
+  // Under concurrency only the transaction that actually flips the row reports 'revoked'; a racing revoke
+  // that lost sees 'noop' → an idempotent no-op with NO new audit.
+  if (outcome === 'noop') return { status: 'ok', changed: false };
+  options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
+  // `changed: true` + the revoked membership's id/role → the live wrapper writes the durable audit in-tx.
+  return { status: 'ok', changed: true, membershipId: target.id, role: target.role };
 }
 
 export async function listMembersWithStore(store: MembershipStore, params: { accountId: string; actingUserId: string }, options: MembershipOpOptions = {}): Promise<ListResult> {
@@ -192,10 +216,20 @@ function liveStore(repo: MembershipRepository): MembershipStore {
 // op runs under `withAccountTransaction` so every memberships query/mutation is RLS-confined to the
 // caller's account. The store's own role check (owner vs viewer) still runs under the scope.
 export async function inviteMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; invitedEmail: unknown; role: unknown }, options: MembershipOpOptions = {}): Promise<InviteResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
   const run = await runInAccountScope(
     client,
     { userId: params.actingUserId, requestedAccountId: params.accountId },
-    (scope) => inviteMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options),
+    async (scope) => {
+      const result = await inviteMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options);
+      if (result.status === 'ok') {
+        // Durable audit (ACBP-P1-008) — SAME transaction + AccountScope as the invite insert. account/actor/
+        // event id are bound server-side by the writer; the payload carries only the invited role (never the
+        // token or email). A write failure throws → the whole tx rolls back → the invite is undone.
+        await audit(scope, membershipInvited({ membershipId: result.membershipId, role: result.role }), auditContext(options));
+      }
+      return result;
+    },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
@@ -217,10 +251,19 @@ export async function acceptInvite(client: DatabaseClient, params: { token: stri
 }
 
 export async function revokeMember(client: DatabaseClient, params: { accountId: string; actingUserId: string; membershipId: string }, options: MembershipOpOptions = {}): Promise<RevokeResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
   const run = await runInAccountScope(
     client,
     { userId: params.actingUserId, requestedAccountId: params.accountId },
-    (scope) => revokeMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options),
+    async (scope) => {
+      const result = await revokeMemberWithStore(liveStore(new MembershipRepository(scope.db)), params, options);
+      // Durable audit ONLY for an ACTUAL revocation (not the idempotent no-op, last-owner denial, or missing/
+      // cross-account target). SAME transaction + scope; a write failure rolls the revocation back.
+      if (result.status === 'ok' && result.changed && result.membershipId !== undefined && result.role !== undefined) {
+        await audit(scope, membershipRevoked({ membershipId: result.membershipId, role: result.role }), auditContext(options));
+      }
+      return result;
+    },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
