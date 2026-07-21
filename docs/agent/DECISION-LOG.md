@@ -93,3 +93,20 @@ Append significant decisions. Format: decision — source — consequence.
 - **All suites' cleanup drop-lists include `accounts`+`account_profiles`** (child-first) so a suite that
   wipes `kysely_migration` and re-migrates cannot hit a stale later-ticket table (the P1-002
   `_acbp_migration_probe` lesson).
+
+## ACBP-P1-004 — Membership and roles (opened 2026-07-21)
+- **Membership/invitation model → CDR-011 (owner-accepted, Option A).** Account-level `memberships`
+  (owner/viewer), owner backfilled from `accounts.created_by_user_id`; **email-bound single-use invites**
+  (hashed token; acceptance requires the accepting user's VERIFIED primary email to match the invited
+  email — a leaked token can't let anyone join); revocation immediate; roles server-authoritative (Clerk
+  claims never authorize), deny by default. `memberships.company_id` is a **nullable column with no FK
+  yet** — the companies FK + company-scoped invite behavior land in **P1-010** (companies), because the
+  dependency graph forces membership before companies and unvalidated company-scoping is unsafe.
+  Alternatives rejected by owner: token-only invites (B — leaked token risk), omit company_id now (C —
+  later table-altering migration), full unvalidated company-scoping (D). Source: owner decision +
+  DATA-ARCHITECTURE (membership has company scope) + backlog ordering (companies = P1-010).
+- **Role enforcement is scoped to membership operations** (owner-only invite/revoke; viewer read-only) —
+  NOT the general `authz.check` middleware (P1-007), and NOT a retrofit of the P1-003 profile route (which
+  operates on the caller's own personal account and is unaffected). Interim audit via structured
+  `membership.invited/accepted/revoked/role_changed` events (non-PII: account/membership id + role; never
+  the invited email or token); durable store is P1-008.

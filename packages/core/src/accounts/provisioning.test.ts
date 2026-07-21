@@ -5,7 +5,7 @@ import { provisionPersonalAccountWithStore, type AccountProvisioningStore } from
 
 function fakeStore(existing?: { id: string; plan_state: string }) {
   let account = existing;
-  const calls = { accountInserts: [] as unknown[], profileInserts: [] as { account_id: string }[] };
+  const calls = { accountInserts: [] as unknown[], profileInserts: [] as { account_id: string }[], ownerMemberships: [] as { accountId: string; userId: string }[] };
   const store: AccountProvisioningStore = {
     insertAccountIfAbsent: (v) => {
       calls.accountInserts.push(v);
@@ -16,6 +16,10 @@ function fakeStore(existing?: { id: string; plan_state: string }) {
     insertProfileIfAbsent: (v) => {
       calls.profileInserts.push(v);
       return Promise.resolve({ row: { account_id: v.account_id }, inserted: true });
+    },
+    ensureOwnerMembership: (accountId, userId) => {
+      calls.ownerMemberships.push({ accountId, userId });
+      return Promise.resolve();
     },
   };
   return { store, calls };
@@ -30,6 +34,7 @@ describe('provisionPersonalAccountWithStore', () => {
     expect(result).toEqual({ accountId: 'acc_new', created: true });
     expect(calls.accountInserts).toEqual([{ created_by_user_id: 'usr_1' }]);
     expect(calls.profileInserts).toEqual([{ account_id: 'acc_new' }]); // profile keyed to the new account
+    expect(calls.ownerMemberships).toEqual([{ accountId: 'acc_new', userId: 'usr_1' }]); // founder is an owner member
     // account.created emitted with ONLY non-PII fields.
     const created = records.filter((r) => r.event === 'account.created');
     expect(created).toHaveLength(1);

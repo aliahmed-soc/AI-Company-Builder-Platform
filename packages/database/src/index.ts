@@ -17,6 +17,10 @@ export type { IdentityExecutor, ProviderIdentityKey } from './identity-repositor
 export { AccountRepository, AccountProfileRepository } from './account-repositories.js';
 export type { AccountExecutor } from './account-repositories.js';
 
+// Membership repository (ACBP-P1-004; CDR-011). Authorization role source; not tenant-scoped yet.
+export { MembershipRepository } from './membership-repositories.js';
+export type { MembershipExecutor } from './membership-repositories.js';
+
 export { applyTenantSession, buildTenantSettings, TENANT_SETTINGS } from './session.js';
 export type { TenantSettingStatement } from './session.js';
 
@@ -42,6 +46,10 @@ export type {
   AccountProfileRow,
   NewAccountProfile,
   AccountProfileUpdate,
+  MembershipsTable,
+  MembershipRow,
+  NewMembership,
+  MembershipUpdate,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

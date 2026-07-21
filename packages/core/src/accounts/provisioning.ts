@@ -6,7 +6,7 @@
 // race-safe (ON CONFLICT DO NOTHING, scoped to the exact constraints) so concurrent first requests
 // converge to one account. Emits an interim `account.created` structured audit event (durable
 // append-only audit is ACBP-P1-008) carrying only non-PII fields (account id + plan state).
-import { withTransaction, AccountRepository, AccountProfileRepository, type DatabaseClient } from '@acbp/database';
+import { withTransaction, AccountRepository, AccountProfileRepository, MembershipRepository, type DatabaseClient } from '@acbp/database';
 import type { Logger } from '@acbp/observability';
 
 /** Outcome of ensuring a personal account. `created` is true only when THIS call inserted the account. */
@@ -19,6 +19,8 @@ export interface ProvisionResult {
 export interface AccountProvisioningStore {
   insertAccountIfAbsent(values: { readonly created_by_user_id: string }): Promise<{ readonly row: { readonly id: string; readonly plan_state: string }; readonly inserted: boolean }>;
   insertProfileIfAbsent(values: { readonly account_id: string }): Promise<{ readonly row: { readonly account_id: string }; readonly inserted: boolean }>;
+  /** Idempotently ensure the founder is an active owner MEMBER of the account (ACBP-P1-004; CDR-011 #3). */
+  ensureOwnerMembership(accountId: string, userId: string): Promise<void>;
 }
 
 export interface ProvisionOptions {
@@ -41,6 +43,8 @@ export async function provisionPersonalAccountWithStore(
   const account = await store.insertAccountIfAbsent({ created_by_user_id: userId });
   // A pre-existing account may already have its profile; insertIfAbsent no-ops in that case.
   await store.insertProfileIfAbsent({ account_id: account.row.id });
+  // The founder is a first-class owner MEMBER of their account (idempotent).
+  await store.ensureOwnerMembership(account.row.id, userId);
   if (account.inserted) {
     options.logger?.info('account.created', { metadata: { accountId: account.row.id, planState: account.row.plan_state } });
   }
@@ -58,9 +62,13 @@ export function provisionPersonalAccount(client: DatabaseClient, userId: string,
     (tx) => {
       const accounts = new AccountRepository(tx.kysely);
       const profiles = new AccountProfileRepository(tx.kysely);
+      const members = new MembershipRepository(tx.kysely);
       const store: AccountProvisioningStore = {
         insertAccountIfAbsent: (v) => accounts.insertIfAbsent(v),
         insertProfileIfAbsent: (v) => profiles.insertIfAbsent(v),
+        ensureOwnerMembership: async (accountId, uid) => {
+          await members.insertOwnerIfAbsent(accountId, uid);
+        },
       };
       return provisionPersonalAccountWithStore(store, userId, options);
     },

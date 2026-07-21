@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
 
   beforeAll(async () => {
     client = createTestDatabase();
-    for (const t of ['account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(client);
@@ -37,7 +37,7 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
   });
   afterAll(async () => {
     if (client) {
-      for (const t of ['account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(client);
     }
   });

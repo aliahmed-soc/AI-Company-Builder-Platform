@@ -101,11 +101,42 @@ export interface AccountProfilesTable {
   updated_at: Generated<Date>;
 }
 
+/**
+ * Account membership (ACBP-P1-004; CDR-011). A-tenant: links a user to an account with a role and
+ * lifecycle. Authorization derives from THIS row (an active membership's role), never from a Clerk
+ * claim or from accounts.created_by_user_id. `company_id` is a nullable structural hook with no FK yet
+ * (companies are ACBP-P1-010). A pending invite has member_user_id null + invited_email + token hash.
+ */
+export interface MembershipsTable {
+  id: Generated<string>;
+  /** Owning account (FK accounts.id, cascade). */
+  account_id: string;
+  /** The member's internal user id (FK users.id). Null while an invite is pending; set on accept. */
+  member_user_id: string | null;
+  /** 'owner' | 'viewer'. */
+  role: string;
+  /** Lifecycle: 'invited' | 'active' | 'revoked'. Default 'invited'. */
+  status: Generated<string>;
+  /** Invite target email (PII). Present on a pending invite; null for the backfilled owner. */
+  invited_email: string | null;
+  /** SHA-256 hash of the single-use invite token (never the raw token). Null once accepted/revoked. */
+  invite_token_hash: string | null;
+  /** The owner who created the invite (FK users.id). Null for the system backfill. */
+  invited_by_user_id: string | null;
+  /** Company-scope hook (P1-010 attaches the FK + populates). Always null in P1-004. */
+  company_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  accepted_at: NullableTimestamp;
+  revoked_at: NullableTimestamp;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
   accounts: AccountsTable;
   account_profiles: AccountProfilesTable;
+  memberships: MembershipsTable;
 }
 
 // Repository-facing row shapes.
@@ -120,3 +151,6 @@ export type AccountUpdate = Updateable<AccountsTable>;
 export type AccountProfileRow = Selectable<AccountProfilesTable>;
 export type NewAccountProfile = Insertable<AccountProfilesTable>;
 export type AccountProfileUpdate = Updateable<AccountProfilesTable>;
+export type MembershipRow = Selectable<MembershipsTable>;
+export type NewMembership = Insertable<MembershipsTable>;
+export type MembershipUpdate = Updateable<MembershipsTable>;
