@@ -126,9 +126,9 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
     expect(policies.rows.map((r) => r.policyname).sort()).toEqual(['audit_events_insert', 'audit_events_select']);
     expect(policies.rows.some((r) => r.cmd === 'UPDATE' || r.cmd === 'DELETE')).toBe(false);
 
-    // The restricted role must not be able to bypass RLS.
-    const roleAttrs = await sql<{ rolbypassrls: boolean; rolsuperuser: boolean }>`select rolbypassrls, rolsuperuser from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
-    expect(roleAttrs.rows[0]).toEqual({ rolbypassrls: false, rolsuperuser: false });
+    // The restricted role must not be able to bypass RLS (pg_roles columns are rolbypassrls + rolsuper).
+    const roleAttrs = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
+    expect(roleAttrs.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
   });
 
   test('idempotency key is unique: a duplicate key is rejected', async () => {
