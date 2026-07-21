@@ -18,7 +18,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //    The owner and role are fixed (never caller-chosen); it can never claim another user's account.
   await sql`
     create or replace function public.acbp_provision_account(p_user_id uuid)
-    returns table (account_id uuid, created boolean)
+    returns table (o_account_id uuid, o_created boolean)
     language plpgsql
     security definer
     set search_path = pg_catalog
@@ -83,7 +83,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //    returns the token hash or email.
   await sql`
     create or replace function public.acbp_accept_invite(p_invite_token_hash text, p_user_id uuid)
-    returns table (membership_id uuid, account_id uuid, role text)
+    returns table (o_membership_id uuid, o_account_id uuid, o_role text)
     language plpgsql
     security definer
     set search_path = pg_catalog

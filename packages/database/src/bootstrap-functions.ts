@@ -12,10 +12,10 @@ export type BootstrapExecutor = Kysely<DatabaseSchema>;
 
 /** Provision (idempotently) the server-verified user's personal account + profile + owner membership. */
 export async function provisionAccountBootstrap(db: BootstrapExecutor, userId: string): Promise<{ readonly accountId: string; readonly created: boolean }> {
-  const r = await sql<{ account_id: string; created: boolean }>`select account_id, created from public.acbp_provision_account(${userId}::uuid)`.execute(db);
+  const r = await sql<{ o_account_id: string; o_created: boolean }>`select o_account_id, o_created from public.acbp_provision_account(${userId}::uuid)`.execute(db);
   const row = r.rows[0];
   if (row === undefined) throw new Error('acbp_provision_account returned no row');
-  return { accountId: row.account_id, created: row.created };
+  return { accountId: row.o_account_id, created: row.o_created };
 }
 
 /** Resolve the caller's OWN active membership role in the requested account (null when not an active member). */
@@ -27,7 +27,7 @@ export async function resolveOwnMembershipBootstrap(db: BootstrapExecutor, userI
 
 /** Atomically accept a pending invite by its stored token hash for the server-verified user (null = denied). */
 export async function acceptInviteBootstrap(db: BootstrapExecutor, inviteTokenHash: string, userId: string): Promise<{ readonly membershipId: string; readonly accountId: string; readonly role: string } | null> {
-  const r = await sql<{ membership_id: string; account_id: string; role: string }>`select membership_id, account_id, role from public.acbp_accept_invite(${inviteTokenHash}, ${userId}::uuid)`.execute(db);
+  const r = await sql<{ o_membership_id: string; o_account_id: string; o_role: string }>`select o_membership_id, o_account_id, o_role from public.acbp_accept_invite(${inviteTokenHash}, ${userId}::uuid)`.execute(db);
   const row = r.rows[0];
-  return row === undefined ? null : { membershipId: row.membership_id, accountId: row.account_id, role: row.role };
+  return row === undefined ? null : { membershipId: row.o_membership_id, accountId: row.o_account_id, role: row.o_role };
 }
