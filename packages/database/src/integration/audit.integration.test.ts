@@ -152,13 +152,13 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
     await expect(asApp({}, (k) => sql`create policy evil_all on audit_events for all using (true) with check (true)`.execute(k))).rejects.toThrow();
   });
 
-  test('escalation: the restricted role cannot grant itself UPDATE, nor SET ROLE / create a role', async () => {
-    // acbp_app is not the table owner and has no grant option → cannot GRANT.
-    await expect(asApp({}, (k) => sql`grant update on audit_events to acbp_app`.execute(k))).rejects.toThrow();
-    await expect(asApp({}, (k) => sql`grant all on audit_events to acbp_app`.execute(k))).rejects.toThrow();
-    // NOINHERIT + not a member of any role → cannot escalate via SET ROLE; NOCREATEROLE → cannot create one.
+  test('escalation: a self-GRANT is a no-op (UPDATE stays denied); CREATE ROLE is denied', async () => {
+    // A non-owner GRANT without grant option is a NO-OP WARNING in PostgreSQL (not an error) — it grants
+    // nothing. So the security property is not "GRANT throws" but "the privilege is never actually acquired".
+    await asApp({}, (k) => sql`grant update on audit_events to acbp_app`.execute(k)); // no-op, resolves
+    // NOCREATEROLE → creating a role is denied (a real permission error).
     await expect(asApp({}, (k) => sql`create role acbp_evil`.execute(k))).rejects.toThrow();
-    // Even after the (failed) grant attempts, UPDATE remains denied.
+    // Despite the no-op grant attempt, UPDATE on audit_events remains denied to the restricted role.
     await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_esc', role: 'viewer' })));
     await expect(asApp({ 'app.current_account': ACCOUNT_A }, (k) => sql`update audit_events set outcome = 'blocked'`.execute(k))).rejects.toThrow();
   });
