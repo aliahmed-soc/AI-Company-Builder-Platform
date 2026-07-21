@@ -63,11 +63,16 @@ membership row under its own AccountScope** (RLS-confined) and calls `checkAutho
   `authorize('member:read_invited_email')` (a projection capability, not a request gate).
 - `profile.ts` — get/update. The role is loaded under the caller's scope; for a single-owner personal account
   this passes by construction, and it is the uniform enforcement point once accounts admit non-owner members
-  (P1-010).
+  (P1-010). Note this is a **net-new** (though behavior-preserving) enforcement point: profile previously had
+  no inline role gate — it relied on owner-of-own-account resolution + RLS — so P1-007 adds `authz.check` here
+  for uniformity, with an extra RLS-confined role read that will only ever deny once non-owner members exist.
 
 Because enforcement lives in the use case, **a direct use-case call cannot bypass authz** — there is no route
-that reaches the mutation without the check. The HTTP routes are thin mappers: any `forbidden` becomes the
-opaque `authorizationDeniedEnvelope` (`authz` / `AUTHORIZATION_DENIED`, 403).
+that reaches the mutation without the check. The HTTP routes are thin mappers: on the members surface every
+authorization denial maps to a **uniform, opaque `403 { error: 'forbidden' }`** — identical for a viewer, a
+non-member, and a deleted identity, so the response is never a role/existence oracle. The transport-neutral
+`authorizationDeniedEnvelope()` (`authz` / `AUTHORIZATION_DENIED`, 403) is the equivalent structured envelope
+in `@acbp/contracts` for surfaces that emit the full error envelope.
 
 ### No request-supplied authority
 

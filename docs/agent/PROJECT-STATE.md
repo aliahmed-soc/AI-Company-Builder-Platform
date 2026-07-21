@@ -7,8 +7,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-007-authorization-middleware` (from `main` @ `012411e`).
 - PR: **draft, open, unmerged**, base `main` (opened in Slice 1).
 - Base main: `012411eb1c24b9375756fda80f1b9d50d9bc0c60` (P1-006 squash-merge PR #7; main CI green run 29860477369).
-- **STATUS: Slice 1 complete + local-green. Continuing autonomously through the slices to the final owner gate.**
-  Do NOT self-authorize: backlog→Done, PR ready, merge, branch delete, or begin P1-008.
+- **STATUS: all 5 slices complete + hosted-green; both independent reviews PASS. STOPPED AT OWNER GATE.**
+  Slices 1–5 CI green (latest full-branch verify pending on the review-fix commit). Independent SECURITY review
+  PASS (0 blocker/0 major/1 minor/2 info); ARCHITECTURE/scope review PASS (0 blocker/0 major/3 minor/2 info).
+  Reasonable minors fixed (see below). Awaiting owner authorization for: (1) backlog ACBP-P1-007→Done, (2) PR #8
+  ready, (3) squash-merge. Do NOT self-authorize / merge / delete branch / begin P1-008.
 
 ## Prior tickets (closed)
 - **ACBP-P1-001..P1-006 — DONE & MERGED.** P1-006 squash `012411e` (PR #7). Main CI green on each squash.
@@ -62,12 +65,25 @@ _Read this first on resume, then continue automatically to "Next executable acti
    correct status). No Clerk role claim is consulted (identity resolution exposes only providerUserId + verified
    email). Test-only slice (no runtime change → `next build` unaffected; last green in Slice 3). 507 local pass /
    0 fail; static gate all EXIT 0.
-5. **IN PROGRESS.** Adversarial + docs + reviews. Added real-PG `member:read_invited_email` redaction test
-   (owner sees pending-invite emails; viewer redacted). Direct-use-case-invocation bypass is structurally
-   impossible (enforcement is inside the use case; cross-account + revocation-immediate already proven in
-   Slice 3). Authored `docs/architecture/AUTHORIZATION.md` (4-independent-controls model, matrix, enforcement
-   at core boundary, no request-supplied authority, freshness, audit, deferrals). Local green. — remaining:
-   independent SECURITY + ARCHITECTURE/scope reviews (subagents) on the full branch diff; then STOP at owner gate.
+5. **DONE.** Adversarial + docs + reviews. Real-PG `member:read_invited_email` redaction test; direct-use-case
+   bypass structurally impossible; `docs/architecture/AUTHORIZATION.md`. Both independent reviews PASS. Applied
+   review fixes: removed now-dead `isOwner`/`isMember` (single source of truth = the authz matrix; arch MINOR-1);
+   corrected AUTHORIZATION.md wording on the members-surface wire envelope (`{error:'forbidden'}` uniform/opaque
+   vs the contracts-level `authorizationDeniedEnvelope`; sec INFO); clarified profile is a net-new-but-
+   behavior-preserving enforcement point (arch INFO-1). Full local suite 505 pass / 0 fail; static gate green.
+
+## Residual risks (accepted; not defects)
+- **Profile role-load is a redundant RLS-confined query** that can only deny once accounts admit non-owner
+  members (P1-010); today it passes by construction (arch MINOR-2). Kept as the uniform enforcement point.
+- **Profile read denial is unaudited when no logger is supplied** (`getAccountProfile` passes none); the path
+  is unreachable today (single-owner). Wire a logger through `getAccountProfile` + the profile route before
+  P1-010 admits non-owner members so "denials audited" holds there too (sec MINOR).
+- **Profile endpoints are not in the end-to-end negative matrix** (their denial is unreachable now); the
+  `profile:read`/`profile:update` matrix DECISION is unit-tested via the contract matrix (arch MINOR-3).
+- **`authz.check` lives in `@acbp/core/authz`**, not the literal "identity module" of SECURITY-ARCHITECTURE §1
+  — same package, cleaner separation, ADR-006 "single authz layer" satisfied (arch INFO-2).
+- **No live authenticated web-route acceptance performed** (requires a dev server + Clerk env — owner/external
+  gate); NOT claimed passed. Hosted CI (zero-skip PG) is the authoritative evidence.
 
 ## Guards (must stay green every slice)
 - `check:static` (typecheck, lint, secrets 0, encoding 0 BOM, boundaries 0, boundary tests) + full `vitest` incl.
@@ -95,10 +111,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads.
 
 ## Next executable action
-Continue **Slice 5** (adversarial/bypass suite: direct core use-case invocation cannot bypass authz [already
-true — enforcement is inside the use case]; cross-account + TOCTOU [role/membership changed before commit];
-audit/observability verification that `authz.denied` carries only non-PII; authorization docs [TENANCY.md or a
-new AUTHORIZATION.md]; then dispatch INDEPENDENT security + architecture/scope reviews). Commit + push each
-green slice; verify hosted CI on the exact pushed commit. **STOP at the owner gate** once all slices are
-hosted-green + independently reviewed. Do NOT self-authorize backlog→Done / PR ready / merge / branch delete /
-start P1-008.
+**NONE — STOPPED at the owner gate.** All 5 slices implemented; both independent reviews PASS; review-fix
+commit pushed and its hosted CI verified green. Remaining steps are owner-gated: (1) backlog ACBP-P1-007→Done,
+(2) `gh pr ready 8`, (3) squash-merge PR #8, then verify main CI + delete branch. Begin ACBP-P1-008 only on
+separate explicit authorization.
