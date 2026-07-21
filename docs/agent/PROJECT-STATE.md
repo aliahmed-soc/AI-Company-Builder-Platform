@@ -43,9 +43,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
    `bootstrap-functions.ts` callers + comprehensive real-PG behavior/abuse/catalog suite. accept binds email
    from `users.primary_email` (active+verified), atomic, fail-closed. Fixes en route: CREATE OR REPLACE for
    re-run idempotency; prefixed OUT columns (o_*) to avoid account_id ambiguity; deleted-user seed constraints.
-   **REMAINING in Slice 3: application REWIRING** — provisioning.ts→acbp_provision_account,
-   account-context-resolver.ts membership read→acbp_resolve_own_membership, membership-service.ts accept
-   →acbp_accept_invite (accept drops the caller-email param; derives from users). + rewiring tests.
+   Slice 3 REWIRING — **DONE** (`804294f`; CI 29852760492 GREEN, zero-skip PG): provisioning.ts→
+   acbp_provision_account, resolver own-membership read→acbp_resolve_own_membership, membership-service.ts
+   accept→acbp_accept_invite. Accept dropped the caller `acceptingVerifiedEmail` across contracts/core/web/
+   tests (email bound from users.primary_email in the fn); denials collapse to safe `invalid_or_used`.
+   Removed acceptInviteWithStore + its store methods (covered by the real-PG bootstrap suite).
 4. Route remaining account-owned ops through restricted scoped transactions + profile/membership regressions
    + pooling/commit/rollback/concurrency.
 5. Catalog inspection + adversarial bypass + migration up/down + docs + independent security & architecture reviews.
