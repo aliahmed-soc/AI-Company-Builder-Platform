@@ -216,4 +216,71 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     const definers = await sql<{ n: number }>`select count(*)::int as n from pg_proc where prosecdef = true and proname like 'acbp_%'`.execute(su.kysely);
     expect(definers.rows[0]?.n).toBe(3);
   });
+
+  // ── Adversarial: cross-account/cross-company forgery, no-context, tamper/escalation ───────────────────
+  test('a forged current_company pointing at ANOTHER account\'s company reveals/mutates nothing', async () => {
+    const coA = await createCompany(accountA);
+    const coB = await createCompany(accountB);
+    await asApp(acctCo(accountA, coA), (k) => sql`insert into company_profiles (company_id, version, name) values (${coA}::uuid, 1, 'A-Co')`.execute(k));
+    await asApp(acctCo(accountB, coB), (k) => sql`insert into company_profiles (company_id, version, name) values (${coB}::uuid, 1, 'B-Co')`.execute(k));
+
+    // Account A forging current_company = coB: companies SELECT is account-scoped → coB (account B) invisible.
+    const coSeen = await asApp(acctCo(accountA, coB), (k) => k.selectFrom('companies').select('id').execute());
+    expect(coSeen.map((r) => r.id)).toEqual([coA]);
+    // company_profiles dual-key + EXISTS(account) → coB's profile is invisible under account A even with the forged company GUC.
+    const profSeen = await asApp(acctCo(accountA, coB), (k) => k.selectFrom('company_profiles').selectAll().execute());
+    expect(profSeen).toHaveLength(0);
+    // And inserting a profile for coB under account A is rejected (WITH CHECK: company must belong to current_account).
+    await expect(asApp(acctCo(accountA, coB), (k) => sql`insert into company_profiles (company_id, version, name) values (${coB}::uuid, 2, 'Evil')`.execute(k))).rejects.toThrow();
+  });
+
+  test('joins/CTEs/subqueries cannot reveal another company\'s profiles or memberships', async () => {
+    const coA = await createCompany(accountA);
+    const coB = await createCompany(accountB);
+    await asApp(acctCo(accountA, coA), (k) => sql`insert into company_memberships (account_id, company_id, member_user_id, role) values (${accountA}::uuid, ${coA}::uuid, ${userU}::uuid, 'owner')`.execute(k));
+    await asApp(acctCo(accountB, coB), (k) => sql`insert into company_memberships (account_id, company_id, member_user_id, role) values (${accountB}::uuid, ${coB}::uuid, ${userV}::uuid, 'owner')`.execute(k));
+    const out = await asApp(acctCo(accountA, coA), async (k) => {
+      const join = await sql<{ n: number }>`select count(*)::int as n from company_memberships cm join companies c on c.id = cm.company_id`.execute(k);
+      const cte = await sql<{ n: number }>`with all_m as (select company_id from company_memberships) select count(*)::int as n from all_m`.execute(k);
+      return { join: join.rows[0]?.n, cte: cte.rows[0]?.n };
+    });
+    expect(out).toEqual({ join: 1, cte: 1 }); // only company A's membership is ever visible
+  });
+
+  test('with NO company context, company detail tables reveal nothing (fail-closed)', async () => {
+    const coA = await createCompany(accountA);
+    await asApp(acctCo(accountA, coA), (k) => sql`insert into company_profiles (company_id, version, name) values (${coA}::uuid, 1, 'A')`.execute(k));
+    // Account scope only (no current_company): profiles/memberships are dual-keyed → invisible.
+    const prof = await asApp(acct(accountA), (k) => k.selectFrom('company_profiles').selectAll().execute());
+    expect(prof).toHaveLength(0);
+    // Empty/malformed company GUC denies with no cast error.
+    for (const ctx of [{ 'app.current_account': accountA, 'app.current_company': '' }, { 'app.current_account': accountA, 'app.current_company': 'not-a-uuid' }]) {
+      const n = await asApp(ctx, (k) => sql<{ n: number }>`select count(*)::int as n from company_profiles`.execute(k).then((x) => x.rows[0]?.n));
+      expect(n).toBe(0);
+    }
+  });
+
+  test('audit company-event forgery: cannot stamp a company_id other than the current company', async () => {
+    const coA = await createCompany(accountA);
+    const coB = await createCompany(accountB);
+    // Under (account A, company A): claim company_id = coB → dual-scope WITH CHECK (company_id = current_company) fails.
+    await expect(
+      asApp(acctCo(accountA, coA), (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, company_id, actor_type, subject_type, subject_id, outcome) values (${ULID_1}, 'company.updated', 1, ${accountA}::uuid, ${coB}::uuid, 'user', 'company', ${coB}, 'success')`.execute(k)),
+    ).rejects.toThrow();
+  });
+
+  test('the restricted role cannot tamper with company RLS (ALTER/DROP/DISABLE FORCE) or drop policies', async () => {
+    for (const t of ['companies', 'company_profiles', 'company_memberships'] as const) {
+      await expect(asApp({}, (k) => sql`alter table public.${sql.ref(t)} no force row level security`.execute(k))).rejects.toThrow();
+      await expect(asApp({}, (k) => sql`alter table public.${sql.ref(t)} disable row level security`.execute(k))).rejects.toThrow();
+      await expect(asApp({}, (k) => sql`drop table public.${sql.ref(t)}`.execute(k))).rejects.toThrow();
+    }
+    await expect(asApp({}, (k) => sql`drop policy companies_insert on public.companies`.execute(k))).rejects.toThrow();
+    await expect(asApp({}, (k) => sql`create policy evil_all on public.companies for all using (true) with check (true)`.execute(k))).rejects.toThrow();
+    // A DELETE on any company table is denied at the grant level (no DELETE granted to acbp_app).
+    const coA = await createCompany(accountA);
+    await expect(asApp(acctCo(accountA, coA), (k) => sql`delete from company_profiles`.execute(k))).rejects.toThrow();
+    await expect(asApp(acctCo(accountA, coA), (k) => sql`delete from company_memberships`.execute(k))).rejects.toThrow();
+    await expect(asApp(acctCo(accountA, coA), (k) => sql`delete from companies`.execute(k))).rejects.toThrow();
+  });
 });
