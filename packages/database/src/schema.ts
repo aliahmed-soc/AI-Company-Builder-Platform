@@ -165,6 +165,71 @@ export interface AuditEventsTable {
   payload: ColumnType<Record<string, string | number | boolean>, Record<string, string | number | boolean>, never>;
   /** Immutable server-set event timestamp (default now()). */
   occurred_at: ColumnType<Date, Date | string | undefined, never>;
+  /** Company tenant stamp (ACBP-P1-010; CDR-015 §6). NULL for account-scoped events; set server-side from
+   *  CompanyScope for company events. No FK (trace survives company deletion). Dual-scope RLS binds it. */
+  company_id: ColumnType<string | null, string | null, never>;
+}
+
+/**
+ * Company root (ACBP-P1-010; CDR-015). A C-root entity owned by exactly one account (`account_id`, immutable).
+ * Identity + lifecycle only; the human-facing NAME is versioned in `company_profiles` (a rename is a new
+ * revision). Company-scoped under RLS: create is account-keyed, read is account-scoped, mutate is dual-keyed
+ * (`app.current_account` + `app.current_company`). Status: 'draft' | 'onboarding' | 'active' | 'paused'
+ * (deactivate/delete deferred). `creation_mode` is onboarding provenance (immutable).
+ */
+export interface CompaniesTable {
+  /** Internal immutable company id (uuid, default gen_random_uuid()). Never caller-supplied. */
+  id: Generated<string>;
+  /** Owning account (FK accounts.id, cascade). Immutable. */
+  account_id: ColumnType<string, string, never>;
+  /** Lifecycle: 'draft' | 'onboarding' | 'active' | 'paused'. Default 'draft'. Mutated by status transitions. */
+  status: Generated<string>;
+  /** Onboarding provenance: 'own_idea' | 'platform_suggested' | 'existing_business'. Immutable. */
+  creation_mode: ColumnType<string, string, never>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/**
+ * Versioned company profile (ACBP-P1-010; CDR-015 §Profile versioning; COMP-004). APPEND-ONLY immutable
+ * revisions: a rename/edit INSERTs `version + 1`; the current profile is `max(version)` per company. The
+ * (company_id, version) PK serializes concurrent writers (loser retries) → last-write-wins with visible
+ * history. Dual-keyed RLS; INSERT + SELECT grants only (no UPDATE/DELETE) so every column is `never` on update.
+ */
+export interface CompanyProfilesTable {
+  /** Owning company (FK companies.id, cascade). Part of the composite PK. */
+  company_id: ColumnType<string, string, never>;
+  /** Monotonic revision number per company (>= 1). Part of the composite PK. */
+  version: ColumnType<number, number, never>;
+  /** Human-facing company name for this revision (bounded 1..200). */
+  name: ColumnType<string, string, never>;
+  /** Optional description (bounded 1..2000 when present). */
+  description: ColumnType<string | null, string | null, never>;
+  /** Author of the revision (FK users.id); null for system-authored revisions. */
+  created_by_user_id: ColumnType<string | null, string | null, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Company membership (ACBP-P1-010; CDR-015 §2). SEPARATE from account `memberships` — no reuse of the account
+ * uniqueness/index/RLS. Requires an active account membership (enforced in the application layer); account
+ * ownership never auto-grants company access. The creator gets an explicit active 'owner' row. Roles
+ * 'owner' | 'viewer'. Dual-keyed RLS with a self-branch for pre-context resolution; INSERT + SELECT grants only.
+ */
+export interface CompanyMembershipsTable {
+  id: Generated<string>;
+  /** Owning account (FK accounts.id, cascade). */
+  account_id: ColumnType<string, string, never>;
+  /** Owning company (FK companies.id, cascade). */
+  company_id: ColumnType<string, string, never>;
+  /** The member's internal user id (FK users.id). Always bound (no pending-invite state in P1-010). */
+  member_user_id: ColumnType<string, string, never>;
+  /** 'owner' | 'viewer'. */
+  role: ColumnType<string, string, never>;
+  /** Lifecycle: 'active' | 'revoked'. Default 'active' (no revoke flow in P1-010). */
+  status: Generated<string>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
 }
 
 export interface DatabaseSchema {
@@ -174,6 +239,9 @@ export interface DatabaseSchema {
   account_profiles: AccountProfilesTable;
   memberships: MembershipsTable;
   audit_events: AuditEventsTable;
+  companies: CompaniesTable;
+  company_profiles: CompanyProfilesTable;
+  company_memberships: CompanyMembershipsTable;
 }
 
 // Repository-facing row shapes.
@@ -193,3 +261,10 @@ export type NewMembership = Insertable<MembershipsTable>;
 export type MembershipUpdate = Updateable<MembershipsTable>;
 export type AuditEventRow = Selectable<AuditEventsTable>;
 export type NewAuditEvent = Insertable<AuditEventsTable>;
+export type CompanyRow = Selectable<CompaniesTable>;
+export type NewCompany = Insertable<CompaniesTable>;
+export type CompanyUpdate = Updateable<CompaniesTable>;
+export type CompanyProfileRow = Selectable<CompanyProfilesTable>;
+export type NewCompanyProfile = Insertable<CompanyProfilesTable>;
+export type CompanyMembershipRow = Selectable<CompanyMembershipsTable>;
+export type NewCompanyMembership = Insertable<CompanyMembershipsTable>;

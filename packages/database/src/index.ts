@@ -3,7 +3,7 @@
 export { createDatabase, closeDatabase, checkDatabaseHealth } from './client.js';
 export type { DatabaseClient, DatabaseHealth, CreateDatabaseDeps, DbCallOptions } from './client.js';
 
-export { withTransaction, withTenantTransaction, withAccountTransaction, nestedTransactionError } from './transaction.js';
+export { withTransaction, withTenantTransaction, withAccountTransaction, elevateToCompanyScope, nestedTransactionError } from './transaction.js';
 export type { TxExecutor } from './transaction.js';
 
 export { TenantRepository, AccountScopedRepository } from './repository.js';
@@ -25,9 +25,14 @@ export type { AccountExecutor } from './account-repositories.js';
 export { MembershipRepository } from './membership-repositories.js';
 export type { MembershipExecutor } from './membership-repositories.js';
 
-// Append-only audit writer (ACBP-P1-008; ADR-015; CDR-014). Writes under the caller's AccountScope in-tx.
+// Append-only audit writer (ACBP-P1-008; ADR-015; CDR-014). Writes under the caller's account/company scope in-tx.
 export { writeAuditEvent } from './audit-repository.js';
-export type { AuditWriteContext } from './audit-repository.js';
+export type { AuditWriteContext, AuditScope } from './audit-repository.js';
+
+// Company repositories (ACBP-P1-010; CDR-015). Company creation runs under an AccountScope; company-owned
+// reads/mutations run under a CompanyScope (TenantScope). Kysely parameterized queries only.
+export { CompanyRepository, CompanyProfileRepository, CompanyMembershipRepository } from './company-repositories.js';
+export type { CompanyExecutor } from './company-repositories.js';
 
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
@@ -65,6 +70,16 @@ export type {
   AuditEventsTable,
   AuditEventRow,
   NewAuditEvent,
+  CompaniesTable,
+  CompanyRow,
+  NewCompany,
+  CompanyUpdate,
+  CompanyProfilesTable,
+  CompanyProfileRow,
+  NewCompanyProfile,
+  CompanyMembershipsTable,
+  CompanyMembershipRow,
+  NewCompanyMembership,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

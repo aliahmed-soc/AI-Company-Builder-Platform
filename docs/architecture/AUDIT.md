@@ -55,9 +55,11 @@ DEFINER function (the P1-006 allowlist stays exactly three).
 binds `account_id`, `actor_id`, `event_id`, and `occurred_at` **server-side from the validated scope and the
 server clock** — a caller cannot supply them (they are not parameters), so an audit row's account, actor,
 identity, and time cannot be forged through the API. The caller supplies only a typed `AuditEvent` built by a
-registered factory (`membershipInvited` / `membershipRevoked`) — there are no free-form event objects, and an
-unregistered name cannot be constructed. A write failure throws, rolling the whole transaction back so the
-business mutation is undone and the action is blocked.
+registered factory (`membershipInvited` / `membershipRevoked` / `companyCreated` / `companyUpdated` /
+`companyPaused` / `companyResumed`) — there are no free-form event objects, and an unregistered name cannot be
+constructed. A write failure throws, rolling the whole transaction back so the business mutation is undone and
+the action is blocked. Since P1-010 the writer also accepts a **company (tenant) scope**; when given one it
+binds `company_id` server-side from that scope (see "Extended in P1-010").
 
 ## Implemented in P1-008 (durable, in-transaction)
 
@@ -74,6 +76,34 @@ factory, and a unit test asserts every registered contract event is produced by 
 real-PostgreSQL producer tests then prove each operation actually writes its event in-transaction, so a use case
 that loses its durable write fails CI. This is structural — not a source-grep.
 
+## Extended in P1-010 (company-scoped events; CDR-015)
+
+Migration `0008` adds a **nullable** `company_id` (uuid, no FK — a redacted trace survives company deletion) to
+`audit_events` — an additive expand that preserves the append-only immutability (still INSERT + SELECT only; no
+UPDATE/DELETE grant or policy). The two policies become **dual-scope**: an **account event** has `company_id
+IS NULL` and is visible under `app.current_account`; a **company event** carries `company_id` and is visible /
+insertable only when **both** `app.current_account` **and** `app.current_company` match (fail-closed text
+comparison). No policy lets an account member read or forge another company's events by matching only the
+account, and a company event cannot be stamped with a `company_id` other than the current company (proven in
+`company.integration.test.ts`). The allowlist stays exactly three SECURITY DEFINER functions.
+
+Four durable, in-transaction company events (written via `writeAuditEvent` under a resolved **CompanyScope**,
+which binds `company_id`/`account_id`/`actor_id`/`event_id`/`occurred_at` server-side):
+
+- `company.created` — on a successful create bootstrap (payload: `creation_mode`).
+- `company.updated` — on a profile/name edit that actually changes a field (payload: `changed_fields` — the
+  changed field **names** only, never values; an idempotent no-op edit writes nothing).
+- `company.paused` / `company.resumed` — on a legal owner-driven `active⇄paused` transition (the transition
+  asserts the specific expected prior status, so an owner resume can only apply to a `paused` company and the
+  event is never mislabeled). The payload is **empty**: no caller-supplied free-text `reason` is accepted or
+  persisted into the immutable store (data minimization; security review LOW-1). The contract factories retain an
+  optional coarse `reason`/`held_work_count` for a future SERVER-set value; they are not populated from request
+  input. An illegal/no-op transition writes nothing.
+
+Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership and company subsets,
+each domain's real-PostgreSQL producer test provides a **compile-exhaustive** driver over its subset, and a
+compile-time guard asserts the partition covers exactly the full operation set.
+
 ## Explicitly deferred (still interim structured logs — NOT durable)
 
 Recorded here and in CDR-014; these names are deliberately **not** in the audit registry, so nothing claims
@@ -87,7 +117,8 @@ them durable:
   here.
 - **Global events:** `webhook.*`, `reconcile.*` — no tenant predicate under FORCE RLS; a global-audit isolation
   model is a later decision.
-- **Company-scoped audit:** P1-010 (needs `app.current_company`, never set until then).
+- **Company-scoped audit:** ✅ implemented in P1-010 (see "Extended in P1-010") — the four `company.*` events
+  are durable and dual-scope; the interim-log deferral above no longer applies to them.
 
 ## Out of P1-008 scope (later tickets)
 

@@ -36,6 +36,15 @@ export const AUTHZ_ACTIONS = [
   'member:read_invited_email',
   'profile:read',
   'profile:update',
+  // Company lifecycle (ACBP-P1-010; CDR-015). `company:create` is checked against the caller's ACCOUNT-membership
+  // role (an account owner creates a company); the rest are checked against the caller's COMPANY-membership role
+  // (resolved from company_memberships). Both use the same owner|viewer enum, so the single matrix suffices.
+  'company:create',
+  'company:read',
+  'company:rename',
+  'company:pause',
+  'company:resume',
+  'company:status',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -77,6 +86,14 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'member:read_invited_email': ['owner'],
   'profile:read': ['owner'],
   'profile:update': ['owner'],
+  // Company lifecycle: owner-only mutations; owner+viewer may read/see status (CDR-015; WORKFLOW §1 "owner"
+  // transitions; API-CONTRACTS "Member (read), owner (lifecycle)").
+  'company:create': ['owner'],
+  'company:read': ['owner', 'viewer'],
+  'company:rename': ['owner'],
+  'company:pause': ['owner'],
+  'company:resume': ['owner'],
+  'company:status': ['owner', 'viewer'],
 };
 
 /**

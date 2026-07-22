@@ -9,6 +9,7 @@
 // typed factory. The account, actor, event id, and timestamp are bound SERVER-SIDE by the writer from the
 // caller's validated AccountScope — never accepted here — so they cannot be forged through this contract.
 import { validationError } from '../errors.js';
+import type { CompanyCreationMode } from '../company/company.js';
 
 /** Actor types (EVENT-CATALOG `actor.type`). `worker` actors can never appear on approval decisions (inv. 5). */
 export type AuditActorType = 'user' | 'worker' | 'system' | 'admin';
@@ -30,6 +31,12 @@ export const AUDIT_OUTCOMES: readonly AuditOutcome[] = ['success', 'denied', 'bl
 export const AUDIT_EVENTS = {
   'membership.invited': { schemaVersion: 1, subjectType: 'membership' },
   'membership.revoked': { schemaVersion: 1, subjectType: 'membership' },
+  // Company lifecycle (ACBP-P1-010; CDR-015 §5) — exactly four durable company events. Company-scoped:
+  // the writer stamps `company_id` from the CompanyScope (never caller-supplied).
+  'company.created': { schemaVersion: 1, subjectType: 'company' },
+  'company.updated': { schemaVersion: 1, subjectType: 'company' },
+  'company.paused': { schemaVersion: 1, subjectType: 'company' },
+  'company.resumed': { schemaVersion: 1, subjectType: 'company' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -120,4 +127,31 @@ export function membershipInvited(input: { readonly membershipId: string; readon
 /** A membership was revoked (high-risk lifecycle transition; success). */
 export function membershipRevoked(input: { readonly membershipId: string; readonly role: 'owner' | 'viewer' }): AuditEvent {
   return makeEvent('membership.revoked', input.membershipId, 'success', { role: input.role });
+}
+
+// ── Company lifecycle factories (ACBP-P1-010; CDR-015 §5). Subject is the company id; payloads carry only
+//    bounded, non-PII references (creation mode, changed-field NAMES, optional coarse reason/count). ─────────
+
+/** A company was created (subject = company id; success). */
+export function companyCreated(input: { readonly companyId: string; readonly creationMode: CompanyCreationMode }): AuditEvent {
+  return makeEvent('company.created', input.companyId, 'success', { creation_mode: input.creationMode });
+}
+
+/** A company profile/name was edited (success). Records the CHANGED FIELD NAMES only — never the values. */
+export function companyUpdated(input: { readonly companyId: string; readonly changedFields: readonly string[] }): AuditEvent {
+  // Metadata is a flat scalar map (no arrays), so the field NAMES are joined into a bounded string.
+  return makeEvent('company.updated', input.companyId, 'success', { changed_fields: input.changedFields.join(',') });
+}
+
+/** A company was paused (success). Optional coarse, non-PII reason. */
+export function companyPaused(input: { readonly companyId: string; readonly reason?: string }): AuditEvent {
+  return makeEvent('company.paused', input.companyId, 'success', input.reason !== undefined ? { reason: input.reason } : {});
+}
+
+/** A company was resumed (success). Optional coarse reason + count of work items released on resume. */
+export function companyResumed(input: { readonly companyId: string; readonly reason?: string; readonly heldWorkCount?: number }): AuditEvent {
+  const metadata: Record<string, string | number> = {};
+  if (input.reason !== undefined) metadata['reason'] = input.reason;
+  if (input.heldWorkCount !== undefined) metadata['held_work_count'] = input.heldWorkCount;
+  return makeEvent('company.resumed', input.companyId, 'success', metadata);
 }

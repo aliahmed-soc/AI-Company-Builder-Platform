@@ -13,6 +13,10 @@ import {
   boundedMetadata,
   membershipInvited,
   membershipRevoked,
+  companyCreated,
+  companyUpdated,
+  companyPaused,
+  companyResumed,
   type AuditEventName,
 } from './index.js';
 
@@ -51,7 +55,14 @@ describe('generateEventId (ULID)', () => {
 
 describe('event-name registry (deny unregistered)', () => {
   test('accepts exactly the registered names', () => {
-    expect(Object.keys(AUDIT_EVENTS).sort()).toEqual(['membership.invited', 'membership.revoked']);
+    expect(Object.keys(AUDIT_EVENTS).sort()).toEqual([
+      'company.created',
+      'company.paused',
+      'company.resumed',
+      'company.updated',
+      'membership.invited',
+      'membership.revoked',
+    ]);
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
   test('rejects unregistered / forged names and non-strings', () => {
@@ -145,5 +156,29 @@ describe('typed factories', () => {
   test('the schema version comes from the registry, not the caller', () => {
     const name: AuditEventName = 'membership.invited';
     expect(membershipInvited({ membershipId: 'm', role: 'viewer' }).schemaVersion).toBe(AUDIT_EVENTS[name].schemaVersion);
+  });
+
+  test('companyCreated builds a frozen success event with the creation mode', () => {
+    const ev = companyCreated({ companyId: 'co_1', creationMode: 'own_idea' });
+    expect(ev).toEqual({ name: 'company.created', schemaVersion: 1, subjectType: 'company', subjectId: 'co_1', outcome: 'success', metadata: { creation_mode: 'own_idea' } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('companyUpdated records changed FIELD NAMES only (never values)', () => {
+    const ev = companyUpdated({ companyId: 'co_2', changedFields: ['name', 'description'] });
+    expect(ev.name).toBe('company.updated');
+    expect(ev.subjectId).toBe('co_2');
+    expect(ev.metadata).toEqual({ changed_fields: 'name,description' });
+  });
+
+  test('companyPaused/companyResumed omit optional fields when absent', () => {
+    expect(companyPaused({ companyId: 'co_3' }).metadata).toEqual({});
+    expect(companyPaused({ companyId: 'co_3', reason: 'owner_request' }).metadata).toEqual({ reason: 'owner_request' });
+    expect(companyResumed({ companyId: 'co_4' }).metadata).toEqual({});
+    expect(companyResumed({ companyId: 'co_4', heldWorkCount: 3 }).metadata).toEqual({ held_work_count: 3 });
+  });
+
+  test('company factories reject an empty subject id', () => {
+    expect(() => companyCreated({ companyId: '', creationMode: 'own_idea' })).toThrow();
   });
 });

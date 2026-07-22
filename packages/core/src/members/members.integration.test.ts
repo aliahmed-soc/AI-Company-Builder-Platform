@@ -6,7 +6,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { closeDatabase, migrateToLatest, writeAuditEvent, type DatabaseClient, type NewUser } from '@acbp/database';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { inviteMember, acceptInvite, revokeMember, listMembers, type AuditWriteFn } from './membership-service.js';
-import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, type AuditedOperation } from '../audit/audit-operations.js';
+import { AUDITED_OPERATIONS, MEMBERSHIP_AUDITED_OPERATION_IDS, type MembershipAuditedOperation } from '../audit/audit-operations.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 // The membership use cases run as the restricted `acbp_app` role (subject to FORCE RLS); schema + user
@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
 
   beforeAll(async () => {
     seed = createSeedClient();
-    for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(seed);
@@ -41,7 +41,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     if (app) await closeDatabase(app);
     if (seed) {
       await disableAppLogin(seed);
-      for (const t of ['audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(seed);
     }
   });
@@ -291,11 +291,12 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(await seed.kysely.selectFrom('audit_events').selectAll().where('account_id', '=', accountId).execute()).toHaveLength(0);
   });
 
-  // Automated completeness: a driver per APPROVED operation, exhaustive over AUDITED_OPERATION_IDS at compile
-  // time (a new operation without a driver fails to compile). Each driver runs the REAL use case and must
-  // leave exactly one durable audit row of its mapped event — so a use case that ever loses its in-tx write
-  // fails CI here, not just review discipline (closes the "parallel bookkeeping" gap).
-  const OP_DRIVERS: Record<AuditedOperation, () => Promise<void>> = {
+  // Automated completeness: a driver per APPROVED MEMBERSHIP operation, exhaustive over the membership subset
+  // at compile time (a new membership operation without a driver fails to compile). Each driver runs the REAL
+  // use case and must leave exactly one durable audit row of its mapped event — so a use case that ever loses
+  // its in-tx write fails CI here, not just review discipline (closes the "parallel bookkeeping" gap). Company
+  // operations are driven by the company producer test (ACBP-P1-010), keeping the domains independent.
+  const OP_DRIVERS: Record<MembershipAuditedOperation, () => Promise<void>> = {
     'membership.invite': async () => {
       const r = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'op-invite@example.com', role: 'viewer' });
       if (r.status !== 'ok') throw new Error('invite driver setup failed');
@@ -312,7 +313,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     },
   };
 
-  test.each(AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event — ACBP-P1-008', async (op) => {
+  test.each(MEMBERSHIP_AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event — ACBP-P1-008', async (op) => {
     await seed.kysely.deleteFrom('audit_events').execute();
     await OP_DRIVERS[op]();
     const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();
