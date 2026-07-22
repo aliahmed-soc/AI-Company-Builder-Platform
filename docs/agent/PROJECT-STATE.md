@@ -3,13 +3,14 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-010** — Company lifecycle (status: **Planned/Ready**; owner-gated to Done).
+- Ticket: **ACBP-P1-010** — Company lifecycle (status: **Done** — owner-authorized finalization 2026-07-22).
 - Branch: `p1-010-company-lifecycle` (from `main` @ `8afb8f0`).
 - PR: draft (opened in Slice 1), base `main`.
 - Base main: `8afb8f003fea91b8cc3586539a3f28cbb0c01ed4` (P1-008 squash PR #9; main CI green run 29877371936).
 - PR: **#11 OPEN / DRAFT / MERGEABLE / CLEAN**, base `main`, head = final feature HEAD.
-- **STATUS: all six slices implemented + hosted-green; three independent reviews clean (fixes applied); AT THE
-  OWNER GATE.** Do NOT self-authorize: backlog→Done, PR ready, merge, branch delete, begin/resume P1-009.
+- **STATUS: OWNER-AUTHORIZED FINALIZATION (2026-07-22).** Backlog set to Done (this commit). Remaining ordered
+  finalization: mark PR #11 ready → squash-merge to `main` → verify exact-main CI → delete branch. P1-009 stays
+  Planned (do NOT begin/resume).
 
 ## Concurrent work — DO NOT TOUCH
 - **PR #10** `p1-004-last-owner-race-fix` (separate session, now deleted) is **OPEN/unmerged**, base main. Its
