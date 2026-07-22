@@ -225,3 +225,9 @@ Append significant decisions. Format: decision — source — consequence.
 - Pause/resume assert the SPECIFIC prior status (active->pause, paused->resume) — review F2 — onboarding->active provisioning (P1-012) cannot be forced via owner resume; audit never mislabeled.
 - No caller-supplied free-text pause/resume reason accepted or persisted — security review LOW-1 — data minimization on the immutable audit store; pause/resume take no request body.
 - Accepted residuals: getCompany status/displayStatus divergence (unreachable behind DB CHECK; fail-closed) and thrown transient DB error -> bare 500 (pre-existing non-leaking pattern shared with membership ops).
+
+## ACBP-P1-009 activity event foundation (CDR-016) — owner-accepted 2026-07-22
+- Separate append-only company-scoped activity_events table, PK = source audit event_id (redacted, rebuildable) — DATA-ARCHITECTURE/diagram-11 projection fidelity — a materialized projection, not a read-view of audit_events.
+- Synchronous in-transaction projection of the 4 company.* events, written atomically with the lifecycle mutation + audit under the same restricted acbp_app CompanyScope — no outbox/async/worker/checkpoint/lease/owner-connection/4th SECURITY DEFINER — projection failure rolls back the whole op.
+- audit_events authoritative; activity_events redacted + rebuildable by source event_id; feed renders company events ONLY (account/Logger events excluded); proposed_vs_executed = executed for all four.
+- activity:read = owner|viewer company member; keyset pagination (occurred_at DESC, event_id DESC; opaque versioned cursor; default 25/max 100); honest as_of; API-only GET /api/companies/[companyId]/activity; no rendered page, no SSE (P6-008).
