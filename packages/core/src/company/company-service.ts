@@ -14,10 +14,12 @@ import {
   MembershipRepository,
   elevateToCompanyScope,
   writeAuditEvent,
+  projectCompanyActivity,
   type DatabaseClient,
   type TenantScope,
   type AuditScope,
   type AuditWriteContext,
+  type ActivityWriteFn,
 } from '@acbp/database';
 import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -50,6 +52,8 @@ export interface CompanyOpOptions {
   readonly logger?: Logger;
   /** TEST SEAM ONLY (ACBP-P1-008/010): override the in-tx audit writer to force a failure. Never set in production. */
   readonly auditWriter?: AuditWriteFn;
+  /** TEST SEAM ONLY (ACBP-P1-009): override the in-tx activity projector to force a failure. Never set in production. */
+  readonly activityWriter?: ActivityWriteFn;
 }
 
 export type CreateCompanyResult =
@@ -145,8 +149,12 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
         role: 'owner',
         status: 'active',
       });
-      // 5) Durable `company.created` audit — SAME transaction + company scope (company_id stamped server-side).
-      await audit(companyScope, companyCreated({ companyId: company.id, creationMode: input.creationMode }), auditContext(options));
+      // 5) Durable `company.created` audit + activity projection — SAME transaction + company scope. The activity
+      //    row is keyed by the audit event id; a projection failure rolls the whole bootstrap back (fail-closed).
+      const project = options.activityWriter ?? projectCompanyActivity;
+      const createdEvent = companyCreated({ companyId: company.id, creationMode: input.creationMode });
+      const auditEventId = await audit(companyScope, createdEvent, auditContext(options));
+      await project(companyScope, createdEvent, auditEventId);
       options.logger?.info('company.created', { metadata: { accountId: params.accountId, companyId: company.id, creationMode: input.creationMode } });
 
       const status: CompanyStatus = INITIAL_COMPANY_STATUS;
