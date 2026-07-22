@@ -45,6 +45,8 @@ export const AUTHZ_ACTIONS = [
   'company:pause',
   'company:resume',
   'company:status',
+  // Company activity feed (ACBP-P1-009; CDR-016). Checked against the caller's COMPANY-membership role.
+  'activity:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -94,6 +96,9 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'company:pause': ['owner'],
   'company:resume': ['owner'],
   'company:status': ['owner', 'viewer'],
+  // Company activity feed read (ACBP-P1-009): any active company member (owner|viewer) — API-CONTRACTS
+  // "Activity … Company member (read)". Account membership alone is insufficient (the company role governs).
+  'activity:read': ['owner', 'viewer'],
 };
 
 /**
