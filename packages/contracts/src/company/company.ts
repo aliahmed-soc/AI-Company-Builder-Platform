@@ -60,3 +60,13 @@ const LEGAL_TRANSITIONS: Readonly<Record<CompanyStatus, readonly CompanyStatus[]
 export function isLegalCompanyTransition(from: CompanyStatus, to: CompanyStatus): boolean {
   return LEGAL_TRANSITIONS[from].includes(to);
 }
+
+/**
+ * COMP-006 / WORKFLOW §1 invariant 16 (groundwork): only an ACTIVE company may pick up NEW autonomous work.
+ * A paused company (and a not-yet-active draft/onboarding company) blocks new job pickup — this pure predicate
+ * is the single truth a scheduler/worker consults before opening a run. In-flight safe-stop is a separate
+ * concern; this governs NEW pickup only. Pausing is the enforcement point (P1-010); the scheduler is later.
+ */
+export function canPickUpAutonomousWork(status: CompanyStatus): boolean {
+  return status === 'active';
+}

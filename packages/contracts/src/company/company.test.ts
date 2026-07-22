@@ -8,6 +8,7 @@ import {
   isCompanyCreationMode,
   INITIAL_COMPANY_STATUS,
   isLegalCompanyTransition,
+  canPickUpAutonomousWork,
 } from './index.js';
 
 describe('company status', () => {
@@ -64,5 +65,16 @@ describe('legal company transitions (WORKFLOW §1 subset)', () => {
     expect(isLegalCompanyTransition('active', 'draft')).toBe(false);
     expect(isLegalCompanyTransition('paused', 'onboarding')).toBe(false);
     expect(isLegalCompanyTransition('onboarding', 'paused')).toBe(false);
+  });
+});
+
+describe('canPickUpAutonomousWork (COMP-006 / invariant 16)', () => {
+  test('only an active company may pick up new autonomous work', () => {
+    expect(canPickUpAutonomousWork('active')).toBe(true);
+  });
+  test('a paused, draft, or onboarding company blocks new pickup', () => {
+    expect(canPickUpAutonomousWork('paused')).toBe(false);
+    expect(canPickUpAutonomousWork('draft')).toBe(false);
+    expect(canPickUpAutonomousWork('onboarding')).toBe(false);
   });
 });

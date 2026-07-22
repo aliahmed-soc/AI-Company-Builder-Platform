@@ -6,9 +6,12 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { closeDatabase, migrateToLatest, CompanyProfileRepository, type DatabaseClient, type NewUser } from '@acbp/database';
+import { canPickUpAutonomousWork } from '@acbp/contracts';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from './company-service.js';
+import { getCompany, renameCompany, pauseCompany, resumeCompany } from './company-lifecycle.js';
 import { runInCompanyScope } from './company-context-resolver.js';
+import { AUDITED_OPERATIONS, COMPANY_AUDITED_OPERATION_IDS, type CompanyAuditedOperation } from '../audit/audit-operations.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 const NOW = () => new Date().toISOString();
@@ -172,5 +175,150 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     if (created.status !== 'ok') throw new Error('setup failed');
     const run = await runInCompanyScope(app, { userId: outsiderId, requestedAccountId: accountId, requestedCompanyId: created.companyId }, () => Promise.resolve('x'));
     expect(run.kind).toBe('denied');
+  });
+
+  // ── Slice 4: lifecycle (read, rename, pause/resume) + pause-pickup rig ────────────────────────────────
+  async function createCompanyFor(name: string): Promise<string> {
+    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
+    if (r.status !== 'ok') throw new Error('create failed');
+    return r.companyId;
+  }
+  /** Bring a company to `active`. Onboarding→active provisioning is P1-012; the P1-010 lifecycle tests seed the
+   *  active state directly (superuser) to exercise pause/resume, which are the owner-driven transitions in scope. */
+  async function createActiveCompany(name: string): Promise<string> {
+    const id = await createCompanyFor(name);
+    await seed.kysely.updateTable('companies').set({ status: 'active' }).where('id', '=', id).execute();
+    return id;
+  }
+  /** Add an active company VIEWER membership for `viewerId` (superuser seed) to test the owner|viewer split. */
+  async function addCompanyViewer(companyId: string): Promise<void> {
+    await seed.kysely.insertInto('company_memberships').values({ account_id: accountId, company_id: companyId, member_user_id: viewerId, role: 'viewer', status: 'active' }).execute();
+  }
+
+  test('getCompany returns a truthful display status (owner and company-viewer can read)', async () => {
+    const id = await createCompanyFor('Readable');
+    await addCompanyViewer(id);
+    const asOwner = await getCompany(app, { userId: ownerId, accountId, companyId: id });
+    expect(asOwner).toMatchObject({ status: 'ok', company: { status: 'draft', displayStatus: 'provisioning', name: 'Readable', profileVersion: 1 } });
+    // A company viewer may read.
+    const asViewer = await getCompany(app, { userId: viewerId, accountId, companyId: id });
+    expect(asViewer.status).toBe('ok');
+    // Once active, the display status is truthful.
+    await seed.kysely.updateTable('companies').set({ status: 'active' }).where('id', '=', id).execute();
+    const active = await getCompany(app, { userId: ownerId, accountId, companyId: id });
+    if (active.status === 'ok') expect(active.company.displayStatus).toBe('active');
+  });
+
+  test('renameCompany (owner) inserts a new profile version + company.updated; a company viewer is forbidden', async () => {
+    const id = await createCompanyFor('Old Name');
+    await addCompanyViewer(id);
+    // Viewer cannot rename (owner-only mutation) — even though they can read.
+    expect((await renameCompany(app, { userId: viewerId, accountId, companyId: id, name: 'Hacked' })).status).toBe('forbidden');
+
+    await seed.kysely.deleteFrom('audit_events').execute();
+    const r = await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'New Name', description: 'now with a brief' });
+    expect(r).toMatchObject({ status: 'ok', changed: true, version: 2 });
+    const prof = await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', id).orderBy('version', 'desc').executeTakeFirstOrThrow();
+    expect(prof).toMatchObject({ version: 2, name: 'New Name', description: 'now with a brief' });
+    const audit = await seed.kysely.selectFrom('audit_events').selectAll().executeTakeFirstOrThrow();
+    expect(audit.name).toBe('company.updated');
+    expect(audit.company_id).toBe(id);
+    expect(audit.payload).toEqual({ changed_fields: 'name,description' });
+  });
+
+  test('renameCompany with identical values is an idempotent no-op (no new version, no audit)', async () => {
+    const id = await createCompanyFor('Same');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    const r = await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'Same' });
+    expect(r).toMatchObject({ status: 'ok', changed: false });
+    expect((await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', id).execute())).toHaveLength(1);
+    expect((await seed.kysely.selectFrom('audit_events').selectAll().execute())).toHaveLength(0);
+  });
+
+  test('pause then resume (owner): legal transitions update status + write company.paused/resumed', async () => {
+    const id = await createActiveCompany('Live Co');
+    await seed.kysely.deleteFrom('audit_events').execute();
+
+    const paused = await pauseCompany(app, { userId: ownerId, accountId, companyId: id, reason: 'owner_request' });
+    expect(paused).toMatchObject({ status: 'ok', companyStatus: 'paused' });
+    const co1 = await seed.kysely.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirstOrThrow();
+    expect(co1.status).toBe('paused');
+    const pauseAudit = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.paused').executeTakeFirstOrThrow();
+    expect(pauseAudit.company_id).toBe(id);
+    expect(pauseAudit.payload).toEqual({ reason: 'owner_request' });
+
+    const resumed = await resumeCompany(app, { userId: ownerId, accountId, companyId: id });
+    expect(resumed).toMatchObject({ status: 'ok', companyStatus: 'active' });
+    const co2 = await seed.kysely.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirstOrThrow();
+    expect(co2.status).toBe('active');
+    expect((await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.resumed').execute())).toHaveLength(1);
+  });
+
+  test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {
+    const draft = await createCompanyFor('Draft Co');
+    expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'draft' });
+    const active = await createActiveCompany('Active Co');
+    expect(await resumeCompany(app, { userId: ownerId, accountId, companyId: active })).toMatchObject({ status: 'invalid_transition', from: 'active' });
+  });
+
+  test('a company viewer cannot pause (owner-only lifecycle op)', async () => {
+    const id = await createActiveCompany('Guarded');
+    await addCompanyViewer(id);
+    expect((await pauseCompany(app, { userId: viewerId, accountId, companyId: id })).status).toBe('forbidden');
+    // Status unchanged.
+    expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirstOrThrow()).status).toBe('active');
+  });
+
+  test('pause blocks new autonomous-work pickup (invariant 16 groundwork)', async () => {
+    const id = await createActiveCompany('Worker Co');
+    // Active → pickup allowed.
+    const before = await getCompany(app, { userId: ownerId, accountId, companyId: id });
+    expect(before.status).toBe('ok');
+    if (before.status === 'ok') expect(canPickUpAutonomousWork(before.company.status)).toBe(true);
+    // Pause → the same predicate now blocks new pickup.
+    await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
+    const after = await getCompany(app, { userId: ownerId, accountId, companyId: id });
+    expect(after.status).toBe('ok');
+    if (after.status === 'ok') {
+      expect(after.company.status).toBe('paused');
+      expect(canPickUpAutonomousWork(after.company.status)).toBe(false);
+    }
+  });
+
+  // Automated completeness: an exhaustive driver per APPROVED COMPANY operation (a new company operation without
+  // a driver fails to compile). Each driver runs the REAL use case and must leave exactly one durable audit of
+  // its mapped event — a company use case that ever loses its in-tx write fails CI here.
+  const CO_DRIVERS: Record<CompanyAuditedOperation, () => Promise<void>> = {
+    'company.create': async () => {
+      await createCompanyFor('DrvCreate');
+    },
+    'company.update': async () => {
+      const id = await createCompanyFor('DrvUpdate');
+      await seed.kysely.deleteFrom('audit_events').execute();
+      const r = await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'DrvUpdated' });
+      if (r.status !== 'ok') throw new Error('update driver failed');
+    },
+    'company.pause': async () => {
+      const id = await createActiveCompany('DrvPause');
+      await seed.kysely.deleteFrom('audit_events').execute();
+      const r = await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
+      if (r.status !== 'ok') throw new Error('pause driver failed');
+    },
+    'company.resume': async () => {
+      const id = await createActiveCompany('DrvResume');
+      const p = await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
+      if (p.status !== 'ok') throw new Error('resume driver setup failed');
+      await seed.kysely.deleteFrom('audit_events').execute();
+      const r = await resumeCompany(app, { userId: ownerId, accountId, companyId: id });
+      if (r.status !== 'ok') throw new Error('resume driver failed');
+    },
+  };
+
+  test.each(COMPANY_AUDITED_OPERATION_IDS)('completeness: company operation %s writes exactly one durable audit of its mapped event — ACBP-P1-010', async (op) => {
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await CO_DRIVERS[op]();
+    const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.name).toBe(AUDITED_OPERATIONS[op]);
   });
 });
