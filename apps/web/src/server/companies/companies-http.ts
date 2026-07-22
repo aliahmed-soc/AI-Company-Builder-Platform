@@ -63,10 +63,14 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { status: result.companyStatus });
     case 'validation':
       return jsonResponse(400, { error: result.error });
+    case 'activity':
+      return jsonResponse(200, { items: result.page.items, nextCursor: result.page.nextCursor, asOf: result.page.asOf });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':
       return jsonResponse(409, { error: 'conflict' });
+    case 'invalid_cursor':
+      return jsonResponse(400, { error: 'invalid_cursor' });
     case 'forbidden':
       return jsonResponse(403, { error: 'forbidden' });
     case 'not_found':
