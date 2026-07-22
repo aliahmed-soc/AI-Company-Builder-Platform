@@ -7,12 +7,12 @@
 // remains open, and cross-boundary reuse is a deliberate, visible choice (pass the tx handle down).
 // Savepoint support may be added later if a concrete need arises.
 import { platformError, ErrorCodes, type PlatformError } from '@acbp/contracts';
-import type { Transaction } from 'kysely';
+import { sql, type Transaction } from 'kysely';
 import type { DatabaseClient, DbCallOptions } from './client.js';
 import type { DatabaseSchema } from './schema.js';
 import type { AccountContext } from '@acbp/contracts';
 import { toDatabaseError } from './errors.js';
-import { applyTenantSession, applyAccountSession } from './session.js';
+import { applyTenantSession, applyAccountSession, TENANT_SETTINGS } from './session.js';
 import { createTenantScope, type TenantContext, type TenantScope } from './tenant.js';
 import { createAccountScope, type AccountScope } from './account-tenant.js';
 
@@ -111,4 +111,29 @@ export async function withAccountTransaction<T>(
     log.warn('db.tx.rollback', { error: err });
     throw err;
   }
+}
+
+/**
+ * ACCOUNT → COMPANY scope elevation WITHIN an existing account transaction (ACBP-P1-010; CDR-015 §Bootstrap).
+ * Given a validated {@link AccountScope} and a company id that either was just inserted under this scope OR is
+ * being resolved into, this: (1) VERIFIES the company belongs to the caller's current account via the
+ * account-scoped `companies` SELECT policy (fail-closed — a company id from another account or a nonexistent
+ * one returns nothing → throws, no scope minted); (2) sets `app.current_company` transaction-locally (SET
+ * LOCAL) on the SAME transaction; (3) mints a branded {@link TenantScope} carrying the account+company+actor
+ * context. It is NOT a general public scope-minting function: it only elevates an ALREADY-validated
+ * AccountScope, and only to a company that scope can see. There is no second transaction and no second
+ * connection — the returned scope runs on the same `scope.db` (same tx) as the account work.
+ */
+export async function elevateToCompanyScope(scope: AccountScope, companyId: string): Promise<TenantScope> {
+  const row = await scope.db.selectFrom('companies').select('id').where('id', '=', companyId).executeTakeFirst();
+  if (row === undefined) {
+    // The company is not visible under the current account scope — refuse to elevate (fail closed).
+    throw platformError('not_found', { code: ErrorCodes.RESOURCE_NOT_FOUND, internalMessage: 'Company not found within the current account scope; cannot elevate.' });
+  }
+  await sql`select set_config(${TENANT_SETTINGS.company}, ${companyId}, ${true})`.execute(scope.db);
+  const tenant: TenantContext =
+    scope.account.actorId !== undefined
+      ? { accountId: scope.account.accountId, companyId, actorId: scope.account.actorId }
+      : { accountId: scope.account.accountId, companyId };
+  return createTenantScope(tenant, scope.db);
 }
