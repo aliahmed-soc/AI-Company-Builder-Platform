@@ -8,6 +8,7 @@ import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from './company-service.js';
 import { renameCompany } from './company-lifecycle.js';
 import { getCompanyActivity } from './activity-service.js';
+import { inviteMember } from '../members/membership-service.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 const NOW = () => new Date().toISOString();
@@ -144,6 +145,30 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     // The owner still reads company A normally, and A's feed never contains B's rows.
     const resA = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: a });
     if (resA.status === 'ok') for (const it of resA.page.items) expect(it.subjectId).toBe(a);
+  });
+
+  test('scope: the feed renders company events ONLY — an account-level membership event never appears', async () => {
+    const id = await seedFeed('ScopeCo', 1); // company.created + company.updated
+    // An account-level audit event (membership.invited, company_id NULL) — NOT a company event.
+    const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'invitee@example.com', role: 'viewer' });
+    expect(invite.status).toBe('ok');
+    const res = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id });
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    // Every feed item is a company.* type; none is the membership event.
+    for (const it of res.page.items) expect(it.type.startsWith('company.')).toBe(true);
+    expect(res.page.items.some((i) => (i.type as string) === 'membership.invited')).toBe(false);
+    // Globally, activity_events contains ONLY company-scoped company.* rows (no account-level projection).
+    const rows = await seed.kysely.selectFrom('activity_events').select(['activity_type', 'company_id']).execute();
+    for (const r of rows) {
+      expect(r.activity_type.startsWith('company.')).toBe(true);
+      expect(r.company_id).not.toBeNull();
+    }
+    // DTO redaction: only the whitelisted display fields are exposed (no correlation/causation/raw payload keys).
+    const created = res.page.items.find((i) => i.type === 'company.created');
+    expect(Object.keys(created?.details ?? {})).toEqual(['creation_mode']);
+    expect(created).not.toHaveProperty('correlationId');
+    expect(created).not.toHaveProperty('payload');
   });
 
   test('cursor validation: a malformed cursor and another company\'s cursor are rejected (invalid_cursor)', async () => {

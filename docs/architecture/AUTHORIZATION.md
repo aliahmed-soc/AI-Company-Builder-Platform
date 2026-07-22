@@ -115,9 +115,15 @@ trusted core/use-case seam:
   (undefined), write nothing, and emit non-PII `authz.denied`. A direct core call (not via the route) still
   enforces. This is NOT asserted from the pure matrix test alone.
 
+## Later additions to the matrix
+
+- **Company-level authorization** and real company roles — **P1-010** (implemented): `company:create` (account
+  owner), `company:read`/`company:status` (owner|viewer), `company:rename`/`company:pause`/`company:resume` (owner),
+  checked against the caller's fresh company-membership role. **P1-009** adds `activity:read` (owner|viewer company
+  member) for the company activity feed. All are pure additions to the deny-by-default matrix.
+
 ## What P1-007 does NOT do (later tickets)
 
-- **Company-level authorization** and real company roles — **P1-010** (this ticket is account-level only).
 - **General policy / approval** enforcement (ADR-009/010) — later.
 - **Configurable / custom roles** and a policy-administration surface — later.
 - **Durable audit storage** — **P1-008** (implemented for the account-scoped first cut: `membership.invited`/
