@@ -11,8 +11,9 @@
 // derives the activity row purely from the authoritative audit row (occurred_at / actor) + the typed event
 // (activity_type / subject / redacted payload), so a rebuild = re-running it over the audit company rows.
 import { isProjectableActivity, activityDisplayPayload, validationError, type AuditEvent } from '@acbp/contracts';
+import type { Kysely } from 'kysely';
 import type { TenantScope } from './tenant.js';
-import type { NewActivityEvent } from './schema.js';
+import type { DatabaseSchema, NewActivityEvent, ActivityEventRow } from './schema.js';
 
 /** The in-transaction projection seam (mirrors AuditWriteFn). Production uses {@link projectCompanyActivity}. */
 export type ActivityWriteFn = (scope: TenantScope, event: AuditEvent, auditEventId: string) => Promise<void>;
@@ -49,4 +50,43 @@ export async function projectCompanyActivity(scope: TenantScope, event: AuditEve
     payload: activityDisplayPayload(event),
   };
   await scope.db.insertInto('activity_events').values(values).execute();
+}
+
+export type ActivityExecutor = Kysely<DatabaseSchema>;
+
+/** The decoded keyset position (the last item of the previous page). */
+export interface ActivityKeyset {
+  readonly occurredAt: Date;
+  readonly eventId: string;
+}
+
+/**
+ * Read-side of the activity feed (ACBP-P1-009). Company-scoped KEYSET pagination over `activity_events`, ordered
+ * `occurred_at DESC, event_id DESC` (matches the `activity_events_feed_idx` index — no OFFSET scan). Runs on the
+ * caller's CompanyScope executor, so RLS confines every row to the current account+company. Reads only; the
+ * projection is append-only and written elsewhere in-transaction.
+ */
+export class ActivityFeedRepository {
+  readonly #db: ActivityExecutor;
+  constructor(db: ActivityExecutor) {
+    this.#db = db;
+  }
+
+  /**
+   * Fetch up to `limit` rows for a company, older than `before` (exclusive keyset) when provided. Returns rows
+   * newest-first. The caller fetches `limit + 1` to detect a further page; pass `limit` accordingly.
+   */
+  listByCompany(companyId: string, limit: number, before?: ActivityKeyset): Promise<ActivityEventRow[]> {
+    let q = this.#db.selectFrom('activity_events').selectAll().where('company_id', '=', companyId);
+    if (before !== undefined) {
+      // DESC keyset: strictly OLDER than the cursor position (occurred_at, event_id).
+      q = q.where((eb) =>
+        eb.or([
+          eb('occurred_at', '<', before.occurredAt),
+          eb.and([eb('occurred_at', '=', before.occurredAt), eb('event_id', '<', before.eventId)]),
+        ]),
+      );
+    }
+    return q.orderBy('occurred_at', 'desc').orderBy('event_id', 'desc').limit(limit).execute();
+  }
 }

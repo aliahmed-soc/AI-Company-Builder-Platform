@@ -36,8 +36,8 @@ export type { CompanyExecutor } from './company-repositories.js';
 
 // Synchronous company activity projection writer (ACBP-P1-009; CDR-016). Writes the redacted activity_events row
 // in the same CompanyScope transaction as the lifecycle mutation + audit; keyed by the source audit event id.
-export { projectCompanyActivity } from './activity-repository.js';
-export type { ActivityWriteFn } from './activity-repository.js';
+export { projectCompanyActivity, ActivityFeedRepository } from './activity-repository.js';
+export type { ActivityWriteFn, ActivityExecutor, ActivityKeyset } from './activity-repository.js';
 
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
