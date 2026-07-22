@@ -24,7 +24,9 @@ import {
 import type { MemberRole } from '../members/roles.js';
 import type { Logger } from '@acbp/observability';
 
-export type AuditWriteFn = (scope: AuditScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
+// Local test-seam type (the exported one lives in company-service.ts; identical shape). Kept un-exported so
+// the company barrel does not re-export two members named `AuditWriteFn`.
+type AuditWriteFn = (scope: AuditScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
 
 export interface CompanyLifecycleOptions {
   readonly correlationId?: string;

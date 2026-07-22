@@ -32,7 +32,27 @@ import {
   type ResolveAccountContextParams,
   type ResolveAccountContextOptions,
 } from '../tenancy/account-context-resolver.js';
+import { createCompany, type CreateCompanyParams, type CreateCompanyResult, type CompanyOpOptions } from '../company/company-service.js';
+import {
+  getCompany,
+  renameCompany,
+  pauseCompany,
+  resumeCompany,
+  type GetCompanyResult,
+  type RenameResult,
+  type StatusTransitionResult,
+  type RenameParams,
+  type PauseParams,
+  type CompanyLifecycleOptions,
+} from '../company/company-lifecycle.js';
 import type { AccountContextResolution } from '@acbp/contracts';
+
+/** Company id + acting user + account, the shared identity of a company-scoped request. */
+export interface CompanyRequestKey {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+}
 
 /** Options for account operations: an optional correlation id and audit/structured logger. */
 export interface AccountOpOptions {
@@ -87,6 +107,17 @@ export interface ClerkIdentityRuntime {
    * otherwise a coarse deny. The requested account id is never trusted without that membership.
    */
   resolveAccountContext(params: ResolveAccountContextParams, options?: ResolveAccountContextOptions): Promise<AccountContextResolution>;
+  /**
+   * Company lifecycle (ACBP-P1-010; CDR-015). `create` is owner-gated by the caller's ACCOUNT role; the rest
+   * run under a resolved CompanyScope (active company membership) with owner-only mutations enforced inside
+   * the use case from the company role. `accountId` is the caller's own account; `companyId` is a request
+   * selector validated by membership — never trusted on its own.
+   */
+  createCompany(params: CreateCompanyParams, options?: CompanyOpOptions): Promise<CreateCompanyResult>;
+  getCompany(params: CompanyRequestKey, options?: CompanyLifecycleOptions): Promise<GetCompanyResult>;
+  renameCompany(params: RenameParams, options?: CompanyLifecycleOptions): Promise<RenameResult>;
+  pauseCompany(params: PauseParams, options?: CompanyLifecycleOptions): Promise<StatusTransitionResult>;
+  resumeCompany(params: PauseParams, options?: CompanyLifecycleOptions): Promise<StatusTransitionResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -130,6 +161,21 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     resolveAccountContext(params, options) {
       return resolveAccountContextUseCase(client, params, options ?? {});
+    },
+    createCompany(params, options) {
+      return createCompany(client, params, options ?? {});
+    },
+    getCompany(params, options) {
+      return getCompany(client, params, options ?? {});
+    },
+    renameCompany(params, options) {
+      return renameCompany(client, params, options ?? {});
+    },
+    pauseCompany(params, options) {
+      return pauseCompany(client, params, options ?? {});
+    },
+    resumeCompany(params, options) {
+      return resumeCompany(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);
