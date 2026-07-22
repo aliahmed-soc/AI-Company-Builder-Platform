@@ -53,6 +53,8 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     viewerId = await seedUser(seed, 'viewer@example.com');
     outsiderId = await seedUser(seed, 'outsider@example.com');
     accountId = (await provisionPersonalAccount(app, ownerId)).accountId;
+    // The viewer is an active ACCOUNT member (a prerequisite for any company membership); the outsider is not.
+    await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: viewerId, role: 'viewer', status: 'active', accepted_at: new Date() }).execute();
   });
 
   /** Create a company and generate `renames` company.updated events → (1 + renames) activity rows. */
