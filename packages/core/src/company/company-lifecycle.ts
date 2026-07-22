@@ -16,6 +16,7 @@ import {
   isCompanyStatus,
   toDisplayStatus,
   validationError,
+  isPlatformError,
   type AuditEvent,
   type CompanyStatus,
   type CompanyDisplayStatus,
@@ -55,6 +56,7 @@ export type RenameResult =
   | { readonly status: 'ok'; readonly changed: boolean; readonly version?: number }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
+  | { readonly status: 'conflict' }
   | { readonly status: 'validation'; readonly error: PublicErrorEnvelope };
 export type StatusTransitionResult =
   | { readonly status: 'ok'; readonly companyStatus: CompanyStatus }
@@ -116,7 +118,9 @@ export function validateProfileEdit(params: RenameParams): { readonly ok: true; 
   }
   let description: string | null | undefined;
   if (params.description === undefined) {
-    description = undefined;
+    description = undefined; // omitted → leave the current description unchanged
+  } else if (params.description === null) {
+    description = null; // explicit null → clear (consistent with create, which also maps null → no description)
   } else if (typeof params.description === 'string') {
     const d = params.description.trim();
     if (d.length > DESCRIPTION_MAX) return { ok: false, error: validationError({ message: 'The company description is too long.', fields: ['description'] }).toPublic() };
@@ -127,44 +131,68 @@ export function validateProfileEdit(params: RenameParams): { readonly ok: true; 
   return { ok: true, name, description };
 }
 
+/** Bounded retries for the (company_id, version) optimistic-append race (COMP-004 last-write-wins). */
+const MAX_RENAME_ATTEMPTS = 4;
+
 export async function renameCompany(client: DatabaseClient, params: RenameParams, options: CompanyLifecycleOptions = {}): Promise<RenameResult> {
   const validated = validateProfileEdit(params);
   if (!validated.ok) return { status: 'validation', error: validated.error };
   const audit = options.auditWriter ?? writeAuditEvent;
 
-  const run = await runInCompanyScope(
-    client,
-    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
-    async (scope, role): Promise<RenameResult> => {
-      if (checkAuthorization(role, 'company:rename', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
-        return { status: 'forbidden' };
-      }
-      const profiles = new CompanyProfileRepository(scope.db);
-      const current = await profiles.currentRevision(params.companyId);
-      if (current === undefined) return { status: 'not_found' };
+  // Immutable-revision model (COMP-004): a rename INSERTs version+1. Two concurrent renames can both read the
+  // same current version; the (company_id, version) PK lets exactly one win and the loser gets a CONFLICT. We
+  // RETRY the loser (a fresh transaction re-reads the now-committed version and appends the next one), so
+  // concurrent edits resolve last-write-wins with visible history instead of surfacing a 500. After a bounded
+  // number of attempts we return a coarse `conflict` (mapped to 409) rather than spin.
+  for (let attempt = 1; attempt <= MAX_RENAME_ATTEMPTS; attempt++) {
+    try {
+      const run = await runInCompanyScope(
+        client,
+        { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+        async (scope, role): Promise<RenameResult> => {
+          if (checkAuthorization(role, 'company:rename', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
+            return { status: 'forbidden' };
+          }
+          const profiles = new CompanyProfileRepository(scope.db);
+          const current = await profiles.currentRevision(params.companyId);
+          if (current === undefined) return { status: 'not_found' };
 
-      const nextName = validated.name;
-      const nextDescription = validated.description === undefined ? current.description : validated.description;
-      const changed: string[] = [];
-      if (nextName !== current.name) changed.push('name');
-      if (nextDescription !== current.description) changed.push('description');
-      if (changed.length === 0) return { status: 'ok', changed: false }; // idempotent no-op → no version, no audit
+          const nextName = validated.name;
+          const nextDescription = validated.description === undefined ? current.description : validated.description;
+          const changed: string[] = [];
+          if (nextName !== current.name) changed.push('name');
+          if (nextDescription !== current.description) changed.push('description');
+          if (changed.length === 0) return { status: 'ok', changed: false }; // idempotent no-op → no version, no audit
 
-      const nextVersion = current.version + 1;
-      await profiles.insert({ company_id: params.companyId, version: nextVersion, name: nextName, description: nextDescription, created_by_user_id: params.userId });
-      await audit(scope, companyUpdated({ companyId: params.companyId, changedFields: changed }), auditContext(options));
-      options.logger?.info('company.updated', { metadata: { accountId: params.accountId, companyId: params.companyId, changedFields: changed.join(',') } });
-      return { status: 'ok', changed: true, version: nextVersion };
-    },
-    optionsFor(options),
-  );
-  return unwrap(run);
+          const nextVersion = current.version + 1;
+          await profiles.insert({ company_id: params.companyId, version: nextVersion, name: nextName, description: nextDescription, created_by_user_id: params.userId });
+          await audit(scope, companyUpdated({ companyId: params.companyId, changedFields: changed }), auditContext(options));
+          options.logger?.info('company.updated', { metadata: { accountId: params.accountId, companyId: params.companyId, changedFields: changed.join(',') } });
+          return { status: 'ok', changed: true, version: nextVersion };
+        },
+        optionsFor(options),
+      );
+      return unwrap(run);
+    } catch (e) {
+      // Retry ONLY the version-append race (a normalized conflict); any other error propagates unchanged.
+      if (attempt < MAX_RENAME_ATTEMPTS && isPlatformError(e) && e.category === 'conflict') continue;
+      if (isPlatformError(e) && e.category === 'conflict') return { status: 'conflict' };
+      throw e;
+    }
+  }
+  return { status: 'conflict' };
 }
 
 // ── pause / resume (owner-driven status transitions) ────────────────────────────────────────────────
+// The transition asserts the SPECIFIC expected `from` (not merely "any legal transition to `to`") so an owner
+// resume can only apply to a `paused` company and a pause only to an `active` one — the system-driven
+// `onboarding→active` provisioning transition (P1-012) can never be forced through the owner resume endpoint,
+// and the audit event is never mislabeled (correctness review F2). The affected-row count is checked before
+// auditing, so a 0-row update (e.g. a weakened scope invariant) can never emit a success audit (F5).
 async function transition(
   scope: TenantScope,
   companyId: string,
+  requiredFrom: CompanyStatus,
   to: CompanyStatus,
   makeEvent: (from: CompanyStatus) => AuditEvent,
   audit: AuditWriteFn,
@@ -174,15 +202,14 @@ async function transition(
   const company = await companies.findById(companyId);
   if (company === undefined) return { status: 'not_found' };
   const from = isCompanyStatus(company.status) ? company.status : 'draft';
-  if (!isLegalCompanyTransition(from, to)) return { status: 'invalid_transition', from };
-  await companies.updateStatus(companyId, to);
+  if (from !== requiredFrom || !isLegalCompanyTransition(from, to)) return { status: 'invalid_transition', from };
+  const updated = await companies.updateStatus(companyId, to);
+  if (updated === undefined) return { status: 'not_found' }; // 0 rows affected → do NOT audit a phantom transition
   await audit(scope, makeEvent(from), ctx);
   return { status: 'ok', companyStatus: to };
 }
 
-export interface PauseParams extends CommonParams {
-  readonly reason?: string;
-}
+export type PauseParams = CommonParams;
 
 export async function pauseCompany(client: DatabaseClient, params: PauseParams, options: CompanyLifecycleOptions = {}): Promise<StatusTransitionResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
@@ -193,7 +220,10 @@ export async function pauseCompany(client: DatabaseClient, params: PauseParams, 
       if (checkAuthorization(role, 'company:pause', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
         return { status: 'forbidden' };
       }
-      const result = await transition(scope, params.companyId, 'paused', () => companyPaused(params.reason !== undefined ? { companyId: params.companyId, reason: params.reason } : { companyId: params.companyId }), audit, auditContext(options));
+      // No caller-supplied free-text reason is persisted (data minimization; the immutable audit records only
+      // the fact of the transition — security review LOW-1). The contract factory keeps an optional coarse
+      // reason for a future SERVER-set value; it is deliberately not populated from request input here.
+      const result = await transition(scope, params.companyId, 'active', 'paused', () => companyPaused({ companyId: params.companyId }), audit, auditContext(options));
       if (result.status === 'ok') options.logger?.info('company.paused', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return result;
     },
@@ -211,7 +241,9 @@ export async function resumeCompany(client: DatabaseClient, params: PauseParams,
       if (checkAuthorization(role, 'company:resume', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
         return { status: 'forbidden' };
       }
-      const result = await transition(scope, params.companyId, 'active', () => companyResumed(params.reason !== undefined ? { companyId: params.companyId, reason: params.reason } : { companyId: params.companyId }), audit, auditContext(options));
+      // Resume requires the company be `paused` (requiredFrom) — the system-driven onboarding→active provisioning
+      // transition (P1-012) can never be forced through here. No caller free-text reason persisted (LOW-1).
+      const result = await transition(scope, params.companyId, 'paused', 'active', () => companyResumed({ companyId: params.companyId }), audit, auditContext(options));
       if (result.status === 'ok') options.logger?.info('company.resumed', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return result;
     },

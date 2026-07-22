@@ -19,6 +19,7 @@ export type CompaniesRequestResult =
   | { readonly status: 'not_found' }
   | { readonly status: 'validation'; readonly error: PublicErrorEnvelope }
   | { readonly status: 'invalid_transition'; readonly from: string }
+  | { readonly status: 'conflict' }
   | { readonly status: 'created'; readonly companyId: string; readonly companyStatus: string; readonly creationMode: string }
   | { readonly status: 'company'; readonly company: CompanyView }
   | { readonly status: 'renamed'; readonly changed: boolean; readonly version?: number }
@@ -31,8 +32,8 @@ export interface CompanyRuntime {
   createCompany(params: { accountId: string; actingUserId: string; creationMode: unknown; name: unknown; description?: unknown }, options?: { logger?: Logger }): Promise<CreateCompanyResult>;
   getCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetCompanyResult>;
   renameCompany(params: { userId: string; accountId: string; companyId: string; name: unknown; description?: unknown }, options?: { logger?: Logger }): Promise<RenameResult>;
-  pauseCompany(params: { userId: string; accountId: string; companyId: string; reason?: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
-  resumeCompany(params: { userId: string; accountId: string; companyId: string; reason?: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
+  pauseCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
+  resumeCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -123,16 +124,18 @@ export async function renameCompanyForRequest(companyId: string, input: { name: 
       return { status: 'forbidden' };
     case 'not_found':
       return { status: 'not_found' };
+    case 'conflict':
+      return { status: 'conflict' };
     case 'validation':
       return { status: 'validation', error: r.error };
   }
 }
 
-async function transitionForRequest(kind: 'pause' | 'resume', companyId: string, input: { reason?: string }, deps: CompaniesRequestDeps): Promise<CompaniesRequestResult> {
+async function transitionForRequest(kind: 'pause' | 'resume', companyId: string, deps: CompaniesRequestDeps): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
   const ctx = await resolveActorWithAccount(deps, runtime);
   if ('kind' in ctx) return ctx.result;
-  const params = input.reason !== undefined ? { userId: ctx.userId, accountId: ctx.accountId, companyId, reason: input.reason } : { userId: ctx.userId, accountId: ctx.accountId, companyId };
+  const params = { userId: ctx.userId, accountId: ctx.accountId, companyId };
   const r = kind === 'pause' ? await runtime.pauseCompany(params, { logger: companiesLogger() }) : await runtime.resumeCompany(params, { logger: companiesLogger() });
   switch (r.status) {
     case 'ok':
@@ -146,9 +149,11 @@ async function transitionForRequest(kind: 'pause' | 'resume', companyId: string,
   }
 }
 
-export function pauseCompanyForRequest(companyId: string, input: { reason?: string }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
-  return transitionForRequest('pause', companyId, input, deps);
+// Pause/resume carry NO request body — the transition fact is the whole payload; no caller-supplied free-text
+// reason is accepted or persisted (security review LOW-1).
+export function pauseCompanyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  return transitionForRequest('pause', companyId, deps);
 }
-export function resumeCompanyForRequest(companyId: string, input: { reason?: string }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
-  return transitionForRequest('resume', companyId, input, deps);
+export function resumeCompanyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  return transitionForRequest('resume', companyId, deps);
 }

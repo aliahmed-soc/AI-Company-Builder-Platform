@@ -4,17 +4,13 @@
 // autonomous-work pickup); an out-of-state transition returns 409 invalid_transition. Optional { reason }.
 // Fail-closed. Other methods → 405.
 import { pauseCompanyForRequest } from '@/server/companies/companies-request';
-import { parseReasonBody, toCompaniesResponse } from '@/server/companies/companies-http';
-import { genericErrorBody } from '@/server/webhooks/http';
+import { toCompaniesResponse } from '@/server/companies/companies-http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request, context: { params: Promise<{ companyId: string }> }): Promise<Response> {
+// No request body: the transition fact is the whole payload; no caller-supplied reason is accepted or stored.
+export async function POST(_request: Request, context: { params: Promise<{ companyId: string }> }): Promise<Response> {
   const { companyId } = await context.params;
-  const parsed = await parseReasonBody(request);
-  if (!parsed.ok) {
-    return new Response(JSON.stringify(genericErrorBody(parsed.status)), { status: parsed.status, headers: { 'content-type': 'application/json; charset=utf-8' } });
-  }
-  return toCompaniesResponse(await pauseCompanyForRequest(companyId, parsed.input));
+  return toCompaniesResponse(await pauseCompanyForRequest(companyId));
 }

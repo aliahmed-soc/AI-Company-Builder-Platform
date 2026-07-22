@@ -239,13 +239,14 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     const id = await createActiveCompany('Live Co');
     await seed.kysely.deleteFrom('audit_events').execute();
 
-    const paused = await pauseCompany(app, { userId: ownerId, accountId, companyId: id, reason: 'owner_request' });
+    const paused = await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
     expect(paused).toMatchObject({ status: 'ok', companyStatus: 'paused' });
     const co1 = await seed.kysely.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirstOrThrow();
     expect(co1.status).toBe('paused');
     const pauseAudit = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.paused').executeTakeFirstOrThrow();
     expect(pauseAudit.company_id).toBe(id);
-    expect(pauseAudit.payload).toEqual({ reason: 'owner_request' });
+    // No caller-supplied free-text reason is persisted (security review LOW-1) — the payload is empty.
+    expect(pauseAudit.payload).toEqual({});
 
     const resumed = await resumeCompany(app, { userId: ownerId, accountId, companyId: id });
     expect(resumed).toMatchObject({ status: 'ok', companyStatus: 'active' });
@@ -254,11 +255,31 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     expect((await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.resumed').execute())).toHaveLength(1);
   });
 
+  test('atomicity: an audit-write failure rolls back a rename (no new version) and a pause (status unchanged)', async () => {
+    const failingWriter = (): Promise<string> => Promise.reject(new Error('audit boom'));
+    // Rename: the v2 profile insert + company.updated audit share one transaction → both roll back.
+    const rid = await createCompanyFor('RB Rename');
+    await expect(renameCompany(app, { userId: ownerId, accountId, companyId: rid, name: 'RB New' }, { auditWriter: failingWriter })).rejects.toBeDefined();
+    const profs = await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', rid).execute();
+    expect(profs).toHaveLength(1); // only v1 survives; the v2 insert was rolled back with its failed audit
+    expect(profs[0]?.name).toBe('RB Rename');
+    // Pause: the status update + company.paused audit share one transaction → both roll back.
+    const pid = await createActiveCompany('RB Pause');
+    await expect(pauseCompany(app, { userId: ownerId, accountId, companyId: pid }, { auditWriter: failingWriter })).rejects.toBeDefined();
+    expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', pid).executeTakeFirstOrThrow()).status).toBe('active');
+    expect(await count('audit_events')).toBe(0);
+  });
+
   test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {
     const draft = await createCompanyFor('Draft Co');
     expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'draft' });
     const active = await createActiveCompany('Active Co');
     expect(await resumeCompany(app, { userId: ownerId, accountId, companyId: active })).toMatchObject({ status: 'invalid_transition', from: 'active' });
+    // Owner resume requires the company be PAUSED — it cannot force the system-driven onboarding→active
+    // provisioning transition (P1-012), so a `company.resumed` audit can never be mislabeled (review F2).
+    const onboarding = await createCompanyFor('Onboarding Co');
+    await seed.kysely.updateTable('companies').set({ status: 'onboarding' }).where('id', '=', onboarding).execute();
+    expect(await resumeCompany(app, { userId: ownerId, accountId, companyId: onboarding })).toMatchObject({ status: 'invalid_transition', from: 'onboarding' });
   });
 
   test('a company viewer cannot pause (owner-only lifecycle op)', async () => {

@@ -218,3 +218,10 @@ Append significant decisions. Format: decision — source — consequence.
   `ACBP-P1-008;ACBP-P1-010` (company-scoped feed needs P1-010's company boundary + durable company.* events);
   P1-009 stays Planned, acceptance unchanged. Source: owner decision 2026-07-22 + COMP-001/004/005/006/008 +
   ADR-006/007 + WORKFLOW-STATE-MACHINES §1 + DATA-ARCHITECTURE + TENANCY + CDR-011/012/013/014 + EVENT-CATALOG.
+
+## ACBP-P1-010 review pass (2026-07-22) — independent security/scope/correctness reviews
+- Reviews clean: scope FULLY COMPLIANT (0 deviations); security no CRITICAL/HIGH; correctness no High defect — 3 reviewers + own catalog/diff checks cover all 16 required areas.
+- Concurrent profile rename now bounded-retries the (company_id,version) append race (true last-write-wins), coarse conflict->409 after N attempts — correctness review F1/security LOW-2 — no 500 on the common concurrent-rename path.
+- Pause/resume assert the SPECIFIC prior status (active->pause, paused->resume) — review F2 — onboarding->active provisioning (P1-012) cannot be forced via owner resume; audit never mislabeled.
+- No caller-supplied free-text pause/resume reason accepted or persisted — security review LOW-1 — data minimization on the immutable audit store; pause/resume take no request body.
+- Accepted residuals: getCompany status/displayStatus divergence (unreachable behind DB CHECK; fail-closed) and thrown transient DB error -> bare 500 (pre-existing non-leaking pattern shared with membership ops).

@@ -1,6 +1,6 @@
 // ACBP-P1-010 — unit tests for companies HTTP mapping + bounded body parsing.
 import { describe, test, expect } from 'vitest';
-import { parseCreateCompanyBody, parseRenameCompanyBody, parseReasonBody, toCompaniesResponse, MAX_COMPANIES_BODY_BYTES } from './companies-http.js';
+import { parseCreateCompanyBody, parseRenameCompanyBody, toCompaniesResponse, MAX_COMPANIES_BODY_BYTES } from './companies-http.js';
 import type { CompaniesRequestResult } from './companies-request.js';
 
 function req(contentType: string | null, bodyStr: string, declaredLength?: number): Parameters<typeof parseCreateCompanyBody>[0] {
@@ -28,11 +28,6 @@ describe('body parsing', () => {
     const r = await parseRenameCompanyBody(req('application/json', JSON.stringify({ name: 'New', description: 'x', version: 99 })));
     expect(r).toEqual({ ok: true, input: { name: 'New', description: 'x' } });
   });
-  test('reason body is optional: no content-type → {}, a JSON reason is extracted, a non-string reason is dropped', async () => {
-    expect(await parseReasonBody(req(null, ''))).toEqual({ ok: true, input: {} });
-    expect(await parseReasonBody(req('application/json', JSON.stringify({ reason: 'owner_request' })))).toEqual({ ok: true, input: { reason: 'owner_request' } });
-    expect(await parseReasonBody(req('application/json', JSON.stringify({ reason: 42 })))).toEqual({ ok: true, input: {} });
-  });
 });
 
 describe('toCompaniesResponse', () => {
@@ -43,6 +38,7 @@ describe('toCompaniesResponse', () => {
     [{ status: 'transitioned', companyStatus: 'paused' }, 200],
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
+    [{ status: 'conflict' }, 409],
     [{ status: 'forbidden' }, 403],
     [{ status: 'not_found' }, 404],
     [{ status: 'unavailable' }, 503],

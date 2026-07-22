@@ -93,8 +93,12 @@ which binds `company_id`/`account_id`/`actor_id`/`event_id`/`occurred_at` server
 - `company.created` — on a successful create bootstrap (payload: `creation_mode`).
 - `company.updated` — on a profile/name edit that actually changes a field (payload: `changed_fields` — the
   changed field **names** only, never values; an idempotent no-op edit writes nothing).
-- `company.paused` / `company.resumed` — on a legal owner-driven `active⇄paused` transition (optional coarse
-  `reason`; `company.resumed` may carry `held_work_count`). An illegal/no-op transition writes nothing.
+- `company.paused` / `company.resumed` — on a legal owner-driven `active⇄paused` transition (the transition
+  asserts the specific expected prior status, so an owner resume can only apply to a `paused` company and the
+  event is never mislabeled). The payload is **empty**: no caller-supplied free-text `reason` is accepted or
+  persisted into the immutable store (data minimization; security review LOW-1). The contract factories retain an
+  optional coarse `reason`/`held_work_count` for a future SERVER-set value; they are not populated from request
+  input. An illegal/no-op transition writes nothing.
 
 Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership and company subsets,
 each domain's real-PostgreSQL producer test provides a **compile-exhaustive** driver over its subset, and a

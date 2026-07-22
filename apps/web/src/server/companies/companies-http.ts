@@ -50,16 +50,6 @@ export async function parseRenameCompanyBody(request: HttpRequest): Promise<Pars
   return { ok: true, input: { name: r.obj['name'], description: r.obj['description'] } };
 }
 
-/** Parse an optional pause/resume body → { reason? }. An empty/absent body is allowed (no reason). */
-export async function parseReasonBody(request: HttpRequest): Promise<Parsed<{ reason?: string }>> {
-  // A body is optional for pause/resume; only enforce shape when a JSON content-type is present.
-  if (!isJsonContentType(request.headers.get('content-type'))) return { ok: true, input: {} };
-  const r = await readJsonObject(request);
-  if (!r.ok) return { ok: false, status: r.status };
-  const reason = r.obj['reason'];
-  return { ok: true, input: typeof reason === 'string' ? { reason } : {} };
-}
-
 /** Map a bounded companies result to a safe HTTP response. */
 export function toCompaniesResponse(result: CompaniesRequestResult): Response {
   switch (result.status) {
@@ -75,6 +65,8 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(400, { error: result.error });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
+    case 'conflict':
+      return jsonResponse(409, { error: 'conflict' });
     case 'forbidden':
       return jsonResponse(403, { error: 'forbidden' });
     case 'not_found':

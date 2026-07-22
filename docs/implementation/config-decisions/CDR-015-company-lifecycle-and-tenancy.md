@@ -103,3 +103,29 @@ minimal invariant-16 pause-pickup test rig.
 - **A 4th `acbp_provision_company` SECURITY DEFINER function** — rejected; company creation has an existing
   AccountScope, so an account-keyed policy suffices (CDR-013 forbids expanding the allowlist without this decision).
 - **Including deactivate now** — rejected; outside the objective string and unbacked by a COMP requirement.
+
+## Independent review outcomes + accepted residual risks (2026-07-22)
+Three independent reviews (security, scope/charter, correctness) ran over the full `main..HEAD` diff. Scope/charter:
+fully compliant, zero deviations. Security: no CRITICAL/HIGH; verified fail-closed dual-keyed RLS, dual-scope audit,
+the validated (not public) `elevateToCompanyScope` elevator, atomic bootstrap, the closed 3-function allowlist, and
+server-resolved authority with `companyId` as a membership-validated selector. Correctness: no High defect; atomicity,
+resolver deny paths, state machine, result mapping, and audit completeness confirmed sound. Findings **fixed**:
+- **Concurrent profile rename (MEDIUM):** `renameCompany` now bounded-retries the `(company_id, version)` append race
+  so concurrent edits resolve last-write-wins with visible history; after N attempts it returns a coarse `conflict`
+  (HTTP 409) instead of surfacing a 500.
+- **Pause/resume `from`-status (LOW):** the transition now asserts the SPECIFIC expected prior status (`active` for
+  pause, `paused` for resume), so the system-driven `onboarding→active` provisioning transition (P1-012) can never be
+  forced through the owner resume endpoint and the audit event is never mislabeled.
+- **Free-text pause/resume `reason` (LOW, security):** no caller-supplied `reason` is accepted or persisted into the
+  immutable audit store (data minimization); pause/resume take no request body. The contract factories keep an
+  optional coarse `reason`/`held_work_count` for a future SERVER-set value only.
+- **`null` description parity (LOW):** rename now treats an explicit `null` description as "clear", matching create.
+- **0-row transition guard (LOW):** the status update's affected-row count is checked before auditing, so a phantom
+  (0-row) transition can never emit a success audit.
+- **Coverage:** added forced-audit-failure rollback tests for rename + pause, and unit coverage for the above.
+
+Accepted residuals (documented, not fixed): (a) `getCompany` coerces an out-of-enum `status` to `'draft'` while
+`displayStatus` reports `'unknown'` — unreachable behind the `companies_status_valid` CHECK and fail-closed
+(`canPickUpAutonomousWork('draft')` is `false`); (b) a thrown transient DB error (serialization/connection) in a
+company use case surfaces as a bare 500 rather than a typed envelope — a pre-existing, non-leaking behavior shared
+with the membership use cases (the thrown `PlatformError` is already redacted; not P1-010-specific).

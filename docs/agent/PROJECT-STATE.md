@@ -7,8 +7,9 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Branch: `p1-010-company-lifecycle` (from `main` @ `8afb8f0`).
 - PR: draft (opened in Slice 1), base `main`.
 - Base main: `8afb8f003fea91b8cc3586539a3f28cbb0c01ed4` (P1-008 squash PR #9; main CI green run 29877371936).
-- **STATUS: owner decisions made (CDR-015). Implementing autonomously.** Do NOT self-authorize: backlog→Done,
-  PR ready, merge, branch delete, begin/resume P1-009.
+- PR: **#11 OPEN / DRAFT / MERGEABLE / CLEAN**, base `main`, head = final feature HEAD.
+- **STATUS: all six slices implemented + hosted-green; three independent reviews clean (fixes applied); AT THE
+  OWNER GATE.** Do NOT self-authorize: backlog→Done, PR ready, merge, branch delete, begin/resume P1-009.
 
 ## Concurrent work — DO NOT TOUCH
 - **PR #10** `p1-004-last-owner-race-fix` (separate session, now deleted) is **OPEN/unmerged**, base main. Its
@@ -86,8 +87,18 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Local Windows→WSL PG forwarding unstable; hosted CI is the authoritative zero-skip integration gate.
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
+## Slices (all hosted-green) + review pass
+- Slice 1 `1ba19cc` (contracts+authz) · Slice 2 `3ee90a0`+`04094af` (migration 0008 + dual-scope RLS) · Slice 3
+  `5dbacdd` (elevate + resolver + create bootstrap + 4 company.* events) · Slice 4 `921c8db` (lifecycle
+  read/rename/pause/resume + pause-pickup groundwork) · Slice 5 `b200985` (HTTP API + runtime wiring) · Slice 6
+  `cb5ed15` (adversarial cross-tenant/tamper suite + audit README). Hosted CI on `cb5ed15`: **801 passed / 0
+  skipped**, preflight zero-skip.
+- Review pass: 3 independent reviews (security/scope/correctness) clean; 1 MEDIUM + several LOW/INFO fixed
+  (rename retry→LWW/409, pause/resume specific-from, free-text reason removed, null-desc parity, 0-row guard,
+  rollback coverage). See CDR-015 "Independent review outcomes".
+
 ## Next executable action
-Commit the planning change (CDR-015 + P1-009 dep correction + agent records; NO production code), open the draft PR,
-then implement **Slice 1** (company contracts + authz actions + typed audit factories + unit tests) under TDD.
-Commit + push each green slice; verify hosted CI on the exact pushed commit. Stop only at the owner gate or a new
-genuine owner decision.
+**AT THE OWNER GATE — stop.** All implementation + reviews + docs complete; final review-fix commit pushed and
+exact-head hosted CI green. Owner-gated finalization actions NOT yet taken (require explicit owner authorization):
+set ACBP-P1-010 backlog Done, mark PR #11 ready, squash-merge to `main`, verify main CI, delete the branch. Do NOT
+begin/resume P1-009 (stays Planned; no branch/PR). PR #10 remains OPEN/unmerged — untouched.

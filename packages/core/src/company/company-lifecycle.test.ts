@@ -22,6 +22,12 @@ describe('validateProfileEdit', () => {
     if (set.ok) expect(set.description).toBe('hi');
   });
 
+  test('an explicit null description clears it (consistent with create — review F3)', () => {
+    const r = validateProfileEdit({ ...base, name: 'X', description: null });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.description).toBeNull();
+  });
+
   test('rejects an empty/over-long name and a non-string description', () => {
     expect(validateProfileEdit({ ...base, name: '' }).ok).toBe(false);
     expect(validateProfileEdit({ ...base, name: 'x'.repeat(201) }).ok).toBe(false);

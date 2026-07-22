@@ -73,20 +73,18 @@ describe('rename/pause/resume', () => {
     expect(await renameCompanyForRequest('c', { name: 'New' }, { identity: identityDeps(), runtime: fakeRuntime() })).toEqual({ status: 'renamed', changed: true, version: 2 });
     expect((await renameCompanyForRequest('c', { name: 'x' }, { identity: identityDeps(), runtime: fakeRuntime({ renameCompany: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
   });
-  test('pause/resume map ok(status) and invalid_transition', async () => {
-    expect(await pauseCompanyForRequest('c', {}, { identity: identityDeps(), runtime: fakeRuntime() })).toEqual({ status: 'transitioned', companyStatus: 'paused' });
-    expect(await resumeCompanyForRequest('c', {}, { identity: identityDeps(), runtime: fakeRuntime() })).toEqual({ status: 'transitioned', companyStatus: 'active' });
-    expect((await pauseCompanyForRequest('c', {}, { identity: identityDeps(), runtime: fakeRuntime({ pauseCompany: () => Promise.resolve({ status: 'invalid_transition', from: 'draft' }) }) }))).toEqual({ status: 'invalid_transition', from: 'draft' });
+  test('pause/resume map ok(status), invalid_transition, and rename conflict → conflict', async () => {
+    expect(await pauseCompanyForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).toEqual({ status: 'transitioned', companyStatus: 'paused' });
+    expect(await resumeCompanyForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).toEqual({ status: 'transitioned', companyStatus: 'active' });
+    expect(await pauseCompanyForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ pauseCompany: () => Promise.resolve({ status: 'invalid_transition', from: 'draft' }) }) })).toEqual({ status: 'invalid_transition', from: 'draft' });
+    // A concurrent-rename version race surfaces as a coarse conflict (mapped to 409), never a 500.
+    expect((await renameCompanyForRequest('c', { name: 'X' }, { identity: identityDeps(), runtime: fakeRuntime({ renameCompany: () => Promise.resolve({ status: 'conflict' }) }) })).status).toBe('conflict');
   });
-  test('the reason is forwarded only when present', async () => {
+  test('pause/resume send NO caller-supplied reason (only the server-resolved ids)', async () => {
     const calls: unknown[] = [];
     const runtime = fakeRuntime({ ensurePersonalAccount: () => Promise.resolve({ accountId: 'a', created: false }), pauseCompany: (p) => { calls.push(p); return Promise.resolve({ status: 'ok', companyStatus: 'paused' }); } });
-    await pauseCompanyForRequest('c', { reason: 'owner_request' }, { identity: identityDeps(), runtime });
-    await pauseCompanyForRequest('c', {}, { identity: identityDeps(), runtime });
-    expect(calls).toEqual([
-      { userId: 'u1', accountId: 'a', companyId: 'c', reason: 'owner_request' },
-      { userId: 'u1', accountId: 'a', companyId: 'c' },
-    ]);
+    await pauseCompanyForRequest('c', { identity: identityDeps(), runtime });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'a', companyId: 'c' }]);
   });
 });
 
@@ -104,12 +102,12 @@ describe('endpoint×principal negative matrix (request layer)', () => {
     const deleted = fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) });
     expect((await getCompanyForRequest('c', { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
     expect((await renameCompanyForRequest('c', { name: 'x' }, { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
-    expect((await pauseCompanyForRequest('c', {}, { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
-    expect((await resumeCompanyForRequest('c', {}, { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
+    expect((await pauseCompanyForRequest('c', { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
+    expect((await resumeCompanyForRequest('c', { identity: identityDeps(), runtime: deleted })).status).toBe('forbidden');
   });
   test('PATCH/pause/resume: unverified→email_unverified, core-denied→forbidden', async () => {
     expect((await renameCompanyForRequest('c', { name: 'x' }, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
-    expect((await pauseCompanyForRequest('c', {}, { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
-    expect((await resumeCompanyForRequest('c', {}, { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
+    expect((await pauseCompanyForRequest('c', { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
+    expect((await resumeCompanyForRequest('c', { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
   });
 });

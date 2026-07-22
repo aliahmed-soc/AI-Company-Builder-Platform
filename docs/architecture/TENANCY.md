@@ -10,7 +10,7 @@ DATA-ARCHITECTURE §1 distinguishes **account-owned (A)** rows (keyed by `accoun
 (C)** rows (keyed by `company_id`). CDR-012 (owner-accepted, Option B) keeps the two granularities
 **type-distinct** so an account-only scope can never reach company-owned data.
 
-| | Account-level (ACBP-P1-005) | Company-level (ACBP-P0-018; reserved for ACBP-P1-010) |
+| | Account-level (ACBP-P1-005) | Company-level (ACBP-P0-018; implemented in ACBP-P1-010) |
 |---|---|---|
 | Context | `AccountContext { accountId, actorId? }` — **no companyId** | `TenantContext { accountId, companyId, actorId? }` |
 | Branded scope | `AccountScope` (brand distinct from `TenantScope`) | `TenantScope` |
@@ -115,6 +115,13 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
 - **P1-008** adds the durable append-only audit store — **implemented** for the account-scoped first cut
   (`membership.invited`/`membership.revoked`, written in-transaction; see `docs/architecture/AUDIT.md`). The
   interim `tenant.context_denied` event remains a structured log (denial persistence is deliberately deferred).
-- **P1-010** provides real company resolution + the company-level `TenantContext` and account-level company RLS;
-  `app.current_company` is intentionally never set today, so company-owned RLS will fail closed until then.
+- **P1-010** — **implemented** (CDR-015): real company resolution + the company-level `TenantContext`/`CompanyScope`
+  and dual-keyed company RLS are now live. `app.current_company` IS set (transaction-locally, `SET LOCAL`) by the
+  trusted `elevateToCompanyScope` elevation inside an already-validated `AccountScope` — company creation runs
+  under the existing restricted AccountScope with an account-keyed `companies` INSERT policy and **no 4th SECURITY
+  DEFINER function** (the closed allowlist stays exactly three). Company-owned reads/mutations require BOTH
+  `app.current_account` and `app.current_company` to match (fail-closed); `companies` INSERT is account-keyed and
+  `companies` SELECT is account-scoped (a company is resolved into, not listed — portfolio/list is P1-011).
+  `company_memberships` is a SEPARATE table (the account `memberships` foundation is untouched); a company
+  membership requires an active account membership and account ownership never auto-grants company access.
   `companyId` on `TenantContext` remains required (not made optional).
