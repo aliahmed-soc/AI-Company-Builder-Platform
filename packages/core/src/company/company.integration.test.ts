@@ -259,12 +259,15 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     const failingWriter = (): Promise<string> => Promise.reject(new Error('audit boom'));
     // Rename: the v2 profile insert + company.updated audit share one transaction → both roll back.
     const rid = await createCompanyFor('RB Rename');
+    await seed.kysely.deleteFrom('audit_events').execute(); // isolate: drop the setup company.created audit
     await expect(renameCompany(app, { userId: ownerId, accountId, companyId: rid, name: 'RB New' }, { auditWriter: failingWriter })).rejects.toBeDefined();
     const profs = await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', rid).execute();
     expect(profs).toHaveLength(1); // only v1 survives; the v2 insert was rolled back with its failed audit
     expect(profs[0]?.name).toBe('RB Rename');
+    expect(await count('audit_events')).toBe(0); // the failed company.updated write left nothing
     // Pause: the status update + company.paused audit share one transaction → both roll back.
     const pid = await createActiveCompany('RB Pause');
+    await seed.kysely.deleteFrom('audit_events').execute(); // isolate: drop the setup company.created audit
     await expect(pauseCompany(app, { userId: ownerId, accountId, companyId: pid }, { auditWriter: failingWriter })).rejects.toBeDefined();
     expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', pid).executeTakeFirstOrThrow()).status).toBe('active');
     expect(await count('audit_events')).toBe(0);
