@@ -194,3 +194,27 @@ Append significant decisions. Format: decision — source — consequence.
   DEFINER fns — expands elevated surface). Source: owner decision 2026-07-22 + ADR-015 + EVENT-CATALOG envelope +
   DATA-ARCHITECTURE §2/`:41` + TECHNICAL-ARCHITECTURE-v1 invariant 11 + FAILURE-AND-RECOVERY row 14 +
   ENGINEERING-STANDARDS `:20-21,35,47` + TENANCY/CDR-013 (RLS + 3-fn allowlist) + CDR-009 (retention).
+
+## ACBP-P1-010 — Company lifecycle (opened 2026-07-22)
+- **Company data model / tenancy / creation bootstrap → CDR-015 (owner-accepted, 2026-07-22).** MANY companies per
+  account (company belongs to exactly one account; company_id/account_id immutable; no default company). Company
+  membership in a **SEPARATE `company_memberships` table** — account `memberships` + its unique index + account-
+  context resolver + account RLS stay UNCHANGED; company membership is independent (requires an active account
+  membership; account ownership does NOT auto-grant company access; creator gets an explicit active company owner
+  row; roles owner|viewer; no company invitation flow). Company creation runs **under the existing restricted
+  AccountScope with an account-keyed `companies` INSERT policy — NO 4th SECURITY DEFINER function** (allowlist stays
+  three); one atomic tx inserts company → mints CompanyScope from the authoritative row → sets app.current_company →
+  inserts owner membership → inserts profile v1 → writes company.created audit → commit-all-or-rollback-all.
+  `CompanyContext {accountId, companyId, actorId}`; branded CompanyScope type-distinct from AccountScope (reserved
+  P1-005 TenantContext/TenantScope); requested companyId is a selector never authority; no Clerk/request claim is
+  authority. Company RLS keyed to app.current_account + app.current_company (both must match; fail-closed).
+  **audit_events gains nullable `company_id`** (additive expand; account events NULL, company events set;
+  append-only preserved; dual-scope policy — account: company_id NULL; company: both match). **Exactly four durable
+  company events** (company.created/updated/paused/resumed). **Deactivate/delete deferred** (COMP-007 Post-MVP);
+  portfolio/switching P1-011; provisioning P1-012; activity feed + outbox P1-009+. Profile = immutable revision
+  model (COMP-004 version history + last-write-wins visible history). **REJECTED:** extending the shared memberships
+  table with company-scoped rows (would rework the P1-004 unique index/queries/RLS); a 4th acbp_provision_company
+  SECURITY DEFINER function; including deactivate. **P1-009 resequencing correction:** ACBP-P1-009 Dependencies →
+  `ACBP-P1-008;ACBP-P1-010` (company-scoped feed needs P1-010's company boundary + durable company.* events);
+  P1-009 stays Planned, acceptance unchanged. Source: owner decision 2026-07-22 + COMP-001/004/005/006/008 +
+  ADR-006/007 + WORKFLOW-STATE-MACHINES §1 + DATA-ARCHITECTURE + TENANCY + CDR-011/012/013/014 + EVENT-CATALOG.
