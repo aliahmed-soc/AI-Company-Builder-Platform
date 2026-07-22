@@ -145,19 +145,23 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(seen).toBe('co_9');
   });
 
-  test('only the P1-002..P1-008 domain tables exist; later-ticket tables do not', async () => {
+  test('only the P1-002..P1-010 domain tables exist; later-ticket tables do not', async () => {
     await migrateToLatest(client); // ensure applied (a prior test may have reversed then re-applied)
     const r = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = r.rows.map((x) => x.table_name);
-    // P1-002 (identity) + P1-003 (account root + profile) + P1-004 (memberships) + P1-008 (audit) domain tables.
+    // P1-002 (identity) + P1-003 (account root + profile) + P1-004 (memberships) + P1-008 (audit) +
+    // P1-010 (companies + versioned profiles + company memberships) domain tables.
     expect(names).toContain('users');
     expect(names).toContain('identity_webhook_receipts');
     expect(names).toContain('accounts');
     expect(names).toContain('account_profiles');
     expect(names).toContain('memberships');
     expect(names).toContain('audit_events');
-    // Company/tasks/approvals/usage and other later-ticket tables must NOT exist yet.
-    for (const notYet of ['companies', 'tasks', 'task_runs', 'approvals', 'usage_events', 'policies']) {
+    expect(names).toContain('companies');
+    expect(names).toContain('company_profiles');
+    expect(names).toContain('company_memberships');
+    // Tasks/approvals/usage and other later-ticket tables must NOT exist yet.
+    for (const notYet of ['tasks', 'task_runs', 'approvals', 'usage_events', 'policies']) {
       expect(names).not.toContain(notYet);
     }
   });
