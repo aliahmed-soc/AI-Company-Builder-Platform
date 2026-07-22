@@ -80,6 +80,9 @@ export type {
   CompanyMembershipsTable,
   CompanyMembershipRow,
   NewCompanyMembership,
+  ActivityEventsTable,
+  ActivityEventRow,
+  NewActivityEvent,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
