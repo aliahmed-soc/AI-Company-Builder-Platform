@@ -24,17 +24,25 @@ const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_eve
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
 
-/** Exact expected grants held by acbp_app, per table (privilege_type sets). */
+/**
+ * Exact TABLE-LEVEL grants held by acbp_app, transcribed from the migrations (0005/0007–0011). Column-level
+ * grants do NOT appear in `role_table_grants` — `provisioning_steps` therefore shows only INSERT/SELECT here
+ * and its outcome-column UPDATE is asserted separately against `column_privileges`.
+ *
+ * Notable least-privilege facts this pins: `account_profiles` has NO INSERT (profiles are created by the
+ * SECURITY DEFINER bootstrap), `company_profiles`/`company_memberships` have NO UPDATE (versioned/append-only
+ * by design), and `platform_admins` is SELECT-only (no runtime write path — CDR-019).
+ */
 const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   accounts: ['SELECT', 'UPDATE'],
-  account_profiles: ['INSERT', 'SELECT', 'UPDATE'],
+  account_profiles: ['SELECT', 'UPDATE'],
   memberships: ['INSERT', 'SELECT', 'UPDATE'],
   audit_events: ['INSERT', 'SELECT'],
   companies: ['INSERT', 'SELECT', 'UPDATE'],
   company_profiles: ['INSERT', 'SELECT'],
-  company_memberships: ['INSERT', 'SELECT', 'UPDATE'],
+  company_memberships: ['INSERT', 'SELECT'],
   activity_events: ['INSERT', 'SELECT'],
-  provisioning_steps: ['INSERT', 'SELECT', 'UPDATE'],
+  provisioning_steps: ['INSERT', 'SELECT'],
   company_workspace_areas: ['INSERT', 'SELECT'],
   platform_admins: ['SELECT'],
 };
