@@ -113,8 +113,14 @@ _Read this first on resume, then continue automatically to "Next executable acti
   the actor's active memberships, served by the existing `company_memberships_member_idx` partial index + companies
   PK; existing indexes adequate. Migrations remain 0001–0009. See `docs/implementation/P1-011-PORTFOLIO-QUERY-PLAN.md`.
   Local integration UNRUNNABLE (Windows→WSL 5432 forwarding refuses connections); hosted CI is the zero-skip gate.
-- Slice 3 — bounded SEQUENTIAL CompanyScope name enrichment + stale-membership coarse-fail + cross-company profile
-  isolation tests.
+- Slice 3 — **IN PROGRESS**. `getCompanyPortfolio` use case: Phase 1 enumeration under AccountScope
+  (`portfolio:read` account-role check via own-membership bootstrap, then `PortfolioRepository`); Phase 2
+  SEQUENTIAL per-candidate name enrichment via FRESH `runInCompanyScope` (Option B — no scope reuse, no parallel).
+  A membership going stale between phases → runInCompanyScope denies → candidate DROPPED (never a stale/substituted
+  row; keyset advances past it). `enrichCandidatesSequentially` exported for deterministic stale-drop testing.
+  Real-PG core test proves membership-only visibility, account-member-only-no-rows, forbidden non-member, keyset
+  pagination + account+actor cursor, strict limit/cursor rejection, cross-company enrichment isolation, stale-drop.
+  Pure-guard unit test (limit/cursor reject before any DB) runs everywhere.
 - Slice 4 — `GET /api/companies` (strict cursor/limit parsing; unsupported params rejected) + request/runtime
   composition + web tests + local production web build.
 - Slice 5 — A→B→A switch-sequence + concurrent context-isolation + pooled-GUC cleanup + adversarial tests.
