@@ -121,8 +121,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   Real-PG core test proves membership-only visibility, account-member-only-no-rows, forbidden non-member, keyset
   pagination + account+actor cursor, strict limit/cursor rejection, cross-company enrichment isolation, stale-drop.
   Pure-guard unit test (limit/cursor reject before any DB) runs everywhere.
-- Slice 4 — `GET /api/companies` (strict cursor/limit parsing; unsupported params rejected) + request/runtime
-  composition + web tests + local production web build.
+- Slice 4 — **IN PROGRESS**. `GET /api/companies` (portfolio) added to the existing collection route (POST create
+  untouched): allowed params {cursor, limit} only (any other → 400); server-resolved account+actor; maps
+  ok→200 {items,nextCursor} / forbidden→403 / invalid_cursor→400 / invalid_limit→400. Wired `getCompanyPortfolio`
+  through the ClerkIdentityRuntime composition + CompanyRuntime; `getPortfolioForRequest` request use case.
+  Web unit tests (request + http mapping) green; local production `next build` green (route ƒ dynamic).
 - Slice 5 — A→B→A switch-sequence + concurrent context-isolation + pooled-GUC cleanup + adversarial tests.
 - Slice 6 — docs + PR body + independent reviews + final verification.
 

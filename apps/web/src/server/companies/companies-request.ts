@@ -8,8 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, CompanyView, InternalUserReconciliation, ProvisionResult } from '@acbp/core';
+import type { PublicErrorEnvelope, ActivityPage, PortfolioPage } from '@acbp/contracts';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, CompanyView, InternalUserReconciliation, ProvisionResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -21,11 +21,13 @@ export type CompaniesRequestResult =
   | { readonly status: 'invalid_transition'; readonly from: string }
   | { readonly status: 'conflict' }
   | { readonly status: 'invalid_cursor' }
+  | { readonly status: 'invalid_limit' }
   | { readonly status: 'created'; readonly companyId: string; readonly companyStatus: string; readonly creationMode: string }
   | { readonly status: 'company'; readonly company: CompanyView }
   | { readonly status: 'renamed'; readonly changed: boolean; readonly version?: number }
   | { readonly status: 'transitioned'; readonly companyStatus: string }
-  | { readonly status: 'activity'; readonly page: ActivityPage };
+  | { readonly status: 'activity'; readonly page: ActivityPage }
+  | { readonly status: 'portfolio'; readonly page: PortfolioPage };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -37,6 +39,7 @@ export interface CompanyRuntime {
   pauseCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
   resumeCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
   getCompanyActivity(params: { userId: string; accountId: string; companyId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetActivityResult>;
+  getCompanyPortfolio(params: { userId: string; accountId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetPortfolioResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -166,6 +169,26 @@ export async function getCompanyActivityForRequest(companyId: string, query: { c
       return { status: 'forbidden' };
     case 'invalid_cursor':
       return { status: 'invalid_cursor' };
+  }
+}
+
+// Read a page of the caller's company portfolio (ACBP-P1-011; CDR-017). `cursor`/`limit` come from the query
+// string (raw; the domain validates — invalid limit REJECTED, not clamped). accountId + userId are server-
+// resolved (the caller's OWN account); the listing is filtered to the actor's ACTIVE company memberships.
+export async function getPortfolioForRequest(query: { cursor?: string; limit?: string }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getCompanyPortfolio({ userId: ctx.userId, accountId: ctx.accountId, cursor: query.cursor, limit: query.limit }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'portfolio', page: r.page };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'invalid_cursor':
+      return { status: 'invalid_cursor' };
+    case 'invalid_limit':
+      return { status: 'invalid_limit' };
   }
 }
 

@@ -8,6 +8,7 @@ import {
   pauseCompanyForRequest,
   resumeCompanyForRequest,
   getCompanyActivityForRequest,
+  getPortfolioForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -32,11 +33,14 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     pauseCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'paused' }),
     resumeCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'active' }),
     getCompanyActivity: () => Promise.resolve({ status: 'ok', page: EMPTY_PAGE }),
+    getCompanyPortfolio: () => Promise.resolve({ status: 'ok', page: EMPTY_PORTFOLIO }),
     ...overrides,
   };
 }
 
 const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
+const EMPTY_PORTFOLIO = { items: [], nextCursor: null } as const;
+const PORTFOLIO_ITEM = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' } as const;
 
 describe('createCompanyForRequest', () => {
   test('creates against the CALLER\'s own account + acting user (never request-supplied)', async () => {
@@ -137,5 +141,32 @@ describe('getCompanyActivityForRequest', () => {
   test('unauthenticated / unverified are refused', async () => {
     expect((await getCompanyActivityForRequest('c', {}, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await getCompanyActivityForRequest('c', {}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+  });
+});
+
+describe('getPortfolioForRequest', () => {
+  test('reads under the caller\'s OWN account + actor (never request-supplied) and forwards raw cursor/limit', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      getCompanyPortfolio: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', page: { items: [PORTFOLIO_ITEM], nextCursor: 'nc' } });
+      },
+    });
+    const r = await getPortfolioForRequest({ cursor: 'abc', limit: '10' }, { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'portfolio', page: { items: [PORTFOLIO_ITEM], nextCursor: 'nc' } });
+    // No companyId (it is a collection read); accountId + userId are server-resolved, cursor/limit forwarded raw.
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', cursor: 'abc', limit: '10' }]);
+  });
+  test('maps forbidden, invalid_cursor, and invalid_limit', async () => {
+    expect((await getPortfolioForRequest({}, { identity: identityDeps(), runtime: fakeRuntime({ getCompanyPortfolio: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await getPortfolioForRequest({ cursor: 'bad' }, { identity: identityDeps(), runtime: fakeRuntime({ getCompanyPortfolio: () => Promise.resolve({ status: 'invalid_cursor' }) }) })).status).toBe('invalid_cursor');
+    expect((await getPortfolioForRequest({ limit: '0' }, { identity: identityDeps(), runtime: fakeRuntime({ getCompanyPortfolio: () => Promise.resolve({ status: 'invalid_limit' }) }) })).status).toBe('invalid_limit');
+  });
+  test('unauthenticated / unverified / deleted are refused', async () => {
+    expect((await getPortfolioForRequest({}, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await getPortfolioForRequest({}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await getPortfolioForRequest({}, { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
   });
 });
