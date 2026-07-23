@@ -9,10 +9,33 @@ import {
   clampActivityPageSize,
   encodeActivityCursor,
   decodeActivityCursor,
+  isActivityTimestamp,
+  microsecondEpochToIso,
   ACTIVITY_PAGE_SIZE_DEFAULT,
   ACTIVITY_PAGE_SIZE_MAX,
   type ActivityCursor,
 } from './index.js';
+
+describe('exact temporal serialization', () => {
+  test('isActivityTimestamp: strict ISO-8601 UTC with 0-6 fraction digits', () => {
+    expect(isActivityTimestamp('2026-07-22T10:00:00Z')).toBe(true);
+    expect(isActivityTimestamp('2026-07-22T10:00:00.1Z')).toBe(true);
+    expect(isActivityTimestamp('2026-07-22T10:00:00.123Z')).toBe(true);
+    expect(isActivityTimestamp('2026-07-22T10:00:00.123456Z')).toBe(true);
+    for (const bad of ['2026', 'Jan 1 2026', '2026-07-22 10:00:00Z', '2026-07-22T10:00:00.1234567Z', '2026-99-99T10:00:00Z', '', 42, null]) {
+      expect(isActivityTimestamp(bad)).toBe(false);
+    }
+  });
+  test('microsecondEpochToIso: exact integer conversion, no float in the path', () => {
+    const seconds = Math.floor(Date.parse('2026-07-22T10:00:00Z') / 1000);
+    expect(microsecondEpochToIso(String(seconds * 1_000_000 + 123456))).toBe('2026-07-22T10:00:00.123456Z');
+    expect(microsecondEpochToIso(`${seconds * 1_000_000}`)).toBe('2026-07-22T10:00:00.000000Z');
+    expect(microsecondEpochToIso(`${seconds * 1_000_000 + 999999}`)).toBe('2026-07-22T10:00:00.999999Z');
+    for (const bad of ['', 'abc', '-5', '1.5', 12345, null, undefined, '9'.repeat(20)]) {
+      expect(microsecondEpochToIso(bad)).toBeNull();
+    }
+  });
+});
 
 describe('activity taxonomy (company events only)', () => {
   test('the visible types are exactly the four company events', () => {
@@ -122,8 +145,18 @@ describe('activity cursor (opaque base64url; versioned; account+company bound; a
   test('rejects an invalid timestamp and an invalid (non-ULID) event id', () => {
     expect(decodeActivityCursor(acct, co, encObj({ ...base, o: 'not-a-date' }))).toBeNull();
     expect(decodeActivityCursor(acct, co, encObj({ ...base, uo: 'also-not-a-date' }))).toBeNull();
+    // Date.parse-permissive forms are rejected by the strict activity-timestamp shape.
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, o: '2026' }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, o: 'Jan 1 2026' }))).toBeNull();
     expect(decodeActivityCursor(acct, co, encObj({ ...base, e: 'not-a-ulid' }))).toBeNull();
     expect(decodeActivityCursor(acct, co, encObj({ ...base, ue: 'short' }))).toBeNull();
+  });
+  test('accepts exact microsecond-precision timestamps (the canonical stored form)', () => {
+    const micro: ActivityCursor = {
+      after: { occurredAt: '2026-07-22T10:00:00.123456Z', eventId: CUR.after.eventId },
+      upper: { occurredAt: '2026-07-22T12:00:00.999999Z', eventId: CUR.upper.eventId },
+    };
+    expect(decodeActivityCursor(acct, co, encodeActivityCursor(acct, co, micro))).toEqual(micro);
   });
   test('a tampered-but-well-formed position still decodes (it can only move the traversal inside the same company)', () => {
     const tamperedAfter = encObj({ ...base, o: '2026-01-01T00:00:00.000Z' });

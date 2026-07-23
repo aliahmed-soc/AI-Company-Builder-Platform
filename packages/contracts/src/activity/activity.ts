@@ -72,10 +72,35 @@ export interface ActivityEventDTO {
   readonly summary: AuditMetadata;
 }
 
-/** A traversal position / upper-bound tuple: an event time + its id (the deterministic tie-breaker). */
+/**
+ * A traversal position / upper-bound tuple: the EXACT stored event time (an ISO-8601 UTC instant with up to
+ * MICROSECOND precision — `activity_events.occurred_at` is copied bit-exactly from the authoritative audit row,
+ * with no truncation) + the event id (the deterministic tie-breaker for equal timestamps).
+ */
 export interface ActivityPosition {
   readonly occurredAt: string;
   readonly eventId: string;
+}
+
+/** Strict activity timestamp: ISO-8601 UTC with 0–6 fraction digits (the canonical serialization is 6). */
+const ACTIVITY_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
+export function isActivityTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && ACTIVITY_TS_RE.test(value) && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Convert a MICROSECOND epoch value (PostgreSQL `(extract(epoch from ts) * 1000000)::bigint`, delivered as a
+ * decimal string) to the canonical exact ISO instant `YYYY-MM-DDTHH:mm:ss.ssssssZ` using integer math only —
+ * no float parsing, no precision loss (values are far below 2^53). Returns null for a malformed input.
+ */
+export function microsecondEpochToIso(us: unknown): string | null {
+  if (typeof us !== 'string' || !/^\d{1,16}$/.test(us)) return null;
+  const total = Number(us);
+  if (!Number.isSafeInteger(total)) return null;
+  const seconds = Math.floor(total / 1_000_000);
+  const fraction = total - seconds * 1_000_000;
+  const base = new Date(seconds * 1000).toISOString(); // '….000Z' — the seconds instant
+  return `${base.slice(0, 19)}.${String(fraction).padStart(6, '0')}Z`;
 }
 
 /**
@@ -174,9 +199,9 @@ export interface ActivityCursor {
 }
 
 function isValidIso(value: string): boolean {
-  if (value.length === 0 || value.length > ISO_MAX_LEN) return false;
-  const t = Date.parse(value);
-  return Number.isFinite(t);
+  // Strict activity-timestamp shape (ISO-8601 UTC, 0–6 fraction digits) — rejects Date.parse-permissive forms
+  // like '2026' or 'Jan 1 2026' (review nit) while accepting the canonical exact microsecond serialization.
+  return value.length <= ISO_MAX_LEN && isActivityTimestamp(value);
 }
 function isValidEventId(value: string): boolean {
   return value.length > 0 && value.length <= MAX_ID_LEN && isUlid(value);

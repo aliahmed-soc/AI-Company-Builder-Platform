@@ -71,9 +71,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   //       events (membership.*, company_id NULL), Logger-only names, and unknown/future company events are
   //       excluded structurally by this predicate;
   //     - event_id preserved (projection identity = the source audit id);
-  //     - occurred_at preserved on the projection's documented MILLISECOND grid (date_trunc — the runtime
-  //       projector round-trips through a JS Date with the same effect, so live == backfill == rebuild and the
-  //       cursor's millisecond timestamps compare exactly);
+  //     - occurred_at preserved EXACTLY (bit-identical copy of the authoritative audit timestamp, including
+  //       sub-millisecond microseconds — no date_trunc, no client round-trip; the runtime projector copies the
+  //       same column in SQL, so live == backfill == rebuild bit-exactly and the microsecond-precision cursor
+  //       round-trips without ordering loss);
   //     - actor_type/actor_id/account_id/company_id/subject copied as server evidence;
   //     - payload REDACTED to the per-type allowlist (creation_mode / changed_fields; paused/resumed → {});
   //       correlation/causation/idempotency ids and any other metadata are NEVER copied;
@@ -88,7 +89,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       ae.company_id,
       ae.name,
       ae.schema_version,
-      date_trunc('milliseconds', ae.occurred_at),
+      ae.occurred_at,
       ae.actor_type,
       ae.actor_id,
       ae.subject_type,

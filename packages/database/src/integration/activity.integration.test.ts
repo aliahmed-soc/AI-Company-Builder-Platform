@@ -144,15 +144,57 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
       await insertActivity(k, U2, ACCOUNT_A, COMPANY_X, T);
       await insertActivity(k, U3, ACCOUNT_A, COMPANY_X, '2026-07-22T09:00:00.000Z'); // older
     });
-    // Page walk with limit 1 through the repository's exclusive after-predicate.
-    const page = (after?: { occurredAt: Date; eventId: string }) =>
+    // Page walk with limit 1 through the repository's exclusive after-predicate (exact ISO keyset strings).
+    const page = (after?: { occurredAt: string; eventId: string }) =>
       asApp(scope(ACCOUNT_A, COMPANY_X), (k) => new ActivityFeedRepository(k).listByCompany(COMPANY_X, 1, after !== undefined ? { after } : {}));
     const p1 = await page();
     expect(p1.map((r) => r.event_id)).toEqual([U2]); // equal ts → higher event_id first (DESC tie-break)
-    const p2 = await page({ occurredAt: new Date(T), eventId: U2 });
+    const p2 = await page({ occurredAt: T, eventId: U2 });
     expect(p2.map((r) => r.event_id)).toEqual([U1]); // same ts, strictly lower id — not skipped, not duplicated
-    const p3 = await page({ occurredAt: new Date(T), eventId: U1 });
+    const p3 = await page({ occurredAt: T, eventId: U1 });
     expect(p3.map((r) => r.event_id)).toEqual([U3]); // then the older row
+  });
+
+  test('sub-millisecond temporal identity: microsecond timestamps are stored exactly and keyset-ordered exactly', async () => {
+    // Two rows in the SAME millisecond, different microseconds — plus the exact-epoch projection the reader uses.
+    const A = '2026-07-22T10:00:00.123456Z';
+    const B = '2026-07-22T10:00:00.123999Z';
+    await asApp(scope(ACCOUNT_A, COMPANY_X), async (k) => {
+      await insertActivity(k, U1, ACCOUNT_A, COMPANY_X, A);
+      await insertActivity(k, U2, ACCOUNT_A, COMPANY_X, B);
+    });
+    // Stored EXACTLY (no truncation): the text form round-trips the microseconds.
+    const stored = await su.kysely
+      .selectFrom('activity_events')
+      .select(['event_id', sql<string>`occurred_at::text`.as('txt'), sql<string>`(extract(epoch from occurred_at) * 1000000)::bigint::text`.as('us')])
+      .orderBy('occurred_at', 'desc')
+      .execute();
+    expect(stored.find((r) => r.event_id === U1)?.txt).toContain('.123456');
+    expect(stored.find((r) => r.event_id === U2)?.txt).toContain('.123999');
+    // Keyset with the exact microsecond ISO distinguishes rows within one millisecond (no skip, no duplicate).
+    const afterB = await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => new ActivityFeedRepository(k).listByCompany(COMPANY_X, 10, { after: { occurredAt: B, eventId: U2 } }));
+    expect(afterB.map((r) => r.event_id)).toEqual([U1]);
+    // The reader's exact-epoch column reproduces the microseconds (what the DTO/cursor serialize).
+    const rows = await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => new ActivityFeedRepository(k).listByCompany(COMPANY_X, 10, {}));
+    expect(rows.map((r) => r.event_id)).toEqual([U2, U1]); // .123999 is newer than .123456
+    expect(rows.find((r) => r.event_id === U1)?.occurred_at_us.endsWith('123456')).toBe(true);
+    expect(rows.find((r) => r.event_id === U2)?.occurred_at_us.endsWith('123999')).toBe(true);
+  });
+
+  test('migration 0009 BYPASSRLS precondition: the guard raises for a non-bypassing role', async () => {
+    // Execute the guard's exact DO-block as the restricted acbp_app role (NOBYPASSRLS, non-superuser) — it must
+    // raise; the same block passes for the CI superuser (proven implicitly by 0009 having applied in beforeAll).
+    await expect(
+      asApp({}, (k) => sql`
+        do $$
+        begin
+          if not (select (rolbypassrls or rolsuper) from pg_roles where rolname = current_user) then
+            raise exception 'migration 0009 requires a BYPASSRLS/superuser migration role: audit_events is under FORCE RLS and the activity backfill would silently read zero rows';
+          end if;
+        end
+        $$;
+      `.execute(k)),
+    ).rejects.toThrow();
   });
 
   test('query plan: the keyset feed query can use activity_events_feed_idx (no seq scan) on seeded volume', async () => {
@@ -206,13 +248,21 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     const rest = await migrateToLatest(su);
     expect(rest.error).toBeUndefined();
 
-    // Only the two ELIGIBLE rows projected; ids preserved; redaction exact; occurred_at on the millisecond grid.
+    // Only the two ELIGIBLE rows projected; ids preserved; redaction exact; occurred_at preserved EXACTLY.
     const rows = await su.kysely.selectFrom('activity_events').selectAll().orderBy('event_id', 'asc').execute();
     expect(rows.map((r) => r.event_id).sort()).toEqual([U1, U2].sort());
     const created = rows.find((r) => r.event_id === U1);
     expect(created).toMatchObject({ account_id: ACCOUNT_A, company_id: COMPANY_X, activity_type: 'company.created', actor_type: 'user', actor_id: ACTOR_U, subject_id: COMPANY_X, schema_version: 1 });
     expect(created?.payload).toEqual({ creation_mode: 'own_idea' }); // junk + correlation NEVER copied
-    expect(new Date(created?.occurred_at ?? 0).toISOString()).toBe('2026-07-10T10:00:00.123Z'); // date_trunc millis
+    // EXACT temporal identity: the sub-millisecond source timestamp is preserved bit-for-bit (no truncation) —
+    // asserted in SQL because a JS Date read would silently drop the microseconds.
+    const exact = await sql<{ same: boolean; txt: string }>`
+      select (act.occurred_at = au.occurred_at) as same, act.occurred_at::text as txt
+      from activity_events act join audit_events au on au.event_id = act.event_id
+      where act.event_id = ${U1}
+    `.execute(su.kysely);
+    expect(exact.rows[0]?.same).toBe(true);
+    expect(exact.rows[0]?.txt).toContain('.123456');
     const paused = rows.find((r) => r.event_id === U2);
     expect(paused?.payload).toEqual({}); // paused summary is empty — 'reason' never copied
 
@@ -220,7 +270,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     await sql`
       insert into public.activity_events
         (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
-      select ae.event_id, ae.account_id, ae.company_id, ae.name, ae.schema_version, date_trunc('milliseconds', ae.occurred_at), ae.actor_type, ae.actor_id, ae.subject_type, ae.subject_id,
+      select ae.event_id, ae.account_id, ae.company_id, ae.name, ae.schema_version, ae.occurred_at, ae.actor_type, ae.actor_id, ae.subject_type, ae.subject_id,
         case ae.name
           when 'company.created' then jsonb_strip_nulls(jsonb_build_object('creation_mode', ae.payload->'creation_mode'))
           when 'company.updated' then jsonb_strip_nulls(jsonb_build_object('changed_fields', ae.payload->'changed_fields'))

@@ -28,7 +28,7 @@ redacted payload), so a rebuild = re-running it over the audit company rows. No 
 | `event_id` (text PK) | = source audit `event_id` (idempotency + traceability + rebuildability) |
 | `account_id` / `company_id` (uuid, NOT NULL) | tenant stamps; **no FK** (a redacted trace survives deletion) |
 | `activity_type` | one of `company.created`/`.updated`/`.paused`/`.resumed` (CHECK) — **company events only** |
-| `occurred_at` (timestamptz) | copied from the authoritative audit `occurred_at` (millisecond-precise; the feed ordering field) |
+| `occurred_at` (timestamptz) | copied **bit-exactly** from the authoritative audit `occurred_at` (sub-millisecond microseconds included — no truncation; the feed ordering field) |
 | `actor_type` / `actor_id` | from the source audit row |
 | `subject_type` / `subject_id` | the company |
 | `payload` (jsonb) | **redacted** display fields only (`creation_mode`, `changed_fields`) — no correlation/causation/raw |
@@ -49,15 +49,16 @@ events are **executed** facts → `executionState = 'executed'` (ACT-003 marking
 ## Historical backfill + rebuild
 
 Migration 0009 **backfills** the projection from the existing durable audit history in the same migration that
-creates the table (before RLS is enabled, on the migration connection): exactly the four company events with
-`company_id IS NOT NULL`, `event_id` preserved as the projection identity, `occurred_at` on the projection's
-**millisecond grid** (`date_trunc('milliseconds', …)` — the runtime projector's JS-Date round-trip has the same
-effect, so live == backfill == rebuild and cursor timestamps compare exactly), actor/tenant columns copied as
-server evidence, and the payload REDACTED to the per-type allowlist (correlation/causation/idempotency ids are
-never copied; account events, Logger-only names, and unknown company events are excluded structurally). The
-backfill is **idempotent** (`ON CONFLICT (event_id) DO NOTHING`) and down/up reapply is deterministic. A future
-full rebuild = re-running the same mapping over the audit company rows (no product/runtime rebuild endpoint and
-no owner-connected worker exist — a rebuild is a migration-connection operation).
+creates the table (before RLS is enabled, on the migration connection — the migration asserts loudly that its
+role has BYPASSRLS/superuser): exactly the four company events with `company_id IS NOT NULL`, `event_id`
+preserved as the projection identity, `occurred_at` preserved **bit-exactly** (sub-millisecond microseconds
+included; NO truncation — identical to the runtime projector's SQL copy, so live == backfill == rebuild
+bit-identically), actor/tenant columns copied as server evidence, and the payload REDACTED to the per-type
+allowlist (correlation/causation/idempotency ids are never copied; account events, Logger-only names, and unknown
+company events are excluded structurally). The backfill is **idempotent** (`ON CONFLICT (event_id) DO NOTHING`)
+and down/up reapply is deterministic. A future full rebuild = re-running the same mapping over the audit company
+rows (no product/runtime rebuild endpoint and no owner-connected worker exist — a rebuild is a
+migration-connection operation).
 
 ## Read path — `GET /api/companies/{companyId}/activity` (API-only; no UI, no SSE)
 
@@ -69,8 +70,11 @@ DESC`; **default page 25, max 100**; forward only; no OFFSET (the query matches 
 
 **Cursor**: opaque **unpadded base64url** (pure-ECMAScript codec — URL-safe alphabet, no `+`/`/`/`=`) of a
 versioned ASCII JSON payload **bound to the account AND company**, carrying the exclusive keyset-after position
-**and the immutable traversal upper bound**. Decoding STRICTLY validates version, tenant binding, field shapes,
-ISO timestamps, and ULID event ids; any malformed/foreign token → `400 invalid_cursor` (never a fallback scan).
+**and the immutable traversal upper bound**. Position timestamps are the EXACT stored instants (canonical
+microsecond ISO, validated against a strict shape — Date.parse-permissive forms like `2026` are rejected) and
+bind into the keyset via `::timestamptz` casts, so sub-millisecond ordering round-trips with no skip/duplicate.
+Decoding STRICTLY validates version, tenant binding, field shapes, timestamps, and ULID event ids; any
+malformed/foreign token → `400 invalid_cursor` (never a fallback scan).
 No signing secret: a tampered-but-well-formed cursor can only move the traversal position INSIDE the
 already-authorized, RLS-confined company — it can never change scope or disclose another company.
 

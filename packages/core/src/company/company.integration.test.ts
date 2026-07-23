@@ -281,7 +281,14 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     const createdAudit = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.created').executeTakeFirstOrThrow();
     expect(created).toMatchObject({ event_id: createdAudit.event_id, account_id: accountId, company_id: id, activity_type: 'company.created', actor_id: ownerId, subject_id: id });
     expect(created.payload).toEqual({ creation_mode: 'own_idea' });
-    expect(new Date(created.occurred_at).getTime()).toBe(new Date(createdAudit.occurred_at).getTime()); // occurred_at == authoritative audit time
+    // EXACT temporal identity (asserted in SQL — a JS Date compare would hide sub-millisecond divergence):
+    // every projected row's occurred_at equals its authoritative audit row's occurred_at bit-for-bit.
+    const exact = await sql<{ n: number }>`
+      select count(*)::int as n
+      from activity_events act join audit_events au on au.event_id = act.event_id
+      where act.occurred_at is distinct from au.occurred_at
+    `.execute(seed.kysely);
+    expect(exact.rows[0]?.n).toBe(0);
     // rename → company.updated activity.
     await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'Feed Co 2' });
     expect((await seed.kysely.selectFrom('activity_events').selectAll().where('activity_type', '=', 'company.updated').where('company_id', '=', id).execute())).toHaveLength(1);

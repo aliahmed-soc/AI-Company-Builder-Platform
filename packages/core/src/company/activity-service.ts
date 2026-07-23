@@ -27,6 +27,7 @@ import {
   executionStateFor,
   activitySummaryFor,
   isActivityType,
+  microsecondEpochToIso,
   type ActivityEventDTO,
   type ActivityPage,
   type ActivityPosition,
@@ -53,14 +54,19 @@ export type GetActivityResult =
   | { readonly status: 'forbidden' }
   | { readonly status: 'invalid_cursor' };
 
-function toDTO(row: { event_id: string; activity_type: string; occurred_at: Date; actor_type: string; payload: Record<string, string | number | boolean> }): ActivityEventDTO | null {
+function toDTO(row: { event_id: string; activity_type: string; occurred_at_us: string; actor_type: string; payload: Record<string, string | number | boolean> }): ActivityEventDTO | null {
   // Fail SAFE on an out-of-taxonomy stored type (unreachable behind the DB CHECK): the row is dropped, never
   // emitted as a generic raw event.
   if (!isActivityType(row.activity_type)) return null;
+  // EXACT temporal identity: occurredAt is rebuilt from the microsecond epoch PostgreSQL computed with exact
+  // numeric math — the stored sub-millisecond timestamp round-trips into the DTO/cursor with no truncation and
+  // no JS Date/float in the path (a malformed epoch is an internal inconsistency → drop fail-safe).
+  const occurredAt = microsecondEpochToIso(row.occurred_at_us);
+  if (occurredAt === null) return null;
   return {
     id: row.event_id,
     type: row.activity_type,
-    occurredAt: new Date(row.occurred_at).toISOString(),
+    occurredAt,
     state: executionStateFor(row.activity_type),
     actorType: row.actor_type,
     // Allowlist re-applied at read time (defense in depth over the stored payload).
@@ -90,16 +96,18 @@ export async function getCompanyActivity(client: DatabaseClient, params: GetActi
       if (checkAuthorization(role, 'activity:read', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
         return { status: 'forbidden' };
       }
-      // Honest `asOf`: the DATABASE read timestamp of this transaction (never application wall-clock). A missing
-      // row is impossible for `select now()`; failing closed here (rather than a wall-clock fallback) keeps the
-      // "asOf is always PostgreSQL time" invariant unconditionally true (security review LOW-2).
-      const ts = await sql<{ ts: Date }>`select now() as ts`.execute(scope.db);
-      const tsRow = ts.rows[0];
-      if (tsRow === undefined) throw new Error('activity feed: database read timestamp unavailable');
-      const asOf = new Date(tsRow.ts).toISOString();
+      // Honest `asOf`: the DATABASE read timestamp of this transaction (never application wall-clock), delivered
+      // as an exact microsecond epoch and formatted with integer math. A missing row is impossible for this
+      // SELECT; failing closed (rather than a wall-clock fallback) keeps the "asOf is always PostgreSQL time"
+      // invariant unconditionally true (security review LOW-2).
+      const ts = await sql<{ us: string }>`select (extract(epoch from now()) * 1000000)::bigint::text as us`.execute(scope.db);
+      const asOf = microsecondEpochToIso(ts.rows[0]?.us);
+      if (asOf === null) throw new Error('activity feed: database read timestamp unavailable');
 
       const repo = new ActivityFeedRepository(scope.db);
-      const toKeyset = (p: ActivityPosition): ActivityKeyset => ({ occurredAt: new Date(p.occurredAt), eventId: p.eventId });
+      // The cursor's exact microsecond ISO strings bind straight into `::timestamptz` casts — PostgreSQL parses
+      // its own precision exactly, so the keyset never passes through a JS Date.
+      const toKeyset = (p: ActivityPosition): ActivityKeyset => ({ occurredAt: p.occurredAt, eventId: p.eventId });
       const rows = await repo.listByCompany(
         params.companyId,
         limit + 1,

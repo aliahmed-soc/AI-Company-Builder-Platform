@@ -9,10 +9,10 @@
 //
 // The canonical REBUILD mapping is the SQL in migration 0009's backfill (idempotent via ON CONFLICT DO NOTHING,
 // run on the migration connection). This live projector uses the IDENTICAL SQL derivation (a single
-// INSERT…SELECT from the authoritative audit row with date_trunc('milliseconds')), so a live-projected row and a
-// backfilled/rebuilt row are byte-identical — but the live path deliberately has NO conflict handling: no live
-// path ever replays an audit id (each attempt mints a fresh ULID), so a duplicate here is an internal bug and
-// must fail LOUDLY, rolling the whole operation back (reviews F2/L1).
+// INSERT…SELECT copying `ae.occurred_at` EXACTLY — sub-millisecond microseconds included, no truncation), so a
+// live-projected row and a backfilled/rebuilt row are bit-identical — but the live path deliberately has NO
+// conflict handling: no live path ever replays an audit id (each attempt mints a fresh ULID), so a duplicate
+// here is an internal bug and must fail LOUDLY, rolling the whole operation back (reviews F2/L1).
 import { isProjectableActivity, activitySummaryFor, validationError, type AuditEvent } from '@acbp/contracts';
 import { sql, type Kysely } from 'kysely';
 import type { TenantScope } from './tenant.js';
@@ -28,9 +28,9 @@ export type ActivityWriteFn = (scope: TenantScope, event: AuditEvent, auditEvent
  * (fail-closed — the activity row is written or the whole lifecycle op is undone).
  *
  * A single INSERT…SELECT derives the time/actor fields from the AUTHORITATIVE audit row entirely in SQL:
- * `occurred_at` is `date_trunc('milliseconds', …)` — the exact expression the 0009 backfill uses — so the
- * millisecond grid never passes through JavaScript float/date parsing (review L1: no 1-ms float-corner
- * divergence between live projection and backfill/rebuild is possible).
+ * `occurred_at` is copied EXACTLY (`ae.occurred_at`, sub-millisecond microseconds included — no truncation, no
+ * JavaScript float/date parsing anywhere in the time path), identical to the 0009 backfill, so live projection,
+ * backfill, and rebuild are bit-identical and the microsecond-precision cursor round-trips exactly.
  */
 export async function projectCompanyActivity(scope: TenantScope, event: AuditEvent, auditEventId: string): Promise<void> {
   if (!isProjectableActivity(event.name)) return; // only company.created/updated/paused/resumed project
@@ -46,7 +46,7 @@ export async function projectCompanyActivity(scope: TenantScope, event: AuditEve
       ${scope.tenant.companyId}::uuid,
       ${event.name},
       ${event.schemaVersion},
-      date_trunc('milliseconds', ae.occurred_at),
+      ae.occurred_at,
       ae.actor_type,
       ae.actor_id,
       ${event.subjectType},
@@ -65,11 +65,18 @@ export async function projectCompanyActivity(scope: TenantScope, event: AuditEve
 
 export type ActivityExecutor = Kysely<DatabaseSchema>;
 
-/** A traversal position tuple (event time + id tie-breaker). */
+/**
+ * A traversal position tuple: the EXACT stored event time as an ISO-8601 UTC string with up to MICROSECOND
+ * precision (bound into SQL via a `::timestamptz` cast — PostgreSQL parses its own microsecond precision
+ * exactly, so no JS Date/float ever touches the ordering key) + the id tie-breaker.
+ */
 export interface ActivityKeyset {
-  readonly occurredAt: Date;
+  readonly occurredAt: string;
   readonly eventId: string;
 }
+
+/** A feed row + the exact microsecond epoch of its occurred_at (int64 as text — no float, no JS Date loss). */
+export type ActivityFeedRow = ActivityEventRow & { readonly occurred_at_us: string };
 
 /**
  * Read-side of the activity feed (ACBP-P1-009). Company-scoped KEYSET pagination over `activity_events`, ordered
@@ -88,17 +95,23 @@ export class ActivityFeedRepository {
    *  - `upper` (INCLUSIVE traversal upper bound, captured on the first page): rows at-or-older than the tuple —
    *    events inserted after the traversal began are excluded from later pages of the same traversal;
    *  - `after` (EXCLUSIVE keyset position, the last item of the previous page): rows strictly older.
-   * The caller fetches `limit + 1` to detect a further page.
+   * The caller fetches `limit + 1` to detect a further page. Each row carries `occurred_at_us` — the exact
+   * microsecond epoch (`(extract(epoch from …) * 1000000)::bigint`, exact numeric math in PostgreSQL 14+) from
+   * which the service builds the exact ISO the DTO/cursor use.
    */
-  listByCompany(companyId: string, limit: number, opts: { upper?: ActivityKeyset; after?: ActivityKeyset } = {}): Promise<ActivityEventRow[]> {
-    let q = this.#db.selectFrom('activity_events').selectAll().where('company_id', '=', companyId);
+  listByCompany(companyId: string, limit: number, opts: { upper?: ActivityKeyset; after?: ActivityKeyset } = {}): Promise<ActivityFeedRow[]> {
+    let q = this.#db
+      .selectFrom('activity_events')
+      .selectAll()
+      .select(sql<string>`(extract(epoch from occurred_at) * 1000000)::bigint::text`.as('occurred_at_us'))
+      .where('company_id', '=', companyId);
     const upper = opts.upper;
     if (upper !== undefined) {
       // Inclusive upper bound: (occurred_at, event_id) <= (upper.occurredAt, upper.eventId).
       q = q.where((eb) =>
         eb.or([
-          eb('occurred_at', '<', upper.occurredAt),
-          eb.and([eb('occurred_at', '=', upper.occurredAt), eb('event_id', '<=', upper.eventId)]),
+          eb('occurred_at', '<', sql<Date>`${upper.occurredAt}::timestamptz`),
+          eb.and([eb('occurred_at', '=', sql<Date>`${upper.occurredAt}::timestamptz`), eb('event_id', '<=', upper.eventId)]),
         ]),
       );
     }
@@ -107,8 +120,8 @@ export class ActivityFeedRepository {
       // Exclusive DESC keyset: strictly OLDER than the previous page's last item.
       q = q.where((eb) =>
         eb.or([
-          eb('occurred_at', '<', after.occurredAt),
-          eb.and([eb('occurred_at', '=', after.occurredAt), eb('event_id', '<', after.eventId)]),
+          eb('occurred_at', '<', sql<Date>`${after.occurredAt}::timestamptz`),
+          eb.and([eb('occurred_at', '=', sql<Date>`${after.occurredAt}::timestamptz`), eb('event_id', '<', after.eventId)]),
         ]),
       );
     }

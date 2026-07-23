@@ -61,8 +61,9 @@ events, CompanyScope, no 4th SECURITY DEFINER).
 ### Historical backfill (owner-required; in migration 0009)
 - 0009 backfills the projection from existing `audit_events` in the table-creating migration (before RLS, on the
   migration connection): the four company events with `company_id IS NOT NULL` only; `event_id` preserved as the
-  projection identity; `occurred_at` on the **millisecond grid** (`date_trunc` — identical to the runtime
-  projector's JS-Date round-trip, so live == backfill == rebuild); tenant/actor columns copied as server evidence;
+  projection identity; `occurred_at` preserved **EXACTLY** (bit-identical copy, sub-millisecond microseconds
+  included — no truncation, identical to the runtime projector's SQL copy, so live == backfill == rebuild
+  bit-exactly); tenant/actor columns copied as server evidence;
   payload REDACTED to the per-type allowlist; account/Logger-only/unknown events excluded structurally; idempotent
   (`ON CONFLICT (event_id) DO NOTHING`); down/up reapply deterministic. Rebuild = the same mapping re-run over the
   audit rows via the migration connection (no product rebuild endpoint, no owner-connected worker).
@@ -110,11 +111,15 @@ task/tool events (only company "executed" events exist here); portfolio/account-
 Three independent reviews (security/tenant-isolation/privacy; projection-atomicity/idempotency/backfill; pagination/
 cursor/codec/plan/scope) ran over the full `main..HEAD` diff. **No CRITICAL/HIGH/MEDIUM finding.** All Low/coverage
 items fixed:
-- **Projector time path (L1/F2):** the live projector now derives the row in a single `INSERT…SELECT` from the
-  authoritative audit row with `date_trunc('milliseconds', …)` — the exact expression the 0009 backfill uses — so
-  live == backfill == rebuild byte-identically (no JS float/date parsing in the time path). The live path has NO
-  conflict handling by design (no live path replays an id; a duplicate is an internal bug and fails loudly); the
-  canonical idempotent rebuild mapping is the 0009 SQL (`ON CONFLICT DO NOTHING`).
+- **Projector time path (L1/F2, then owner-tightened to EXACT preservation):** the live projector derives the row
+  in a single `INSERT…SELECT` copying `ae.occurred_at` **bit-exactly** (sub-millisecond microseconds included; NO
+  `date_trunc`, no JS Date/float anywhere in the time path) — identical to the 0009 backfill SQL, so live ==
+  backfill == rebuild bit-identically. The reader serializes the exact time from a PostgreSQL-computed microsecond
+  epoch (`(extract(epoch …) * 1000000)::bigint`, exact numeric math) into a canonical microsecond ISO used by the
+  DTO, `sourceThrough`, and the cursor; keyset predicates bind that ISO via `::timestamptz` casts (PostgreSQL
+  parses its own precision exactly), so the cursor round-trips sub-millisecond ordering with no skip/duplicate.
+  The live path has NO conflict handling by design (no live path replays an id; a duplicate is an internal bug and
+  fails loudly); the canonical idempotent rebuild mapping is the 0009 SQL (`ON CONFLICT DO NOTHING`).
 - **Backfill precondition (F3):** migration 0009 asserts loudly that the migration role has BYPASSRLS/superuser
   (audit_events is under FORCE RLS) instead of silently backfilling zero rows.
 - **Coverage (F1 + tie-break):** added the rename projection-failure rollback proof (rename's projection call is a
