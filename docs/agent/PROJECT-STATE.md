@@ -3,8 +3,9 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-012** — Workspace provisioning (status: **Planned**; owner-gated to Done). Owner authorized
-  implementation 2026-07-23 with 25 explicit decisions → **CDR-018**.
+- Ticket: **ACBP-P1-012** — Workspace provisioning (status: **Done** — owner-authorized finalization 2026-07-23;
+  squash-merge of PR #14 in progress per the authorized sequence). Next ticket P1-013 NOT started (requires
+  separate owner authorization). Owner decisions (25) → **CDR-018**.
 - Branch: `p1-012-workspace-provisioning` (from `main` @ `e7f9a53`).
 - Base main: `e7f9a53f267fcf16395654a7789dbf1be56d5fbf` (P1-011 squash PR #13; exact-main CI 30006648643 green,
   84 files / 902 / 0-skip).
