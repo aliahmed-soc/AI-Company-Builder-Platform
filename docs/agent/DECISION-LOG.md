@@ -253,3 +253,11 @@ Append significant decisions. Format: decision — source — consequence.
 - Six audit-only registered events (provisioning.started/step_started/step_completed/step_failed/retry_requested/completed; bounded metadata allowlists; system actor for execution, user actor for retry_requested); P1-009 activity taxonomy UNCHANGED.
 - Migration 0010 additive: provisioning_steps (FORCE RLS dual-key; SELECT+INSERT+column-limited UPDATE) + company_workspace_areas (SELECT+INSERT only); backfill seeds pending checkpoints for existing draft/onboarding companies, executes nothing, transitions nothing. No 4th SECURITY DEFINER.
 - Authz provisioning:read (company owner|viewer) + provisioning:resume (company owner). API-only: GET /api/companies/[companyId]/provisioning + POST .../provisioning/resume (single resume route; no start/retry/acknowledge/cancel; no body/params; no UI/SSE).
+
+## ACBP-P1-013 administrative-access foundation (CDR-019) - owner-accepted 2026-07-23
+- Separate platform-operator authority: owner-managed platform_admins allowlist keyed to users.id; NO runtime create/update/revoke/enumerate/delete API; acbp_app = self-check SELECT only; fresh check every request; Clerk claims/account ownership/tenant membership never grant admin.
+- Mandatory bounded VERBATIM reason (>=1 non-ws char, <=512 code points, no NUL, no trim/normalize before storage) validated BEFORE any DB read.
+- Cross-tenant reads on restricted acbp_app via transaction-local target GUCs set ONLY after identity + reason + fresh-admin verification; accountId+companyId both selectors (relationship DB-verified); JIT = per-request/per-transaction only; primitive PRIVATE (no generic runAsTenant/cross-tenant export); no BYPASSRLS/owner-runtime/third-role/4th SECURITY DEFINER.
+- audit_events ARE the admin action records; register ONLY admin.tenant_read (target-tenant-scoped; actor_type admin with real actor_id; metadata {reason, scope='company_overview'}; audit failure blocks response); audit-only - activity taxonomy unchanged.
+- Exact API: POST /api/admin/accounts/[accountId]/companies/[companyId]/read, body {reason}, output {companyId,status,creationMode,createdAt}; one coarse 403 (no existence oracle); no admin list/search/mutation/impersonation/audit-export/UI/SSE.
+- Break-glass + full JIT approval workflow DOCUMENTED, not built.
