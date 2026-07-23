@@ -126,8 +126,11 @@ _Read this first on resume, then continue automatically to "Next executable acti
   ok→200 {items,nextCursor} / forbidden→403 / invalid_cursor→400 / invalid_limit→400. Wired `getCompanyPortfolio`
   through the ClerkIdentityRuntime composition + CompanyRuntime; `getPortfolioForRequest` request use case.
   Web unit tests (request + http mapping) green; local production `next build` green (route ƒ dynamic).
-- Slice 5 — A→B→A switch-sequence + concurrent context-isolation + pooled-GUC cleanup + adversarial tests.
-- Slice 6 — docs + PR body + independent reviews + final verification.
+- Slice 5 — **IN PROGRESS**. Real-PG switch-isolation test: A→B→A sequential re-entry (no name/status bleed);
+  same company yields DIFFERENT roles to different callers (role isolation via portfolio); concurrent entries +
+  concurrent portfolios never cross (pooled-connection GUC isolation); transaction-local GUCs clear after COMMIT
+  AND ROLLBACK; forged route companyId (non-member + cross-account) denies coarsely.
+- Slice 6 — docs + PR body + independent reviews + final verification (owner gate).
 
 ## Next executable action
 Commit the planning change (CDR-017 + agent records; NO production code), open the draft PR, then implement **Slice 1**
