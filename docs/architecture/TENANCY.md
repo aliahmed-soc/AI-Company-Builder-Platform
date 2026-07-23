@@ -130,6 +130,13 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
   Selection is URL-only and non-authoritative — nothing persisted (no column/cookie/Clerk/session/global state);
   switching = a fresh `runInCompanyScope`. No 4th SECURITY DEFINER, no RLS/persistence/index migration. See
   `docs/architecture/PORTFOLIO.md`.
+- **P1-012** — **implemented** (CDR-018): internal-Postgres-only **workspace provisioning**. Two new dual-keyed
+  FORCE-RLS company-detail tables (`provisioning_steps` with column-level UPDATE limited to outcome columns;
+  append-only `company_workspace_areas`). Request-driven SEQUENTIAL execution — every step a fresh
+  `runInCompanyScope` transaction on `acbp_app`; no worker/queue/lease/outbox/owner connection; durable statuses
+  pending|completed|failed only (no committed `running`); the system `draft→onboarding→active` transitions are
+  now reachable (creation bootstrap + all-six-completed activation gate). No 4th SECURITY DEFINER (allowlist
+  stays exactly three). See `docs/architecture/PROVISIONING.md`.
   `company_memberships` is a SEPARATE table (the account `memberships` foundation is untouched); a company
   membership requires an active account membership and account ownership never auto-grants company access.
   `companyId` on `TenantContext` remains required (not made optional).

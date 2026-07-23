@@ -5,7 +5,7 @@ import { AUDIT_EVENTS } from '@acbp/contracts';
 import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, factoryFor, producedEventNames, registeredEventNames } from './audit-operations.js';
 
 describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
-  test('the approved operation set is the membership + company lifecycle operations', () => {
+  test('the approved operation set is the membership + company lifecycle + provisioning operations', () => {
     expect([...AUDITED_OPERATION_IDS].sort()).toEqual([
       'company.create',
       'company.pause',
@@ -13,6 +13,13 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'company.update',
       'membership.invite',
       'membership.revoke',
+      // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
+      'provisioning.complete',
+      'provisioning.retry_request',
+      'provisioning.start',
+      'provisioning.step_complete',
+      'provisioning.step_fail',
+      'provisioning.step_start',
     ]);
     expect(AUDITED_OPERATIONS['membership.invite']).toBe('membership.invited');
     expect(AUDITED_OPERATIONS['membership.revoke']).toBe('membership.revoked');
@@ -20,6 +27,12 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['company.update']).toBe('company.updated');
     expect(AUDITED_OPERATIONS['company.pause']).toBe('company.paused');
     expect(AUDITED_OPERATIONS['company.resume']).toBe('company.resumed');
+    expect(AUDITED_OPERATIONS['provisioning.start']).toBe('provisioning.started');
+    expect(AUDITED_OPERATIONS['provisioning.step_start']).toBe('provisioning.step_started');
+    expect(AUDITED_OPERATIONS['provisioning.step_complete']).toBe('provisioning.step_completed');
+    expect(AUDITED_OPERATIONS['provisioning.step_fail']).toBe('provisioning.step_failed');
+    expect(AUDITED_OPERATIONS['provisioning.retry_request']).toBe('provisioning.retry_requested');
+    expect(AUDITED_OPERATIONS['provisioning.complete']).toBe('provisioning.completed');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
@@ -40,7 +53,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       const event = factoryFor(op)('subject_1');
       expect(event.name).toBe(AUDITED_OPERATIONS[op]);
       expect(event.subjectId).toBe('subject_1');
-      expect(event.outcome).toBe('success');
+      // A recorded STEP FAILURE is honestly not a success — its outcome is 'blocked' (CDR-018 §8);
+      // every other approved operation records a success.
+      expect(event.outcome).toBe(op === 'provisioning.step_fail' ? 'blocked' : 'success');
     }
   });
 });

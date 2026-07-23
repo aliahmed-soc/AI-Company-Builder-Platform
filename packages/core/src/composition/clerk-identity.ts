@@ -47,6 +47,7 @@ import {
 } from '../company/company-lifecycle.js';
 import { getCompanyActivity, type GetActivityParams, type GetActivityResult, type GetActivityOptions } from '../company/activity-service.js';
 import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, type GetPortfolioOptions } from '../company/portfolio-service.js';
+import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, type GetProvisioningResult, type ResumeProvisioningResult, type ProvisioningOpOptions } from '../company/provisioning-service.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -128,6 +129,13 @@ export interface ClerkIdentityRuntime {
    * the cursor is bound to the account+actor. `accountId` is the caller's own account (server-resolved).
    */
   getCompanyPortfolio(params: GetPortfolioParams, options?: GetPortfolioOptions): Promise<GetPortfolioResult>;
+  /**
+   * Workspace provisioning (ACBP-P1-012; CDR-018). Status read = any active company member (owner|viewer);
+   * resume = company owner only. Request-driven sequential execution; no worker/queue exists. companyId is a
+   * membership-validated selector.
+   */
+  getProvisioningStatus(params: ProvisioningParams, options?: ProvisioningOpOptions): Promise<GetProvisioningResult>;
+  resumeProvisioning(params: ProvisioningParams, options?: ProvisioningOpOptions): Promise<ResumeProvisioningResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -192,6 +200,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getCompanyPortfolio(params, options) {
       return getCompanyPortfolio(client, params, options ?? {});
+    },
+    getProvisioningStatus(params, options) {
+      return getProvisioningStatus(client, params, options ?? {});
+    },
+    resumeProvisioning(params, options) {
+      return resumeProvisioning(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

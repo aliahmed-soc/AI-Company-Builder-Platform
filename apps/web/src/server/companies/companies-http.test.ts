@@ -39,6 +39,7 @@ describe('toCompaniesResponse', () => {
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],
     [{ status: 'activity', page: { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } }, 200],
     [{ status: 'portfolio', page: { items: [], nextCursor: null } }, 200],
+    [{ status: 'provisioning', provisioning: { companyId: 'co', companyStatus: 'onboarding', steps: [], nextIncompleteStep: null, resumable: false, exhausted: false, completed: false } }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],
@@ -76,5 +77,14 @@ describe('toCompaniesResponse', () => {
     const res = toCompaniesResponse({ status: 'invalid_limit' });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid_limit' });
+  });
+
+  test('provisioning returns only the approved redacted fields (no accountId/actor/free-text failure)', async () => {
+    const step = { step: 'research', order: 3, status: 'failed', attempt: 2, requestedAt: '2026-01-01T00:00:00.000Z', startedAt: '2026-01-01T00:00:01.000Z', completedAt: null, failedAt: '2026-01-01T00:00:02.000Z', failureCode: 'internal_error' } as const;
+    const res = toCompaniesResponse({ status: 'provisioning', provisioning: { companyId: 'co_1', companyStatus: 'onboarding', steps: [step], nextIncompleteStep: 'research', resumable: true, exhausted: false, completed: false } });
+    expect(res.status).toBe(200);
+    const body: unknown = await res.json();
+    expect(body).toEqual({ companyId: 'co_1', companyStatus: 'onboarding', steps: [step], nextIncompleteStep: 'research', resumable: true, exhausted: false, completed: false });
+    expect(JSON.stringify(body)).not.toContain('accountId');
   });
 });

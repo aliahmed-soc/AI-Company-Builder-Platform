@@ -5,10 +5,10 @@
 // restricted `acbp_app` role under FORCE RLS. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
-import { closeDatabase, migrateToLatest, CompanyProfileRepository, type DatabaseClient, type NewUser } from '@acbp/database';
-import { canPickUpAutonomousWork } from '@acbp/contracts';
+import { closeDatabase, migrateToLatest, writeAuditEvent, CompanyProfileRepository, type DatabaseClient, type NewUser } from '@acbp/database';
+import { canPickUpAutonomousWork, isAuditEventName } from '@acbp/contracts';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
-import { createCompany } from './company-service.js';
+import { createCompany, type AuditWriteFn } from './company-service.js';
 import { getCompany, renameCompany, pauseCompany, resumeCompany } from './company-lifecycle.js';
 import { runInCompanyScope } from './company-context-resolver.js';
 import { AUDITED_OPERATIONS, COMPANY_AUDITED_OPERATION_IDS, type CompanyAuditedOperation } from '../audit/audit-operations.js';
@@ -31,7 +31,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   let outsiderId: string;
   let accountId: string;
 
-  const ALL = ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   beforeAll(async () => {
     seed = createSeedClient();
@@ -52,7 +52,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     }
   });
   beforeEach(async () => {
-    for (const t of ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
+    for (const t of ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
       await seed.kysely.deleteFrom(t).execute();
     }
     ownerId = await seedUser(seed, 'owner@example.com');
@@ -67,22 +67,22 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
       .execute();
   });
 
-  async function count(table: 'companies' | 'company_profiles' | 'company_memberships' | 'audit_events' | 'activity_events'): Promise<number> {
+  async function count(table: 'companies' | 'company_profiles' | 'company_memberships' | 'audit_events' | 'activity_events' | 'provisioning_steps' | 'company_workspace_areas'): Promise<number> {
     const r = await sql<{ n: number }>`select count(*)::int as n from ${sql.ref(table)}`.execute(seed.kysely);
     return r.rows[0]?.n ?? 0;
   }
 
   test('an account owner creates a company: company + profile v1 + owner membership + company.created audit (atomic)', async () => {
-    const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Acme Co' });
+    const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Acme Co' }, { provisioningRunner: null }); // seam: observe the committed BOOTSTRAP state (the default auto-run is proven in provisioning.integration.test.ts)
     expect(res.status).toBe('ok');
     if (res.status !== 'ok') return;
-    expect(res.companyStatus).toBe('draft');
+    expect(res.companyStatus).toBe('onboarding'); // creation now ends in onboarding (P1-012 bootstrap)
     expect(res.creationMode).toBe('own_idea');
 
     // Company row (superuser read).
     const co = await seed.kysely.selectFrom('companies').selectAll().where('id', '=', res.companyId).executeTakeFirstOrThrow();
     expect(co.account_id).toBe(accountId);
-    expect(co.status).toBe('draft');
+    expect(co.status).toBe('onboarding'); // draft->onboarding happened atomically in the bootstrap (P1-012)
     expect(co.creation_mode).toBe('own_idea');
     // Profile v1.
     const prof = await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', res.companyId).executeTakeFirstOrThrow();
@@ -99,11 +99,27 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     expect(audit.subject_id).toBe(res.companyId);
     expect(audit.actor_id).toBe(ownerId);
     expect(audit.payload).toEqual({ creation_mode: 'own_idea' });
+    // P1-012 bootstrap additions (same transaction): six PENDING checkpoints in canonical order + the
+    // provisioning.started audit. NO step executed (no area rows), NO provisioning activity projection.
+    const steps = await seed.kysely.selectFrom('provisioning_steps').selectAll().where('company_id', '=', res.companyId).orderBy('step_order', 'asc').execute();
+    expect(steps.map((s) => s.step)).toEqual(['profile', 'mission_draft', 'research', 'roadmap', 'documents', 'activity']);
+    for (const s of steps) {
+      expect(s.status).toBe('pending');
+      expect(s.attempt).toBe(0);
+      expect(s.account_id).toBe(accountId);
+    }
+    const started = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'provisioning.started').executeTakeFirstOrThrow();
+    expect(started.company_id).toBe(res.companyId);
+    expect(started.payload).toEqual({ step_count: 6 });
+    expect(await count('company_workspace_areas')).toBe(0);
+    // Provisioning events are AUDIT-ONLY — the activity feed still carries exactly the company.created row.
+    const act = await seed.kysely.selectFrom('activity_events').select('activity_type').where('company_id', '=', res.companyId).execute();
+    expect(act.map((a) => a.activity_type)).toEqual(['company.created']);
   });
 
   test('each of the three creation modes creates a company', async () => {
     for (const mode of ['own_idea', 'platform_suggested', 'existing_business'] as const) {
-      const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: mode, name: `Co ${mode}` });
+      const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: mode, name: `Co ${mode}`, }, { provisioningRunner: null });
       expect(res.status).toBe('ok');
       if (res.status === 'ok') expect(res.creationMode).toBe(mode);
     }
@@ -136,10 +152,25 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     expect(await count('company_profiles')).toBe(0);
     expect(await count('company_memberships')).toBe(0);
     expect(await count('audit_events')).toBe(0);
+    expect(await count('provisioning_steps')).toBe(0); // checkpoint seeding shares the same transaction (P1-012)
+  });
+
+  test('atomicity (P1-012): a provisioning.started audit failure rolls back the ENTIRE creation — company, checkpoints, onboarding transition, everything', async () => {
+    // Succeed for company.created, fail ONLY the provisioning.started write (the last bootstrap step).
+    const selectiveWriter: AuditWriteFn = (scope, event, ctx) =>
+      event.name === 'provisioning.started' ? Promise.reject(new Error('provisioning audit boom')) : writeAuditEvent(scope, event, ctx);
+    await expect(createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'PB Start' }, { auditWriter: selectiveWriter })).rejects.toBeDefined();
+    // NOTHING survives — not the company (so no draft/onboarding state exists), not the checkpoints, not the
+    // earlier company.created audit or its activity projection (one transaction, all-or-nothing).
+    expect(await count('companies')).toBe(0);
+    expect(await count('provisioning_steps')).toBe(0);
+    expect(await count('company_workspace_areas')).toBe(0);
+    expect(await count('audit_events')).toBe(0);
+    expect(await count('activity_events')).toBe(0);
   });
 
   test('resolver: the creator resolves into the company and reads its current profile (role owner)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Resolvable' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Resolvable' }, { provisioningRunner: null });
     expect(created.status).toBe('ok');
     if (created.status !== 'ok') return;
 
@@ -156,7 +187,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   });
 
   test('resolver deny: an account member WITHOUT a company membership is denied (no company access)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Private' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Private' }, { provisioningRunner: null });
     if (created.status !== 'ok') throw new Error('setup failed');
     // viewer is an active ACCOUNT member but has NO company membership → denied.
     const run = await runInCompanyScope(app, { userId: viewerId, requestedAccountId: accountId, requestedCompanyId: created.companyId }, () => Promise.resolve('should-not-run'));
@@ -171,7 +202,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   });
 
   test('resolver deny: a non-account-member is denied (cannot even obtain the account scope)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Locked' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Locked' }, { provisioningRunner: null });
     if (created.status !== 'ok') throw new Error('setup failed');
     const run = await runInCompanyScope(app, { userId: outsiderId, requestedAccountId: accountId, requestedCompanyId: created.companyId }, () => Promise.resolve('x'));
     expect(run.kind).toBe('denied');
@@ -179,7 +210,9 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
 
   // ── Slice 4: lifecycle (read, rename, pause/resume) + pause-pickup rig ────────────────────────────────
   async function createCompanyFor(name: string): Promise<string> {
-    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
+    // provisioningRunner: null — these lifecycle tests exercise the P1-010 semantics on a NOT-yet-provisioned
+    // company; the default post-create auto-run is proven in provisioning.integration.test.ts.
+    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name }, { provisioningRunner: null });
     if (r.status !== 'ok') throw new Error('create failed');
     return r.companyId;
   }
@@ -199,7 +232,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     const id = await createCompanyFor('Readable');
     await addCompanyViewer(id);
     const asOwner = await getCompany(app, { userId: ownerId, accountId, companyId: id });
-    expect(asOwner).toMatchObject({ status: 'ok', company: { status: 'draft', displayStatus: 'provisioning', name: 'Readable', profileVersion: 1 } });
+    expect(asOwner).toMatchObject({ status: 'ok', company: { status: 'onboarding', displayStatus: 'provisioning', name: 'Readable', profileVersion: 1 } });
     // A company viewer may read.
     const asViewer = await getCompany(app, { userId: viewerId, accountId, companyId: id });
     expect(asViewer.status).toBe('ok');
@@ -331,6 +364,9 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
 
   test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {
     const draft = await createCompanyFor('Draft Co');
+    expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'onboarding' }); // post-P1-012 a fresh company is onboarding
+    // A genuinely DRAFT company (the backfilled pre-P1-012 shape) still cannot be paused either.
+    await seed.kysely.updateTable('companies').set({ status: 'draft' }).where('id', '=', draft).execute();
     expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'draft' });
     const active = await createActiveCompany('Active Co');
     expect(await resumeCompany(app, { userId: ownerId, accountId, companyId: active })).toMatchObject({ status: 'invalid_transition', from: 'active' });
@@ -398,7 +434,12 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     await seed.kysely.deleteFrom('audit_events').execute();
     await CO_DRIVERS[op]();
     const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();
-    expect(all).toHaveLength(1);
-    expect(all[0]?.name).toBe(AUDITED_OPERATIONS[op]);
+    // Exactly ONE event of the operation's MAPPED name. The create bootstrap additionally writes its
+    // co-registered provisioning.started event (P1-012) — every co-written name must itself be a REGISTERED
+    // event (never an unregistered/free-form write).
+    expect(all.filter((e) => e.name === AUDITED_OPERATIONS[op])).toHaveLength(1);
+    for (const e of all) expect(isAuditEventName(e.name)).toBe(true);
+    const expected = op === 'company.create' ? ['company.created', 'provisioning.started'] : [AUDITED_OPERATIONS[op]];
+    expect(all.map((e) => e.name).sort()).toEqual(expected.sort());
   });
 });

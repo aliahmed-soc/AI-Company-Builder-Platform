@@ -12,6 +12,7 @@ import {
   CompanyProfileRepository,
   CompanyMembershipRepository,
   MembershipRepository,
+  ProvisioningRepository,
   elevateToCompanyScope,
   writeAuditEvent,
   projectCompanyActivity,
@@ -25,15 +26,20 @@ import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import {
   companyCreated,
+  provisioningStarted,
   isCompanyCreationMode,
   INITIAL_COMPANY_STATUS,
+  PROVISIONING_STEPS,
   validationError,
+  platformError,
+  ErrorCodes,
   type AuditEvent,
   type CompanyCreationMode,
   type CompanyStatus,
   type PublicErrorEnvelope,
 } from '@acbp/contracts';
 import { isMemberRole } from '../members/roles.js';
+import { resumeProvisioning, type ProvisioningRunnerFn } from './provisioning-service.js';
 import type { Logger } from '@acbp/observability';
 
 /** TEST SEAM ONLY (mirrors membership-service): override the in-tx audit writer to force a failure. */
@@ -54,6 +60,9 @@ export interface CompanyOpOptions {
   readonly auditWriter?: AuditWriteFn;
   /** TEST SEAM ONLY (ACBP-P1-009): override the in-tx activity projector to force a failure. Never set in production. */
   readonly activityWriter?: ActivityWriteFn;
+  /** TEST SEAM ONLY (ACBP-P1-012): override (or with `null` suppress) the post-commit inline provisioning run,
+   *  so tests can observe the committed bootstrap state. Production always uses the real resume service. */
+  readonly provisioningRunner?: ProvisioningRunnerFn | null;
 }
 
 export type CreateCompanyResult =
@@ -155,13 +164,49 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
       const createdEvent = companyCreated({ companyId: company.id, creationMode: input.creationMode });
       const auditEventId = await audit(companyScope, createdEvent, auditContext(options));
       await project(companyScope, createdEvent, auditEventId);
+      // 6) Workspace provisioning bootstrap (ACBP-P1-012; CDR-018 §10) — STILL the same transaction:
+      //    six PENDING checkpoints, the system-driven draft→onboarding transition, and the provisioning.started
+      //    audit. Any of these failing rolls the WHOLE creation back (no partial company, no orphan checkpoints).
+      //    NO step executes here — execution is request-driven and begins only after this transaction commits.
+      await new ProvisioningRepository(companyScope.db).seedCheckpoints(params.accountId, company.id);
+      const transitioned = await new CompanyRepository(companyScope.db).updateStatus(company.id, 'onboarding');
+      if (transitioned === undefined) {
+        // The just-inserted company must be visible/mutable under its own scope — anything else is an internal
+        // inconsistency; throw so the whole bootstrap rolls back (fail-closed).
+        throw platformError('internal', { code: ErrorCodes.INTERNAL_ERROR, internalMessage: 'Company bootstrap could not transition draft→onboarding.' });
+      }
+      // SYSTEM actor (CDR-018 §8: automatic provisioning is a system action; consistent with the backfilled-
+      // draft bring-up path) — the scope-bound actor_id still records whose create request drove it.
+      await audit(companyScope, provisioningStarted({ companyId: company.id, stepCount: PROVISIONING_STEPS.length }), { actorType: 'system', ...auditContext(options) });
       options.logger?.info('company.created', { metadata: { accountId: params.accountId, companyId: company.id, creationMode: input.creationMode } });
 
-      const status: CompanyStatus = INITIAL_COMPANY_STATUS;
+      const status: CompanyStatus = 'onboarding';
       return { status: 'ok', companyId: company.id, companyStatus: status, creationMode: input.creationMode };
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
 
-  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+  const created = run.kind === 'ran' ? run.value : ({ status: 'forbidden' } as const);
+  if (created.status !== 'ok') return created;
+
+  // AUTOMATIC POST-COMMIT PROVISIONING (CDR-018 §3/§10): the creation transaction has COMMITTED; now run the
+  // request-driven resume service INLINE (awaited — never a detached promise/timer). The creator is the
+  // company owner (the bootstrap just made them one), so provisioning:resume authorizes. A step failure — or
+  // any unexpected error here — NEVER rolls back or fails the already-created company: it stays `onboarding`
+  // with truthful checkpoints, and a later explicit owner resume continues from the first incomplete step.
+  if (options.provisioningRunner !== null) {
+    const runner = options.provisioningRunner ?? resumeProvisioning;
+    try {
+      const provisioned = await runner(client, { userId: params.actingUserId, accountId: params.accountId, companyId: created.companyId }, options);
+      // Truthfulness: report `active` only when the transactionally-read company status says so (the steps-only
+      // `completed` flag could momentarily lead the not-yet-committed activation of a concurrent run).
+      if (provisioned.status === 'ok' && provisioned.provisioning.companyStatus === 'active') {
+        return { ...created, companyStatus: 'active' };
+      }
+    } catch {
+      // Logged coarsely; the company itself was created successfully and remains resumable.
+      options.logger?.warn('provisioning.post_create_run_failed', { metadata: { companyId: created.companyId } });
+    }
+  }
+  return created;
 }

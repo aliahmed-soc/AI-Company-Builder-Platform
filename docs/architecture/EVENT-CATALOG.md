@@ -2,11 +2,14 @@
 
 Status: Proposed. **These are proposed contracts for this product — not observed Polsia internals** (no event system was ever visible in the reference product; PRD §10).
 
-**Implementation status (ACBP-P1-008; CDR-014 Option A):** the durable append-only audit store exists for the
-account-scoped first cut. Two events are persisted in-transaction today — `membership.invited` and
-`membership.revoked` (registered in `@acbp/contracts` `audit/`; written by `writeAuditEvent`). All other events
-in this catalog remain **proposed / interim structured logs only** and are NOT durable yet (see
-`docs/architecture/AUDIT.md` for the implemented model, the deferred list, and the logging-vs-audit distinction).
+**Implementation status (ACBP-P1-008/010/012; CDR-014/015/018):** the durable append-only audit store exists.
+Persisted in-transaction today: `membership.invited`, `membership.revoked` (P1-008); `company.created`,
+`company.updated`, `company.paused`, `company.resumed` (P1-010; the four are also activity-projected — P1-009);
+and the six AUDIT-ONLY workspace-provisioning events (P1-012; CDR-018 §8) — `provisioning.started`,
+`provisioning.step_started`, `provisioning.step_completed`, `provisioning.step_failed`,
+`provisioning.retry_requested`, `provisioning.completed` — which are NEVER activity-projected (the P1-009
+four-event feed taxonomy is closed). All other events in this catalog remain **proposed / interim structured
+logs only** and are NOT durable yet (see `docs/architecture/AUDIT.md`).
 
 ## Common envelope (all events)
 
@@ -34,6 +37,10 @@ Retention default: activity-projected events with company data; audit-relevant e
 | company.updated | Account&Company | activity | changed_fields (names only) | audited | with company |
 | company.paused / company.resumed | Account&Company | Workflow coord. (halt/resume pickup, invariant 16), activity | reason?, held_work_count (resume) | audited | with company |
 | company.deactivated | Account&Company | Workflow coord., export | — | audited | permanent record |
+| provisioning.started | Account&Company (P1-012) | audit only — never activity | step_count | audited (company-scoped) | with company |
+| provisioning.step_started / step_completed / step_failed | Account&Company (P1-012) | audit only — never activity | step, attempt (+ result_code / failure_code — closed sets) | audited; step_failed outcome=blocked; system actor | with company |
+| provisioning.retry_requested | Account&Company (P1-012) | audit only — never activity | step, next_attempt | audited; USER actor; causation for the retry run | with company |
+| provisioning.completed | Account&Company (P1-012) | audit only — never activity | step_count | audited atomically with onboarding→active | with company |
 | interview.started | Discovery | activity | session_id | audited | with session |
 | interview.question_answered | Discovery | Understanding (incremental), memory | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |

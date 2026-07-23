@@ -17,6 +17,12 @@ import {
   companyUpdated,
   companyPaused,
   companyResumed,
+  provisioningStarted,
+  provisioningStepStarted,
+  provisioningStepCompleted,
+  provisioningStepFailed,
+  provisioningRetryRequested,
+  provisioningCompleted,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -29,21 +35,30 @@ export const AUDITED_OPERATIONS = {
   'company.update': 'company.updated',
   'company.pause': 'company.paused',
   'company.resume': 'company.resumed',
+  // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — the six audit-only provisioning transitions.
+  'provisioning.start': 'provisioning.started',
+  'provisioning.step_start': 'provisioning.step_started',
+  'provisioning.step_complete': 'provisioning.step_completed',
+  'provisioning.step_fail': 'provisioning.step_failed',
+  'provisioning.retry_request': 'provisioning.retry_requested',
+  'provisioning.complete': 'provisioning.completed',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
 export const AUDITED_OPERATION_IDS = Object.keys(AUDITED_OPERATIONS) as readonly AuditedOperation[];
 
-// Domain partition (ACBP-P1-010): each domain's producer test owns an exhaustive driver over its own subset.
+// Domain partition (ACBP-P1-010/P1-012): each domain's producer test owns an exhaustive driver over its own subset.
 export type MembershipAuditedOperation = 'membership.invite' | 'membership.revoke';
 export type CompanyAuditedOperation = 'company.create' | 'company.update' | 'company.pause' | 'company.resume';
+export type ProvisioningAuditedOperation = 'provisioning.start' | 'provisioning.step_start' | 'provisioning.step_complete' | 'provisioning.step_fail' | 'provisioning.retry_request' | 'provisioning.complete';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
+export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionCoversAll = [MembershipAuditedOperation | CompanyAuditedOperation] extends [AuditedOperation]
-  ? [AuditedOperation] extends [MembershipAuditedOperation | CompanyAuditedOperation]
+type PartitionCoversAll = [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation] extends [AuditedOperation]
+  ? [AuditedOperation] extends [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation]
     ? true
     : never
   : never;
@@ -78,6 +93,18 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => companyPaused({ companyId: subjectId });
     case 'company.resume':
       return (subjectId) => companyResumed({ companyId: subjectId });
+    case 'provisioning.start':
+      return (subjectId) => provisioningStarted({ companyId: subjectId, stepCount: 6 });
+    case 'provisioning.step_start':
+      return (subjectId) => provisioningStepStarted({ companyId: subjectId, step: 'profile', attempt: 1 });
+    case 'provisioning.step_complete':
+      return (subjectId) => provisioningStepCompleted({ companyId: subjectId, step: 'profile', attempt: 1, resultCode: 'profile_verified' });
+    case 'provisioning.step_fail':
+      return (subjectId) => provisioningStepFailed({ companyId: subjectId, step: 'profile', attempt: 1, failureCode: 'profile_missing' });
+    case 'provisioning.retry_request':
+      return (subjectId) => provisioningRetryRequested({ companyId: subjectId, step: 'profile', nextAttempt: 2 });
+    case 'provisioning.complete':
+      return (subjectId) => provisioningCompleted({ companyId: subjectId, stepCount: 6 });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

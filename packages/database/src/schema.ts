@@ -260,6 +260,52 @@ export interface ActivityEventsTable {
   projected_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Workspace provisioning checkpoint (ACBP-P1-012; CDR-018). ONE MUTABLE current-state row per (company, step)
+ * for the six canonical steps. Durable statuses pending | completed | failed ONLY (`running` is never committed);
+ * attempts bounded to 3 total; transition history lives in `audit_events` (same-transaction), not here. Identity
+ * columns are immutable to `acbp_app` via COLUMN-LEVEL update grants (only the outcome columns are updatable).
+ * Dual-keyed FORCE RLS (`app.current_account` + `app.current_company`); no DELETE/TRUNCATE grant.
+ */
+export interface ProvisioningStepsTable {
+  /** Owning account (FK accounts.id, cascade). Immutable. */
+  account_id: ColumnType<string, string, never>;
+  /** Owning company (FK companies.id, cascade). Part of the composite PK. Immutable. */
+  company_id: ColumnType<string, string, never>;
+  /** One of the six canonical steps. Part of the composite PK. Immutable. */
+  step: ColumnType<string, string, never>;
+  /** The canonical 1-based execution order (CHECK-pinned to the step name). Immutable. */
+  step_order: ColumnType<number, number, never>;
+  /** 'pending' | 'completed' | 'failed'. Default 'pending'. */
+  status: ColumnType<string, string | undefined, string>;
+  /** Total committed attempts (0 while pending; 1..3 after outcomes). */
+  attempt: ColumnType<number, number | undefined, number>;
+  /** When the checkpoint was seeded (creation bootstrap or backfill). Immutable. */
+  requested_at: ColumnType<Date, Date | string | undefined, never>;
+  started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  completed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  failed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** Closed bounded failure code ('profile_missing' | 'activity_projection_missing' | 'internal_error') or null. */
+  failure_code: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/**
+ * Minimal workspace-area registry (ACBP-P1-012; CDR-018 §6). APPEND-ONLY: one row per (company, area) for the
+ * four creating steps (mission_draft, research, roadmap, documents). INSERT + SELECT only for `acbp_app`;
+ * dual-keyed FORCE RLS. profile/activity provision no area (verification steps).
+ */
+export interface CompanyWorkspaceAreasTable {
+  /** Owning account (FK accounts.id, cascade). */
+  account_id: ColumnType<string, string, never>;
+  /** Owning company (FK companies.id, cascade). Part of the composite PK. */
+  company_id: ColumnType<string, string, never>;
+  /** 'mission_draft' | 'research' | 'roadmap' | 'documents'. Part of the composite PK. */
+  area: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -271,6 +317,8 @@ export interface DatabaseSchema {
   company_profiles: CompanyProfilesTable;
   company_memberships: CompanyMembershipsTable;
   activity_events: ActivityEventsTable;
+  provisioning_steps: ProvisioningStepsTable;
+  company_workspace_areas: CompanyWorkspaceAreasTable;
 }
 
 // Repository-facing row shapes.
@@ -299,3 +347,8 @@ export type CompanyMembershipRow = Selectable<CompanyMembershipsTable>;
 export type NewCompanyMembership = Insertable<CompanyMembershipsTable>;
 export type ActivityEventRow = Selectable<ActivityEventsTable>;
 export type NewActivityEvent = Insertable<ActivityEventsTable>;
+export type ProvisioningStepRow = Selectable<ProvisioningStepsTable>;
+export type NewProvisioningStep = Insertable<ProvisioningStepsTable>;
+export type ProvisioningStepUpdate = Updateable<ProvisioningStepsTable>;
+export type CompanyWorkspaceAreaRow = Selectable<CompanyWorkspaceAreasTable>;
+export type NewCompanyWorkspaceArea = Insertable<CompanyWorkspaceAreasTable>;

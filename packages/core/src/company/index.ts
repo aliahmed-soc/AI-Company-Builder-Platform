@@ -4,3 +4,4 @@ export * from './company-service.js';
 export * from './company-lifecycle.js';
 export * from './activity-service.js';
 export * from './portfolio-service.js';
+export * from './provisioning-service.js';

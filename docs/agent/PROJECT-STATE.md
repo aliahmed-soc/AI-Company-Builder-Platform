@@ -3,27 +3,26 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-011** — Company switching and portfolio (status: **Done** — owner-authorized finalization
-  2026-07-23; squash-merge of PR #13 in progress per the authorized sequence). Next ticket P1-012 NOT started
-  (requires separate owner authorization).
-- Branch: `p1-011-company-switching-portfolio` (from `main` @ `e99b0b3`).
-- Base main: `e99b0b396474d7316c25ba05a31382808d8c991c` (P1-009 squash PR #12; exact-main CI 29971233314 green,
-  852/0-skip).
+- Ticket: **ACBP-P1-012** — Workspace provisioning (status: **Done** — owner-authorized finalization 2026-07-23;
+  squash-merge of PR #14 in progress per the authorized sequence). Next ticket P1-013 NOT started (requires
+  separate owner authorization). Owner decisions (25) → **CDR-018**.
+- Branch: `p1-012-workspace-provisioning` (from `main` @ `e7f9a53`).
+- Base main: `e7f9a53f267fcf16395654a7789dbf1be56d5fbf` (P1-011 squash PR #13; exact-main CI 30006648643 green,
+  84 files / 902 / 0-skip).
 - PR: draft (opened at planning), base `main`.
-- **STATUS: all 6 slices implemented; hosted CI green (897/0-skip on `6ce59b2`; plan-evidence run `30004638933`
-  green on `650c424`); THREE independent reviews (security/tenant-isolation + scope/correctness + targeted
-  follow-up) — ZERO unresolved findings.** R1/R2: no Critical/High/Medium on product code; R3: 2 Medium + 4 Low
-  confined to the evidence suite itself, ALL fixed (mirror deleted — plan suite now EXPLAINs the exact production
-  `buildListQuery`; bitmap-tolerant join assertion; DESC-precise sort assertions; verbatim revoked-selection test)
-  or dispositioned. Real-PG EXPLAIN evidence recorded (membership-index-driven natural plan; NO index migration;
-  see `docs/implementation/P1-011-PORTFOLIO-QUERY-PLAN.md`); 23-area review coverage matrix + findings register in
-  `docs/implementation/P1-011-REVIEW-COVERAGE.md`. AT THE OWNER GATE. Do NOT self-authorize: backlog→Done, PR
-  ready, merge, branch delete, begin P1-012.
-- **Review outcome (2026-07-23):** security review upheld all 8 CDR-017 invariants; scope review confirmed keyset
-  correctness, stale-drop cursor integrity, spec compliance, boundaries. 3 Low/informational notes, all resolved
-  as no-change: L1 float-in-epoch is exact on PG14+ (numeric extract; proven P1-009 pattern); L2 combined
-  drop+hasMore path is correct-by-construction (nextCursor derives from enumeration, independent of enrichment
-  drops) + proven in two halves; L3 param-before-auth 400-vs-401 matches the existing activity route (consistency).
+- **P1-012 design (CDR-018, owner-accepted 2026-07-23):** internal-Postgres-only workspace provisioning; six
+  canonical ordered steps (profile, mission_draft, research, roadmap, documents, activity); auto-start after the
+  creation tx COMMITS; request-driven SEQUENTIAL execution, fresh CompanyScope tx per step; NO worker/queue/
+  detached-task/polling/lease/daemon/outbox/owner-connection; durable statuses pending|completed|failed (NO
+  committed running); max 3 total attempts/step (exhausted → safe conflict); one MUTABLE row per (company, step)
+  in `provisioning_steps` + `company_workspace_areas` registry (mission_draft/research/roadmap/documents INSERTs;
+  profile + activity are VERIFICATION steps — no duplicates, no synthetic events); activation = all six completed
+  (failed-acknowledged DEFERRED); six audit-only registered events (started/step_started/step_completed/
+  step_failed/retry_requested/completed; system actor for execution, user actor for retry_requested); P1-009
+  activity taxonomy UNCHANGED; migration 0010 additive (FORCE RLS dual-key; backfill seeds pending checkpoints
+  for draft/onboarding companies, runs nothing, transitions nothing); authz `provisioning:read` (owner|viewer) +
+  `provisioning:resume` (owner); API-only GET …/provisioning + POST …/provisioning/resume (single resume route,
+  no start/retry/acknowledge/cancel, no body/params, no UI/SSE); NO 4th SECURITY DEFINER.
 - **P1-011 design (CDR-017, owner-accepted 2026-07-23):** membership-filtered portfolio (active company_memberships
   only; NO account-owner registry visibility); enumeration under AccountScope (company GUC unset) starting from the
   memberships self-branch, joined to companies (account RLS = isolation, not authorization); name enrichment via
@@ -102,12 +101,13 @@ _Read this first on resume, then continue automatically to "Next executable acti
   P1-009 only on separate authorization. Stop if profile-versioning storage semantics turn out canonically unsettled
   (owner-approved immutable-revision model per CDR-015).
 
-## Authority limits (this ticket)
-- No production systems/credentials; no external DB; no public tunnel; no Clerk dashboard; do not touch the inert
-  P1-002 endpoint or PR #10 / its worktree. Do NOT: add a 4th SECURITY DEFINER function; weaken/alter FORCE RLS or
-  the P1-006/account model; grant BYPASSRLS; expose the owner connection; reuse `memberships` for company membership;
-  change account-membership semantics; implement activity feed/outbox/P1-011/P1-012/deactivate/delete; make
-  unrelated refactors.
+## Authority limits (this ticket — P1-012)
+- No production systems/credentials; no external DB/provider/webhook/object storage; no public tunnel; no Clerk
+  dashboard; do not touch the inert P1-002 endpoint or PR #10 / its worktree. Do NOT: mark P1-012 Done / PR ready /
+  merge / delete branch / begin P1-013; add a 4th SECURITY DEFINER function; weaken FORCE RLS; grant BYPASSRLS;
+  expose the owner connection; implement a worker/queue/lease/outbox/detached task; add provisioning
+  activity-feed events; add failed-step acknowledgement; add UI or SSE; commit a durable `running` state; add any
+  endpoint beyond GET provisioning + POST provisioning/resume.
 
 ## Test baselines
 - Inherited from merged `main` (`8afb8f0`): hosted CI green (zero-skip PG preflight + aggregate + audit). Integration
@@ -149,11 +149,33 @@ _Read this first on resume, then continue automatically to "Next executable acti
   entry); two independent reviews CLEAN; final verification green. PR body updated. Awaiting owner authorization
   to mark Done / ready / merge / delete branch.
 
+## P1-012 slice plan (CDR-018)
+- Slice 1 — **DONE** (`69d15fa` + completeness-registry fix `d0dbe2f`): contracts (closed step/status/failure-code
+  enums, DTOs, flag derivations), `provisioning:read`/`provisioning:resume`, six audit registrations + factories +
+  operation partition. Draft **PR #14**.
+- Slice 2 — **DONE** (`bcd12a2`; CI 30010682316): migration 0010 (CHECK-pinned tables; FORCE RLS dual-key;
+  column-limited UPDATE; idempotent draft/onboarding backfill with BYPASSRLS guard) + real-PG
+  RLS/privilege/backfill/down-up suite; all 22 existing suites' drop-lists extended.
+- Slice 3 — **DONE** (`7e0a5d4`; CI 30011303006): creation tx atomically adds 6 pending checkpoints +
+  draft→onboarding + provisioning.started (selective-writer rollback proven); creation returns onboarding.
+- Slice 4 — **DONE** (`ae4fd5c`; CI 30012231249): fresh-scope step executor (FOR UPDATE + status/attempt guards;
+  no committed running; cap 3), material effects (verify profile/activity; idempotent area inserts), resume
+  orchestration (Phase A company-row-locked gates; USER retry_requested + causation; backfilled-draft bring-up;
+  paused/inconsistent fail closed), completion transition (locks + gate + idempotent activation),
+  createCompany post-commit INLINE auto-run (provisioningRunner seam); 12-test real-PG suite (kill-and-resume at
+  every checkpoint, exhaustion, concurrency single-effect/single-activation, authz matrix, DTO privacy, GUC
+  cleanup, provisioning audit completeness).
+- Slice 5 — **DONE** (`5933fe3`; CI 30012614309): GET …/provisioning + POST …/provisioning/resume (param-free,
+  body never parsed) + runtime wiring + web tests + prod build (both routes ƒ dynamic).
+- Slice 6 — **DONE (pending owner gate)**: three independent reviews (security/RLS/audit; correctness/
+  concurrency/state-machine; scope/migration/taxonomy) — NO Critical/High; R2's 2 Medium (concurrent-retry
+  authorization/audit gaps) FIXED STRUCTURALLY (retry_requested written in the executing step tx under an exact
+  (step, attempt) Phase-A authorization; unauthorized failed rows halt); 6 further Lows fixed, 5 accepted with
+  documented rationale (`docs/implementation/P1-012-REVIEW-COVERAGE.md` register). Architecture docs complete
+  (PROVISIONING.md new; TENANCY/AUTHORIZATION/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE/API-CONTRACTS updated).
+  Local gate green on the Slice 6 candidate (674 passed / 277 PG-dependent skips; build; audit; diff-check).
+
 ## Next executable action
-**ALL P1-011 SLICES COMPLETE — AT THE OWNER GATE.** Branch `p1-011-company-switching-portfolio` (draft PR #13),
-HEAD after the Slice 6 docs commit; hosted CI green with zero-skip integration on every pushed slice; both
-independent reviews clean. AWAIT OWNER AUTHORIZATION for the finalization sequence (mark backlog Done, mark PR
-ready, squash-merge "ACBP-P1-011: Company switching and portfolio" with NO Co-Authored-By trailer, verify exact-main
-CI, delete the merged branch). Do NOT self-authorize any of those, and do NOT begin P1-012. Do NOT: add
-selected-company persistence, a portfolio UI, a switch endpoint, a 4th SECURITY DEFINER, weaken RLS, or touch PR #10 /
-the inert Clerk webhook endpoint.
+**AT THE FINAL OWNER GATE** once the Slice 6 commit's exact-head hosted CI is green. AWAIT OWNER AUTHORIZATION for:
+backlog ACBP-P1-012→Done, PR #14 ready, squash-merge "ACBP-P1-012: Workspace provisioning" (no Co-Authored-By),
+exact-main CI, branch delete. Do NOT self-authorize; do NOT begin P1-013.

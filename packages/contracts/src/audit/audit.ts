@@ -37,6 +37,15 @@ export const AUDIT_EVENTS = {
   'company.updated': { schemaVersion: 1, subjectType: 'company' },
   'company.paused': { schemaVersion: 1, subjectType: 'company' },
   'company.resumed': { schemaVersion: 1, subjectType: 'company' },
+  // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — exactly six durable, company-scoped, AUDIT-ONLY events.
+  // NONE of these are projectable into the activity feed (the P1-009 four-event taxonomy stays closed): the
+  // projector's `isProjectableActivity` allowlist excludes them by construction. Subject is the company id.
+  'provisioning.started': { schemaVersion: 1, subjectType: 'company' },
+  'provisioning.step_started': { schemaVersion: 1, subjectType: 'company' },
+  'provisioning.step_completed': { schemaVersion: 1, subjectType: 'company' },
+  'provisioning.step_failed': { schemaVersion: 1, subjectType: 'company' },
+  'provisioning.retry_requested': { schemaVersion: 1, subjectType: 'company' },
+  'provisioning.completed': { schemaVersion: 1, subjectType: 'company' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -154,4 +163,38 @@ export function companyResumed(input: { readonly companyId: string; readonly rea
   if (input.reason !== undefined) metadata['reason'] = input.reason;
   if (input.heldWorkCount !== undefined) metadata['held_work_count'] = input.heldWorkCount;
   return makeEvent('company.resumed', input.companyId, 'success', metadata);
+}
+
+// ── Workspace-provisioning factories (ACBP-P1-012; CDR-018 §8). Subject is the company id. Metadata is the
+//    EXACT per-event allowlist — bounded step/code identifiers and small integers only; never a raw exception,
+//    SQL text, free-form reason, credential, or internal id. All AUDIT-ONLY (never activity-projected). ────────
+
+/** Provisioning began for a company (seeded in the creation transaction, or first resume of a backfilled draft). */
+export function provisioningStarted(input: { readonly companyId: string; readonly stepCount: number }): AuditEvent {
+  return makeEvent('provisioning.started', input.companyId, 'success', { step_count: input.stepCount });
+}
+
+/** A provisioning step attempt began (recorded atomically with the attempt's committed outcome). */
+export function provisioningStepStarted(input: { readonly companyId: string; readonly step: string; readonly attempt: number }): AuditEvent {
+  return makeEvent('provisioning.step_started', input.companyId, 'success', { step: input.step, attempt: input.attempt });
+}
+
+/** A provisioning step completed with its closed result code. */
+export function provisioningStepCompleted(input: { readonly companyId: string; readonly step: string; readonly attempt: number; readonly resultCode: string }): AuditEvent {
+  return makeEvent('provisioning.step_completed', input.companyId, 'success', { step: input.step, attempt: input.attempt, result_code: input.resultCode });
+}
+
+/** A provisioning step failed with its closed failure code (controlled failure; the outcome is `blocked`). */
+export function provisioningStepFailed(input: { readonly companyId: string; readonly step: string; readonly attempt: number; readonly failureCode: string }): AuditEvent {
+  return makeEvent('provisioning.step_failed', input.companyId, 'blocked', { step: input.step, attempt: input.attempt, failure_code: input.failureCode });
+}
+
+/** An authenticated OWNER explicitly requested a resume of a failed step (the only user-actor provisioning event). */
+export function provisioningRetryRequested(input: { readonly companyId: string; readonly step: string; readonly nextAttempt: number }): AuditEvent {
+  return makeEvent('provisioning.retry_requested', input.companyId, 'success', { step: input.step, next_attempt: input.nextAttempt });
+}
+
+/** All six steps completed — recorded atomically with the onboarding→active transition. */
+export function provisioningCompleted(input: { readonly companyId: string; readonly stepCount: number }): AuditEvent {
+  return makeEvent('provisioning.completed', input.companyId, 'success', { step_count: input.stepCount });
 }

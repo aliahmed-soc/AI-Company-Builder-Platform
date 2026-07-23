@@ -100,9 +100,23 @@ which binds `company_id`/`account_id`/`actor_id`/`event_id`/`occurred_at` server
   optional coarse `reason`/`held_work_count` for a future SERVER-set value; they are not populated from request
   input. An illegal/no-op transition writes nothing.
 
-Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership and company subsets,
-each domain's real-PostgreSQL producer test provides a **compile-exhaustive** driver over its subset, and a
-compile-time guard asserts the partition covers exactly the full operation set.
+Six durable, in-transaction **workspace-provisioning** events (ACBP-P1-012; CDR-018 §8) — AUDIT-ONLY, never
+activity-projected; written under a resolved CompanyScope atomically with the state change they record:
+
+- `provisioning.started` (`{step_count}`) — checkpoints seeded (creation bootstrap, or the once-only
+  backfilled-draft bring-up).
+- `provisioning.step_started` (`{step, attempt}`) / `provisioning.step_completed` (`{step, attempt,
+  result_code}`) / `provisioning.step_failed` (outcome `blocked`; `{step, attempt, failure_code}`) — one
+  started+outcome pair per COMMITTED attempt (an interrupted attempt commits nothing). Closed result/failure
+  codes only — never exception text, SQL, or free-form reasons. SYSTEM actor (the scope-bound `actor_id`
+  records whose request drove the execution — provenance, not authority).
+- `provisioning.retry_requested` (`{step, next_attempt}`) — the only USER-actor provisioning event; the retry
+  run's system events reference it via `causation_id`.
+- `provisioning.completed` (`{step_count}`) — written atomically with the `onboarding→active` transition.
+
+Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company, and
+provisioning subsets, each domain's real-PostgreSQL producer test provides a **compile-exhaustive** driver over
+its subset, and a compile-time guard asserts the partition covers exactly the full operation set.
 
 ## Explicitly deferred (still interim structured logs — NOT durable)
 

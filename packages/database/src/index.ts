@@ -44,6 +44,11 @@ export type { ActivityWriteFn, ActivityExecutor, ActivityKeyset, ActivityFeedRow
 export { PortfolioRepository } from './portfolio-repository.js';
 export type { PortfolioExecutor, PortfolioKeyset, PortfolioCandidateRow } from './portfolio-repository.js';
 
+// Workspace-provisioning repositories (ACBP-P1-012; CDR-018). Checkpoint seeding/locking/outcomes + the
+// append-only workspace-area registry. Every method requires a validated CompanyScope (dual-keyed RLS).
+export { ProvisioningRepository, WorkspaceAreaRepository } from './provisioning-repository.js';
+export type { ProvisioningExecutor } from './provisioning-repository.js';
+
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
 export type { BootstrapExecutor } from './bootstrap-functions.js';
@@ -93,6 +98,13 @@ export type {
   ActivityEventsTable,
   ActivityEventRow,
   NewActivityEvent,
+  ProvisioningStepsTable,
+  ProvisioningStepRow,
+  NewProvisioningStep,
+  ProvisioningStepUpdate,
+  CompanyWorkspaceAreasTable,
+  CompanyWorkspaceAreaRow,
+  NewCompanyWorkspaceArea,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

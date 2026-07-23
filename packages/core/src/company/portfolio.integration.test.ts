@@ -30,7 +30,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
   let outsiderId: string;
   let accountId: string;
 
-  const ALL = ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   beforeAll(async () => {
     seed = createSeedClient();
@@ -51,7 +51,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     }
   });
   beforeEach(async () => {
-    for (const t of ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
+    for (const t of ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
       await seed.kysely.deleteFrom(t).execute();
     }
     ownerId = await seedUser(seed, 'owner@example.com');
@@ -62,15 +62,16 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: viewerId, role: 'viewer', status: 'active', accepted_at: sql<Date>`now()` }).execute();
   });
 
-  /** Create a company (owner becomes its company owner) and pin created_at exactly for deterministic order. */
+  /** Create a company (owner becomes its company owner) and pin created_at exactly for deterministic order.
+   *  provisioningRunner: null — portfolio semantics are under test, not provisioning; companies stay onboarding. */
   async function createCompanyAt(name: string, createdAtIso: string): Promise<string> {
-    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
+    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name }, { provisioningRunner: null });
     if (r.status !== 'ok') throw new Error(`create failed: ${r.status}`);
     await seed.kysely.updateTable('companies').set({ created_at: sql<Date>`${createdAtIso}::timestamptz` }).where('id', '=', r.companyId).execute();
     return r.companyId;
   }
   /** Build the raw enumeration candidate for a company (exact created_at_us) — the input to enrichment. */
-  async function candidateOf(companyId: string, role: string, status = 'draft'): Promise<PortfolioCandidateRow> {
+  async function candidateOf(companyId: string, role: string, status = 'onboarding'): Promise<PortfolioCandidateRow> {
     const row = await sql<{ us: string }>`select (extract(epoch from created_at) * 1000000)::bigint::text as us from companies where id = ${companyId}::uuid`.execute(seed.kysely);
     return { company_id: companyId, status, role, created_at_us: row.rows[0]!.us };
   }
@@ -85,7 +86,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     expect(res.page.items.map((i) => i.companyId)).toEqual([late, early]); // created_at DESC
     expect(res.page.items.map((i) => i.name)).toEqual(['Beta', 'Alpha']);
     expect(res.page.items.every((i) => i.role === 'owner')).toBe(true);
-    expect(res.page.items.every((i) => i.status === 'draft')).toBe(true);
+    expect(res.page.items.every((i) => i.status === 'onboarding')).toBe(true); // fresh companies are onboarding (P1-012)
     expect(res.page.items[0]?.createdAt).toBe('2026-03-01T00:00:00.500000Z'); // exact microsecond
     expect(res.page.items[1]?.createdAt).toBe('2026-01-01T00:00:00.000000Z');
     expect(res.page.nextCursor).toBeNull();

@@ -124,7 +124,10 @@ trusted core/use-case seam:
   an account-level action gating only the `GET /api/companies` portfolio CALL; result rows remain filtered by the
   caller's active COMPANY memberships (an account role never grants a row by itself; CDR-017 §7). There is
   deliberately NO `company:switch` action — switching is stateless URL-only re-resolution, not a role-gated
-  operation. All are pure additions to the deny-by-default matrix.
+  operation. **P1-012** adds `provisioning:read` (owner|viewer company member) and `provisioning:resume`
+  (company OWNER only — a lifecycle-mutation-class action: it can ultimately activate the company); there is
+  deliberately NO start/retry/acknowledge/cancel action (CDR-018 §11). All are pure additions to the
+  deny-by-default matrix.
 
 ## What P1-007 does NOT do (later tickets)
 
