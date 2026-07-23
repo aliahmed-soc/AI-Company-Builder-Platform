@@ -49,6 +49,12 @@ export type { PortfolioExecutor, PortfolioKeyset, PortfolioCandidateRow } from '
 export { ProvisioningRepository, WorkspaceAreaRepository } from './provisioning-repository.js';
 export type { ProvisioningExecutor } from './provisioning-repository.js';
 
+// The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
+// operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
+// arbitrary-scope helper exists or may be added.
+export { executeAdminCompanyRead } from './admin-access.js';
+export type { AdminCompanyReadRow, AdminCompanyReadOutcome } from './admin-access.js';
+
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
 export type { BootstrapExecutor } from './bootstrap-functions.js';

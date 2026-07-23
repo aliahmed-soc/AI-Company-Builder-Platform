@@ -1,3 +1,2 @@
-// core/admin — module public index (ACBP-P0-011 scaffold). Cross-module imports go through this index (spec rule 10). No implementation yet.
-export {};
-
+// core/admin - platform-administrative access (ACBP-P1-013; CDR-019). Cross-module imports go through this index.
+export * from './admin-service.js';
