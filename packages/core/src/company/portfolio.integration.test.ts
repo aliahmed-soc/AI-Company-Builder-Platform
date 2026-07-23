@@ -70,7 +70,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     return r.companyId;
   }
   /** Build the raw enumeration candidate for a company (exact created_at_us) — the input to enrichment. */
-  async function candidateOf(companyId: string, role: string, status = 'draft'): Promise<PortfolioCandidateRow> {
+  async function candidateOf(companyId: string, role: string, status = 'onboarding'): Promise<PortfolioCandidateRow> {
     const row = await sql<{ us: string }>`select (extract(epoch from created_at) * 1000000)::bigint::text as us from companies where id = ${companyId}::uuid`.execute(seed.kysely);
     return { company_id: companyId, status, role, created_at_us: row.rows[0]!.us };
   }
@@ -85,7 +85,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     expect(res.page.items.map((i) => i.companyId)).toEqual([late, early]); // created_at DESC
     expect(res.page.items.map((i) => i.name)).toEqual(['Beta', 'Alpha']);
     expect(res.page.items.every((i) => i.role === 'owner')).toBe(true);
-    expect(res.page.items.every((i) => i.status === 'draft')).toBe(true);
+    expect(res.page.items.every((i) => i.status === 'onboarding')).toBe(true); // fresh companies are onboarding (P1-012)
     expect(res.page.items[0]?.createdAt).toBe('2026-03-01T00:00:00.500000Z'); // exact microsecond
     expect(res.page.items[1]?.createdAt).toBe('2026-01-01T00:00:00.000000Z');
     expect(res.page.nextCursor).toBeNull();

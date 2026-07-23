@@ -12,6 +12,7 @@ import {
   CompanyProfileRepository,
   CompanyMembershipRepository,
   MembershipRepository,
+  ProvisioningRepository,
   elevateToCompanyScope,
   writeAuditEvent,
   projectCompanyActivity,
@@ -25,9 +26,13 @@ import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import {
   companyCreated,
+  provisioningStarted,
   isCompanyCreationMode,
   INITIAL_COMPANY_STATUS,
+  PROVISIONING_STEPS,
   validationError,
+  platformError,
+  ErrorCodes,
   type AuditEvent,
   type CompanyCreationMode,
   type CompanyStatus,
@@ -155,9 +160,21 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
       const createdEvent = companyCreated({ companyId: company.id, creationMode: input.creationMode });
       const auditEventId = await audit(companyScope, createdEvent, auditContext(options));
       await project(companyScope, createdEvent, auditEventId);
+      // 6) Workspace provisioning bootstrap (ACBP-P1-012; CDR-018 §10) — STILL the same transaction:
+      //    six PENDING checkpoints, the system-driven draft→onboarding transition, and the provisioning.started
+      //    audit. Any of these failing rolls the WHOLE creation back (no partial company, no orphan checkpoints).
+      //    NO step executes here — execution is request-driven and begins only after this transaction commits.
+      await new ProvisioningRepository(companyScope.db).seedCheckpoints(params.accountId, company.id);
+      const transitioned = await new CompanyRepository(companyScope.db).updateStatus(company.id, 'onboarding');
+      if (transitioned === undefined) {
+        // The just-inserted company must be visible/mutable under its own scope — anything else is an internal
+        // inconsistency; throw so the whole bootstrap rolls back (fail-closed).
+        throw platformError('internal', { code: ErrorCodes.INTERNAL_ERROR, internalMessage: 'Company bootstrap could not transition draft→onboarding.' });
+      }
+      await audit(companyScope, provisioningStarted({ companyId: company.id, stepCount: PROVISIONING_STEPS.length }), auditContext(options));
       options.logger?.info('company.created', { metadata: { accountId: params.accountId, companyId: company.id, creationMode: input.creationMode } });
 
-      const status: CompanyStatus = INITIAL_COMPANY_STATUS;
+      const status: CompanyStatus = 'onboarding';
       return { status: 'ok', companyId: company.id, companyStatus: status, creationMode: input.creationMode };
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
