@@ -108,9 +108,27 @@ Transactional outbox + async projector/worker (later, with the higher-volume tas
 feed (P6-008)**; rendered activity UI; broad search/export; audit/activity retention/purge; proposed-vs-executed
 evidence joins for task/tool events; account-level/portfolio activity (P1-011+).
 
-## Residual risks (accepted)
+## Residual risks (accepted; from independent review)
 
 - `activity_type` / redaction are enforced at the app layer + the DB CHECK; the only write path is the typed in-tx
   projector, so a spurious row would require a compromised app path and is still RLS-bound + type-constrained.
+- **The cursor is opaque by convention, not encryption** (base64url of plaintext JSON): it contains the CALLER'S
+  OWN account/company ids and event tuples — values the same principal already receives through the URL path,
+  the members API, and the feed items themselves. The binding check guarantees a cursor can only ever be minted
+  for (and used by) the requester's own resolved tenant pair, so nothing foreign is disclosed (review LOW-1).
+- If an entire fetched page consisted of out-of-taxonomy stored rows (unreachable behind the DB CHECK), the
+  read-side drop-filter would end the traversal early rather than skip past them — fail-safe direction: rows are
+  dropped, never emitted (review LOW-3).
+- **Keyset shape is an OR-form filter, not a row-constructor seek** (review L2): PostgreSQL walks the
+  `activity_events_feed_idx` from the company's newest entry applying the predicates as filters with an early-exit
+  LIMIT — page *k* scans ~k·limit index entries rather than seeking directly. Negligible at company-lifecycle
+  event volumes; a row-constructor seek is a deliberate later optimization if higher-volume sources land.
+- **`asOf` is the transaction read timestamp (`now()`), captured just before the feed SELECT** (review L3): under
+  READ COMMITTED an event committing in that sliver may appear with `occurredAt > asOf` — the conservative,
+  honest direction (freshness is under-claimed, never over-claimed). Likewise an event committing in the same
+  millisecond as the traversal upper bound with a smaller ULID can surface on a later page of that traversal —
+  both are covered by the documented "committed-transaction visibility; no snapshot isolation across requests".
+- **Migration 0009's backfill requires a BYPASSRLS/superuser migration role** (audit_events is under FORCE RLS);
+  the migration asserts this precondition loudly rather than silently backfilling nothing (review F3).
 - No live authenticated web-route acceptance was performed (owner/external gate); hosted zero-skip PostgreSQL CI is
   the authoritative gate; the Next build ran locally.

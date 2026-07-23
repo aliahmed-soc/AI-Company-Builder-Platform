@@ -29,7 +29,8 @@ events, CompanyScope, no 4th SECURITY DEFINER).
    authoritative audit company rows → activity rows (documented + unit-proven); no running rebuild worker is added.
 5. **No** outbox, async projector, worker, checkpoint, lease, owner connection, or fourth SECURITY DEFINER function.
 6. **API-only:** `GET /api/companies/[companyId]/activity` — authenticated, company-member (owner|viewer) read, keyset
-   paginated + filtered, typed JSON with an honest `as_of`. NO rendered web page.
+   paginated (NO filters in P1-009 — `cursor` and `limit` are the only query parameters; anything else is rejected),
+   typed JSON with honest response metadata. NO rendered web page.
 7. **No SSE / live stream** (ACT-004/005 real-time is deferred to P6-008). P1-009 delivers the paged feed (ACT-001/003).
 
 ## Required model (invariants)
@@ -104,3 +105,26 @@ task/tool events (only company "executed" events exist here); portfolio/account-
   of that machinery.
 - **A 4th SECURITY DEFINER / owner-connection projector** — rejected; synchronous in-tx projection runs under the
   existing CompanyScope on `acbp_app`, so no privileged path is needed.
+
+## Independent review outcomes + accepted residual risks (2026-07-23)
+Three independent reviews (security/tenant-isolation/privacy; projection-atomicity/idempotency/backfill; pagination/
+cursor/codec/plan/scope) ran over the full `main..HEAD` diff. **No CRITICAL/HIGH/MEDIUM finding.** All Low/coverage
+items fixed:
+- **Projector time path (L1/F2):** the live projector now derives the row in a single `INSERT…SELECT` from the
+  authoritative audit row with `date_trunc('milliseconds', …)` — the exact expression the 0009 backfill uses — so
+  live == backfill == rebuild byte-identically (no JS float/date parsing in the time path). The live path has NO
+  conflict handling by design (no live path replays an id; a duplicate is an internal bug and fails loudly); the
+  canonical idempotent rebuild mapping is the 0009 SQL (`ON CONFLICT DO NOTHING`).
+- **Backfill precondition (F3):** migration 0009 asserts loudly that the migration role has BYPASSRLS/superuser
+  (audit_events is under FORCE RLS) instead of silently backfilling zero rows.
+- **Coverage (F1 + tie-break):** added the rename projection-failure rollback proof (rename's projection call is a
+  distinct inline path) and an equal-timestamp page-boundary tie-break test.
+- **asOf fallback (LOW-2):** the unreachable app-wall-clock fallback now throws instead — `asOf` is unconditionally
+  PostgreSQL time.
+Accepted residuals (documented in ACTIVITY.md): the cursor is opaque-by-convention and contains the caller's OWN
+tenant ids (nothing foreign disclosable; binding + RLS confine it); an all-dropped page (unreachable behind the DB
+CHECK) would end a traversal early (fail-safe direction); the OR-form keyset is a filtered index walk, not a
+row-constructor seek (negligible at company-event volume); `asOf` = transaction read timestamp (conservative under
+READ COMMITTED); same-millisecond/late-commit edges are covered by the documented no-snapshot-across-requests
+caveat; the backfill copies allowlisted values type-blind where the JS allowlist admits scalars only (unreachable
+via the validated factories; the read-side allowlist re-application contains it).

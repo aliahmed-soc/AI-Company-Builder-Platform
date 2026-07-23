@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, ActivityFeedRepository, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -135,6 +135,24 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     });
     const rows = await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => k.selectFrom('activity_events').select('event_id').orderBy('occurred_at', 'desc').orderBy('event_id', 'desc').execute());
     expect(rows.map((r) => r.event_id)).toEqual([U2, U3, U1]);
+  });
+
+  test('keyset tie-break across a page boundary: equal timestamps paginate by event_id with no skip/duplicate', async () => {
+    const T = '2026-07-22T10:00:00.000Z';
+    await asApp(scope(ACCOUNT_A, COMPANY_X), async (k) => {
+      await insertActivity(k, U1, ACCOUNT_A, COMPANY_X, T); // same millisecond as U2
+      await insertActivity(k, U2, ACCOUNT_A, COMPANY_X, T);
+      await insertActivity(k, U3, ACCOUNT_A, COMPANY_X, '2026-07-22T09:00:00.000Z'); // older
+    });
+    // Page walk with limit 1 through the repository's exclusive after-predicate.
+    const page = (after?: { occurredAt: Date; eventId: string }) =>
+      asApp(scope(ACCOUNT_A, COMPANY_X), (k) => new ActivityFeedRepository(k).listByCompany(COMPANY_X, 1, after !== undefined ? { after } : {}));
+    const p1 = await page();
+    expect(p1.map((r) => r.event_id)).toEqual([U2]); // equal ts → higher event_id first (DESC tie-break)
+    const p2 = await page({ occurredAt: new Date(T), eventId: U2 });
+    expect(p2.map((r) => r.event_id)).toEqual([U1]); // same ts, strictly lower id — not skipped, not duplicated
+    const p3 = await page({ occurredAt: new Date(T), eventId: U1 });
+    expect(p3.map((r) => r.event_id)).toEqual([U3]); // then the older row
   });
 
   test('query plan: the keyset feed query can use activity_events_feed_idx (no seq scan) on seeded volume', async () => {

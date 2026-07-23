@@ -90,9 +90,13 @@ export async function getCompanyActivity(client: DatabaseClient, params: GetActi
       if (checkAuthorization(role, 'activity:read', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') {
         return { status: 'forbidden' };
       }
-      // Honest `asOf`: the DATABASE read timestamp of this transaction (never application wall-clock).
+      // Honest `asOf`: the DATABASE read timestamp of this transaction (never application wall-clock). A missing
+      // row is impossible for `select now()`; failing closed here (rather than a wall-clock fallback) keeps the
+      // "asOf is always PostgreSQL time" invariant unconditionally true (security review LOW-2).
       const ts = await sql<{ ts: Date }>`select now() as ts`.execute(scope.db);
-      const asOf = new Date(ts.rows[0]?.ts ?? new Date()).toISOString();
+      const tsRow = ts.rows[0];
+      if (tsRow === undefined) throw new Error('activity feed: database read timestamp unavailable');
+      const asOf = new Date(tsRow.ts).toISOString();
 
       const repo = new ActivityFeedRepository(scope.db);
       const toKeyset = (p: ActivityPosition): ActivityKeyset => ({ occurredAt: new Date(p.occurredAt), eventId: p.eventId });

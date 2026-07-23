@@ -25,6 +25,21 @@ const CURRENT_ACCOUNT = sql`nullif(current_setting('app.current_account', true),
 const CURRENT_COMPANY = sql`nullif(current_setting('app.current_company', true), '')`;
 
 export async function up(db: Kysely<unknown>): Promise<void> {
+  // 0) PRECONDITION (correctness review F3): the backfill below READS `audit_events`, which has been under FORCE
+  //    RLS since migration 0007 and this transaction sets no GUCs — so the migration role MUST bypass RLS
+  //    (BYPASSRLS in production, superuser in CI; the established two-connection model). Without this check, a
+  //    non-bypassing role would see ZERO audit rows and the migration would "succeed" with a silently empty
+  //    backfill. Fail LOUDLY instead.
+  await sql`
+    do $$
+    begin
+      if not (select (rolbypassrls or rolsuper) from pg_roles where rolname = current_user) then
+        raise exception 'migration 0009 requires a BYPASSRLS/superuser migration role: audit_events is under FORCE RLS and the activity backfill would silently read zero rows';
+      end if;
+    end
+    $$;
+  `.execute(db);
+
   // 1) The append-only projection table. event_id = the source audit event id (idempotency + traceability).
   await db.schema
     .createTable('activity_events')

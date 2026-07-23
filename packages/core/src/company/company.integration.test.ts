@@ -311,6 +311,15 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', pid).executeTakeFirstOrThrow()).status).toBe('active');
     expect(await count('audit_events')).toBe(0);
     expect(await count('activity_events')).toBe(0);
+    // rename: its projection call is a DISTINCT inline path (not the transition helper) — prove its rollback too
+    // (correctness review F1): the v2 profile insert + audit + activity all roll back together.
+    const rrid = await createCompanyFor('PB Rename');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await seed.kysely.deleteFrom('activity_events').execute();
+    await expect(renameCompany(app, { userId: ownerId, accountId, companyId: rrid, name: 'PB Renamed' }, { activityWriter: failingProjector })).rejects.toBeDefined();
+    expect((await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', rrid).execute())).toHaveLength(1); // v1 only
+    expect(await count('audit_events')).toBe(0);
+    expect(await count('activity_events')).toBe(0);
   });
 
   test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {
