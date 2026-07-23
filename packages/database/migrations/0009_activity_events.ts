@@ -49,14 +49,54 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   // 2) Keyset index for the feed's `occurred_at DESC, event_id DESC` pagination, scoped by company.
   await sql`create index activity_events_feed_idx on public.activity_events (company_id, occurred_at desc, event_id desc)`.execute(db);
 
-  // 3) Least-privilege grants: INSERT + SELECT ONLY (append-only projection — no UPDATE/DELETE/TRUNCATE).
+  // 3) HISTORICAL BACKFILL (CDR-016): deterministically project the EXISTING durable company audit events into
+  //    the feed, exactly as the runtime projector would (audit stays authoritative; this is the rebuild mapping
+  //    expressed in SQL). Runs BEFORE RLS is enabled, on the migration/owner connection.
+  //     - eligible rows ONLY: company_id IS NOT NULL and name in the four-company-event taxonomy — account
+  //       events (membership.*, company_id NULL), Logger-only names, and unknown/future company events are
+  //       excluded structurally by this predicate;
+  //     - event_id preserved (projection identity = the source audit id);
+  //     - occurred_at preserved on the projection's documented MILLISECOND grid (date_trunc — the runtime
+  //       projector round-trips through a JS Date with the same effect, so live == backfill == rebuild and the
+  //       cursor's millisecond timestamps compare exactly);
+  //     - actor_type/actor_id/account_id/company_id/subject copied as server evidence;
+  //     - payload REDACTED to the per-type allowlist (creation_mode / changed_fields; paused/resumed → {});
+  //       correlation/causation/idempotency ids and any other metadata are NEVER copied;
+  //     - schema_version copied; state is implicitly 'executed' (the whole taxonomy);
+  //     - ON CONFLICT (event_id) DO NOTHING → a rerun of this backfill is idempotent (no duplicates).
+  await sql`
+    insert into public.activity_events
+      (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
+    select
+      ae.event_id,
+      ae.account_id,
+      ae.company_id,
+      ae.name,
+      ae.schema_version,
+      date_trunc('milliseconds', ae.occurred_at),
+      ae.actor_type,
+      ae.actor_id,
+      ae.subject_type,
+      ae.subject_id,
+      case ae.name
+        when 'company.created' then jsonb_strip_nulls(jsonb_build_object('creation_mode', ae.payload->'creation_mode'))
+        when 'company.updated' then jsonb_strip_nulls(jsonb_build_object('changed_fields', ae.payload->'changed_fields'))
+        else '{}'::jsonb
+      end
+    from public.audit_events ae
+    where ae.company_id is not null
+      and ae.name in ('company.created', 'company.updated', 'company.paused', 'company.resumed')
+    on conflict (event_id) do nothing
+  `.execute(db);
+
+  // 4) Least-privilege grants: INSERT + SELECT ONLY (append-only projection — no UPDATE/DELETE/TRUNCATE).
   await sql`grant select, insert on public.activity_events to ${APP_ROLE}`.execute(db);
 
-  // 4) Enable + FORCE RLS (applies to the owner too; only BYPASSRLS/superusers bypass).
+  // 5) Enable + FORCE RLS (applies to the owner too; only BYPASSRLS/superusers bypass).
   await sql`alter table public.activity_events enable row level security`.execute(db);
   await sql`alter table public.activity_events force row level security`.execute(db);
 
-  // 5) Dual-keyed policies (fail-closed text comparison against BOTH transaction-local GUCs). INSERT binds the row
+  // 6) Dual-keyed policies (fail-closed text comparison against BOTH transaction-local GUCs). INSERT binds the row
   //    to the caller's account+company (cannot project into another tenant); SELECT confines reads the same way.
   //    NO update/delete policy → those commands are denied for the restricted role.
   await sql`

@@ -37,7 +37,7 @@ describe('toCompaniesResponse', () => {
     [{ status: 'renamed', changed: true, version: 2 }, 200],
     [{ status: 'transitioned', companyStatus: 'paused' }, 200],
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],
-    [{ status: 'activity', page: { items: [], nextCursor: null, asOf: null } }, 200],
+    [{ status: 'activity', page: { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],

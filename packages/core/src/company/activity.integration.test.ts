@@ -79,22 +79,56 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     if (res.status !== 'ok') return;
     expect(res.page.items).toHaveLength(3);
     expect(res.page.items.map((i) => i.type)).toEqual(['company.updated', 'company.updated', 'company.created']);
-    for (const it of res.page.items) expect(it.executionState).toBe('executed');
+    for (const it of res.page.items) expect(it.state).toBe('executed');
     expect(res.page.nextCursor).toBeNull();
-    expect(res.page.asOf).toBe(res.page.items[0]?.occurredAt); // honest: newest returned event time
-    // DTO redaction: only whitelisted display fields; the created event carries creation_mode.
+    // Honest metadata: synchronous projection; asOf is the DATABASE read timestamp (a valid recent ISO instant,
+    // at-or-after the newest item); sourceThrough is the traversal upper bound = the newest item's tuple.
+    expect(res.page.projectionMode).toBe('synchronous');
+    expect(res.page.lagSeconds).toBe(0);
+    expect(Number.isFinite(Date.parse(res.page.asOf))).toBe(true);
+    expect(Date.parse(res.page.asOf)).toBeGreaterThanOrEqual(Date.parse(res.page.items[0]?.occurredAt ?? ''));
+    expect(res.page.sourceThrough).toEqual({ occurredAt: res.page.items[0]?.occurredAt, eventId: res.page.items[0]?.id });
+    // DTO redaction: the tightened shape — no actor internal id, no account/company ids, allowlisted summary only.
     const created = res.page.items.find((i) => i.type === 'company.created');
-    expect(created?.details).toEqual({ creation_mode: 'own_idea' });
-    expect(created?.subjectId).toBe(id);
+    expect(created?.summary).toEqual({ creation_mode: 'own_idea' });
+    expect(created?.actorType).toBe('user');
+    expect(created).not.toHaveProperty('actorId');
+    expect(created).not.toHaveProperty('subjectId');
+    expect(created).not.toHaveProperty('accountId');
   });
 
-  test('empty feed → no items, null cursor, null as_of', async () => {
-    // A company with membership but (impossibly in practice) no events: assert the empty-shape via a fresh company
-    // whose only event we then remove via the superuser to simulate emptiness.
+  test('empty feed → no items, null cursor, null sourceThrough (asOf still a DB timestamp)', async () => {
     const id = await seedFeed('Empty', 0); // has exactly company.created
     await seed.kysely.deleteFrom('activity_events').where('company_id', '=', id).execute();
     const res = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id });
-    expect(res).toMatchObject({ status: 'ok', page: { items: [], nextCursor: null, asOf: null } });
+    expect(res).toMatchObject({ status: 'ok', page: { items: [], nextCursor: null, sourceThrough: null, projectionMode: 'synchronous', lagSeconds: 0 } });
+    if (res.status === 'ok') expect(Number.isFinite(Date.parse(res.page.asOf))).toBe(true);
+  });
+
+  test('traversal upper bound: an event inserted after page 1 is excluded from that traversal; sourceThrough is constant; a fresh traversal includes it', async () => {
+    const id = await seedFeed('Stable', 3); // 4 rows
+    const p1 = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id, limit: 2 });
+    expect(p1.status).toBe('ok');
+    if (p1.status !== 'ok' || p1.page.nextCursor === null) throw new Error('setup failed');
+    const boundAtStart = p1.page.sourceThrough;
+    // A NEW event lands after page 1 (newer than the upper bound).
+    const r = await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'Stable NEW' });
+    expect(r.status).toBe('ok');
+    // Page 2 of the SAME traversal: the new event is EXCLUDED; sourceThrough unchanged.
+    const p2 = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id, limit: 2, cursor: p1.page.nextCursor });
+    expect(p2.status).toBe('ok');
+    if (p2.status !== 'ok') return;
+    expect(p2.page.sourceThrough).toEqual(boundAtStart);
+    const traversalIds = [...p1.page.items.map((i) => i.id), ...p2.page.items.map((i) => i.id)];
+    expect(new Set(traversalIds).size).toBe(traversalIds.length); // no duplicates
+    expect(traversalIds).toHaveLength(4); // exactly the four rows that existed at traversal start
+    // A FRESH traversal (no cursor) sees the new event, and its sourceThrough advances past the old bound.
+    const fresh = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id, limit: 10 });
+    expect(fresh.status).toBe('ok');
+    if (fresh.status === 'ok') {
+      expect(fresh.page.items).toHaveLength(5);
+      expect(fresh.page.sourceThrough).not.toEqual(boundAtStart);
+    }
   });
 
   test('keyset pagination is stable: no duplicates, no omissions across pages', async () => {
@@ -142,9 +176,14 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     // seed a company under the account whose owner membership row we then remove, leaving no company membership.
     await seed.kysely.deleteFrom('company_memberships').where('company_id', '=', b).execute();
     expect((await getCompanyActivity(app, { userId: ownerId, accountId, companyId: b })).status).toBe('forbidden');
-    // The owner still reads company A normally, and A's feed never contains B's rows.
+    // The owner still reads company A normally, and A's feed contains exactly A's rows (verified by id set).
     const resA = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: a });
-    if (resA.status === 'ok') for (const it of resA.page.items) expect(it.subjectId).toBe(a);
+    expect(resA.status).toBe('ok');
+    if (resA.status === 'ok') {
+      const aIds = new Set((await seed.kysely.selectFrom('activity_events').select('event_id').where('company_id', '=', a).execute()).map((r) => r.event_id));
+      for (const it of resA.page.items) expect(aIds.has(it.id)).toBe(true);
+      expect(resA.page.items).toHaveLength(aIds.size);
+    }
   });
 
   test('scope: the feed renders company events ONLY — an account-level membership event never appears', async () => {
@@ -164,11 +203,12 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
       expect(r.activity_type.startsWith('company.')).toBe(true);
       expect(r.company_id).not.toBeNull();
     }
-    // DTO redaction: only the whitelisted display fields are exposed (no correlation/causation/raw payload keys).
+    // DTO redaction: only the whitelisted summary keys are exposed (no correlation/causation/raw payload keys).
     const created = res.page.items.find((i) => i.type === 'company.created');
-    expect(Object.keys(created?.details ?? {})).toEqual(['creation_mode']);
+    expect(Object.keys(created?.summary ?? {})).toEqual(['creation_mode']);
     expect(created).not.toHaveProperty('correlationId');
     expect(created).not.toHaveProperty('payload');
+    expect(created).not.toHaveProperty('actorId');
   });
 
   test('cursor validation: a malformed cursor and another company\'s cursor are rejected (invalid_cursor)', async () => {

@@ -31,10 +31,12 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     renameCompany: () => Promise.resolve({ status: 'ok', changed: true, version: 2 }),
     pauseCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'paused' }),
     resumeCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'active' }),
-    getCompanyActivity: () => Promise.resolve({ status: 'ok', page: { items: [], nextCursor: null, asOf: null } }),
+    getCompanyActivity: () => Promise.resolve({ status: 'ok', page: EMPTY_PAGE }),
     ...overrides,
   };
 }
+
+const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 
 describe('createCompanyForRequest', () => {
   test('creates against the CALLER\'s own account + acting user (never request-supplied)', async () => {
@@ -121,11 +123,11 @@ describe('getCompanyActivityForRequest', () => {
       ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
       getCompanyActivity: (p) => {
         calls.push(p);
-        return Promise.resolve({ status: 'ok', page: { items: [], nextCursor: 'nc', asOf: null } });
+        return Promise.resolve({ status: 'ok', page: { ...EMPTY_PAGE, nextCursor: 'nc' } });
       },
     });
     const r = await getCompanyActivityForRequest('co_req', { cursor: 'abc', limit: '10' }, { identity: identityDeps(), runtime });
-    expect(r).toEqual({ status: 'activity', page: { items: [], nextCursor: 'nc', asOf: null } });
+    expect(r).toEqual({ status: 'activity', page: { ...EMPTY_PAGE, nextCursor: 'nc' } });
     expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req', cursor: 'abc', limit: '10' }]);
   });
   test('maps forbidden and invalid_cursor', async () => {

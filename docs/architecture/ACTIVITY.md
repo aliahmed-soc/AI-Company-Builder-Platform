@@ -46,22 +46,53 @@ The feed renders EXACTLY the four company events. Account-level audit events (`m
 can never appear (the projector no-ops on non-company events AND the type CHECK rejects them). All four company
 events are **executed** facts → `executionState = 'executed'` (ACT-003 marking present, trivially executed here).
 
+## Historical backfill + rebuild
+
+Migration 0009 **backfills** the projection from the existing durable audit history in the same migration that
+creates the table (before RLS is enabled, on the migration connection): exactly the four company events with
+`company_id IS NOT NULL`, `event_id` preserved as the projection identity, `occurred_at` on the projection's
+**millisecond grid** (`date_trunc('milliseconds', …)` — the runtime projector's JS-Date round-trip has the same
+effect, so live == backfill == rebuild and cursor timestamps compare exactly), actor/tenant columns copied as
+server evidence, and the payload REDACTED to the per-type allowlist (correlation/causation/idempotency ids are
+never copied; account events, Logger-only names, and unknown company events are excluded structurally). The
+backfill is **idempotent** (`ON CONFLICT (event_id) DO NOTHING`) and down/up reapply is deterministic. A future
+full rebuild = re-running the same mapping over the audit company rows (no product/runtime rebuild endpoint and
+no owner-connected worker exist — a rebuild is a migration-connection operation).
+
 ## Read path — `GET /api/companies/{companyId}/activity` (API-only; no UI, no SSE)
 
 Authenticated; **owner|viewer company member** (`activity:read`; account membership alone is insufficient — the
 fresh company role governs). Runs under `runInCompanyScope`, RLS-confined to the current account+company. The
-`companyId` is a membership-validated **selector**; `cursor`/`limit` are query-string inputs the domain validates
-and clamps. **Keyset pagination**: `occurred_at DESC, event_id DESC`; an **opaque, versioned, company-bound**
-cursor (a bad or foreign cursor → `400 invalid_cursor`, never a silent unbounded scan); **default page 25, max
-100**; forward pagination; no OFFSET. The DTO exposes activity type + `occurredAt` + actor internal id + subject +
-the redacted `details` + `executionState` — **never** raw payload, correlation/causation ids, or account events.
+`companyId` is a membership-validated **selector**; `cursor` and `limit` are the ONLY supported query parameters
+(anything else → 400); the domain validates and clamps them. **Keyset pagination**: `occurred_at DESC, event_id
+DESC`; **default page 25, max 100**; forward only; no OFFSET (the query matches `activity_events_feed_idx`).
+
+**Cursor**: opaque **unpadded base64url** (pure-ECMAScript codec — URL-safe alphabet, no `+`/`/`/`=`) of a
+versioned ASCII JSON payload **bound to the account AND company**, carrying the exclusive keyset-after position
+**and the immutable traversal upper bound**. Decoding STRICTLY validates version, tenant binding, field shapes,
+ISO timestamps, and ULID event ids; any malformed/foreign token → `400 invalid_cursor` (never a fallback scan).
+No signing secret: a tampered-but-well-formed cursor can only move the traversal position INSIDE the
+already-authorized, RLS-confined company — it can never change scope or disclose another company.
+
+**Traversal consistency**: the FIRST page captures the upper bound (the newest event at traversal start); later
+pages apply both the upper bound and the keyset-after predicate, so an event inserted after page 1 is EXCLUDED
+from that traversal (a fresh traversal includes it). No snapshot isolation across requests is claimed beyond this.
+
+**DTO** (tightened redaction): each item exposes ONLY `id` (the source audit event id), `type`, `occurredAt`,
+`state: 'executed'`, the coarse `actorType`, and the per-type allowlisted `summary` (`company.created` →
+`creation_mode`; `company.updated` → `changed_fields` names; paused/resumed → **empty**). It never exposes actor
+internal ids, account/company ids, raw audit payload, correlation/causation/idempotency ids, or free-text fields.
+The allowlist is applied at projection time AND re-applied at DTO mapping (defense in depth); an out-of-taxonomy
+stored type is dropped, never emitted as a generic raw event.
 
 ## "As of" / lag honesty
 
-`asOf` is the **newest returned event's `occurredAt`** (or `null` when the feed is empty). Because the projection
-is written synchronously in the source transaction, the feed is **always caught up** — `asOf` never claims
-freshness beyond the latest projected event and never uses wall-clock request time. There is no backlog to hide;
-if/when an async projector is introduced later, `asOf` becomes the projector checkpoint (still honest).
+Response metadata: `projectionMode: 'synchronous'`; **`asOf` = the PostgreSQL read timestamp of the feed query's
+transaction** (never application wall-clock); `sourceThrough` = the traversal upper-bound tuple (constant across
+the traversal's pages; `null` for an empty feed); `lagSeconds: 0` — the supported taxonomy commits atomically with
+its source, so projection lag is structurally zero. This claims visibility of committed transactions only and
+implies no SSE/push delivery; if/when an async projector is introduced later, `asOf`/lag become the projector
+checkpoint (still honest).
 
 ## Trust boundaries
 

@@ -10,7 +10,7 @@
 // This function is ALSO the single-event REBUILD mapping: given a CompanyScope and an audit company event, it
 // derives the activity row purely from the authoritative audit row (occurred_at / actor) + the typed event
 // (activity_type / subject / redacted payload), so a rebuild = re-running it over the audit company rows.
-import { isProjectableActivity, activityDisplayPayload, validationError, type AuditEvent } from '@acbp/contracts';
+import { isProjectableActivity, activitySummaryFor, validationError, type AuditEvent } from '@acbp/contracts';
 import type { Kysely } from 'kysely';
 import type { TenantScope } from './tenant.js';
 import type { DatabaseSchema, NewActivityEvent, ActivityEventRow } from './schema.js';
@@ -42,19 +42,24 @@ export async function projectCompanyActivity(scope: TenantScope, event: AuditEve
     company_id: scope.tenant.companyId,
     activity_type: event.name,
     schema_version: event.schemaVersion,
+    // NOTE: occurred_at round-trips through a JS Date here (node-postgres → Date → insert), which truncates to
+    // MILLISECOND precision — the projection's documented precision grid. The migration backfill applies the
+    // same date_trunc('milliseconds') so live projection == backfill == rebuild, and the cursor's millisecond
+    // ISO timestamps compare exactly against the stored values (no keyset skip/duplicate at boundaries).
     occurred_at: source.occurred_at,
     actor_type: source.actor_type,
     actor_id: source.actor_id,
     subject_type: event.subjectType,
     subject_id: event.subjectId,
-    payload: activityDisplayPayload(event),
+    // Per-type ALLOWLISTED summary only (CDR-016 redaction) — never the raw metadata bag.
+    payload: activitySummaryFor(event.name, event.metadata),
   };
   await scope.db.insertInto('activity_events').values(values).execute();
 }
 
 export type ActivityExecutor = Kysely<DatabaseSchema>;
 
-/** The decoded keyset position (the last item of the previous page). */
+/** A traversal position tuple (event time + id tie-breaker). */
 export interface ActivityKeyset {
   readonly occurredAt: Date;
   readonly eventId: string;
@@ -73,17 +78,31 @@ export class ActivityFeedRepository {
   }
 
   /**
-   * Fetch up to `limit` rows for a company, older than `before` (exclusive keyset) when provided. Returns rows
-   * newest-first. The caller fetches `limit + 1` to detect a further page; pass `limit` accordingly.
+   * Fetch up to `limit` rows for a company, newest-first, applying:
+   *  - `upper` (INCLUSIVE traversal upper bound, captured on the first page): rows at-or-older than the tuple —
+   *    events inserted after the traversal began are excluded from later pages of the same traversal;
+   *  - `after` (EXCLUSIVE keyset position, the last item of the previous page): rows strictly older.
+   * The caller fetches `limit + 1` to detect a further page.
    */
-  listByCompany(companyId: string, limit: number, before?: ActivityKeyset): Promise<ActivityEventRow[]> {
+  listByCompany(companyId: string, limit: number, opts: { upper?: ActivityKeyset; after?: ActivityKeyset } = {}): Promise<ActivityEventRow[]> {
     let q = this.#db.selectFrom('activity_events').selectAll().where('company_id', '=', companyId);
-    if (before !== undefined) {
-      // DESC keyset: strictly OLDER than the cursor position (occurred_at, event_id).
+    const upper = opts.upper;
+    if (upper !== undefined) {
+      // Inclusive upper bound: (occurred_at, event_id) <= (upper.occurredAt, upper.eventId).
       q = q.where((eb) =>
         eb.or([
-          eb('occurred_at', '<', before.occurredAt),
-          eb.and([eb('occurred_at', '=', before.occurredAt), eb('event_id', '<', before.eventId)]),
+          eb('occurred_at', '<', upper.occurredAt),
+          eb.and([eb('occurred_at', '=', upper.occurredAt), eb('event_id', '<=', upper.eventId)]),
+        ]),
+      );
+    }
+    const after = opts.after;
+    if (after !== undefined) {
+      // Exclusive DESC keyset: strictly OLDER than the previous page's last item.
+      q = q.where((eb) =>
+        eb.or([
+          eb('occurred_at', '<', after.occurredAt),
+          eb.and([eb('occurred_at', '=', after.occurredAt), eb('event_id', '<', after.eventId)]),
         ]),
       );
     }

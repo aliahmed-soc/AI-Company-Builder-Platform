@@ -1,17 +1,17 @@
 // @acbp/contracts — activity feed contract tests (ACBP-P1-009; CDR-016).
 import { describe, test, expect } from 'vitest';
-import { companyCreated, companyPaused } from '../audit/index.js';
 import {
   ACTIVITY_TYPES,
   isActivityType,
   isProjectableActivity,
   executionStateFor,
-  activityDisplayPayload,
+  activitySummaryFor,
   clampActivityPageSize,
   encodeActivityCursor,
   decodeActivityCursor,
   ACTIVITY_PAGE_SIZE_DEFAULT,
   ACTIVITY_PAGE_SIZE_MAX,
+  type ActivityCursor,
 } from './index.js';
 
 describe('activity taxonomy (company events only)', () => {
@@ -21,8 +21,8 @@ describe('activity taxonomy (company events only)', () => {
   });
   test('account-level / Logger-only / unknown names are NOT projectable', () => {
     for (const bad of ['membership.invited', 'membership.revoked', 'authz.denied', 'account.created', 'webhook.x', 'reconcile.done', 'company.deleted', '', 1, null, {}]) {
-      expect(isActivityType(bad as unknown)).toBe(false);
-      expect(isProjectableActivity(bad as unknown)).toBe(false);
+      expect(isActivityType(bad)).toBe(false);
+      expect(isProjectableActivity(bad)).toBe(false);
     }
   });
   test('every company event is an executed fact (ACT-003 marking)', () => {
@@ -30,13 +30,19 @@ describe('activity taxonomy (company events only)', () => {
   });
 });
 
-describe('activityDisplayPayload (redaction)', () => {
-  test('projects the bounded safe audit metadata (creation_mode) and nothing more', () => {
-    const ev = companyCreated({ companyId: 'co_1', creationMode: 'own_idea' });
-    expect(activityDisplayPayload(ev)).toEqual({ creation_mode: 'own_idea' });
+describe('activitySummaryFor (per-type allowlist redaction)', () => {
+  test('company.created exposes creation_mode ONLY; unknown keys are dropped', () => {
+    expect(activitySummaryFor('company.created', { creation_mode: 'own_idea', evil: 'x', correlation_id: 'c1' })).toEqual({ creation_mode: 'own_idea' });
   });
-  test('an event with no display fields projects an empty payload', () => {
-    expect(activityDisplayPayload(companyPaused({ companyId: 'co_2' }))).toEqual({});
+  test('company.updated exposes changed_fields ONLY', () => {
+    expect(activitySummaryFor('company.updated', { changed_fields: 'name,description', reason: 'leak' })).toEqual({ changed_fields: 'name,description' });
+  });
+  test('company.paused / company.resumed have EMPTY summaries regardless of stored payload', () => {
+    expect(activitySummaryFor('company.paused', { reason: 'should-not-appear' })).toEqual({});
+    expect(activitySummaryFor('company.resumed', { held_work_count: 3 })).toEqual({});
+  });
+  test('non-scalar values are never emitted', () => {
+    expect(activitySummaryFor('company.created', { creation_mode: { nested: true } })).toEqual({});
   });
 });
 
@@ -54,26 +60,75 @@ describe('clampActivityPageSize', () => {
   });
 });
 
-describe('activity cursor (opaque, versioned, company-bound keyset)', () => {
-  const co = 'co_abc';
-  const pos = { occurredAt: '2026-07-22T10:00:00.000Z', eventId: '01ARZ3NDEKTSV4RRFFQ69G5FAV' };
+describe('activity cursor (opaque base64url; versioned; account+company bound; after + upper bound)', () => {
+  const acct = '11111111-1111-1111-1111-111111111111';
+  const co = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const CUR: ActivityCursor = {
+    after: { occurredAt: '2026-07-22T10:00:00.000Z', eventId: '01ARZ3NDEKTSV4RRFFQ69G5FA1' },
+    upper: { occurredAt: '2026-07-22T12:00:00.000Z', eventId: '01ARZ3NDEKTSV4RRFFQ69G5FA9' },
+  };
+  const encObj = (obj: unknown): string => {
+    // Local base64url encoder for forged-token construction in tests (ASCII payloads).
+    const s = JSON.stringify(obj);
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let out = '';
+    for (let i = 0; i < s.length; i += 3) {
+      const b0 = s.charCodeAt(i);
+      const b1 = i + 1 < s.length ? s.charCodeAt(i + 1) : NaN;
+      const b2 = i + 2 < s.length ? s.charCodeAt(i + 2) : NaN;
+      out += A[b0 >> 2];
+      out += A[((b0 & 3) << 4) | (Number.isNaN(b1) ? 0 : b1 >> 4)];
+      if (!Number.isNaN(b1)) out += A[((b1 & 15) << 2) | (Number.isNaN(b2) ? 0 : b2 >> 6)];
+      if (!Number.isNaN(b2)) out += A[b2 & 63];
+    }
+    return out;
+  };
+  const base = { v: 2, a: acct, c: co, o: CUR.after.occurredAt, e: CUR.after.eventId, uo: CUR.upper.occurredAt, ue: CUR.upper.eventId };
 
-  test('round-trips for the same company', () => {
-    const token = encodeActivityCursor(co, pos);
-    expect(decodeActivityCursor(co, token)).toEqual(pos);
+  test('round-trips for the same account+company and is URL-safe (no +, /, =)', () => {
+    const token = encodeActivityCursor(acct, co, CUR);
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(token).not.toMatch(/[+/=]/);
+    expect(decodeActivityCursor(acct, co, token)).toEqual(CUR);
   });
-  test("rejects another company's cursor (binding)", () => {
-    const token = encodeActivityCursor(co, pos);
-    expect(decodeActivityCursor('co_other', token)).toBeNull();
+  test('rejects a foreign account and a foreign company (binding)', () => {
+    const token = encodeActivityCursor(acct, co, CUR);
+    expect(decodeActivityCursor('22222222-2222-2222-2222-222222222222', co, token)).toBeNull();
+    expect(decodeActivityCursor(acct, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', token)).toBeNull();
   });
-  test('rejects malformed / non-string / oversized / wrong-version tokens (fail-closed, never throws)', () => {
-    const enc = (obj: unknown) => encodeURIComponent(JSON.stringify(obj));
-    expect(decodeActivityCursor(co, '%')).toBeNull(); // malformed percent-encoding
-    expect(decodeActivityCursor(co, '')).toBeNull();
-    expect(decodeActivityCursor(co, 42)).toBeNull();
-    expect(decodeActivityCursor(co, 'x'.repeat(600))).toBeNull();
-    expect(decodeActivityCursor(co, enc({ v: 2, c: co, o: pos.occurredAt, e: pos.eventId }))).toBeNull(); // wrong version
-    expect(decodeActivityCursor(co, enc({ v: 1, c: co, o: 123, e: pos.eventId }))).toBeNull(); // non-string occurredAt
-    expect(decodeActivityCursor(co, encodeURIComponent('{bad'))).toBeNull(); // non-JSON
+  test('rejects malformed base64 (bad alphabet, impossible length), empty, non-string, oversized', () => {
+    expect(decodeActivityCursor(acct, co, 'has+plus/and=pad')).toBeNull();
+    expect(decodeActivityCursor(acct, co, 'ab!cd')).toBeNull();
+    expect(decodeActivityCursor(acct, co, 'AAAAA')).toBeNull(); // length % 4 === 1 is impossible
+    expect(decodeActivityCursor(acct, co, '')).toBeNull();
+    expect(decodeActivityCursor(acct, co, 42)).toBeNull();
+    expect(decodeActivityCursor(acct, co, 'A'.repeat(700))).toBeNull();
+  });
+  test('rejects non-JSON and non-ASCII (malformed UTF-8) payloads', () => {
+    expect(decodeActivityCursor(acct, co, encObj('not-an-object'))).toBeNull(); // valid JSON but not an object
+    expect(decodeActivityCursor(acct, co, 'e2JhZA')).toBeNull(); // decodes to '{bad' — not JSON
+    expect(decodeActivityCursor(acct, co, 'w6k')).toBeNull(); // decodes to bytes 0xC3 0xA9 (UTF-8 'é') — non-ASCII rejected
+  });
+  test('rejects unknown version, missing fields, and excessive field lengths', () => {
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, v: 1 }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, v: 3 }))).toBeNull();
+    for (const missing of ['a', 'c', 'o', 'e', 'uo', 'ue'] as const) {
+      const { [missing]: _drop, ...rest } = base;
+      expect(decodeActivityCursor(acct, co, encObj(rest))).toBeNull();
+    }
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, o: 'x'.repeat(50) }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, e: 'x'.repeat(80) }))).toBeNull();
+  });
+  test('rejects an invalid timestamp and an invalid (non-ULID) event id', () => {
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, o: 'not-a-date' }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, uo: 'also-not-a-date' }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, e: 'not-a-ulid' }))).toBeNull();
+    expect(decodeActivityCursor(acct, co, encObj({ ...base, ue: 'short' }))).toBeNull();
+  });
+  test('a tampered-but-well-formed position still decodes (it can only move the traversal inside the same company)', () => {
+    const tamperedAfter = encObj({ ...base, o: '2026-01-01T00:00:00.000Z' });
+    expect(decodeActivityCursor(acct, co, tamperedAfter)).toEqual({ after: { occurredAt: '2026-01-01T00:00:00.000Z', eventId: CUR.after.eventId }, upper: CUR.upper });
+    const tamperedUpper = encObj({ ...base, ue: '01ARZ3NDEKTSV4RRFFQ69G5FA2' });
+    expect(decodeActivityCursor(acct, co, tamperedUpper)?.upper.eventId).toBe('01ARZ3NDEKTSV4RRFFQ69G5FA2');
   });
 });

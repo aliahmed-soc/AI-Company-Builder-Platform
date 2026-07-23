@@ -57,14 +57,32 @@ events, CompanyScope, no 4th SECURITY DEFINER).
   are server-bound (never caller-supplied). Idempotent by PK (a retried projection of the same audit event is a no-op /
   conflict, never a duplicate feed item).
 
+### Historical backfill (owner-required; in migration 0009)
+- 0009 backfills the projection from existing `audit_events` in the table-creating migration (before RLS, on the
+  migration connection): the four company events with `company_id IS NOT NULL` only; `event_id` preserved as the
+  projection identity; `occurred_at` on the **millisecond grid** (`date_trunc` — identical to the runtime
+  projector's JS-Date round-trip, so live == backfill == rebuild); tenant/actor columns copied as server evidence;
+  payload REDACTED to the per-type allowlist; account/Logger-only/unknown events excluded structurally; idempotent
+  (`ON CONFLICT (event_id) DO NOTHING`); down/up reapply deterministic. Rebuild = the same mapping re-run over the
+  audit rows via the migration connection (no product rebuild endpoint, no owner-connected worker).
+
 ### Read path (`activity:read`)
 - New authz action `activity:read` → **owner|viewer** company member (account membership alone is insufficient; the
   fresh company role governs). Runs under `runInCompanyScope`. **Keyset pagination**: order `occurred_at DESC,
-  event_id DESC`; opaque, versioned cursor bound to `(account, company)`, integrity-checked; default page 25, max 100;
-  forward pagination; no OFFSET. DTO exposes activity_type + occurred_at + actor internal id + subject + bounded safe
-  fields + `proposed_vs_executed`; NEVER raw payload/correlation/causation/account events. `as_of` = the latest returned
-  activity `occurred_at` (synchronous projection ⇒ always caught up; honest lag, no fabricated freshness; `null` when
-  empty).
+  event_id DESC`; default page 25, max 100; forward only; no OFFSET. `cursor`/`limit` are the ONLY query params.
+- **Cursor**: opaque unpadded **base64url** (pure-ECMAScript codec; URL-safe alphabet, no `+`/`/`/`=`) of a
+  versioned ASCII JSON payload bound to **account AND company**, carrying the exclusive keyset-after position AND
+  the **immutable traversal upper bound** captured on the first page (later pages apply both predicates, so events
+  inserted after page 1 are excluded from that traversal; a fresh traversal includes them). Strict validation
+  (version/tenant-binding/shape/ISO-timestamp/ULID-event-id/bounds); malformed or foreign → `invalid_cursor` (400);
+  no signing secret — tampering can only move the position inside the already-authorized RLS-confined company.
+- **DTO** (tightened): items expose ONLY `id`/`type`/`occurredAt`/`state:'executed'`/coarse `actorType`/per-type
+  allowlisted `summary` (`creation_mode`; `changed_fields` names; paused/resumed EMPTY). Never actor internal ids,
+  account/company ids, raw payload, correlation/causation/idempotency ids, or free-text. Allowlist applied at
+  projection AND re-applied at DTO mapping; an out-of-taxonomy stored type is dropped, never emitted raw.
+- **Honest metadata**: `projectionMode:'synchronous'`; `asOf` = the POSTGRESQL read timestamp of the feed query's
+  transaction (never app wall-clock); `sourceThrough` = the traversal upper bound (constant across pages; null when
+  empty); `lagSeconds: 0` (atomic same-tx projection). Committed-transaction visibility only; no SSE implied.
 
 ### Trust boundaries (unchanged from P1-010; preserved)
 - Identity Clerk-only; internal memberships/roles authoritative; active account + active company membership both

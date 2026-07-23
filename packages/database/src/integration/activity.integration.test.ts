@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -135,6 +135,92 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     });
     const rows = await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => k.selectFrom('activity_events').select('event_id').orderBy('occurred_at', 'desc').orderBy('event_id', 'desc').execute());
     expect(rows.map((r) => r.event_id)).toEqual([U2, U3, U1]);
+  });
+
+  test('query plan: the keyset feed query can use activity_events_feed_idx (no seq scan) on seeded volume', async () => {
+    // Seed 300 rows for company X via the superuser (BYPASSRLS) — realistic enough for the planner.
+    await sql`
+      insert into activity_events (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
+      select
+        lpad(upper(to_hex(g)), 26, '0'),
+        ${ACCOUNT_A}::uuid, ${COMPANY_X}::uuid, 'company.updated', 1,
+        timestamptz '2026-07-01' + (g || ' seconds')::interval,
+        'user', ${ACTOR_U}::uuid, 'company', ${COMPANY_X}, '{}'::jsonb
+      from generate_series(1, 300) g
+    `.execute(su.kysely);
+    // As the restricted role under CompanyScope, EXPLAIN the exact keyset shape with seqscan disabled to prove
+    // the intended index is USABLE (small tables may otherwise prefer a seq scan; usability is the claim).
+    const plan = await asApp(scope(ACCOUNT_A, COMPANY_X), async (k) => {
+      await sql`set local enable_seqscan = off`.execute(k);
+      const r = await sql<{ 'QUERY PLAN': string }>`
+        explain select * from activity_events
+        where company_id = ${COMPANY_X}::uuid
+          and (occurred_at < now() or (occurred_at = now() and event_id <= 'ZZZZZZZZZZZZZZZZZZZZZZZZZZ'))
+        order by occurred_at desc, event_id desc
+        limit 26
+      `.execute(k);
+      return r.rows.map((x) => x['QUERY PLAN']).join('\n');
+    });
+    expect(plan).toContain('activity_events_feed_idx');
+    expect(plan).not.toContain('Seq Scan on activity_events');
+    expect(plan).toContain('Limit'); // bounded result
+  });
+
+  test('historical backfill (0009): eligible audit company events project exactly once, redacted, ids/times preserved', async () => {
+    // Rebuild the schema stepwise: through 0008, seed audit history, then apply 0009 (which backfills).
+    for (const t of ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+      await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+    }
+    const upTo = await createMigrator(su).migrateTo('0008_companies');
+    expect(upTo.error).toBeUndefined();
+
+    // Eligible: two company events (one with a MICROSECOND-precision occurred_at + a junk payload key to prove
+    // truncation + redaction). Ineligible: an account-level membership event (company_id NULL) and an
+    // unknown/undeclared company event name (excluded by the taxonomy predicate).
+    await sql`
+      insert into audit_events (event_id, name, schema_version, account_id, company_id, actor_type, actor_id, subject_type, subject_id, outcome, payload, occurred_at, correlation_id) values
+      (${U1}, 'company.created', 1, ${ACCOUNT_A}::uuid, ${COMPANY_X}::uuid, 'user', ${ACTOR_U}::uuid, 'company', ${COMPANY_X}, 'success', '{"creation_mode":"own_idea","junk":"drop-me"}'::jsonb, timestamptz '2026-07-10 10:00:00.123456+00', 'corr-1'),
+      (${U2}, 'company.paused', 1, ${ACCOUNT_A}::uuid, ${COMPANY_X}::uuid, 'user', ${ACTOR_U}::uuid, 'company', ${COMPANY_X}, 'success', '{"reason":"should-not-copy"}'::jsonb, timestamptz '2026-07-11 11:00:00+00', null),
+      (${U3}, 'membership.invited', 1, ${ACCOUNT_A}::uuid, null, 'user', ${ACTOR_U}::uuid, 'membership', 'm_1', 'success', '{"role":"viewer"}'::jsonb, timestamptz '2026-07-12 12:00:00+00', null),
+      ('01ARZ3NDEKTSV4RRFFQ69G5FB9', 'company.deleted', 1, ${ACCOUNT_A}::uuid, ${COMPANY_X}::uuid, 'user', ${ACTOR_U}::uuid, 'company', ${COMPANY_X}, 'success', '{}'::jsonb, timestamptz '2026-07-13 13:00:00+00', null)
+    `.execute(su.kysely);
+
+    const rest = await migrateToLatest(su);
+    expect(rest.error).toBeUndefined();
+
+    // Only the two ELIGIBLE rows projected; ids preserved; redaction exact; occurred_at on the millisecond grid.
+    const rows = await su.kysely.selectFrom('activity_events').selectAll().orderBy('event_id', 'asc').execute();
+    expect(rows.map((r) => r.event_id).sort()).toEqual([U1, U2].sort());
+    const created = rows.find((r) => r.event_id === U1);
+    expect(created).toMatchObject({ account_id: ACCOUNT_A, company_id: COMPANY_X, activity_type: 'company.created', actor_type: 'user', actor_id: ACTOR_U, subject_id: COMPANY_X, schema_version: 1 });
+    expect(created?.payload).toEqual({ creation_mode: 'own_idea' }); // junk + correlation NEVER copied
+    expect(new Date(created?.occurred_at ?? 0).toISOString()).toBe('2026-07-10T10:00:00.123Z'); // date_trunc millis
+    const paused = rows.find((r) => r.event_id === U2);
+    expect(paused?.payload).toEqual({}); // paused summary is empty — 'reason' never copied
+
+    // Rerunning the SAME backfill statement is idempotent (ON CONFLICT DO NOTHING → no duplicates).
+    await sql`
+      insert into public.activity_events
+        (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
+      select ae.event_id, ae.account_id, ae.company_id, ae.name, ae.schema_version, date_trunc('milliseconds', ae.occurred_at), ae.actor_type, ae.actor_id, ae.subject_type, ae.subject_id,
+        case ae.name
+          when 'company.created' then jsonb_strip_nulls(jsonb_build_object('creation_mode', ae.payload->'creation_mode'))
+          when 'company.updated' then jsonb_strip_nulls(jsonb_build_object('changed_fields', ae.payload->'changed_fields'))
+          else '{}'::jsonb
+        end
+      from public.audit_events ae
+      where ae.company_id is not null and ae.name in ('company.created', 'company.updated', 'company.paused', 'company.resumed')
+      on conflict (event_id) do nothing
+    `.execute(su.kysely);
+    expect((await su.kysely.selectFrom('activity_events').selectAll().execute())).toHaveLength(2);
+
+    // Down/up reapply of 0009 is deterministic: same two rows, same redaction.
+    const down = await createMigrator(su).migrateDown();
+    expect(down.error).toBeUndefined();
+    const reup = await migrateToLatest(su);
+    expect(reup.error).toBeUndefined();
+    const again = await su.kysely.selectFrom('activity_events').selectAll().execute();
+    expect(again.map((r) => r.event_id).sort()).toEqual([U1, U2].sort());
   });
 
   test('catalog: FORCE RLS; acbp_app has INSERT+SELECT only; allowlist still 3 SECURITY DEFINER', async () => {
