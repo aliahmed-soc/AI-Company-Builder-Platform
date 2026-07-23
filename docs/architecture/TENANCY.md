@@ -121,7 +121,15 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
   under the existing restricted AccountScope with an account-keyed `companies` INSERT policy and **no 4th SECURITY
   DEFINER function** (the closed allowlist stays exactly three). Company-owned reads/mutations require BOTH
   `app.current_account` and `app.current_company` to match (fail-closed); `companies` INSERT is account-keyed and
-  `companies` SELECT is account-scoped (a company is resolved into, not listed — portfolio/list is P1-011).
+  `companies` SELECT is account-scoped (a company is resolved into, not listed — the account-scoped SELECT is a
+  tenant-isolation boundary, not a list feature).
+- **P1-011** — **implemented** (CDR-017): the **membership-filtered** company portfolio (`GET /api/companies`) and
+  **stateless** switching. The portfolio enumerates ONLY companies where the actor has an active
+  `company_membership` (account ownership grants no row), starting from the memberships self-branch under
+  `AccountScope` (company GUC unset) and enriching names via fresh, sequential per-candidate `CompanyScope` reads.
+  Selection is URL-only and non-authoritative — nothing persisted (no column/cookie/Clerk/session/global state);
+  switching = a fresh `runInCompanyScope`. No 4th SECURITY DEFINER, no RLS/persistence/index migration. See
+  `docs/architecture/PORTFOLIO.md`.
   `company_memberships` is a SEPARATE table (the account `memberships` foundation is untouched); a company
   membership requires an active account membership and account ownership never auto-grants company access.
   `companyId` on `TenantContext` remains required (not made optional).

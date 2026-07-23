@@ -50,17 +50,11 @@ export class PortfolioRepository {
   }
 
   /**
-   * Fetch up to `limit` portfolio candidates for `actorId`, newest-company-first, applying the EXCLUSIVE `after`
-   * keyset (rows strictly older than the previous page's last item). The caller fetches `limit + 1` to detect a
-   * further page. `actorId` MUST be the AccountScope's own actor — the memberships RLS self-branch
-   * (`member_user_id = app.current_actor`) is what makes these rows visible under account scope, so a mismatched
-   * id would simply return nothing (fail-closed), never another user's portfolio.
-   *
-   * The join is on BOTH `company_id` and `account_id` so a company only contributes when it belongs to the same
-   * account as the membership (defense in depth over the account-scoped `companies` SELECT policy). Active
-   * status is filtered explicitly in addition to the RLS self-branch.
+   * Build the enumeration query WITHOUT executing it. Exposed (in addition to the executing method below) so the
+   * query-plan evidence suite can EXPLAIN and compile the EXACT production shape — no hand-maintained mirror that
+   * could silently drift from what production runs (targeted review M-2).
    */
-  listActiveMembershipCompanies(actorId: string, limit: number, opts: { after?: PortfolioKeyset } = {}): Promise<PortfolioCandidateRow[]> {
+  buildListQuery(actorId: string, limit: number, opts: { after?: PortfolioKeyset } = {}) {
     let q = this.#db
       .selectFrom('company_memberships as cm')
       .innerJoin('companies as c', (join) => join.onRef('c.id', '=', 'cm.company_id').onRef('c.account_id', '=', 'cm.account_id'))
@@ -82,6 +76,21 @@ export class PortfolioRepository {
         ]),
       );
     }
-    return q.orderBy('c.created_at', 'desc').orderBy('c.id', 'desc').limit(limit).execute();
+    return q.orderBy('c.created_at', 'desc').orderBy('c.id', 'desc').limit(limit);
+  }
+
+  /**
+   * Fetch up to `limit` portfolio candidates for `actorId`, newest-company-first, applying the EXCLUSIVE `after`
+   * keyset (rows strictly older than the previous page's last item). The caller fetches `limit + 1` to detect a
+   * further page. `actorId` MUST be the AccountScope's own actor — the memberships RLS self-branch
+   * (`member_user_id = app.current_actor`) is what makes these rows visible under account scope, so a mismatched
+   * id would simply return nothing (fail-closed), never another user's portfolio.
+   *
+   * The join is on BOTH `company_id` and `account_id` so a company only contributes when it belongs to the same
+   * account as the membership (defense in depth over the account-scoped `companies` SELECT policy). Active
+   * status is filtered explicitly in addition to the RLS self-branch.
+   */
+  listActiveMembershipCompanies(actorId: string, limit: number, opts: { after?: PortfolioKeyset } = {}): Promise<PortfolioCandidateRow[]> {
+    return this.buildListQuery(actorId, limit, opts).execute();
   }
 }

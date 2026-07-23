@@ -2,9 +2,10 @@
 //
 // Seeds a REALISTIC population (10 accounts, ~2,800 companies, ~2,300 memberships — active AND revoked, plus a
 // high-membership noise actor in the same account and an exact-microsecond created_at tie), ANALYZEs, then runs
-// EXPLAIN (FORMAT JSON) on the SAME SQL shape as `PortfolioRepository.listActiveMembershipCompanies` — as the
-// restricted `acbp_app` role under the account+actor GUCs, so the RLS policy predicates are part of the planned
-// query — for both the first page and the keyset (`after`) page.
+// EXPLAIN (FORMAT JSON) on the EXACT PRODUCTION query (`PortfolioRepository.buildListQuery` — the very builder
+// `listActiveMembershipCompanies` executes, so this evidence cannot drift from production) — as the restricted
+// `acbp_app` role under the account+actor GUCs, so the RLS policy predicates are part of the planned query — for
+// both the first page and the keyset (`after`) page.
 //
 // It asserts SEMANTIC plan properties (tolerant of normal planner variation — node types/index names, never exact
 // plan text):
@@ -15,8 +16,8 @@
 //     (Sort over created_at + id);
 //   - ONLY `company_memberships` + `companies` are touched (no broad profile query).
 // The NATURAL plan is recorded (console marker `PORTFOLIO_PLAN_EVIDENCE`) for the query-plan doc; no planner
-// settings are forced. The mirrored EXPLAIN shape is bound to reality by ALSO walking the REAL repository over
-// the same seed (12 expected rows, strict keyset order, tie broken by id DESC, no overlap/gap across pages).
+// settings are forced. The executing method is ALSO walked over the same seed (12 expected rows, strict keyset
+// order, tie broken by id DESC, no overlap/gap across pages) to prove behavioral correctness at this scale.
 //
 // Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning.
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
@@ -64,34 +65,11 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
   }
   const ctx = () => ({ 'app.current_account': accountA, 'app.current_actor': uMain });
 
-  /** The EXPLAIN mirror of PortfolioRepository.listActiveMembershipCompanies — SAME builder shape (keep in sync;
-   *  the sibling correctness test below runs the REAL repository over the same seed to pin the two together). */
-  function mirrorQuery(k: DatabaseClient['kysely'], actorId: string, limit: number, after?: { createdAt: string; companyId: string }) {
-    let q = k
-      .selectFrom('company_memberships as cm')
-      .innerJoin('companies as c', (join) => join.onRef('c.id', '=', 'cm.company_id').onRef('c.account_id', '=', 'cm.account_id'))
-      .where('cm.member_user_id', '=', actorId)
-      .where('cm.status', '=', 'active')
-      .select([
-        'c.id as company_id',
-        'c.status as status',
-        'cm.role as role',
-        sql<string>`(extract(epoch from c.created_at) * 1000000)::bigint::text`.as('created_at_us'),
-      ]);
-    if (after !== undefined) {
-      q = q.where((eb) =>
-        eb.or([
-          eb('c.created_at', '<', sql<Date>`${after.createdAt}::timestamptz`),
-          eb.and([eb('c.created_at', '=', sql<Date>`${after.createdAt}::timestamptz`), eb('c.id', '<', after.companyId)]),
-        ]),
-      );
-    }
-    return q.orderBy('c.created_at', 'desc').orderBy('c.id', 'desc').limit(limit);
-  }
-
+  /** EXPLAIN the EXACT production query: `PortfolioRepository.buildListQuery` is the same builder
+   *  `listActiveMembershipCompanies` executes, so this evidence can never drift from what production runs. */
   async function explainNodes(after?: { createdAt: string; companyId: string }): Promise<{ nodes: PlanNode[]; text: string }> {
     return asApp(ctx(), async (k) => {
-      const rows = await mirrorQuery(k, uMain, 26, after).explain<Record<string, unknown>>('json');
+      const rows = await new PortfolioRepository(k).buildListQuery(uMain, 26, after !== undefined ? { after } : {}).explain<Record<string, unknown>>('json');
       const qp = rows[0]?.['QUERY PLAN'];
       const parsed: unknown = typeof qp === 'string' ? JSON.parse(qp) : qp;
       const root = (parsed as ReadonlyArray<{ Plan: PlanNode }>)[0]!.Plan;
@@ -105,22 +83,32 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
     expect([...relations].sort()).toEqual(['companies', 'company_memberships']);
     expect(text).not.toContain('company_profiles');
     // Access begins from the actor's active memberships via the partial index (never a memberships seq scan).
+    // Pinning the INDEX NAME is a deliberate tripwire: if a different/composite membership index is ever added
+    // and the planner prefers it, this fails so the query-plan evidence gets RE-DERIVED — not a plain flake.
     expect(nodes.some((n) => n['Index Name'] === 'company_memberships_member_idx')).toBe(true);
-    // The companies join uses an indexed key; NO unbounded sequential scan of either relation.
-    expect(nodes.some((n) => n['Relation Name'] === 'companies' && String(n['Node Type']).includes('Index'))).toBe(true);
+    // The companies join uses an indexed access path. Tolerant of legitimate planner variation: a plain
+    // Index/Index Only Scan carries the relation name on the node itself, while a bitmap plan splits into a
+    // Bitmap Heap Scan (relation, no "Index" in the node type) + a child Bitmap Index Scan (index, no relation).
+    expect(
+      nodes.some(
+        (n) =>
+          n['Relation Name'] === 'companies' && (String(n['Node Type']).includes('Index') || n['Node Type'] === 'Bitmap Heap Scan'),
+      ),
+    ).toBe(true);
     for (const n of nodes) {
       if (n['Node Type'] === 'Seq Scan') {
         throw new Error(`${label}: unexpected Seq Scan on ${String(n['Relation Name'])} — unbounded scan in the portfolio plan`);
       }
     }
-    // Bounded + deterministically ordered: a Limit node over a Sort on (created_at, id).
+    // Bounded + deterministically ordered: a Limit node over a Sort on (created_at DESC, id DESC) — the exact
+    // CDR-017 §8 ordering contract, direction included.
     expect(nodes.some((n) => n['Node Type'] === 'Limit')).toBe(true);
     const sortKeys = nodes
       .filter((n) => String(n['Node Type']).includes('Sort'))
       .map((n) => JSON.stringify(n['Sort Key'] ?? ''))
       .join(' ');
-    expect(sortKeys).toContain('created_at');
-    expect(sortKeys).toContain('id');
+    expect(sortKeys).toMatch(/created_at DESC/);
+    expect(sortKeys).toMatch(/\.id DESC/);
     // The account + actor predicates (RLS policy quals + the explicit actor parameter) survive into the plan.
     expect(text).toContain('app.current_account');
     expect(text).toContain('app.current_actor');
@@ -209,8 +197,8 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
     // Record the natural hosted plan (compact) for the query-plan evidence doc.
     console.log('PORTFOLIO_PLAN_EVIDENCE first_page ' + JSON.stringify(nodes.map((n) => ({ t: n['Node Type'], r: n['Relation Name'], i: n['Index Name'] }))));
     assertPlanShape(nodes, text, 'first page');
-    // No OFFSET anywhere in the compiled SQL (keyset only).
-    const compiled = await asApp(ctx(), (k) => Promise.resolve(mirrorQuery(k, uMain, 26).compile().sql.toLowerCase()));
+    // No OFFSET anywhere in the PRODUCTION compiled SQL (keyset only).
+    const compiled = await asApp(ctx(), (k) => Promise.resolve(new PortfolioRepository(k).buildListQuery(uMain, 26).compile().sql.toLowerCase()));
     expect(compiled).not.toContain('offset');
   });
 

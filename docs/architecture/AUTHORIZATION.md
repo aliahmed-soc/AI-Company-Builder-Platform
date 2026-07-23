@@ -120,7 +120,11 @@ trusted core/use-case seam:
 - **Company-level authorization** and real company roles — **P1-010** (implemented): `company:create` (account
   owner), `company:read`/`company:status` (owner|viewer), `company:rename`/`company:pause`/`company:resume` (owner),
   checked against the caller's fresh company-membership role. **P1-009** adds `activity:read` (owner|viewer company
-  member) for the company activity feed. All are pure additions to the deny-by-default matrix.
+  member) for the company activity feed. **P1-011** adds `portfolio:read` (owner|viewer ACTIVE ACCOUNT member) —
+  an account-level action gating only the `GET /api/companies` portfolio CALL; result rows remain filtered by the
+  caller's active COMPANY memberships (an account role never grants a row by itself; CDR-017 §7). There is
+  deliberately NO `company:switch` action — switching is stateless URL-only re-resolution, not a role-gated
+  operation. All are pure additions to the deny-by-default matrix.
 
 ## What P1-007 does NOT do (later tickets)
 

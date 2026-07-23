@@ -125,6 +125,21 @@ describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, 
     expect(ids(pp)).toEqual([gamma, beta]);
   });
 
+  test('a revoked selection forces reload: the SAME request that just succeeded is now coarsely denied, and the next portfolio read excludes the company (CDR-017 required behavior)', async () => {
+    // Active membership → the protected company request succeeds.
+    const before = await getCompany(app, { userId: userO, accountId, companyId: alpha });
+    expect(before.status === 'ok' && before.company.name).toBe('Alpha');
+    // The membership is revoked (e.g. by an admin) while the client still "has" alpha selected in its URL.
+    await seed.kysely.updateTable('company_memberships').set({ status: 'revoked' }).where('company_id', '=', alpha).where('member_user_id', '=', userO).execute();
+    // The IDENTICAL request now denies coarsely — fresh resolution, no cached scope, no fallback company.
+    const after = await getCompany(app, { userId: userO, accountId, companyId: alpha });
+    expect(after.status).toBe('forbidden');
+    // And the next portfolio read excludes the revoked company (only Beta remains for userO).
+    const p = await getCompanyPortfolio(app, { userId: userO, accountId });
+    expect(p.status).toBe('ok');
+    if (p.status === 'ok') expect(p.page.items.map((i) => i.companyId)).toEqual([beta]);
+  });
+
   test('a forged route companyId denies: a non-member company and a cross-account company both 403', async () => {
     // userO is NOT a member of Gamma (only userP is) → coarse denial (selection is non-authoritative).
     expect((await getCompany(app, { userId: userO, accountId, companyId: gamma })).status).toBe('forbidden');
