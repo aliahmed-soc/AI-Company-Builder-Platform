@@ -23,6 +23,8 @@ import {
   provisioningStepFailed,
   provisioningRetryRequested,
   provisioningCompleted,
+  adminTenantRead,
+  ADMIN_READ_SCOPE,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -42,6 +44,8 @@ export const AUDITED_OPERATIONS = {
   'provisioning.step_fail': 'provisioning.step_failed',
   'provisioning.retry_request': 'provisioning.retry_requested',
   'provisioning.complete': 'provisioning.completed',
+  // Platform-administrative access (ACBP-P1-013; CDR-019 §7) — the one admin operation.
+  'admin.tenant_read': 'admin.tenant_read',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -51,14 +55,16 @@ export const AUDITED_OPERATION_IDS = Object.keys(AUDITED_OPERATIONS) as readonly
 export type MembershipAuditedOperation = 'membership.invite' | 'membership.revoke';
 export type CompanyAuditedOperation = 'company.create' | 'company.update' | 'company.pause' | 'company.resume';
 export type ProvisioningAuditedOperation = 'provisioning.start' | 'provisioning.step_start' | 'provisioning.step_complete' | 'provisioning.step_fail' | 'provisioning.retry_request' | 'provisioning.complete';
+export type AdminAuditedOperation = 'admin.tenant_read';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
+export const ADMIN_AUDITED_OPERATION_IDS: readonly AdminAuditedOperation[] = ['admin.tenant_read'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionCoversAll = [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation] extends [AuditedOperation]
-  ? [AuditedOperation] extends [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation]
+type PartitionCoversAll = [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation] extends [AuditedOperation]
+  ? [AuditedOperation] extends [MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation]
     ? true
     : never
   : never;
@@ -105,6 +111,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => provisioningRetryRequested({ companyId: subjectId, step: 'profile', nextAttempt: 2 });
     case 'provisioning.complete':
       return (subjectId) => provisioningCompleted({ companyId: subjectId, stepCount: 6 });
+    case 'admin.tenant_read':
+      return (subjectId) => adminTenantRead({ companyId: subjectId, reason: 'canonical sample reason', scope: ADMIN_READ_SCOPE });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

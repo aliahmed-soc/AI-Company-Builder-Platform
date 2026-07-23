@@ -48,6 +48,7 @@ import {
 import { getCompanyActivity, type GetActivityParams, type GetActivityResult, type GetActivityOptions } from '../company/activity-service.js';
 import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, type GetPortfolioOptions } from '../company/portfolio-service.js';
 import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, type GetProvisioningResult, type ResumeProvisioningResult, type ProvisioningOpOptions } from '../company/provisioning-service.js';
+import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -136,6 +137,14 @@ export interface ClerkIdentityRuntime {
    */
   getProvisioningStatus(params: ProvisioningParams, options?: ProvisioningOpOptions): Promise<GetProvisioningResult>;
   resumeProvisioning(params: ProvisioningParams, options?: ProvisioningOpOptions): Promise<ResumeProvisioningResult>;
+  /**
+   * Platform-administrative company-overview read (ACBP-P1-013; CDR-019). NOT a tenant operation: authority
+   * comes ONLY from a fresh in-transaction platform_admins self-check (tenant roles/account ownership/Clerk
+   * claims never grant it); the mandatory reason is validated before any database access; the read is audited
+   * (admin.tenant_read, target-tenant trail) atomically or nothing is returned. Every denial is one coarse
+   * `forbidden`.
+   */
+  adminReadCompanyOverview(params: AdminReadParams, options?: AdminOpOptions): Promise<AdminReadResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -206,6 +215,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});
+    },
+    adminReadCompanyOverview(params, options) {
+      return adminReadCompanyOverview(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

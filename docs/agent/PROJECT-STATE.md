@@ -3,13 +3,44 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-012** — Workspace provisioning (status: **Done** — owner-authorized finalization 2026-07-23;
-  squash-merge of PR #14 in progress per the authorized sequence). Next ticket P1-013 NOT started (requires
-  separate owner authorization). Owner decisions (25) → **CDR-018**.
-- Branch: `p1-012-workspace-provisioning` (from `main` @ `e7f9a53`).
-- Base main: `e7f9a53f267fcf16395654a7789dbf1be56d5fbf` (P1-011 squash PR #13; exact-main CI 30006648643 green,
-  84 files / 902 / 0-skip).
-- PR: draft (opened at planning), base `main`.
+- **NO ACTIVE TICKET.** ACBP-P1-013 finalization is owner-authorized and in progress (backlog **Done**; PR #15
+  ready → squash-merge → exact-main CI → branch cleanup). **ACBP-P1-014** (Tenant-isolation adversarial test
+  suite) remains **Planned/unstarted** — starting it requires explicit owner authorization.
+
+## Closed in this session
+- Ticket: **ACBP-P1-013** — Administrative-access foundation (status: **Done**, owner-authorized 2026-07-24).
+  Implemented 2026-07-23 under 21 explicit owner decisions → **CDR-019**.
+- Branch: `p1-013-administrative-access-foundation` (from `main` @ `795227b`).
+- Base main: `795227bb5265eb71d09e0a220fb3f8917eaa3384` (P1-012 squash PR #14; exact-main CI 30014863811 green,
+  87 files / 951 / 0-skip).
+- **P1-013 design (CDR-019):** owner-managed `platform_admins` allowlist (users.id-keyed; runtime = self-check
+  SELECT only, fresh per request; NO runtime management API; no default/env admin); mandatory bounded VERBATIM
+  reason (≥1 non-ws char, ≤512 code points, no NUL, validated before any DB read); single operation
+  `admin.tenant_read` (audit-only; target-tenant-scoped; actor_type admin; metadata {reason, scope='company_overview'};
+  audit failure blocks response); cross-tenant read via transaction-local target GUCs on `acbp_app` ONLY after
+  identity + reason + fresh-admin checks (accountId+companyId both selectors, relationship DB-verified; JIT =
+  per-transaction; primitive PRIVATE — no generic runAsTenant export); API-only
+  POST /api/admin/accounts/[accountId]/companies/[companyId]/read body {reason} → {companyId,status,creationMode,
+  createdAt}; coarse single 403 (no existence oracle); NO impersonation structurally; break-glass + JIT workflow
+  DOCUMENTED not built; activity taxonomy unchanged; no 4th SECURITY DEFINER/BYPASSRLS/owner-runtime/third role.
+- PR: **#15 draft** "ACBP-P1-013: Administrative-access foundation", base `main`.
+- **P1-013 progress:** planning `c48734d` (CDR-019); Slice 1 `15d5adb` (contracts/authz/audit registry; CI
+  30017194994 green); Slice 2 `d49e33b` (migration 0011 platform_admins + real-PG suite + runbook; its CI
+  30017530296 FAILED on a latent head-pinned migrateDown in the P1-012 backfill suite → repaired `b014e4e`:
+  rollback targets pinned BY NAME, also restoring the 0009 reapply proof that had gone vacuous); Slice 3
+  `1b28db6`+`a86cf92` (executeAdminCompanyRead one-tx primitive + adminReadCompanyOverview + real-PG trust
+  suite + always-run no-impersonation boundary guard; CI 30018642111 green 91f/980/0-skip); Slice 4 `0db555c`
+  (admin API route + strict parsing/privacy tests + prod build, route emitted dynamic; CI 30019840829 green
+  1018/1018/0-skip). Slice 5 `ae53442`+`966e44d`: malformed-selector UUID-shape guard, full doc set
+  (ADMINISTRATIVE-ACCESS.md + BREAK-GLASS-DESIGN.md new; SECURITY-ARCHITECTURE/AUTHORIZATION/TENANCY/
+  API-CONTRACTS/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE updated), three independent reviews over the eight owner
+  lenses (no Critical/High; 1 Medium + 6 Lows + 1 info — ALL fixed; ledger in
+  `docs/implementation/P1-013-REVIEW-COVERAGE.md`), postcss ≥8.5.12 override (GHSA-6g55-p6wh-862q).
+  **Final feature HEAD `966e44d`; exact-head CI 30021770562 green — 93 files / 1038 / 0 failed / 0 skipped.**
+  NOTE (documented deviations): no reified AdminCapability value exists — the capability is the verified
+  position inside the one transaction (strictly stronger: nothing to cache/serialize/forge); META_MAX_VALUE_LEN
+  raised 512→1024 UTF-16 units for astral verbatim reasons (the PUBLIC reason limit stays exactly 512 code
+  points); all admin parse failures collapse to one generic 400.
 - **P1-012 design (CDR-018, owner-accepted 2026-07-23):** internal-Postgres-only workspace provisioning; six
   canonical ordered steps (profile, mission_draft, research, roadmap, documents, activity); auto-start after the
   creation tx COMMITS; request-driven SEQUENTIAL execution, fresh CompanyScope tx per step; NO worker/queue/
@@ -101,13 +132,13 @@ _Read this first on resume, then continue automatically to "Next executable acti
   P1-009 only on separate authorization. Stop if profile-versioning storage semantics turn out canonically unsettled
   (owner-approved immutable-revision model per CDR-015).
 
-## Authority limits (this ticket — P1-012)
-- No production systems/credentials; no external DB/provider/webhook/object storage; no public tunnel; no Clerk
-  dashboard; do not touch the inert P1-002 endpoint or PR #10 / its worktree. Do NOT: mark P1-012 Done / PR ready /
-  merge / delete branch / begin P1-013; add a 4th SECURITY DEFINER function; weaken FORCE RLS; grant BYPASSRLS;
-  expose the owner connection; implement a worker/queue/lease/outbox/detached task; add provisioning
-  activity-feed events; add failed-step acknowledgement; add UI or SSE; commit a durable `running` state; add any
-  endpoint beyond GET provisioning + POST provisioning/resume.
+## Authority limits (this ticket — P1-013)
+- No production systems/credentials; no public tunnel; no Clerk dashboard; do not touch the inert P1-002 endpoint
+  or PR #10 / its worktree. Do NOT: mark P1-013 Done / PR ready / merge / delete branch / begin P1-014; build
+  break-glass or a JIT approval workflow; implement impersonation of any kind; add tenant-data mutations, admin
+  list/search, audit export, UI, or SSE; add a runtime admin-management endpoint; add a worker/queue/outbox; add
+  a 4th SECURITY DEFINER; weaken FORCE RLS; grant BYPASSRLS; expose the owner runtime connection or a third
+  runtime role; export a generic arbitrary-tenant scope primitive; expand the activity taxonomy.
 
 ## Test baselines
 - Inherited from merged `main` (`8afb8f0`): hosted CI green (zero-skip PG preflight + aggregate + audit). Integration
@@ -175,7 +206,20 @@ _Read this first on resume, then continue automatically to "Next executable acti
   (PROVISIONING.md new; TENANCY/AUTHORIZATION/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE/API-CONTRACTS updated).
   Local gate green on the Slice 6 candidate (674 passed / 277 PG-dependent skips; build; audit; diff-check).
 
+## P1-013 slice plan (CDR-019)
+- Slice 1 — CDR-019 + planning + draft PR; contracts (AdminReason validation, AdminReadTarget,
+  AdminCompanyOverview), `admin:tenant_read` authz (granted to NO membership role), `admin.tenant_read` audit
+  registration + completeness partition; unit tests.
+- Slice 2 — migration 0011 `platform_admins` (self-check SELECT only; zero mutation grants) + real-PG
+  RLS/catalog/lifecycle tests + operational setup/revocation runbook stub.
+- Slice 3 — private admin gate + transaction-local target-scope primitive + audited company-overview read
+  (audit-before-response atomicity) + real-PG trust tests.
+- Slice 4 — POST /api/admin/accounts/[accountId]/companies/[companyId]/read (strict body/query parsing) + web
+  tests + production build.
+- Slice 5 — concurrent/GUC/no-impersonation adversarial tests + docs (break-glass design; runbook; architecture
+  updates) + independent reviews + final verification (owner gate).
+
 ## Next executable action
-**AT THE FINAL OWNER GATE** once the Slice 6 commit's exact-head hosted CI is green. AWAIT OWNER AUTHORIZATION for:
-backlog ACBP-P1-012→Done, PR #14 ready, squash-merge "ACBP-P1-012: Workspace provisioning" (no Co-Authored-By),
-exact-main CI, branch delete. Do NOT self-authorize; do NOT begin P1-013.
+Commit the planning change (CDR-019 + records; NO production code), open the draft PR, then implement Slice 1
+under TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit (zero-skip PG). Stop only
+at a genuinely new owner decision or the complete final owner gate.

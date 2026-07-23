@@ -10,7 +10,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, migrateDown, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -40,7 +40,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   let coPaused = '';
   let coB = ''; // account B's draft company
 
-  const ALL = ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   async function asApp<T>(gucs: Record<string, string>, fn: (trx: DatabaseClient['kysely']) => Promise<T>): Promise<T> {
     return withTransaction(app, async (tx) => {
@@ -84,8 +84,10 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     coPaused = await seedCompany(accountA, 'paused');
     coB = await seedCompany(accountB, 'draft');
 
-    // Roll 0010 back and re-apply so its backfill runs against this realistic population (down/up determinism).
-    const down = await migrateDown(su);
+    // Roll back TO BELOW 0010 BY NAME (a bare one-step migrateDown would pop whatever the head migration is —
+    // it broke when 0011 landed on top) and re-apply, so the 0010 backfill runs against this realistic
+    // population (down/up determinism).
+    const down = await createMigrator(su).migrateTo('0009_activity_events');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
     expect(up.error).toBeUndefined();
@@ -201,7 +203,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   });
 
   test('DELETE and TRUNCATE are denied on both tables (no grant); areas UPDATE denied too', async () => {
-    for (const t of ['provisioning_steps', 'company_workspace_areas'] as const) {
+    for (const t of ['platform_admins', 'provisioning_steps', 'company_workspace_areas'] as const) {
       await expect(asApp(acctCo(accountA, coDraft), (k) => sql`delete from public.${sql.ref(t)}`.execute(k))).rejects.toThrow();
       await expect(asApp(acctCo(accountA, coDraft), (k) => sql`truncate table public.${sql.ref(t)}`.execute(k))).rejects.toThrow();
     }

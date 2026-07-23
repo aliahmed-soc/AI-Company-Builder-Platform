@@ -116,7 +116,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
@@ -187,7 +187,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
       } catch {
         /* best effort */
       }
-      for (const t of ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(su);
     }
   });

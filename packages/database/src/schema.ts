@@ -306,6 +306,21 @@ export interface CompanyWorkspaceAreasTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Platform-administrator allowlist (ACBP-P1-013; CDR-019). The SEPARATE platform-operator authority: rows are
+ * managed EXCLUSIVELY via explicit owner-connection operational setup — the restricted role has SELECT only,
+ * and FORCE RLS confines it to a SELF-CHECK (`user_id = app.current_actor`; no enumeration). Every column is
+ * `never` on insert/update for the app role (no runtime write path exists at all).
+ */
+export interface PlatformAdminsTable {
+  /** The administrator's internal user id (PK; FK users.id, cascade). */
+  user_id: ColumnType<string, never, never>;
+  /** 'active' | 'revoked'. */
+  status: ColumnType<string, never, never>;
+  created_at: ColumnType<Date, never, never>;
+  revoked_at: ColumnType<Date | null, never, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -319,6 +334,7 @@ export interface DatabaseSchema {
   activity_events: ActivityEventsTable;
   provisioning_steps: ProvisioningStepsTable;
   company_workspace_areas: CompanyWorkspaceAreasTable;
+  platform_admins: PlatformAdminsTable;
 }
 
 // Repository-facing row shapes.

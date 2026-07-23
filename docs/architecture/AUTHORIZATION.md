@@ -127,7 +127,11 @@ trusted core/use-case seam:
   operation. **P1-012** adds `provisioning:read` (owner|viewer company member) and `provisioning:resume`
   (company OWNER only — a lifecycle-mutation-class action: it can ultimately activate the company); there is
   deliberately NO start/retry/acknowledge/cancel action (CDR-018 §11). All are pure additions to the
-  deny-by-default matrix.
+  deny-by-default matrix. **P1-013** registers `admin:tenant_read` with an EMPTY membership allow-list —
+  NO account/company role may ever satisfy it. It documents (in the matrix) that platform-admin authority is
+  a SEPARATE database-backed gate: a fresh in-transaction `platform_admins` self-check (CDR-019), never a
+  branch of the ordinary owner/viewer matrix. Tenant roles, account ownership, and Clerk claims never grant
+  it; see `ADMINISTRATIVE-ACCESS.md`.
 
 ## What P1-007 does NOT do (later tickets)
 

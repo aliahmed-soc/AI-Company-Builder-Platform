@@ -32,6 +32,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'portfolio:read': ['owner', 'viewer'],
   'provisioning:read': ['owner', 'viewer'],
   'provisioning:resume': ['owner'],
+  // Platform-admin access (ACBP-P1-013; CDR-019): NO membership role may ever perform it via the matrix —
+  // tenant owner/viewer are structurally denied; the separate platform_admins gate is the only path.
+  'admin:tenant_read': [],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

@@ -140,3 +140,13 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
   `company_memberships` is a SEPARATE table (the account `memberships` foundation is untouched); a company
   membership requires an active account membership and account ownership never auto-grants company access.
   `companyId` on `TenantContext` remains required (not made optional).
+- **P1-013** — **implemented** (CDR-019): the **platform-admin** company-overview read — the ONE sanctioned
+  cross-tenant read. It does NOT weaken the tenancy model: it runs on the restricted `acbp_app` role with
+  FORCE RLS fully active, gaining target-tenant visibility ONLY from transaction-local target GUCs
+  (`app.current_account`/`app.current_company`) set inside one transaction strictly AFTER a fresh
+  `platform_admins` self-check ("JIT" = per-transaction scope; nothing survives commit/rollback). The new
+  `platform_admins` table is itself FORCE-RLS with a self-check-only SELECT policy (no enumeration; grants =
+  SELECT only). No BYPASSRLS, no owner runtime connection, no third runtime role, no 4th SECURITY DEFINER
+  (allowlist stays exactly three), and no generic cross-tenant scope primitive is exported. Tenant roles
+  never grant admin; the admin actor is audited as itself (`actor_type='admin'`, no impersonation). See
+  `docs/architecture/ADMINISTRATIVE-ACCESS.md`.

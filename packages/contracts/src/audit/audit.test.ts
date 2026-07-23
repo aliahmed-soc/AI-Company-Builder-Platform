@@ -56,6 +56,8 @@ describe('generateEventId (ULID)', () => {
 describe('event-name registry (deny unregistered)', () => {
   test('accepts exactly the registered names', () => {
     expect(Object.keys(AUDIT_EVENTS).sort()).toEqual([
+      // Platform-administrative access (ACBP-P1-013; CDR-019 §7) — exactly one audit-only admin event.
+      'admin.tenant_read',
       'company.created',
       'company.paused',
       'company.resumed',
@@ -116,7 +118,10 @@ describe('boundedMetadata', () => {
     const many: Record<string, number> = {};
     for (let i = 0; i < 17; i++) many[`k${i}`] = i;
     expect(() => boundedMetadata(many)).toThrow();
-    expect(() => boundedMetadata({ big: 'x'.repeat(513) })).toThrow();
+    // Per-value bound is 1024 UTF-16 units (sized for the ≤512-code-point VERBATIM admin reason, which may be
+    // up to 1024 units with astral characters — ACBP-P1-013/CDR-019 §4).
+    expect(() => boundedMetadata({ big: 'x'.repeat(1024) })).not.toThrow();
+    expect(() => boundedMetadata({ big: 'x'.repeat(1025) })).toThrow();
     expect(() => boundedMetadata({ a: 'x'.repeat(500), b: 'y'.repeat(500), c: 'z'.repeat(500), d: 'w'.repeat(500), e: 'v'.repeat(500), f: 'u'.repeat(500), g: 't'.repeat(500), h: 's'.repeat(500), i: 'r'.repeat(500) })).toThrow();
   });
 

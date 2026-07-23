@@ -46,6 +46,11 @@ export const AUDIT_EVENTS = {
   'provisioning.step_failed': { schemaVersion: 1, subjectType: 'company' },
   'provisioning.retry_requested': { schemaVersion: 1, subjectType: 'company' },
   'provisioning.completed': { schemaVersion: 1, subjectType: 'company' },
+  // Platform-administrative access (ACBP-P1-013; CDR-019 §7) — exactly ONE audit-only admin event. Scoped to the
+  // TARGET tenant (account+company stamped from the admin path's transaction-local target scope) so the access
+  // is visible in that tenant's own audit trail (SECURITY §3 tenant visibility); actor_type='admin' with the
+  // REAL administrator's internal user id. Never activity-projected.
+  'admin.tenant_read': { schemaVersion: 1, subjectType: 'company' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -56,10 +61,13 @@ export function isAuditEventName(v: unknown): v is AuditEventName {
 /** Bounded metadata: a flat map of scalars only. NO nesting, arrays, Error objects, secrets, or PII. */
 export type AuditMetadata = Readonly<Record<string, string | number | boolean>>;
 
-// Metadata bounds (references/digests only — EVENT-CATALOG `:18`). Deliberately tight.
+// Metadata bounds (references/digests only — EVENT-CATALOG `:18`). Deliberately tight. The per-value length is
+// measured in UTF-16 units and sized at 1024 so the canonically-mandated VERBATIM admin reason (ACBP-P1-013;
+// CDR-019 §4: ≤512 UNICODE CODE POINTS, which is up to 1024 UTF-16 units when astral characters are used) can
+// never be rejected at write time after passing its own strict validation. Every other producer stays far below.
 const META_MAX_KEYS = 16;
 const META_KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
-const META_MAX_VALUE_LEN = 512;
+const META_MAX_VALUE_LEN = 1024;
 const META_MAX_TOTAL_BYTES = 4096;
 
 /**
@@ -197,4 +205,16 @@ export function provisioningRetryRequested(input: { readonly companyId: string; 
 /** All six steps completed — recorded atomically with the onboarding→active transition. */
 export function provisioningCompleted(input: { readonly companyId: string; readonly stepCount: number }): AuditEvent {
   return makeEvent('provisioning.completed', input.companyId, 'success', { step_count: input.stepCount });
+}
+
+// ── Platform-administrative access factory (ACBP-P1-013; CDR-019 §7). Subject = the TARGET company. ──────────
+
+/**
+ * An administrator read a tenant's company overview. Metadata is EXACTLY `{reason, scope}`: the reason is the
+ * caller-validated VERBATIM string (strictly bounded upstream by `validateAdminReason` — ≤512 code points, no
+ * NUL, non-empty; never trimmed/normalized), `scope` is the closed operation code. Never a route, IP,
+ * user-agent, email, token, SQL, stack trace, or any other request field.
+ */
+export function adminTenantRead(input: { readonly companyId: string; readonly reason: string; readonly scope: string }): AuditEvent {
+  return makeEvent('admin.tenant_read', input.companyId, 'success', { reason: input.reason, scope: input.scope });
 }
