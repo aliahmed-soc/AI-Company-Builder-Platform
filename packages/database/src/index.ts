@@ -93,6 +93,13 @@ export type {
   ActivityEventsTable,
   ActivityEventRow,
   NewActivityEvent,
+  ProvisioningStepsTable,
+  ProvisioningStepRow,
+  NewProvisioningStep,
+  ProvisioningStepUpdate,
+  CompanyWorkspaceAreasTable,
+  CompanyWorkspaceAreaRow,
+  NewCompanyWorkspaceArea,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
