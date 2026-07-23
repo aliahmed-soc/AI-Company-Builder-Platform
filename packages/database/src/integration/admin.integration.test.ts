@@ -9,7 +9,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, migrateDown, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -66,7 +66,8 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
 
     // Deterministic down/up/reapply against this population: 0011 must drop and re-apply cleanly (the admin
     // rows are recreated by the operational path afterwards — the migration itself never seeds anything).
-    const down = await migrateDown(su);
+    // Rolled back TO BELOW 0011 BY NAME so this keeps testing 0011 when later migrations land on top.
+    const down = await createMigrator(su).migrateTo('0010_workspace_provisioning');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
     expect(up.error).toBeUndefined();

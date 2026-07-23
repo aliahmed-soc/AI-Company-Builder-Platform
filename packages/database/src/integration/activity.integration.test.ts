@@ -282,8 +282,10 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     `.execute(su.kysely);
     expect((await su.kysely.selectFrom('activity_events').selectAll().execute())).toHaveLength(2);
 
-    // Down/up reapply of 0009 is deterministic: same two rows, same redaction.
-    const down = await createMigrator(su).migrateDown();
+    // Down/up reapply of 0009 is deterministic: same two rows, same redaction. Rolled back TO BELOW 0009 BY
+    // NAME (a bare one-step migrateDown pops whatever the head is — it silently stopped testing 0009's
+    // backfill once 0010 landed on top).
+    const down = await createMigrator(su).migrateTo('0008_companies');
     expect(down.error).toBeUndefined();
     const reup = await migrateToLatest(su);
     expect(reup.error).toBeUndefined();
