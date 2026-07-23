@@ -3,8 +3,13 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-013** — Administrative-access foundation (status: **Planned**; owner-gated to Done). Owner
-  authorized implementation 2026-07-23 with 21 explicit decisions → **CDR-019**.
+- **NO ACTIVE TICKET.** ACBP-P1-013 finalization is owner-authorized and in progress (backlog **Done**; PR #15
+  ready → squash-merge → exact-main CI → branch cleanup). **ACBP-P1-014** (Tenant-isolation adversarial test
+  suite) remains **Planned/unstarted** — starting it requires explicit owner authorization.
+
+## Closed in this session
+- Ticket: **ACBP-P1-013** — Administrative-access foundation (status: **Done**, owner-authorized 2026-07-24).
+  Implemented 2026-07-23 under 21 explicit owner decisions → **CDR-019**.
 - Branch: `p1-013-administrative-access-foundation` (from `main` @ `795227b`).
 - Base main: `795227bb5265eb71d09e0a220fb3f8917eaa3384` (P1-012 squash PR #14; exact-main CI 30014863811 green,
   87 files / 951 / 0-skip).
@@ -26,12 +31,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
   `1b28db6`+`a86cf92` (executeAdminCompanyRead one-tx primitive + adminReadCompanyOverview + real-PG trust
   suite + always-run no-impersonation boundary guard; CI 30018642111 green 91f/980/0-skip); Slice 4 `0db555c`
   (admin API route + strict parsing/privacy tests + prod build, route emitted dynamic; CI 30019840829 green
-  1018/1018/0-skip). Slice 5 in progress: malformed-selector UUID-shape guard (coarse forbidden, no DB touch),
-  docs (ADMINISTRATIVE-ACCESS.md + BREAK-GLASS-DESIGN.md new; SECURITY-ARCHITECTURE/AUTHORIZATION/TENANCY/
-  API-CONTRACTS/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE updated), independent reviews, final verification,
-  owner-gate report. NOTE (documented deviation): no reified AdminCapability value exists — the capability is
-  the verified position inside the one transaction (strictly stronger: nothing to cache/serialize/forge);
-  META_MAX_VALUE_LEN raised 512→1024 UTF-16 units for astral verbatim reasons.
+  1018/1018/0-skip). Slice 5 `ae53442`+`966e44d`: malformed-selector UUID-shape guard, full doc set
+  (ADMINISTRATIVE-ACCESS.md + BREAK-GLASS-DESIGN.md new; SECURITY-ARCHITECTURE/AUTHORIZATION/TENANCY/
+  API-CONTRACTS/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE updated), three independent reviews over the eight owner
+  lenses (no Critical/High; 1 Medium + 6 Lows + 1 info — ALL fixed; ledger in
+  `docs/implementation/P1-013-REVIEW-COVERAGE.md`), postcss ≥8.5.12 override (GHSA-6g55-p6wh-862q).
+  **Final feature HEAD `966e44d`; exact-head CI 30021770562 green — 93 files / 1038 / 0 failed / 0 skipped.**
+  NOTE (documented deviations): no reified AdminCapability value exists — the capability is the verified
+  position inside the one transaction (strictly stronger: nothing to cache/serialize/forge); META_MAX_VALUE_LEN
+  raised 512→1024 UTF-16 units for astral verbatim reasons (the PUBLIC reason limit stays exactly 512 code
+  points); all admin parse failures collapse to one generic 400.
 - **P1-012 design (CDR-018, owner-accepted 2026-07-23):** internal-Postgres-only workspace provisioning; six
   canonical ordered steps (profile, mission_draft, research, roadmap, documents, activity); auto-start after the
   creation tx COMMITS; request-driven SEQUENTIAL execution, fresh CompanyScope tx per step; NO worker/queue/
