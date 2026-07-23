@@ -231,3 +231,10 @@ Append significant decisions. Format: decision — source — consequence.
 - Synchronous in-transaction projection of the 4 company.* events, written atomically with the lifecycle mutation + audit under the same restricted acbp_app CompanyScope — no outbox/async/worker/checkpoint/lease/owner-connection/4th SECURITY DEFINER — projection failure rolls back the whole op.
 - audit_events authoritative; activity_events redacted + rebuildable by source event_id; feed renders company events ONLY (account/Logger events excluded); proposed_vs_executed = executed for all four.
 - activity:read = owner|viewer company member; keyset pagination (occurred_at DESC, event_id DESC; opaque versioned cursor; default 25/max 100); honest as_of; API-only GET /api/companies/[companyId]/activity; no rendered page, no SSE (P6-008).
+
+## ACBP-P1-011 company switching and portfolio (CDR-017) — owner-accepted 2026-07-23
+- Membership-filtered portfolio ONLY (active company_memberships; NO account-owner registry visibility) — API-CONTRACTS Member-read + CDR-015 no-auto-grant — companies account RLS is isolation, not authorization; SQL starts from the memberships self-branch.
+- Name enrichment via bounded SEQUENTIAL fresh CompanyScope reads; NO account-scoped company_profiles policy; no parallel reads that could mix SET LOCAL company context.
+- Selection URL-only/stateless/non-authoritative; nothing persisted (no DB/Clerk/cookie/session); switching = navigate + fresh runInCompanyScope; no company:switch action, no switch endpoint, not a durable audit event.
+- API-only GET /api/companies; portfolio:read (account owner|viewer); keyset created_at DESC/id DESC; default 25/max 100 with invalid limits REJECTED (not clamped); cursor versioned base64url bound to account+ACTOR; DTO {companyId,name,status,role,createdAt}; no filters/metrics.
+- No RLS/persistence migration; index-only migration ONLY on EXPLAIN-proven need; no 4th SECURITY DEFINER.
