@@ -57,6 +57,7 @@ describe('parseAdminReadBody — strict `{ reason }` only', () => {
     ['blank reason', req('application/json', JSON.stringify({ reason: '   ' }))],
     ['oversized reason (513 code points)', req('application/json', JSON.stringify({ reason: 'x'.repeat(513) }))],
     ['NUL in reason', req('application/json', JSON.stringify({ reason: `bad${NUL}reason` }))],
+    ['lone surrogate smuggled via JSON escape', req('application/json', '{"reason":"\\ud800 escaped lone surrogate"}')],
     ['unknown extra property', req('application/json', JSON.stringify({ reason: REASON, scope: 'company_overview' }))],
     ['injection-shaped extra property', req('application/json', JSON.stringify({ reason: REASON, accountId: 'evil' }))],
     ['only an unknown property', req('application/json', JSON.stringify({ Reason: REASON }))],
@@ -77,7 +78,7 @@ describe('toAdminReadResponse — bounded mapping', () => {
     const body: unknown = await res.json();
     expect(body).toEqual({ companyId: 'co_1', status: 'active', creationMode: 'own_idea', createdAt: '2026-07-01T00:00:00.000Z' });
     expect(Object.keys(body as Record<string, unknown>).sort()).toEqual(['companyId', 'createdAt', 'creationMode', 'status']);
-    expect(res.headers.get('cache-control')).toBeNull(); // no cache directive is set; the route is force-dynamic
+    expect(res.headers.get('cache-control')).toBe('no-store'); // admin data must never be cached anywhere
   });
   const cases: ReadonlyArray<[AdminRequestResult, number, string]> = [
     [{ status: 'invalid_reason' }, 400, 'bad_request'],

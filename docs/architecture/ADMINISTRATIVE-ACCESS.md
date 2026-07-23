@@ -30,13 +30,15 @@ Request protocol (order is load-bearing):
 
 1. Every query parameter rejected; body must be EXACTLY `{ reason }` (unknown properties rejected).
 2. The reason validated BEFORE any identity/database work: verbatim retention, ≥1 non-whitespace
-   character, ≤512 Unicode code points, NUL forbidden, no trimming/normalization before storage.
+   character, ≤512 Unicode code points, NUL forbidden, well-formed Unicode required (lone surrogates —
+   smugglable via JSON escapes — rejected), no trimming/normalization before storage.
 3. Server-verified session identity → internal user mapping (browser input never trusted).
 4. Selector shape gate: non-UUID-shaped ids → the same coarse denial, without touching the database.
 5. The purpose-specific database primitive (`executeAdminCompanyRead`, @acbp/database) runs the whole
    protocol in ONE restricted-role transaction:
    a. `app.current_actor` ← the admin's internal user id (transaction-local);
-   b. fresh `platform_admins` self-check (active row required — the admin gate);
+   b. fresh `platform_admins` self-check joined to a LIVE `users` row (active admin row AND
+      `users.status='active'` — a soft-deleted user loses admin authority at the database layer too);
    c. only then: target `app.current_account` + `app.current_company` (transaction-local; JIT =
       per-transaction scope, CDR-019 decision 20);
    d. the ONE approved read, relationship-verified in-database

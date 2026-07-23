@@ -126,15 +126,40 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
     await expect(sql`insert into platform_admins (user_id, status) values (${ordinaryUser}::uuid, 'revoked')`.execute(su.kysely)).rejects.toThrow();
   });
 
-  test('catalog: FORCE RLS; exactly ONE self-select policy; SELECT-only grant; 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner', async () => {
-    const rls = await sql<{ relforcerowsecurity: boolean }>`select relforcerowsecurity from pg_class where relname = 'platform_admins' and relkind = 'r'`.execute(su.kysely);
-    expect(rls.rows[0]?.relforcerowsecurity).toBe(true);
+  test('a SOFT-DELETED user loses admin authority at the database layer (users.status join — not only the identity boundary)', async () => {
+    // The self-check the primitive runs: platform_admins joined to a LIVE users row. Soft-delete the admin...
+    await sql`update users set status = 'deleted', deleted_at = now() where id = ${adminA}::uuid`.execute(su.kysely);
+    try {
+      const gate = await asApp(actor(adminA), (k) =>
+        k
+          .selectFrom('platform_admins')
+          .innerJoin('users', 'users.id', 'platform_admins.user_id')
+          .select(['platform_admins.user_id', 'platform_admins.status'])
+          .where('platform_admins.user_id', '=', adminA)
+          .where('users.status', '=', 'active')
+          .execute(),
+      );
+      expect(gate).toHaveLength(0); // ...and the admin gate finds nothing, even though the admin row is still 'active'.
+    } finally {
+      await sql`update users set status = 'active', deleted_at = null where id = ${adminA}::uuid`.execute(su.kysely);
+    }
+  });
+
+  test('catalog: ENABLE+FORCE RLS; exactly ONE self-select policy; SELECT-only grant to acbp_app ONLY; 3 SECURITY DEFINER total; acbp_app NOBYPASSRLS/non-owner', async () => {
+    // BOTH flags: FORCE is inert if row security itself is disabled (review L: relrowsecurity was unpinned).
+    const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'platform_admins' and relkind = 'r'`.execute(su.kysely);
+    expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
     const pols = await sql<{ policyname: string; cmd: string }>`select policyname, cmd from pg_policies where tablename = 'platform_admins'`.execute(su.kysely);
     expect(pols.rows.map((p) => `${p.policyname}:${p.cmd}`)).toEqual(['platform_admins_self_select:SELECT']);
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'platform_admins'`.execute(su.kysely);
     expect(grants.rows.map((g) => g.privilege_type)).toEqual(['SELECT']);
-    const definers = await sql<{ n: number }>`select count(*)::int as n from pg_proc where prosecdef = true and proname like 'acbp_%'`.execute(su.kysely);
-    expect(definers.rows[0]?.n).toBe(3);
+    // NO other role (incl. PUBLIC) holds ANY grant on platform_admins — only acbp_app and the table owner.
+    const others = await sql<{ grantee: string }>`select distinct grantee from information_schema.role_table_grants where table_schema = 'public' and table_name = 'platform_admins' and grantee not in ('acbp_app', (select tableowner from pg_tables where schemaname='public' and tablename='platform_admins'))`.execute(su.kysely);
+    expect(others.rows).toEqual([]);
+    // ALL public-namespace SECURITY DEFINER functions — no name filter (review L: an unprefixed 4th would
+    // have slipped past a proname LIKE 'acbp_%' count) — must be exactly the three 0006 bootstraps.
+    const definers = await sql<{ proname: string }>`select proname from pg_proc where prosecdef = true and pronamespace = 'public'::regnamespace order by proname`.execute(su.kysely);
+    expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
   });

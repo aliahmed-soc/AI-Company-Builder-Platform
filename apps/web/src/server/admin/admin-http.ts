@@ -17,7 +17,9 @@ export const MAX_ADMIN_BODY_BYTES = 8 * 1024;
 type HttpRequest = RawBodyRequest & { readonly headers: Pick<Headers, 'get'> };
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  // no-store on EVERY admin response: cross-tenant admin data (and its denials) must never be cached by any
+  // intermediary — belt-and-braces on top of POST semantics + the route's force-dynamic.
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 }
 
 /**

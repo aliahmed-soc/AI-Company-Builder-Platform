@@ -39,6 +39,16 @@ describe('validateAdminReason (CDR-019 §4) — strict, verbatim, fail-closed', 
     expect(validateAdminReason('\u0000').ok).toBe(false);
     expect(validateAdminReason('trailing\u0000').ok).toBe(false);
   });
+  test('lone surrogates are rejected (JSON escapes can smuggle them past a UTF-8 body decode); well-formed pairs pass', () => {
+    // Build LONE surrogates at runtime — exactly what JSON.parse of an escaped "\\ud800" produces.
+    const loneHigh = String.fromCharCode(0xd800);
+    const loneLow = String.fromCharCode(0xdfff);
+    expect(validateAdminReason(loneHigh).ok).toBe(false);
+    expect(validateAdminReason(`x${loneLow}y`).ok).toBe(false);
+    expect(validateAdminReason(`ok ${String.fromCharCode(0xd83d)} tail`).ok).toBe(false); // high surrogate split from its pair
+    // A REAL surrogate pair (astral char) remains valid — the well-formedness gate never rejects real content.
+    expect(validateAdminReason('\u{1F600} valid astral')).toEqual({ ok: true, reason: '\u{1F600} valid astral' });
+  });
 });
 
 describe('admin.tenant_read registration (CDR-019 §7)', () => {

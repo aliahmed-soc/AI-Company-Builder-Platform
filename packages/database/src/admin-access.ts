@@ -50,14 +50,27 @@ export async function executeAdminCompanyRead(
   target: { readonly adminUserId: string; readonly accountId: string; readonly companyId: string },
   buildAudit: (row: AdminCompanyReadRow) => AuditEvent,
   ctx: AuditWriteContext = {},
-  /** TEST SEAM ONLY: override the in-tx audit writer to force a failure. Never set in production. */
-  audit: typeof writeAuditEvent = writeAuditEvent,
+  /**
+   * TEST FAILPOINT ONLY: invoked (with NO arguments — it can reach neither the transaction nor the scope)
+   * AFTER the audit write succeeded, still inside the transaction; a rejection forces the rollback path.
+   * It cannot skip, replace, or observe the audit write — `writeAuditEvent` above is unconditionally the
+   * one audit path. Never set in production (the composed runtime never forwards one).
+   */
+  failpointAfterAudit?: () => Promise<void>,
 ): Promise<AdminCompanyReadOutcome> {
   return withTransaction(client, async (tx) => {
     // 1) Actor context first — the self-check policy needs it; nothing else is set yet.
     await sql`select set_config(${TENANT_SETTINGS.actor}, ${target.adminUserId}, ${true})`.execute(tx.kysely);
-    // 2) FRESH admin standing (self-check RLS: only the actor's own row is even visible). Fail closed.
-    const admin = await tx.kysely.selectFrom('platform_admins').select(['user_id', 'status']).where('user_id', '=', target.adminUserId).executeTakeFirst();
+    // 2) FRESH admin standing (self-check RLS: only the actor's own row is even visible), joined to a LIVE
+    //    identity: a soft-deleted user (users.status='deleted') loses admin authority here even if their
+    //    platform_admins row was never revoked — the identity boundary is not the only guard. Fail closed.
+    const admin = await tx.kysely
+      .selectFrom('platform_admins')
+      .innerJoin('users', 'users.id', 'platform_admins.user_id')
+      .select(['platform_admins.user_id', 'platform_admins.status'])
+      .where('platform_admins.user_id', '=', target.adminUserId)
+      .where('users.status', '=', 'active')
+      .executeTakeFirst();
     if (admin === undefined || admin.status !== 'active') return { outcome: 'not_admin' };
     // 3) TARGET tenant scope — transaction-local ONLY, set strictly after the admin gate passed.
     await sql`select set_config(${TENANT_SETTINGS.account}, ${target.accountId}, ${true})`.execute(tx.kysely);
@@ -73,7 +86,9 @@ export async function executeAdminCompanyRead(
     // 5) The admin.tenant_read audit — same transaction, TARGET-tenant-scoped, admin-actor-stamped. A failure
     //    here throws → the whole transaction rolls back → the caller receives no company data.
     const scope = createTenantScope({ accountId: target.accountId, companyId: target.companyId, actorId: target.adminUserId }, tx.kysely);
-    await audit(scope, buildAudit(company), { actorType: 'admin', ...ctx });
+    // actorType is pinned LAST so no caller-supplied ctx value can ever re-label the admin as a tenant user.
+    await writeAuditEvent(scope, buildAudit(company), { ...ctx, actorType: 'admin' });
+    if (failpointAfterAudit !== undefined) await failpointAfterAudit();
     // 6) Returning resolves the transaction callback → COMMIT; only then does the caller see the row.
     return { outcome: 'ok', company };
   });

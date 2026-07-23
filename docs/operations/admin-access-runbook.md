@@ -49,6 +49,13 @@ freshly on every request — nothing is cached).
 Un-doing an accidental revocation is a new grant-shaped change (`status='active', revoked_at=null` via UPDATE)
 with its own ticket reference and verification; never edit history.
 
+## Offboarding (required step)
+
+When an administrator's USER is offboarded or soft-deleted (`users.status = 'deleted'`), REVOKE their
+`platform_admins` row in the same change (procedure above). Defence in depth already denies them — the
+admin gate joins to a LIVE `users` row (`users.status = 'active'`) and the identity boundary rejects deleted
+users — but an unrevoked row misstates operator standing and must not be left behind.
+
 ## Never
 
 - Grant via any application endpoint (none exists — by design; do not build one).

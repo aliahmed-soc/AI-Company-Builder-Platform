@@ -16,11 +16,29 @@ export const ADMIN_READ_SCOPE = 'company_overview';
 
 export type AdminReasonValidation = { readonly ok: true; readonly reason: string } | { readonly ok: false };
 
+/** Explicit surrogate-pair scan (String.prototype.isWellFormed needs lib es2024; this stays lib-neutral). */
+function isWellFormedUnicode(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = s.charCodeAt(i + 1); // NaN at end-of-string → fails the range check → lone high surrogate
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      i += 1; // valid pair — skip the low surrogate
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      return false; // low surrogate with no preceding high surrogate
+    }
+  }
+  return true;
+}
+
 /**
  * STRICTLY validate an admin reason (CDR-019 §4):
  *  - must be a string with AT LEAST ONE non-whitespace character;
  *  - at most 512 UNICODE CODE POINTS (astral characters count once — measured by code points, not UTF-16 units);
  *  - NUL (U+0000) is forbidden anywhere;
+ *  - must be WELL-FORMED Unicode (no lone surrogates — JSON escapes like an escaped lone U+D800 can smuggle
+ *    them past a fatal UTF-8 body decode; an ill-formed string cannot be persisted to jsonb, which would
+ *    otherwise turn a validation problem into a mid-transaction 500 — security review P1-013 finding 3.2);
  *  - the ORIGINAL string is retained EXACTLY — no trimming, no normalization, no rewriting before storage
  *    (SECURITY §3: "recorded verbatim"; leading/trailing whitespace around real content is preserved).
  * Returns the exact original string on success; fail-closed `{ok:false}` on any violation. Callers MUST run
@@ -29,6 +47,7 @@ export type AdminReasonValidation = { readonly ok: true; readonly reason: string
 export function validateAdminReason(input: unknown): AdminReasonValidation {
   if (typeof input !== 'string') return { ok: false };
   if (input.includes('\u0000')) return { ok: false }; // NUL (U+0000) forbidden anywhere
+  if (!isWellFormedUnicode(input)) return { ok: false }; // lone surrogates rejected (see doc comment)
   if (input.trim().length === 0) return { ok: false }; // trim used for the EMPTINESS check only — never stored
   let codePoints = 0;
   for (const _cp of input) {

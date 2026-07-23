@@ -17,7 +17,7 @@
 // session/token is minted; no tenant-member identity is assumed; no membership row is created; ordinary
 // company use cases are never invoked from this path. There is no AdminCapability value exported anywhere —
 // admin standing exists only as the in-transaction verification inside the database primitive.
-import { executeAdminCompanyRead, writeAuditEvent, type DatabaseClient } from '@acbp/database';
+import { executeAdminCompanyRead, type DatabaseClient } from '@acbp/database';
 import { validateAdminReason, adminTenantRead, ADMIN_READ_SCOPE, type AdminCompanyOverview } from '@acbp/contracts';
 import type { Logger } from '@acbp/observability';
 
@@ -35,8 +35,6 @@ export interface AdminReadParams {
 export interface AdminOpOptions {
   readonly correlationId?: string;
   readonly logger?: Logger;
-  /** TEST SEAM ONLY: override the in-tx audit writer to force a failure. Never set in production. */
-  readonly auditWriter?: typeof writeAuditEvent;
 }
 
 export type AdminReadResult =
@@ -69,7 +67,6 @@ export async function adminReadCompanyOverview(client: DatabaseClient, params: A
     { adminUserId: userId, accountId, companyId },
     (row) => adminTenantRead({ companyId: row.id, reason: validated.reason, scope: ADMIN_READ_SCOPE }),
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
-    options.auditWriter ?? writeAuditEvent,
   );
 
   // 3) ONE coarse denial for every non-success cause (no existence/standing oracle). Non-PII structured log only.

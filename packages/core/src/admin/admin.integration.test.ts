@@ -8,7 +8,9 @@
 // ACBP_TEST_DATABASE_URL; never mocked.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
-import { closeDatabase, migrateToLatest, withTransaction, type DatabaseClient, type NewUser } from '@acbp/database';
+import { closeDatabase, migrateToLatest, withTransaction, executeAdminCompanyRead, type DatabaseClient, type NewUser } from '@acbp/database';
+import { adminTenantRead, ADMIN_READ_SCOPE } from '@acbp/contracts';
+import type { Logger } from '@acbp/observability';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { adminReadCompanyOverview } from './admin-service.js';
@@ -149,10 +151,38 @@ describe.skipIf(!hasTestDatabase)('platform-admin tenant read (real PostgreSQL, 
     expect(await adminAudits(companyA)).toHaveLength(0);
   });
 
-  test('audit atomicity: an audit-write failure rolls back and returns NO company data (and no audit row)', async () => {
-    const failing = (): Promise<string> => Promise.reject(new Error('audit boom'));
-    await expect(adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: companyA, reason: REASON }, { auditWriter: failing })).rejects.toBeDefined();
+  // The failpoint fires AFTER the audit write, inside the same transaction — a rejection there proves the
+  // rollback discards BOTH the audit row and the data path (the no-argument failpoint replaced the removed
+  // auditWriter seam, which handed the live target-scoped transaction to injectable code — review M finding).
+  const buildAudit = (row: { id: string }) => adminTenantRead({ companyId: row.id, reason: REASON, scope: ADMIN_READ_SCOPE });
+  const boom = (): Promise<void> => Promise.reject(new Error('audit boom'));
+
+  test('audit atomicity: a failure in the audit transaction rolls back and returns NO company data (and no audit row)', async () => {
+    await expect(executeAdminCompanyRead(app, { adminUserId: adminId, accountId: accountA, companyId: companyA }, buildAudit, {}, boom)).rejects.toBeDefined();
     expect(await adminAudits(companyA)).toHaveLength(0);
+  });
+
+  test('a SOFT-DELETED admin is denied by the DATABASE-LAYER gate (users join) — the same coarse forbidden', async () => {
+    await seed.kysely.updateTable('users').set({ status: 'deleted', deleted_at: sql<Date>`now()`, primary_email: null, email_verified: false }).where('id', '=', adminId).execute();
+    try {
+      expect(await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: companyA, reason: REASON })).toEqual({ status: 'forbidden' });
+      expect(await adminAudits(companyA)).toHaveLength(0);
+    } finally {
+      await seed.kysely.updateTable('users').set({ status: 'active', deleted_at: null }).where('id', '=', adminId).execute();
+    }
+  });
+
+  test('LOG CANARY: the reason never reaches any log line the service emits (success and denial paths)', async () => {
+    const canary = 'LEAK-CANARY-CORE-LOG-4242';
+    const lines: string[] = [];
+    const capture = (event: string, fields?: object): void => {
+      lines.push(JSON.stringify({ event, ...(fields ?? {}) }));
+    };
+    const logger = { debug: capture, info: capture, warn: capture, error: capture } as unknown as Logger;
+    expect((await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: companyA, reason: canary }, { logger })).status).toBe('ok');
+    expect((await adminReadCompanyOverview(app, { userId: ownerId, accountId: accountA, companyId: companyA, reason: canary }, { logger })).status).toBe('forbidden');
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.join('')).not.toContain(canary);
   });
 
   test('concurrent reads of companies A and B stay isolated: each result and each audit lands on its own tenant', async () => {
@@ -175,7 +205,7 @@ describe.skipIf(!hasTestDatabase)('platform-admin tenant read (real PostgreSQL, 
   test('GUC cleanup: after success, denial and audit-failure rollback, a bare transaction sees no leaked context', async () => {
     await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: companyA, reason: REASON });
     await adminReadCompanyOverview(app, { userId: ownerId, accountId: accountA, companyId: companyA, reason: REASON });
-    await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: companyA, reason: REASON }, { auditWriter: () => Promise.reject(new Error('boom')) }).catch(() => undefined);
+    await executeAdminCompanyRead(app, { adminUserId: adminId, accountId: accountA, companyId: companyA }, buildAudit, {}, boom).catch(() => undefined);
     const gucs = await withTransaction(app, async (tx) => {
       const r = await sql<{ a: string | null; c: string | null; u: string | null }>`select current_setting('app.current_account', true) as a, current_setting('app.current_company', true) as c, current_setting('app.current_actor', true) as u`.execute(tx.kysely);
       return r.rows[0]!;
