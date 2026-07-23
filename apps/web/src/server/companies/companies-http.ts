@@ -63,10 +63,23 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { status: result.companyStatus });
     case 'validation':
       return jsonResponse(400, { error: result.error });
+    case 'activity':
+      // The typed page: redacted items + honest metadata (projectionMode/asOf/sourceThrough/lagSeconds). Never a
+      // raw activity/audit row serialization.
+      return jsonResponse(200, {
+        items: result.page.items,
+        nextCursor: result.page.nextCursor,
+        projectionMode: result.page.projectionMode,
+        asOf: result.page.asOf,
+        sourceThrough: result.page.sourceThrough,
+        lagSeconds: result.page.lagSeconds,
+      });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':
       return jsonResponse(409, { error: 'conflict' });
+    case 'invalid_cursor':
+      return jsonResponse(400, { error: 'invalid_cursor' });
     case 'forbidden':
       return jsonResponse(403, { error: 'forbidden' });
     case 'not_found':

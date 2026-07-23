@@ -232,6 +232,34 @@ export interface CompanyMembershipsTable {
   updated_at: Generated<Date>;
 }
 
+/**
+ * Company activity feed projection (ACBP-P1-009; CDR-016). A separate, APPEND-ONLY, company-scoped projection of
+ * the durable `audit_events` company events — written SYNCHRONOUSLY in the same transaction as the lifecycle
+ * mutation + audit under the caller's CompanyScope. `event_id` = the source audit event id (idempotency +
+ * traceability + rebuildability). Dual-keyed RLS (`app.current_account` + `app.current_company`). IMMUTABLE: the
+ * restricted role has INSERT + SELECT only (no UPDATE/DELETE grant or policy), so every column is `never` on
+ * update. All identity/tenant/time fields are server-bound from the scope + the source audit row — never client-supplied.
+ */
+export interface ActivityEventsTable {
+  /** Source audit event id (ULID). Primary key — idempotent projection, traceable to the authoritative audit row. */
+  event_id: ColumnType<string, string, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** One of the four company events: 'company.created' | 'company.updated' | 'company.paused' | 'company.resumed'. */
+  activity_type: ColumnType<string, string, never>;
+  schema_version: ColumnType<number, number, never>;
+  /** Copied from the authoritative audit `occurred_at` (the event time; ordering field). */
+  occurred_at: ColumnType<Date, Date | string, never>;
+  actor_type: ColumnType<string, string, never>;
+  actor_id: ColumnType<string | null, string | null, never>;
+  subject_type: ColumnType<string, string, never>;
+  subject_id: ColumnType<string, string, never>;
+  /** Bounded, redacted display fields (no correlation/causation/raw). node-postgres serializes the object to jsonb. */
+  payload: ColumnType<Record<string, string | number | boolean>, Record<string, string | number | boolean>, never>;
+  /** When the projection row was written (default now()). Synchronous ⇒ ≈ occurred_at; not the feed's freshness source. */
+  projected_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -242,6 +270,7 @@ export interface DatabaseSchema {
   companies: CompaniesTable;
   company_profiles: CompanyProfilesTable;
   company_memberships: CompanyMembershipsTable;
+  activity_events: ActivityEventsTable;
 }
 
 // Repository-facing row shapes.
@@ -268,3 +297,5 @@ export type CompanyProfileRow = Selectable<CompanyProfilesTable>;
 export type NewCompanyProfile = Insertable<CompanyProfilesTable>;
 export type CompanyMembershipRow = Selectable<CompanyMembershipsTable>;
 export type NewCompanyMembership = Insertable<CompanyMembershipsTable>;
+export type ActivityEventRow = Selectable<ActivityEventsTable>;
+export type NewActivityEvent = Insertable<ActivityEventsTable>;

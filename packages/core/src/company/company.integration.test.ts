@@ -31,7 +31,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   let outsiderId: string;
   let accountId: string;
 
-  const ALL = ['company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   beforeAll(async () => {
     seed = createSeedClient();
@@ -52,7 +52,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     }
   });
   beforeEach(async () => {
-    for (const t of ['company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
+    for (const t of ['activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
       await seed.kysely.deleteFrom(t).execute();
     }
     ownerId = await seedUser(seed, 'owner@example.com');
@@ -67,7 +67,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
       .execute();
   });
 
-  async function count(table: 'companies' | 'company_profiles' | 'company_memberships' | 'audit_events'): Promise<number> {
+  async function count(table: 'companies' | 'company_profiles' | 'company_memberships' | 'audit_events' | 'activity_events'): Promise<number> {
     const r = await sql<{ n: number }>`select count(*)::int as n from ${sql.ref(table)}`.execute(seed.kysely);
     return r.rows[0]?.n ?? 0;
   }
@@ -271,6 +271,62 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     await expect(pauseCompany(app, { userId: ownerId, accountId, companyId: pid }, { auditWriter: failingWriter })).rejects.toBeDefined();
     expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', pid).executeTakeFirstOrThrow()).status).toBe('active');
     expect(await count('audit_events')).toBe(0);
+  });
+
+  // ── ACBP-P1-009: synchronous in-transaction activity projection (CDR-016) ────────────────────────────
+  test('each lifecycle op projects exactly one activity row (keyed by the audit event id) in the same transaction', async () => {
+    const id = await createCompanyFor('Feed Co');
+    // create → company.created activity, traceable to its audit row + redacted payload.
+    const created = await seed.kysely.selectFrom('activity_events').selectAll().where('company_id', '=', id).executeTakeFirstOrThrow();
+    const createdAudit = await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'company.created').executeTakeFirstOrThrow();
+    expect(created).toMatchObject({ event_id: createdAudit.event_id, account_id: accountId, company_id: id, activity_type: 'company.created', actor_id: ownerId, subject_id: id });
+    expect(created.payload).toEqual({ creation_mode: 'own_idea' });
+    // EXACT temporal identity (asserted in SQL — a JS Date compare would hide sub-millisecond divergence):
+    // every projected row's occurred_at equals its authoritative audit row's occurred_at bit-for-bit.
+    const exact = await sql<{ n: number }>`
+      select count(*)::int as n
+      from activity_events act join audit_events au on au.event_id = act.event_id
+      where act.occurred_at is distinct from au.occurred_at
+    `.execute(seed.kysely);
+    expect(exact.rows[0]?.n).toBe(0);
+    // rename → company.updated activity.
+    await renameCompany(app, { userId: ownerId, accountId, companyId: id, name: 'Feed Co 2' });
+    expect((await seed.kysely.selectFrom('activity_events').selectAll().where('activity_type', '=', 'company.updated').where('company_id', '=', id).execute())).toHaveLength(1);
+    // pause + resume → company.paused / company.resumed activity.
+    await seed.kysely.updateTable('companies').set({ status: 'active' }).where('id', '=', id).execute();
+    await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
+    await resumeCompany(app, { userId: ownerId, accountId, companyId: id });
+    const types = (await seed.kysely.selectFrom('activity_events').select('activity_type').where('company_id', '=', id).execute()).map((r) => r.activity_type).sort();
+    expect(types).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated']);
+    // Every activity row is traceable to an audit row of the same id (audit is authoritative).
+    const auditIds = new Set((await seed.kysely.selectFrom('audit_events').select('event_id').where('company_id', '=', id).execute()).map((r) => r.event_id));
+    for (const a of await seed.kysely.selectFrom('activity_events').select('event_id').where('company_id', '=', id).execute()) expect(auditIds.has(a.event_id)).toBe(true);
+  });
+
+  test('atomicity: an activity-projection failure rolls back the whole op (mutation + audit + activity)', async () => {
+    const failingProjector = (): Promise<void> => Promise.reject(new Error('project boom'));
+    // create bootstrap: a projection failure undoes company + profile + membership + audit + activity.
+    await expect(createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'PB Create' }, { activityWriter: failingProjector })).rejects.toBeDefined();
+    expect(await count('companies')).toBe(0);
+    expect(await count('audit_events')).toBe(0);
+    expect(await count('activity_events')).toBe(0);
+    // pause: a projection failure leaves the status unchanged with no audit or activity.
+    const pid = await createActiveCompany('PB Pause');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await seed.kysely.deleteFrom('activity_events').execute();
+    await expect(pauseCompany(app, { userId: ownerId, accountId, companyId: pid }, { activityWriter: failingProjector })).rejects.toBeDefined();
+    expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', pid).executeTakeFirstOrThrow()).status).toBe('active');
+    expect(await count('audit_events')).toBe(0);
+    expect(await count('activity_events')).toBe(0);
+    // rename: its projection call is a DISTINCT inline path (not the transition helper) — prove its rollback too
+    // (correctness review F1): the v2 profile insert + audit + activity all roll back together.
+    const rrid = await createCompanyFor('PB Rename');
+    await seed.kysely.deleteFrom('audit_events').execute();
+    await seed.kysely.deleteFrom('activity_events').execute();
+    await expect(renameCompany(app, { userId: ownerId, accountId, companyId: rrid, name: 'PB Renamed' }, { activityWriter: failingProjector })).rejects.toBeDefined();
+    expect((await seed.kysely.selectFrom('company_profiles').selectAll().where('company_id', '=', rrid).execute())).toHaveLength(1); // v1 only
+    expect(await count('audit_events')).toBe(0);
+    expect(await count('activity_events')).toBe(0);
   });
 
   test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {

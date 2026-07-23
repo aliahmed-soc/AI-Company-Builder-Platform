@@ -3,14 +3,20 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-010** — Company lifecycle (status: **Done** — owner-authorized finalization 2026-07-22).
-- Branch: `p1-010-company-lifecycle` (from `main` @ `8afb8f0`).
-- PR: draft (opened in Slice 1), base `main`.
-- Base main: `8afb8f003fea91b8cc3586539a3f28cbb0c01ed4` (P1-008 squash PR #9; main CI green run 29877371936).
-- PR: **#11 OPEN / DRAFT / MERGEABLE / CLEAN**, base `main`, head = final feature HEAD.
-- **STATUS: OWNER-AUTHORIZED FINALIZATION (2026-07-22).** Backlog set to Done (this commit). Remaining ordered
-  finalization: mark PR #11 ready → squash-merge to `main` → verify exact-main CI → delete branch. P1-009 stays
-  Planned (do NOT begin/resume).
+- Ticket: **ACBP-P1-009** — Activity event foundation (status: **Done** — owner-authorized finalization 2026-07-23).
+- Branch: `p1-009-activity-event-foundation` (from `main` @ `093ec3f`).
+- Base main: `093ec3ffb6325d08f39b6ab679930d638bdec081` (P1-010 squash PR #11; main CI green run 29935591570).
+- PR: draft (opened at planning), base `main`.
+- **STATUS: OWNER-AUTHORIZED FINALIZATION (2026-07-23).** Backlog set to Done (this commit). Remaining ordered
+  finalization: mark PR #12 ready → squash-merge to `main` ("ACBP-P1-009: Activity event foundation") → verify
+  exact-main CI → delete branch. P1-011 stays Planned (do NOT begin).
+- **P1-009 design (CDR-016, owner-accepted 2026-07-22):** separate append-only company-scoped `activity_events`
+  table (PK = source audit `event_id`; redacted; rebuildable); **synchronous in-transaction projection** of the 4
+  company events (`company.created/updated/paused/resumed`) written atomically with the lifecycle mutation + audit
+  under the same restricted `acbp_app` CompanyScope; `audit_events` authoritative; **no outbox/async/worker/
+  checkpoint/lease/owner-connection/4th SECURITY DEFINER**; `activity:read` = owner|viewer company member; keyset
+  pagination (occurred_at DESC, event_id DESC; opaque versioned cursor; default 25/max 100); honest `as_of`;
+  **API-only** `GET /api/companies/[companyId]/activity`; no rendered page, no SSE (SSE deferred to P6-008).
 
 ## Concurrent work — DO NOT TOUCH
 - **PR #10** `p1-004-last-owner-race-fix` (separate session, now deleted) is **OPEN/unmerged**, base main. Its
@@ -21,8 +27,7 @@ _Read this first on resume, then continue automatically to "Next executable acti
 
 ## Prior tickets (closed)
 - **ACBP-P1-001..P1-008 — DONE & MERGED.** P1-008 squash `8afb8f0` (PR #9). Main CI green on each squash.
-- **P1-009 (Activity event foundation) — Planned; RESEQUENCED AFTER P1-010** (owner Option A): its Dependencies
-  corrected to `ACBP-P1-008;ACBP-P1-010`; its company-scoped acceptance is UNCHANGED. Do NOT implement P1-009.
+- **ACBP-P1-010 — DONE & MERGED** (squash `093ec3f`, PR #11; exact-main CI `29935591570` green, 803/0-skip).
 - Residual: delete the inert P1-002 Clerk Development webhook endpoint. Do NOT touch it.
 
 ## P1-010 scope (canonical) — CDR-015 (owner-accepted 2026-07-22)
@@ -88,18 +93,21 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Local Windows→WSL PG forwarding unstable; hosted CI is the authoritative zero-skip integration gate.
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
-## Slices (all hosted-green) + review pass
-- Slice 1 `1ba19cc` (contracts+authz) · Slice 2 `3ee90a0`+`04094af` (migration 0008 + dual-scope RLS) · Slice 3
-  `5dbacdd` (elevate + resolver + create bootstrap + 4 company.* events) · Slice 4 `921c8db` (lifecycle
-  read/rename/pause/resume + pause-pickup groundwork) · Slice 5 `b200985` (HTTP API + runtime wiring) · Slice 6
-  `cb5ed15` (adversarial cross-tenant/tamper suite + audit README). Hosted CI on `cb5ed15`: **801 passed / 0
-  skipped**, preflight zero-skip.
-- Review pass: 3 independent reviews (security/scope/correctness) clean; 1 MEDIUM + several LOW/INFO fixed
-  (rename retry→LWW/409, pause/resume specific-from, free-text reason removed, null-desc parity, 0-row guard,
-  rollback coverage). See CDR-015 "Independent review outcomes".
+## P1-009 slice plan (CDR-016)
+- Slice 1 — activity contracts (ActivityType taxonomy = the 4 company events; ActivityEventDTO + redaction map from
+  AuditEvent; keyset cursor encode/decode + validation; `as_of` contract) + `activity:read` authz action + unit tests.
+- Slice 2 — migration 0009: `activity_events` (PK = source event_id; account/company NOT NULL; append-only) + FORCE RLS
+  dual-keyed + INSERT/SELECT grants + keyset index + schema types + real-PG RLS tests.
+- Slice 3 — synchronous in-tx projection: `projectCompanyActivity` writer (@acbp/database) wired into the 4 P1-010
+  lifecycle use cases after the audit write (same CompanyScope tx); real-PG atomicity/rollback + rebuild-mapping tests.
+- Slice 4 — read use case `getCompanyActivity` (CompanyScope, `activity:read`, keyset pagination, DTO redaction,
+  honest `as_of`) + unit + real-PG pagination/isolation tests.
+- Slice 5 — API `GET /api/companies/[companyId]/activity` + request/http + runtime wiring + tests + local web build.
+- Slice 6 — adversarial (cross-company, cursor attacks, oversized page, no account/Logger events, no raw payload) +
+  docs + 3 independent reviews.
 
 ## Next executable action
-**AT THE OWNER GATE — stop.** All implementation + reviews + docs complete; final review-fix commit pushed and
-exact-head hosted CI green. Owner-gated finalization actions NOT yet taken (require explicit owner authorization):
-set ACBP-P1-010 backlog Done, mark PR #11 ready, squash-merge to `main`, verify main CI, delete the branch. Do NOT
-begin/resume P1-009 (stays Planned; no branch/PR). PR #10 remains OPEN/unmerged — untouched.
+Commit the planning change (CDR-016 + agent records; NO production code), open the draft PR, then implement **Slice 1**
+under TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit (zero-skip PG). Stop only at a
+genuinely new owner decision or the complete final owner gate. Do NOT: mark Done/PR-ready/merge/delete-branch, begin
+P1-011/P1-012/P6-008 (SSE), add a 4th SECURITY DEFINER, weaken RLS, or touch PR #10 / the inert Clerk webhook endpoint.

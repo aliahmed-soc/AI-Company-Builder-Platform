@@ -5,7 +5,7 @@
 // two owner-driven status transitions and profile edits — the durable `company.*` audit is written in the SAME
 // transaction (a write failure rolls the transition back). Status transitions are guarded by the legal-
 // transition table (WORKFLOW §1) so an out-of-state pause/resume is rejected, not silently applied.
-import { CompanyRepository, CompanyProfileRepository, writeAuditEvent, type DatabaseClient, type TenantScope, type AuditScope, type AuditWriteContext } from '@acbp/database';
+import { CompanyRepository, CompanyProfileRepository, writeAuditEvent, projectCompanyActivity, type DatabaseClient, type TenantScope, type AuditScope, type AuditWriteContext, type ActivityWriteFn } from '@acbp/database';
 import { runInCompanyScope } from './company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import {
@@ -34,6 +34,8 @@ export interface CompanyLifecycleOptions {
   readonly logger?: Logger;
   /** TEST SEAM ONLY: override the in-tx audit writer to force a failure (prove the transition rolls back). */
   readonly auditWriter?: AuditWriteFn;
+  /** TEST SEAM ONLY (ACBP-P1-009): override the in-tx activity projector to force a failure. Never set in production. */
+  readonly activityWriter?: ActivityWriteFn;
 }
 
 function auditContext(options: CompanyLifecycleOptions): AuditWriteContext {
@@ -166,7 +168,10 @@ export async function renameCompany(client: DatabaseClient, params: RenameParams
 
           const nextVersion = current.version + 1;
           await profiles.insert({ company_id: params.companyId, version: nextVersion, name: nextName, description: nextDescription, created_by_user_id: params.userId });
-          await audit(scope, companyUpdated({ companyId: params.companyId, changedFields: changed }), auditContext(options));
+          const project = options.activityWriter ?? projectCompanyActivity;
+          const updatedEvent = companyUpdated({ companyId: params.companyId, changedFields: changed });
+          const auditEventId = await audit(scope, updatedEvent, auditContext(options));
+          await project(scope, updatedEvent, auditEventId); // same-tx activity projection (rolls back with the rename)
           options.logger?.info('company.updated', { metadata: { accountId: params.accountId, companyId: params.companyId, changedFields: changed.join(',') } });
           return { status: 'ok', changed: true, version: nextVersion };
         },
@@ -196,6 +201,7 @@ async function transition(
   to: CompanyStatus,
   makeEvent: (from: CompanyStatus) => AuditEvent,
   audit: AuditWriteFn,
+  project: ActivityWriteFn,
   ctx: AuditWriteContext,
 ): Promise<StatusTransitionResult> {
   const companies = new CompanyRepository(scope.db);
@@ -205,7 +211,9 @@ async function transition(
   if (from !== requiredFrom || !isLegalCompanyTransition(from, to)) return { status: 'invalid_transition', from };
   const updated = await companies.updateStatus(companyId, to);
   if (updated === undefined) return { status: 'not_found' }; // 0 rows affected → do NOT audit a phantom transition
-  await audit(scope, makeEvent(from), ctx);
+  const event = makeEvent(from);
+  const auditEventId = await audit(scope, event, ctx);
+  await project(scope, event, auditEventId); // same-tx activity projection (rolls back with the status update)
   return { status: 'ok', companyStatus: to };
 }
 
@@ -213,6 +221,7 @@ export type PauseParams = CommonParams;
 
 export async function pauseCompany(client: DatabaseClient, params: PauseParams, options: CompanyLifecycleOptions = {}): Promise<StatusTransitionResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
+  const project = options.activityWriter ?? projectCompanyActivity;
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
@@ -223,7 +232,7 @@ export async function pauseCompany(client: DatabaseClient, params: PauseParams, 
       // No caller-supplied free-text reason is persisted (data minimization; the immutable audit records only
       // the fact of the transition — security review LOW-1). The contract factory keeps an optional coarse
       // reason for a future SERVER-set value; it is deliberately not populated from request input here.
-      const result = await transition(scope, params.companyId, 'active', 'paused', () => companyPaused({ companyId: params.companyId }), audit, auditContext(options));
+      const result = await transition(scope, params.companyId, 'active', 'paused', () => companyPaused({ companyId: params.companyId }), audit, project, auditContext(options));
       if (result.status === 'ok') options.logger?.info('company.paused', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return result;
     },
@@ -234,6 +243,7 @@ export async function pauseCompany(client: DatabaseClient, params: PauseParams, 
 
 export async function resumeCompany(client: DatabaseClient, params: PauseParams, options: CompanyLifecycleOptions = {}): Promise<StatusTransitionResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
+  const project = options.activityWriter ?? projectCompanyActivity;
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
@@ -243,7 +253,7 @@ export async function resumeCompany(client: DatabaseClient, params: PauseParams,
       }
       // Resume requires the company be `paused` (requiredFrom) — the system-driven onboarding→active provisioning
       // transition (P1-012) can never be forced through here. No caller free-text reason persisted (LOW-1).
-      const result = await transition(scope, params.companyId, 'paused', 'active', () => companyResumed({ companyId: params.companyId }), audit, auditContext(options));
+      const result = await transition(scope, params.companyId, 'paused', 'active', () => companyResumed({ companyId: params.companyId }), audit, project, auditContext(options));
       if (result.status === 'ok') options.logger?.info('company.resumed', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return result;
     },

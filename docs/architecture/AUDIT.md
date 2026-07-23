@@ -122,8 +122,12 @@ them durable:
 
 ## Out of P1-008 scope (later tickets)
 
-Transactional **outbox** + **activity feed** (P1-009+); audit **read/export/admin API** (separate
-API-CONTRACTS contract); **retention/purge** enforcement worker (CDR-009 / later); customer-visible history.
+Audit **read/export/admin API** (separate API-CONTRACTS contract); **retention/purge** enforcement worker
+(CDR-009 / later); customer-visible history. The **activity feed** is implemented in **P1-009** (CDR-016): the four
+durable `company.*` events project SYNCHRONOUSLY, in the same CompanyScope transaction, into an append-only,
+company-scoped `activity_events` table (`audit_events` stays authoritative; the projection is redacted +
+rebuildable, keyed by the source audit `event_id`) — see `docs/architecture/ACTIVITY.md`. The transactional
+**outbox** + async projector remain deferred (later, with higher-volume event sources).
 
 ## Recovery / operations
 

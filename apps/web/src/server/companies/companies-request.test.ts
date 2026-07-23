@@ -7,6 +7,7 @@ import {
   renameCompanyForRequest,
   pauseCompanyForRequest,
   resumeCompanyForRequest,
+  getCompanyActivityForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -30,9 +31,12 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     renameCompany: () => Promise.resolve({ status: 'ok', changed: true, version: 2 }),
     pauseCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'paused' }),
     resumeCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'active' }),
+    getCompanyActivity: () => Promise.resolve({ status: 'ok', page: EMPTY_PAGE }),
     ...overrides,
   };
 }
+
+const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 
 describe('createCompanyForRequest', () => {
   test('creates against the CALLER\'s own account + acting user (never request-supplied)', async () => {
@@ -109,5 +113,29 @@ describe('endpoint×principal negative matrix (request layer)', () => {
     expect((await renameCompanyForRequest('c', { name: 'x' }, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await pauseCompanyForRequest('c', { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
     expect((await resumeCompanyForRequest('c', { identity: identityDeps(), runtime: forbidden() })).status).toBe('forbidden');
+  });
+});
+
+describe('getCompanyActivityForRequest', () => {
+  test('resolves under the caller\'s account + forwards raw cursor/limit (server-resolved authority)', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      getCompanyActivity: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', page: { ...EMPTY_PAGE, nextCursor: 'nc' } });
+      },
+    });
+    const r = await getCompanyActivityForRequest('co_req', { cursor: 'abc', limit: '10' }, { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'activity', page: { ...EMPTY_PAGE, nextCursor: 'nc' } });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req', cursor: 'abc', limit: '10' }]);
+  });
+  test('maps forbidden and invalid_cursor', async () => {
+    expect((await getCompanyActivityForRequest('c', {}, { identity: identityDeps(), runtime: fakeRuntime({ getCompanyActivity: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await getCompanyActivityForRequest('c', { cursor: 'bad' }, { identity: identityDeps(), runtime: fakeRuntime({ getCompanyActivity: () => Promise.resolve({ status: 'invalid_cursor' }) }) })).status).toBe('invalid_cursor');
+  });
+  test('unauthenticated / unverified are refused', async () => {
+    expect((await getCompanyActivityForRequest('c', {}, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await getCompanyActivityForRequest('c', {}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
   });
 });
