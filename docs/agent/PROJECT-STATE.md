@@ -103,11 +103,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
 ## P1-011 slice plan (CDR-017)
-- Slice 1 — CDR-017 + portfolio contracts (PortfolioItem/PortfolioPage; account+actor-bound base64url keyset cursor;
-  strict limit validation — REJECT not clamp) + `portfolio:read` authz action + exhaustive unit tests.
-- Slice 2 — account-scoped membership-filtered portfolio repository (memberships-self-branch → companies join;
-  keyset created_at DESC/id DESC; no list-all-companies method) + query-plan evidence (+ index-only migration ONLY
-  if EXPLAIN proves need) + real-PG visibility/isolation tests.
+- Slice 1 — **DONE** (`3e0834a`; exact-commit CI `29972673530` green). Shared base64url codec extracted; portfolio
+  contracts (PortfolioItem/PortfolioPage; account+actor-bound base64url keyset cursor; strict limit REJECT-not-clamp);
+  `portfolio:read` authz action + drift entry; codec/portfolio unit tests (54 contracts tests green).
+- Slice 2 — **IN PROGRESS**. Account-scoped membership-filtered `PortfolioRepository`
+  (`listActiveMembershipCompanies`: memberships-self-branch → companies PK join; keyset created_at DESC/id DESC;
+  exact-microsecond `created_at_us`; NO name, NO list-all method) + real-PG visibility/isolation/keyset test.
+  **Query-plan decision (CDR-017 §10): NO index migration** — the access path is membership-driven and bounded by
+  the actor's active memberships, served by the existing `company_memberships_member_idx` partial index + companies
+  PK; existing indexes adequate. Migrations remain 0001–0009. See `docs/implementation/P1-011-PORTFOLIO-QUERY-PLAN.md`.
+  Local integration UNRUNNABLE (Windows→WSL 5432 forwarding refuses connections); hosted CI is the zero-skip gate.
 - Slice 3 — bounded SEQUENTIAL CompanyScope name enrichment + stale-membership coarse-fail + cross-company profile
   isolation tests.
 - Slice 4 — `GET /api/companies` (strict cursor/limit parsing; unsupported params rejected) + request/runtime
