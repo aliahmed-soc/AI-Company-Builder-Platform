@@ -3,13 +3,36 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-009** — Activity event foundation (status: **Done** — owner-authorized finalization 2026-07-23).
-- Branch: `p1-009-activity-event-foundation` (from `main` @ `093ec3f`).
-- Base main: `093ec3ffb6325d08f39b6ab679930d638bdec081` (P1-010 squash PR #11; main CI green run 29935591570).
+- Ticket: **ACBP-P1-011** — Company switching and portfolio (status: **Done** — owner-authorized finalization
+  2026-07-23; squash-merge of PR #13 in progress per the authorized sequence). Next ticket P1-012 NOT started
+  (requires separate owner authorization).
+- Branch: `p1-011-company-switching-portfolio` (from `main` @ `e99b0b3`).
+- Base main: `e99b0b396474d7316c25ba05a31382808d8c991c` (P1-009 squash PR #12; exact-main CI 29971233314 green,
+  852/0-skip).
 - PR: draft (opened at planning), base `main`.
-- **STATUS: OWNER-AUTHORIZED FINALIZATION (2026-07-23).** Backlog set to Done (this commit). Remaining ordered
-  finalization: mark PR #12 ready → squash-merge to `main` ("ACBP-P1-009: Activity event foundation") → verify
-  exact-main CI → delete branch. P1-011 stays Planned (do NOT begin).
+- **STATUS: all 6 slices implemented; hosted CI green (897/0-skip on `6ce59b2`; plan-evidence run `30004638933`
+  green on `650c424`); THREE independent reviews (security/tenant-isolation + scope/correctness + targeted
+  follow-up) — ZERO unresolved findings.** R1/R2: no Critical/High/Medium on product code; R3: 2 Medium + 4 Low
+  confined to the evidence suite itself, ALL fixed (mirror deleted — plan suite now EXPLAINs the exact production
+  `buildListQuery`; bitmap-tolerant join assertion; DESC-precise sort assertions; verbatim revoked-selection test)
+  or dispositioned. Real-PG EXPLAIN evidence recorded (membership-index-driven natural plan; NO index migration;
+  see `docs/implementation/P1-011-PORTFOLIO-QUERY-PLAN.md`); 23-area review coverage matrix + findings register in
+  `docs/implementation/P1-011-REVIEW-COVERAGE.md`. AT THE OWNER GATE. Do NOT self-authorize: backlog→Done, PR
+  ready, merge, branch delete, begin P1-012.
+- **Review outcome (2026-07-23):** security review upheld all 8 CDR-017 invariants; scope review confirmed keyset
+  correctness, stale-drop cursor integrity, spec compliance, boundaries. 3 Low/informational notes, all resolved
+  as no-change: L1 float-in-epoch is exact on PG14+ (numeric extract; proven P1-009 pattern); L2 combined
+  drop+hasMore path is correct-by-construction (nextCursor derives from enumeration, independent of enrichment
+  drops) + proven in two halves; L3 param-before-auth 400-vs-401 matches the existing activity route (consistency).
+- **P1-011 design (CDR-017, owner-accepted 2026-07-23):** membership-filtered portfolio (active company_memberships
+  only; NO account-owner registry visibility); enumeration under AccountScope (company GUC unset) starting from the
+  memberships self-branch, joined to companies (account RLS = isolation, not authorization); name enrichment via
+  bounded SEQUENTIAL fresh CompanyScope reads (NO account-scoped profile policy); selection URL-only/stateless/
+  non-authoritative (nothing persisted anywhere); switching = navigate + fresh runInCompanyScope (no switch action/
+  endpoint/durable event); API-only `GET /api/companies` (cursor+limit only; invalid limits REJECTED not clamped;
+  keyset created_at DESC, id DESC; default 25/max 100; cursor base64url bound to account+ACTOR); DTO
+  {companyId,name,status,role,createdAt}; no filters/metrics; no RLS/persistence migration (index-only allowed ONLY
+  on EXPLAIN-proven need); no 4th SECURITY DEFINER.
 - **P1-009 design (CDR-016, owner-accepted 2026-07-22):** separate append-only company-scoped `activity_events`
   table (PK = source audit `event_id`; redacted; rebuildable); **synchronous in-transaction projection** of the 4
   company events (`company.created/updated/paused/resumed`) written atomically with the lifecycle mutation + audit
@@ -93,21 +116,44 @@ _Read this first on resume, then continue automatically to "Next executable acti
 - Local Windows→WSL PG forwarding unstable; hosted CI is the authoritative zero-skip integration gate.
 - The `_lc` shell hook intermittently emits false exit-127; verify state via git/gh/CI/filesystem re-reads (PowerShell).
 
-## P1-009 slice plan (CDR-016)
-- Slice 1 — activity contracts (ActivityType taxonomy = the 4 company events; ActivityEventDTO + redaction map from
-  AuditEvent; keyset cursor encode/decode + validation; `as_of` contract) + `activity:read` authz action + unit tests.
-- Slice 2 — migration 0009: `activity_events` (PK = source event_id; account/company NOT NULL; append-only) + FORCE RLS
-  dual-keyed + INSERT/SELECT grants + keyset index + schema types + real-PG RLS tests.
-- Slice 3 — synchronous in-tx projection: `projectCompanyActivity` writer (@acbp/database) wired into the 4 P1-010
-  lifecycle use cases after the audit write (same CompanyScope tx); real-PG atomicity/rollback + rebuild-mapping tests.
-- Slice 4 — read use case `getCompanyActivity` (CompanyScope, `activity:read`, keyset pagination, DTO redaction,
-  honest `as_of`) + unit + real-PG pagination/isolation tests.
-- Slice 5 — API `GET /api/companies/[companyId]/activity` + request/http + runtime wiring + tests + local web build.
-- Slice 6 — adversarial (cross-company, cursor attacks, oversized page, no account/Logger events, no raw payload) +
-  docs + 3 independent reviews.
+## P1-011 slice plan (CDR-017)
+- Slice 1 — **DONE** (`3e0834a`; exact-commit CI `29972673530` green). Shared base64url codec extracted; portfolio
+  contracts (PortfolioItem/PortfolioPage; account+actor-bound base64url keyset cursor; strict limit REJECT-not-clamp);
+  `portfolio:read` authz action + drift entry; codec/portfolio unit tests (54 contracts tests green).
+- Slice 2 — **IN PROGRESS**. Account-scoped membership-filtered `PortfolioRepository`
+  (`listActiveMembershipCompanies`: memberships-self-branch → companies PK join; keyset created_at DESC/id DESC;
+  exact-microsecond `created_at_us`; NO name, NO list-all method) + real-PG visibility/isolation/keyset test.
+  **Query-plan decision (CDR-017 §10): NO index migration** — PROVEN by hosted real-PG EXPLAIN evidence
+  (`portfolio-plan.integration.test.ts`, realistic ANALYZEd population, postgres:16): natural plan = Limit → Sort →
+  Nested Loop(Bitmap via `company_memberships_member_idx` → `companies_pkey` probe), no seq scans, identical for
+  first + keyset pages. Migrations remain 0001–0009. See `docs/implementation/P1-011-PORTFOLIO-QUERY-PLAN.md`.
+  Local integration UNRUNNABLE (Windows→WSL 5432 forwarding refuses connections); hosted CI is the zero-skip gate.
+- Slice 3 — **DONE**. `getCompanyPortfolio` use case: Phase 1 enumeration under AccountScope
+  (`portfolio:read` account-role check via own-membership bootstrap, then `PortfolioRepository`); Phase 2
+  SEQUENTIAL per-candidate name enrichment via FRESH `runInCompanyScope` (Option B — no scope reuse, no parallel).
+  A membership going stale between phases → runInCompanyScope denies → candidate DROPPED (never a stale/substituted
+  row; keyset advances past it). `enrichCandidatesSequentially` exported for deterministic stale-drop testing.
+  Real-PG core test proves membership-only visibility, account-member-only-no-rows, forbidden non-member, keyset
+  pagination + account+actor cursor, strict limit/cursor rejection, cross-company enrichment isolation, stale-drop.
+  Pure-guard unit test (limit/cursor reject before any DB) runs everywhere.
+- Slice 4 — **DONE**. `GET /api/companies` (portfolio) added to the existing collection route (POST create
+  untouched): allowed params {cursor, limit} only (any other → 400); server-resolved account+actor; maps
+  ok→200 {items,nextCursor} / forbidden→403 / invalid_cursor→400 / invalid_limit→400. Wired `getCompanyPortfolio`
+  through the ClerkIdentityRuntime composition + CompanyRuntime; `getPortfolioForRequest` request use case.
+  Web unit tests (request + http mapping) green; local production `next build` green (route ƒ dynamic).
+- Slice 5 — **DONE**. Real-PG switch-isolation test: A→B→A sequential re-entry (no name/status bleed);
+  same company yields DIFFERENT roles to different callers (role isolation via portfolio); concurrent entries +
+  concurrent portfolios never cross (pooled-connection GUC isolation); transaction-local GUCs clear after COMMIT
+  AND ROLLBACK; forged route companyId (non-member + cross-account) denies coarsely.
+- Slice 6 — **DONE (pending owner gate)**. Architecture docs (`docs/architecture/PORTFOLIO.md`; TENANCY.md P1-011
+  entry); two independent reviews CLEAN; final verification green. PR body updated. Awaiting owner authorization
+  to mark Done / ready / merge / delete branch.
 
 ## Next executable action
-Commit the planning change (CDR-016 + agent records; NO production code), open the draft PR, then implement **Slice 1**
-under TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit (zero-skip PG). Stop only at a
-genuinely new owner decision or the complete final owner gate. Do NOT: mark Done/PR-ready/merge/delete-branch, begin
-P1-011/P1-012/P6-008 (SSE), add a 4th SECURITY DEFINER, weaken RLS, or touch PR #10 / the inert Clerk webhook endpoint.
+**ALL P1-011 SLICES COMPLETE — AT THE OWNER GATE.** Branch `p1-011-company-switching-portfolio` (draft PR #13),
+HEAD after the Slice 6 docs commit; hosted CI green with zero-skip integration on every pushed slice; both
+independent reviews clean. AWAIT OWNER AUTHORIZATION for the finalization sequence (mark backlog Done, mark PR
+ready, squash-merge "ACBP-P1-011: Company switching and portfolio" with NO Co-Authored-By trailer, verify exact-main
+CI, delete the merged branch). Do NOT self-authorize any of those, and do NOT begin P1-012. Do NOT: add
+selected-company persistence, a portfolio UI, a switch endpoint, a 4th SECURITY DEFINER, weaken RLS, or touch PR #10 /
+the inert Clerk webhook endpoint.

@@ -29,6 +29,7 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'company:resume': ['owner'],
   'company:status': ['owner', 'viewer'],
   'activity:read': ['owner', 'viewer'],
+  'portfolio:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

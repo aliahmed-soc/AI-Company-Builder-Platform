@@ -74,12 +74,18 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
         sourceThrough: result.page.sourceThrough,
         lagSeconds: result.page.lagSeconds,
       });
+    case 'portfolio':
+      // The typed portfolio page: redacted items {companyId,name,status,role,createdAt} + the opaque nextCursor.
+      // No accountId, actor ids, totals, metrics or aggregates (CDR-017 §9).
+      return jsonResponse(200, { items: result.page.items, nextCursor: result.page.nextCursor });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':
       return jsonResponse(409, { error: 'conflict' });
     case 'invalid_cursor':
       return jsonResponse(400, { error: 'invalid_cursor' });
+    case 'invalid_limit':
+      return jsonResponse(400, { error: 'invalid_limit' });
     case 'forbidden':
       return jsonResponse(403, { error: 'forbidden' });
     case 'not_found':

@@ -39,6 +39,11 @@ export type { CompanyExecutor } from './company-repositories.js';
 export { projectCompanyActivity, ActivityFeedRepository } from './activity-repository.js';
 export type { ActivityWriteFn, ActivityExecutor, ActivityKeyset, ActivityFeedRow } from './activity-repository.js';
 
+// Company portfolio read repository (ACBP-P1-011; CDR-017). Account-scoped, membership-filtered keyset listing
+// of the actor's active-membership companies. No name (enriched separately under CompanyScope); reads only.
+export { PortfolioRepository } from './portfolio-repository.js';
+export type { PortfolioExecutor, PortfolioKeyset, PortfolioCandidateRow } from './portfolio-repository.js';
+
 // SECURITY DEFINER bootstrap function callers (ACBP-P1-006; CDR-013). The only RLS-boundary crossings.
 export { provisionAccountBootstrap, resolveOwnMembershipBootstrap, acceptInviteBootstrap } from './bootstrap-functions.js';
 export type { BootstrapExecutor } from './bootstrap-functions.js';

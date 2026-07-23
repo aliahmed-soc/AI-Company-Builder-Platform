@@ -38,9 +38,11 @@ describe('toCompaniesResponse', () => {
     [{ status: 'transitioned', companyStatus: 'paused' }, 200],
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],
     [{ status: 'activity', page: { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } }, 200],
+    [{ status: 'portfolio', page: { items: [], nextCursor: null } }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],
+    [{ status: 'invalid_limit' }, 400],
     [{ status: 'forbidden' }, 403],
     [{ status: 'not_found' }, 404],
     [{ status: 'unavailable' }, 503],
@@ -61,5 +63,18 @@ describe('toCompaniesResponse', () => {
     const res = toCompaniesResponse({ status: 'created', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' });
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ company: { companyId: 'co_1', status: 'draft', creationMode: 'own_idea' } });
+  });
+
+  test('portfolio returns only the redacted items + nextCursor (no accountId/actor/metrics)', async () => {
+    const item = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' };
+    const res = toCompaniesResponse({ status: 'portfolio', page: { items: [item], nextCursor: 'nc' } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [item], nextCursor: 'nc' });
+  });
+
+  test('invalid_limit is a 400 (rejected, never clamped)', async () => {
+    const res = toCompaniesResponse({ status: 'invalid_limit' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_limit' });
   });
 });

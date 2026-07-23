@@ -46,6 +46,7 @@ import {
   type CompanyLifecycleOptions,
 } from '../company/company-lifecycle.js';
 import { getCompanyActivity, type GetActivityParams, type GetActivityResult, type GetActivityOptions } from '../company/activity-service.js';
+import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, type GetPortfolioOptions } from '../company/portfolio-service.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -121,6 +122,12 @@ export interface ClerkIdentityRuntime {
   resumeCompany(params: PauseParams, options?: CompanyLifecycleOptions): Promise<StatusTransitionResult>;
   /** Read a page of the company activity feed (ACBP-P1-009). Owner|viewer company member; keyset-paginated. */
   getCompanyActivity(params: GetActivityParams, options?: GetActivityOptions): Promise<GetActivityResult>;
+  /**
+   * Read a page of the caller's company portfolio (ACBP-P1-011; CDR-017). Active account member (owner|viewer);
+   * rows are filtered to the actor's ACTIVE company memberships (account ownership grants none). Keyset-paginated;
+   * the cursor is bound to the account+actor. `accountId` is the caller's own account (server-resolved).
+   */
+  getCompanyPortfolio(params: GetPortfolioParams, options?: GetPortfolioOptions): Promise<GetPortfolioResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -182,6 +189,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getCompanyActivity(params, options) {
       return getCompanyActivity(client, params, options ?? {});
+    },
+    getCompanyPortfolio(params, options) {
+      return getCompanyPortfolio(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

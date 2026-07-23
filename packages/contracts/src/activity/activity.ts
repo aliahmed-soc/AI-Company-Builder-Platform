@@ -10,6 +10,7 @@
 // are NOT projectable and never appear. All four company events are EXECUTED facts (ACT-003 marking is present
 // but trivially 'executed' for P1-009's event set).
 import { isUlid } from '../audit/ulid.js';
+import { asciiToBase64Url, base64UrlToAscii } from '../codec/base64url.js';
 import type { AuditMetadata } from '../audit/audit.js';
 
 /** The CLOSED set of activity types the feed may render — the four durable company events (CDR-016). */
@@ -136,54 +137,7 @@ export function clampActivityPageSize(requested: unknown): number {
   return Math.min(i, ACTIVITY_PAGE_SIZE_MAX);
 }
 
-// ── Pure-ECMAScript base64url codec (ASCII payloads only; no Buffer/btoa/TextEncoder) ────────────────────────
-const B64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-const B64URL_RE = /^[A-Za-z0-9_-]+$/;
-
-/** Encode an ASCII string as unpadded base64url. Throws on a non-ASCII code unit (the cursor payload is ASCII). */
-function asciiToBase64Url(input: string): string {
-  let out = '';
-  for (let i = 0; i < input.length; i += 3) {
-    const b: number[] = [];
-    for (let j = i; j < i + 3 && j < input.length; j++) {
-      const code = input.charCodeAt(j);
-      if (code > 0x7f) throw new Error('cursor payload must be ASCII');
-      b.push(code);
-    }
-    const b0 = b[0] ?? 0;
-    const b1 = b[1] ?? 0;
-    const b2 = b[2] ?? 0;
-    out += B64URL_ALPHABET[b0 >> 2];
-    out += B64URL_ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)];
-    if (b.length > 1) out += B64URL_ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)];
-    if (b.length > 2) out += B64URL_ALPHABET[b2 & 0x3f];
-  }
-  return out;
-}
-
-/** Decode unpadded base64url to an ASCII string, or null for any malformed token (bad alphabet, bad length,
- *  or a decoded byte outside ASCII — i.e. a would-be multi-byte UTF-8 sequence). Never throws. */
-function base64UrlToAscii(token: string): string | null {
-  if (token.length === 0 || !B64URL_RE.test(token)) return null;
-  if (token.length % 4 === 1) return null; // impossible unpadded base64 length
-  const idx = (ch: string): number => B64URL_ALPHABET.indexOf(ch);
-  let out = '';
-  for (let i = 0; i < token.length; i += 4) {
-    const c = [...token.slice(i, i + 4)].map(idx);
-    if (c.some((x) => x < 0)) return null;
-    const c0 = c[0] ?? 0;
-    const c1 = c[1] ?? 0;
-    const c2 = c[2] ?? 0;
-    const c3 = c[3] ?? 0;
-    const b0 = (c0 << 2) | (c1 >> 4);
-    out += String.fromCharCode(b0);
-    if (c.length > 2) out += String.fromCharCode(((c1 & 0x0f) << 4) | (c2 >> 2));
-    if (c.length > 3) out += String.fromCharCode(((c2 & 0x03) << 6) | c3);
-  }
-  // Reject any non-ASCII byte (a real UTF-8 multi-byte payload is not a valid cursor).
-  for (let i = 0; i < out.length; i++) if (out.charCodeAt(i) > 0x7f) return null;
-  return out;
-}
+// The unpadded base64url codec is shared with the portfolio cursor (P1-011) via ../codec/base64url.js.
 
 // ── Keyset cursor (opaque base64url; versioned; account+company bound; after + traversal upper bound) ────────
 const CURSOR_VERSION = 2;
