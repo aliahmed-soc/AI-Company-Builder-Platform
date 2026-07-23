@@ -73,7 +73,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   }
 
   test('an account owner creates a company: company + profile v1 + owner membership + company.created audit (atomic)', async () => {
-    const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Acme Co' });
+    const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Acme Co' }, { provisioningRunner: null }); // seam: observe the committed BOOTSTRAP state (the default auto-run is proven in provisioning.integration.test.ts)
     expect(res.status).toBe('ok');
     if (res.status !== 'ok') return;
     expect(res.companyStatus).toBe('onboarding'); // creation now ends in onboarding (P1-012 bootstrap)
@@ -119,7 +119,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
 
   test('each of the three creation modes creates a company', async () => {
     for (const mode of ['own_idea', 'platform_suggested', 'existing_business'] as const) {
-      const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: mode, name: `Co ${mode}` });
+      const res = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: mode, name: `Co ${mode}`, }, { provisioningRunner: null });
       expect(res.status).toBe('ok');
       if (res.status === 'ok') expect(res.creationMode).toBe(mode);
     }
@@ -170,7 +170,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   });
 
   test('resolver: the creator resolves into the company and reads its current profile (role owner)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Resolvable' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Resolvable' }, { provisioningRunner: null });
     expect(created.status).toBe('ok');
     if (created.status !== 'ok') return;
 
@@ -187,7 +187,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   });
 
   test('resolver deny: an account member WITHOUT a company membership is denied (no company access)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Private' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Private' }, { provisioningRunner: null });
     if (created.status !== 'ok') throw new Error('setup failed');
     // viewer is an active ACCOUNT member but has NO company membership → denied.
     const run = await runInCompanyScope(app, { userId: viewerId, requestedAccountId: accountId, requestedCompanyId: created.companyId }, () => Promise.resolve('should-not-run'));
@@ -202,7 +202,7 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   });
 
   test('resolver deny: a non-account-member is denied (cannot even obtain the account scope)', async () => {
-    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Locked' });
+    const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name: 'Locked' }, { provisioningRunner: null });
     if (created.status !== 'ok') throw new Error('setup failed');
     const run = await runInCompanyScope(app, { userId: outsiderId, requestedAccountId: accountId, requestedCompanyId: created.companyId }, () => Promise.resolve('x'));
     expect(run.kind).toBe('denied');
@@ -210,7 +210,9 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
 
   // ── Slice 4: lifecycle (read, rename, pause/resume) + pause-pickup rig ────────────────────────────────
   async function createCompanyFor(name: string): Promise<string> {
-    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
+    // provisioningRunner: null — these lifecycle tests exercise the P1-010 semantics on a NOT-yet-provisioned
+    // company; the default post-create auto-run is proven in provisioning.integration.test.ts.
+    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name }, { provisioningRunner: null });
     if (r.status !== 'ok') throw new Error('create failed');
     return r.companyId;
   }

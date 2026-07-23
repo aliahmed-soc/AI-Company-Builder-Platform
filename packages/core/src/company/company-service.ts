@@ -39,6 +39,7 @@ import {
   type PublicErrorEnvelope,
 } from '@acbp/contracts';
 import { isMemberRole } from '../members/roles.js';
+import { resumeProvisioning, type ProvisioningRunnerFn } from './provisioning-service.js';
 import type { Logger } from '@acbp/observability';
 
 /** TEST SEAM ONLY (mirrors membership-service): override the in-tx audit writer to force a failure. */
@@ -59,6 +60,9 @@ export interface CompanyOpOptions {
   readonly auditWriter?: AuditWriteFn;
   /** TEST SEAM ONLY (ACBP-P1-009): override the in-tx activity projector to force a failure. Never set in production. */
   readonly activityWriter?: ActivityWriteFn;
+  /** TEST SEAM ONLY (ACBP-P1-012): override (or with `null` suppress) the post-commit inline provisioning run,
+   *  so tests can observe the committed bootstrap state. Production always uses the real resume service. */
+  readonly provisioningRunner?: ProvisioningRunnerFn | null;
 }
 
 export type CreateCompanyResult =
@@ -180,5 +184,25 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
 
-  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+  const created = run.kind === 'ran' ? run.value : ({ status: 'forbidden' } as const);
+  if (created.status !== 'ok') return created;
+
+  // AUTOMATIC POST-COMMIT PROVISIONING (CDR-018 §3/§10): the creation transaction has COMMITTED; now run the
+  // request-driven resume service INLINE (awaited — never a detached promise/timer). The creator is the
+  // company owner (the bootstrap just made them one), so provisioning:resume authorizes. A step failure — or
+  // any unexpected error here — NEVER rolls back or fails the already-created company: it stays `onboarding`
+  // with truthful checkpoints, and a later explicit owner resume continues from the first incomplete step.
+  if (options.provisioningRunner !== null) {
+    const runner = options.provisioningRunner ?? resumeProvisioning;
+    try {
+      const provisioned = await runner(client, { userId: params.actingUserId, accountId: params.accountId, companyId: created.companyId }, options);
+      if (provisioned.status === 'ok' && provisioned.provisioning.completed) {
+        return { ...created, companyStatus: 'active' }; // truthful final status after successful auto-provisioning
+      }
+    } catch {
+      // Logged coarsely; the company itself was created successfully and remains resumable.
+      options.logger?.warn('provisioning.post_create_run_failed', { metadata: { companyId: created.companyId } });
+    }
+  }
+  return created;
 }

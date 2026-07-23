@@ -52,6 +52,12 @@ export class ProvisioningRepository {
     return this.#db.selectFrom('provisioning_steps').selectAll().where('company_id', '=', companyId).where('step', '=', step).forUpdate().executeTakeFirst();
   }
 
+  /** Lock ALL of a company's checkpoint rows `FOR UPDATE` in canonical order (the completion transition proves
+   *  "all six completed" under lock so no concurrent attempt can race the onboarding→active activation). */
+  lockSteps(companyId: string): Promise<ProvisioningStepRow[]> {
+    return this.#db.selectFrom('provisioning_steps').selectAll().where('company_id', '=', companyId).orderBy('step_order', 'asc').forUpdate().execute();
+  }
+
   /** Commit a step attempt's SUCCESS outcome: attempt increment + started/completed timestamps, atomically with
    *  the step's material effect in the caller's transaction. Guarded on the CURRENT status/attempt (optimistic
    *  re-check under the row lock); returns the number of rows updated (0 = the guard failed — caller aborts). */

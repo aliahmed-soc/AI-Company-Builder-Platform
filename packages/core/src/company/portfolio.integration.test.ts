@@ -62,9 +62,10 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: viewerId, role: 'viewer', status: 'active', accepted_at: sql<Date>`now()` }).execute();
   });
 
-  /** Create a company (owner becomes its company owner) and pin created_at exactly for deterministic order. */
+  /** Create a company (owner becomes its company owner) and pin created_at exactly for deterministic order.
+   *  provisioningRunner: null — portfolio semantics are under test, not provisioning; companies stay onboarding. */
   async function createCompanyAt(name: string, createdAtIso: string): Promise<string> {
-    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
+    const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name }, { provisioningRunner: null });
     if (r.status !== 'ok') throw new Error(`create failed: ${r.status}`);
     await seed.kysely.updateTable('companies').set({ created_at: sql<Date>`${createdAtIso}::timestamptz` }).where('id', '=', r.companyId).execute();
     return r.companyId;
