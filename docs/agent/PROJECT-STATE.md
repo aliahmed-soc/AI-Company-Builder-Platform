@@ -3,12 +3,13 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-009** — Activity event foundation (status: **Planned/Ready**; owner-gated to Done).
+- Ticket: **ACBP-P1-009** — Activity event foundation (status: **Done** — owner-authorized finalization 2026-07-23).
 - Branch: `p1-009-activity-event-foundation` (from `main` @ `093ec3f`).
 - Base main: `093ec3ffb6325d08f39b6ab679930d638bdec081` (P1-010 squash PR #11; main CI green run 29935591570).
 - PR: draft (opened at planning), base `main`.
-- **STATUS: owner decisions made (CDR-016). Implementing autonomously.** Do NOT self-authorize: backlog→Done,
-  PR ready, merge, branch delete, begin P1-011.
+- **STATUS: OWNER-AUTHORIZED FINALIZATION (2026-07-23).** Backlog set to Done (this commit). Remaining ordered
+  finalization: mark PR #12 ready → squash-merge to `main` ("ACBP-P1-009: Activity event foundation") → verify
+  exact-main CI → delete branch. P1-011 stays Planned (do NOT begin).
 - **P1-009 design (CDR-016, owner-accepted 2026-07-22):** separate append-only company-scoped `activity_events`
   table (PK = source audit `event_id`; redacted; rebuildable); **synchronous in-transaction projection** of the 4
   company events (`company.created/updated/paused/resumed`) written atomically with the lifecycle mutation + audit
