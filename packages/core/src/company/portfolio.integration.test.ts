@@ -130,6 +130,20 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     expect((await getCompanyPortfolio(app, { userId: ownerId, accountId, cursor: foreign })).status).toBe('invalid_cursor');
   });
 
+  test('a PAUSED company stays visible in the portfolio with its truthful status (CDR-017 required behavior)', async () => {
+    const active = await createCompanyAt('Running', '2026-02-01T00:00:00.000000Z');
+    const paused = await createCompanyAt('Sleeping', '2026-01-01T00:00:00.000000Z');
+    await seed.kysely.updateTable('companies').set({ status: 'active' }).where('id', '=', active).execute();
+    await seed.kysely.updateTable('companies').set({ status: 'paused' }).where('id', '=', paused).execute();
+    const res = await getCompanyPortfolio(app, { userId: ownerId, accountId });
+    expect(res.status).toBe('ok');
+    if (res.status !== 'ok') return;
+    expect(res.page.items.map((i) => ({ id: i.companyId, status: i.status, name: i.name }))).toEqual([
+      { id: active, status: 'active', name: 'Running' },
+      { id: paused, status: 'paused', name: 'Sleeping' },
+    ]);
+  });
+
   test('enrichment isolation: each candidate gets ITS OWN name under a fresh CompanyScope (no context bleed)', async () => {
     const a = await createCompanyAt('Alpha', '2026-02-01T00:00:00.000000Z');
     const b = await createCompanyAt('Beta', '2026-01-01T00:00:00.000000Z');
