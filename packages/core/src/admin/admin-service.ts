@@ -44,6 +44,11 @@ export type AdminReadResult =
   | { readonly status: 'invalid_reason' }
   | { readonly status: 'forbidden' };
 
+// Selector shape gate: ids must LOOK like UUIDs before touching the database. A malformed selector would
+// otherwise surface as a uuid-cast error (bounded 500) — shape-checking keeps every bad-target cause inside
+// the ONE coarse `forbidden` (no malformed-vs-nonexistent distinction) and off the database entirely.
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The single P1-013 admin operation: a reason-captured, audited read of one company's registry overview.
  * Returns ONLY the four approved fields — never accountId, actor ids, admin-standing details, profile/member
@@ -56,7 +61,7 @@ export async function adminReadCompanyOverview(client: DatabaseClient, params: A
   const userId = typeof params.userId === 'string' ? params.userId.trim() : '';
   const accountId = typeof params.accountId === 'string' ? params.accountId.trim() : '';
   const companyId = typeof params.companyId === 'string' ? params.companyId.trim() : '';
-  if (userId === '' || accountId === '' || companyId === '') return { status: 'forbidden' };
+  if (!UUID_SHAPE.test(userId) || !UUID_SHAPE.test(accountId) || !UUID_SHAPE.test(companyId)) return { status: 'forbidden' };
 
   // 2) The one-transaction protocol (gate → target scope → read → audit → commit) in the database primitive.
   const result = await executeAdminCompanyRead(

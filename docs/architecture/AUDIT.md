@@ -114,9 +114,21 @@ activity-projected; written under a resolved CompanyScope atomically with the st
   run's system events reference it via `causation_id`.
 - `provisioning.completed` (`{step_count}`) — written atomically with the `onboarding→active` transition.
 
-Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company, and
-provisioning subsets, each domain's real-PostgreSQL producer test provides a **compile-exhaustive** driver over
-its subset, and a compile-time guard asserts the partition covers exactly the full operation set.
+One durable, in-transaction **platform-admin** event (ACBP-P1-013; CDR-019) — AUDIT-ONLY, never
+activity-projected:
+
+- `admin.tenant_read` (`{reason, scope='company_overview'}`) — THE admin-action record for the one sanctioned
+  cross-tenant company-overview read. Written into the TARGET tenant's trail (target account/company ids) with
+  `actor_type='admin'` and the REAL administrator's internal user id (never a tenant user — no impersonation).
+  The `reason` is the caller's mandatory justification retained VERBATIM (validated: ≥1 non-whitespace char,
+  ≤512 Unicode code points, no NUL; never trimmed/normalized). Audit-or-nothing: the overview is returned ONLY
+  after this event committed in the same transaction — an audit failure rolls back and delivers no data. To
+  admit a 512-code-point astral-plane reason (up to 1024 UTF-16 units), the per-value metadata bound was raised
+  512→1024 UTF-16 units (total-payload bound unchanged; boundary tests pin both).
+
+Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company,
+provisioning, and admin subsets, each domain's real-PostgreSQL producer test provides a **compile-exhaustive**
+driver over its subset, and a compile-time guard asserts the partition covers exactly the full operation set.
 
 ## Explicitly deferred (still interim structured logs — NOT durable)
 

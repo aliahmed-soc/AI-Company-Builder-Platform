@@ -8,8 +8,10 @@ Persisted in-transaction today: `membership.invited`, `membership.revoked` (P1-0
 and the six AUDIT-ONLY workspace-provisioning events (P1-012; CDR-018 §8) — `provisioning.started`,
 `provisioning.step_started`, `provisioning.step_completed`, `provisioning.step_failed`,
 `provisioning.retry_requested`, `provisioning.completed` — which are NEVER activity-projected (the P1-009
-four-event feed taxonomy is closed). All other events in this catalog remain **proposed / interim structured
-logs only** and are NOT durable yet (see `docs/architecture/AUDIT.md`).
+four-event feed taxonomy is closed); and the AUDIT-ONLY platform-admin event `admin.tenant_read` (P1-013;
+CDR-019) — written into the TARGET tenant's trail with `actor_type='admin'` and metadata exactly
+`{reason (verbatim), scope='company_overview'}`, never activity-projected. All other events in this catalog
+remain **proposed / interim structured logs only** and are NOT durable yet (see `docs/architecture/AUDIT.md`).
 
 ## Common envelope (all events)
 
@@ -41,6 +43,7 @@ Retention default: activity-projected events with company data; audit-relevant e
 | provisioning.step_started / step_completed / step_failed | Account&Company (P1-012) | audit only — never activity | step, attempt (+ result_code / failure_code — closed sets) | audited; step_failed outcome=blocked; system actor | with company |
 | provisioning.retry_requested | Account&Company (P1-012) | audit only — never activity | step, next_attempt | audited; USER actor; causation for the retry run | with company |
 | provisioning.completed | Account&Company (P1-012) | audit only — never activity | step_count | audited atomically with onboarding→active | with company |
+| admin.tenant_read | Admin surface (P1-013) | audit only — never activity | reason (verbatim), scope='company_overview' | THE admin-action record (CDR-019); target-tenant-scoped; actor_type=admin (real admin id); written before response delivery | with company |
 | interview.started | Discovery | activity | session_id | audited | with session |
 | interview.question_answered | Discovery | Understanding (incremental), memory | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |

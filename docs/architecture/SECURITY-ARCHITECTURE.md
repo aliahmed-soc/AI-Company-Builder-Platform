@@ -42,3 +42,13 @@ Secrets **must**: live outside normal application records (values only in Infisi
 | Tenant visibility | Where appropriate (support actions on a tenant's data), the tenant's own audit export shows that access occurred |
 | No silent impersonation | Impersonation-style debugging requires explicit flagging, is visible in the tenant audit trail, and is disabled for approval decisions (an admin cannot approve *as* a customer) |
 | Break-glass | Sealed high-privilege path: dual-control activation, alarms on use, mandatory post-use review, automatic expiry |
+
+**Delivered foundation (ACBP-P1-013; CDR-019)** — see `ADMINISTRATIVE-ACCESS.md` for the full model:
+admin identity = owner-managed `platform_admins` allowlist (self-check-only runtime visibility; no runtime
+management API; fresh per-request verification; tenant roles/Clerk claims never grant it). One operation:
+the reason-captured (verbatim, ≤512 code points), target-tenant-audited `admin.tenant_read` company-overview
+read on the restricted `acbp_app` role via transaction-local target GUCs set only after the admin gate —
+"JIT" is per-transaction scope (decision 20); no BYPASSRLS/owner-runtime/impersonation, audit-before-response,
+one coarse denial (no existence oracle). Break-glass and the full JIT approval workflow are DESIGN-ONLY —
+`BREAK-GLASS-DESIGN.md` (dual control, incident reference, time-limited credential, alarms, post-use review,
+automatic expiry, no silent impersonation, no customer-approval simulation); implementing them is an owner gate.

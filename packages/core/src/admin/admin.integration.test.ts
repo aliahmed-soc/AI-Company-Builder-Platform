@@ -135,6 +135,12 @@ describe.skipIf(!hasTestDatabase)('platform-admin tenant read (real PostgreSQL, 
     // Unknown company / unknown account → the IDENTICAL result shape.
     expect(await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: '00000000-0000-4000-8000-000000000000', reason: REASON })).toEqual({ status: 'forbidden' });
     expect(await adminReadCompanyOverview(app, { userId: adminId, accountId: '00000000-0000-4000-8000-000000000001', companyId: companyA, reason: REASON })).toEqual({ status: 'forbidden' });
+    // MALFORMED ids (non-UUID shape, SQL-ish junk, empty) → the SAME coarse forbidden — never a thrown
+    // uuid-cast error, so a caller cannot even distinguish malformed from nonexistent.
+    for (const bad of ['not-a-uuid', "1' or '1'='1", 'acc_123', '']) {
+      expect(await adminReadCompanyOverview(app, { userId: adminId, accountId: bad, companyId: companyA, reason: REASON })).toEqual({ status: 'forbidden' });
+      expect(await adminReadCompanyOverview(app, { userId: adminId, accountId: accountA, companyId: bad, reason: REASON })).toEqual({ status: 'forbidden' });
+    }
     // No audit rows for any denial.
     expect(await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'admin.tenant_read').execute()).toHaveLength(0);
     // Each tenant is reachable ONLY via its own explicitly-targeted request (fresh scope per request).

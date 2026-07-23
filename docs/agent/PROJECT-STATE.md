@@ -18,10 +18,20 @@ _Read this first on resume, then continue automatically to "Next executable acti
   POST /api/admin/accounts/[accountId]/companies/[companyId]/read body {reason} → {companyId,status,creationMode,
   createdAt}; coarse single 403 (no existence oracle); NO impersonation structurally; break-glass + JIT workflow
   DOCUMENTED not built; activity taxonomy unchanged; no 4th SECURITY DEFINER/BYPASSRLS/owner-runtime/third role.
-- Branch: `p1-012-workspace-provisioning` (from `main` @ `e7f9a53`).
-- Base main: `e7f9a53f267fcf16395654a7789dbf1be56d5fbf` (P1-011 squash PR #13; exact-main CI 30006648643 green,
-  84 files / 902 / 0-skip).
-- PR: draft (opened at planning), base `main`.
+- PR: **#15 draft** "ACBP-P1-013: Administrative-access foundation", base `main`.
+- **P1-013 progress:** planning `c48734d` (CDR-019); Slice 1 `15d5adb` (contracts/authz/audit registry; CI
+  30017194994 green); Slice 2 `d49e33b` (migration 0011 platform_admins + real-PG suite + runbook; its CI
+  30017530296 FAILED on a latent head-pinned migrateDown in the P1-012 backfill suite → repaired `b014e4e`:
+  rollback targets pinned BY NAME, also restoring the 0009 reapply proof that had gone vacuous); Slice 3
+  `1b28db6`+`a86cf92` (executeAdminCompanyRead one-tx primitive + adminReadCompanyOverview + real-PG trust
+  suite + always-run no-impersonation boundary guard; CI 30018642111 green 91f/980/0-skip); Slice 4 `0db555c`
+  (admin API route + strict parsing/privacy tests + prod build, route emitted dynamic; CI 30019840829 green
+  1018/1018/0-skip). Slice 5 in progress: malformed-selector UUID-shape guard (coarse forbidden, no DB touch),
+  docs (ADMINISTRATIVE-ACCESS.md + BREAK-GLASS-DESIGN.md new; SECURITY-ARCHITECTURE/AUTHORIZATION/TENANCY/
+  API-CONTRACTS/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE updated), independent reviews, final verification,
+  owner-gate report. NOTE (documented deviation): no reified AdminCapability value exists — the capability is
+  the verified position inside the one transaction (strictly stronger: nothing to cache/serialize/forge);
+  META_MAX_VALUE_LEN raised 512→1024 UTF-16 units for astral verbatim reasons.
 - **P1-012 design (CDR-018, owner-accepted 2026-07-23):** internal-Postgres-only workspace provisioning; six
   canonical ordered steps (profile, mission_draft, research, roadmap, documents, activity); auto-start after the
   creation tx COMMITS; request-driven SEQUENTIAL execution, fresh CompanyScope tx per step; NO worker/queue/
