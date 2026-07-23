@@ -7,6 +7,8 @@ import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, factoryFor, producedEventNam
 describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
   test('the approved operation set is the membership + company lifecycle + provisioning operations', () => {
     expect([...AUDITED_OPERATION_IDS].sort()).toEqual([
+      // Platform-administrative access (ACBP-P1-013; CDR-019) — deliberately approved addition.
+      'admin.tenant_read',
       'company.create',
       'company.pause',
       'company.resume',
@@ -33,6 +35,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['provisioning.step_fail']).toBe('provisioning.step_failed');
     expect(AUDITED_OPERATIONS['provisioning.retry_request']).toBe('provisioning.retry_requested');
     expect(AUDITED_OPERATIONS['provisioning.complete']).toBe('provisioning.completed');
+    expect(AUDITED_OPERATIONS['admin.tenant_read']).toBe('admin.tenant_read');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

@@ -11,4 +11,5 @@ export * from './company/index.js';
 export * from './activity/index.js';
 export * from './portfolio/index.js';
 export * from './provisioning/index.js';
+export * from './admin/index.js';
 

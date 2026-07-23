@@ -57,6 +57,11 @@ export const AUTHZ_ACTIONS = [
   // deliberately NO start/retry/acknowledge/cancel action — resume is the single mutation surface.
   'provisioning:read',
   'provisioning:resume',
+  // Platform-administrative access (ACBP-P1-013; CDR-019). Registered so the action is a named, closed member
+  // of the policy surface — but granted to NO membership role (empty allow-list below): tenant owner/viewer
+  // NEVER authorize it. Admin authority is a SEPARATE database-backed gate (the owner-managed platform_admins
+  // self-check in @acbp/core's admin module), not a branch of this matrix.
+  'admin:tenant_read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -116,6 +121,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // owner only (a lifecycle-mutation-class operation — it can ultimately activate the company).
   'provisioning:read': ['owner', 'viewer'],
   'provisioning:resume': ['owner'],
+  // Platform-administrative access (ACBP-P1-013; CDR-019): EMPTY allow-list — no membership role may ever
+  // perform it through this matrix. The separate platform_admins gate is the only path (and it never consults
+  // this matrix for a grant; the entry exists so the action name is closed and matrix-denied by construction).
+  'admin:tenant_read': [],
 };
 
 /**
