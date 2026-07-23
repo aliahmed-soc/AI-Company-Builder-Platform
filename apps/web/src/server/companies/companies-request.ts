@@ -8,8 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage, PortfolioPage } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, CompanyView, InternalUserReconciliation, ProvisionResult } from '@acbp/core';
+import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO } from '@acbp/contracts';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -27,7 +27,8 @@ export type CompaniesRequestResult =
   | { readonly status: 'renamed'; readonly changed: boolean; readonly version?: number }
   | { readonly status: 'transitioned'; readonly companyStatus: string }
   | { readonly status: 'activity'; readonly page: ActivityPage }
-  | { readonly status: 'portfolio'; readonly page: PortfolioPage };
+  | { readonly status: 'portfolio'; readonly page: PortfolioPage }
+  | { readonly status: 'provisioning'; readonly provisioning: ProvisioningStatusDTO };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -40,6 +41,8 @@ export interface CompanyRuntime {
   resumeCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
   getCompanyActivity(params: { userId: string; accountId: string; companyId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetActivityResult>;
   getCompanyPortfolio(params: { userId: string; accountId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetPortfolioResult>;
+  getProvisioningStatus(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetProvisioningResult>;
+  resumeProvisioning(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ResumeProvisioningResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -189,6 +192,37 @@ export async function getPortfolioForRequest(query: { cursor?: string; limit?: s
       return { status: 'invalid_cursor' };
     case 'invalid_limit':
       return { status: 'invalid_limit' };
+  }
+}
+
+// Workspace provisioning (ACBP-P1-012; CDR-018). Status read = any active company member; resume = company owner
+// only (the domain enforces both from the fresh company role). companyId is a membership-validated selector;
+// accountId + userId are server-resolved. No caller input beyond the route's companyId reaches the domain.
+export async function getProvisioningForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getProvisioningStatus({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'provisioning', provisioning: r.provisioning };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+export async function resumeProvisioningForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.resumeProvisioning({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'provisioning', provisioning: r.provisioning };
+    case 'conflict':
+      return { status: 'conflict' };
+    case 'forbidden':
+      return { status: 'forbidden' };
   }
 }
 

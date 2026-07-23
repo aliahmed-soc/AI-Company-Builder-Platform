@@ -78,6 +78,18 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       // The typed portfolio page: redacted items {companyId,name,status,role,createdAt} + the opaque nextCursor.
       // No accountId, actor ids, totals, metrics or aggregates (CDR-017 §9).
       return jsonResponse(200, { items: result.page.items, nextCursor: result.page.nextCursor });
+    case 'provisioning':
+      // The redacted ordered six-step status (ACBP-P1-012; CDR-018 §12): approved fields only — no accountId,
+      // actor/membership ids, free-text failure messages, or internal error detail.
+      return jsonResponse(200, {
+        companyId: result.provisioning.companyId,
+        companyStatus: result.provisioning.companyStatus,
+        steps: result.provisioning.steps,
+        nextIncompleteStep: result.provisioning.nextIncompleteStep,
+        resumable: result.provisioning.resumable,
+        exhausted: result.provisioning.exhausted,
+        completed: result.provisioning.completed,
+      });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':

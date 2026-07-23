@@ -9,6 +9,8 @@ import {
   resumeCompanyForRequest,
   getCompanyActivityForRequest,
   getPortfolioForRequest,
+  getProvisioningForRequest,
+  resumeProvisioningForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -34,6 +36,8 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     resumeCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'active' }),
     getCompanyActivity: () => Promise.resolve({ status: 'ok', page: EMPTY_PAGE }),
     getCompanyPortfolio: () => Promise.resolve({ status: 'ok', page: EMPTY_PORTFOLIO }),
+    getProvisioningStatus: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
+    resumeProvisioning: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
     ...overrides,
   };
 }
@@ -41,6 +45,15 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
 const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 const EMPTY_PORTFOLIO = { items: [], nextCursor: null } as const;
 const PORTFOLIO_ITEM = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' } as const;
+const PROVISIONING_DTO = {
+  companyId: 'co_1',
+  companyStatus: 'onboarding',
+  steps: [{ step: 'profile' as const, order: 1, status: 'pending' as const, attempt: 0, requestedAt: '2026-01-01T00:00:00.000Z', startedAt: null, completedAt: null, failedAt: null, failureCode: null }],
+  nextIncompleteStep: 'profile' as const,
+  resumable: true,
+  exhausted: false,
+  completed: false,
+} as const;
 
 describe('createCompanyForRequest', () => {
   test('creates against the CALLER\'s own account + acting user (never request-supplied)', async () => {
@@ -168,5 +181,32 @@ describe('getPortfolioForRequest', () => {
     expect((await getPortfolioForRequest({}, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await getPortfolioForRequest({}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await getPortfolioForRequest({}, { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
+  });
+});
+
+describe('provisioning requests (ACBP-P1-012)', () => {
+  test('GET resolves under the caller\'s own account; companyId is the only route input', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      getProvisioningStatus: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO });
+      },
+    });
+    const r = await getProvisioningForRequest('co_req', { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'provisioning', provisioning: PROVISIONING_DTO });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req' }]);
+  });
+  test('resume maps ok / conflict (exhausted) / forbidden (viewer or non-member)', async () => {
+    expect((await resumeProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).status).toBe('provisioning');
+    expect((await resumeProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resumeProvisioning: () => Promise.resolve({ status: 'conflict' }) }) })).status).toBe('conflict');
+    expect((await resumeProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resumeProvisioning: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await getProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ getProvisioningStatus: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+  });
+  test('unauthenticated / unverified / deleted are refused on both endpoints', async () => {
+    expect((await getProvisioningForRequest('c', { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await resumeProvisioningForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await resumeProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
   });
 });
