@@ -9,4 +9,5 @@ export * from './authz/index.js';
 export * from './audit/index.js';
 export * from './company/index.js';
 export * from './activity/index.js';
+export * from './portfolio/index.js';
 

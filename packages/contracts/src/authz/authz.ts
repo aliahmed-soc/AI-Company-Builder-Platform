@@ -47,6 +47,11 @@ export const AUTHZ_ACTIONS = [
   'company:status',
   // Company activity feed (ACBP-P1-009; CDR-016). Checked against the caller's COMPANY-membership role.
   'activity:read',
+  // Company portfolio (ACBP-P1-011; CDR-017 §7). An ACCOUNT-level action: checked against the caller's active
+  // ACCOUNT-membership role (owner|viewer). It gates only the API CALL; result rows stay filtered by active
+  // COMPANY membership (an account role never grants a portfolio row by itself). There is deliberately NO
+  // `company:switch` action — switching is stateless URL-only re-resolution, not a role-gated operation.
+  'portfolio:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -99,6 +104,9 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // Company activity feed read (ACBP-P1-009): any active company member (owner|viewer) — API-CONTRACTS
   // "Activity … Company member (read)". Account membership alone is insufficient (the company role governs).
   'activity:read': ['owner', 'viewer'],
+  // Company portfolio read (ACBP-P1-011; CDR-017 §7): any active ACCOUNT member (owner|viewer). This role check
+  // authorizes the API call only; the listing itself is intersected with the caller's active company memberships.
+  'portfolio:read': ['owner', 'viewer'],
 };
 
 /**
