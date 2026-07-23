@@ -52,6 +52,11 @@ export const AUTHZ_ACTIONS = [
   // COMPANY membership (an account role never grants a portfolio row by itself). There is deliberately NO
   // `company:switch` action — switching is stateless URL-only re-resolution, not a role-gated operation.
   'portfolio:read',
+  // Workspace provisioning (ACBP-P1-012; CDR-018 §11). Checked against the caller's COMPANY-membership role:
+  // any active company member may READ provisioning status; only a company OWNER may RESUME. There is
+  // deliberately NO start/retry/acknowledge/cancel action — resume is the single mutation surface.
+  'provisioning:read',
+  'provisioning:resume',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -107,6 +112,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // Company portfolio read (ACBP-P1-011; CDR-017 §7): any active ACCOUNT member (owner|viewer). This role check
   // authorizes the API call only; the listing itself is intersected with the caller's active company memberships.
   'portfolio:read': ['owner', 'viewer'],
+  // Workspace provisioning (ACBP-P1-012; CDR-018 §11): status read = any active company member; resume = company
+  // owner only (a lifecycle-mutation-class operation — it can ultimately activate the company).
+  'provisioning:read': ['owner', 'viewer'],
+  'provisioning:resume': ['owner'],
 };
 
 /**

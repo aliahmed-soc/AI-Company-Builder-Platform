@@ -62,6 +62,13 @@ describe('event-name registry (deny unregistered)', () => {
       'company.updated',
       'membership.invited',
       'membership.revoked',
+      // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — six audit-only events, deliberately registered.
+      'provisioning.completed',
+      'provisioning.retry_requested',
+      'provisioning.started',
+      'provisioning.step_completed',
+      'provisioning.step_failed',
+      'provisioning.step_started',
     ]);
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
