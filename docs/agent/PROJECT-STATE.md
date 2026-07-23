@@ -3,7 +3,9 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- Ticket: **ACBP-P1-011** — Company switching and portfolio (status: **Planned/Ready**; owner-gated to Done).
+- Ticket: **ACBP-P1-011** — Company switching and portfolio (status: **Done** — owner-authorized finalization
+  2026-07-23; squash-merge of PR #13 in progress per the authorized sequence). Next ticket P1-012 NOT started
+  (requires separate owner authorization).
 - Branch: `p1-011-company-switching-portfolio` (from `main` @ `e99b0b3`).
 - Base main: `e99b0b396474d7316c25ba05a31382808d8c991c` (P1-009 squash PR #12; exact-main CI 29971233314 green,
   852/0-skip).
