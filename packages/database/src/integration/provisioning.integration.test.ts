@@ -40,7 +40,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   let coPaused = '';
   let coB = ''; // account B's draft company
 
-  const ALL = ['provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   async function asApp<T>(gucs: Record<string, string>, fn: (trx: DatabaseClient['kysely']) => Promise<T>): Promise<T> {
     return withTransaction(app, async (tx) => {
@@ -201,7 +201,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   });
 
   test('DELETE and TRUNCATE are denied on both tables (no grant); areas UPDATE denied too', async () => {
-    for (const t of ['provisioning_steps', 'company_workspace_areas'] as const) {
+    for (const t of ['platform_admins', 'provisioning_steps', 'company_workspace_areas'] as const) {
       await expect(asApp(acctCo(accountA, coDraft), (k) => sql`delete from public.${sql.ref(t)}`.execute(k))).rejects.toThrow();
       await expect(asApp(acctCo(accountA, coDraft), (k) => sql`truncate table public.${sql.ref(t)}`.execute(k))).rejects.toThrow();
     }

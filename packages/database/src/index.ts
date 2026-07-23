@@ -105,6 +105,7 @@ export type {
   CompanyWorkspaceAreasTable,
   CompanyWorkspaceAreaRow,
   NewCompanyWorkspaceArea,
+  PlatformAdminsTable,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
