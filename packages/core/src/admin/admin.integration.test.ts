@@ -7,9 +7,6 @@
 // path is structurally impersonation-free (source guard). Runs as `acbp_app` under FORCE RLS. Skips without
 // ACBP_TEST_DATABASE_URL; never mocked.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { sql } from 'kysely';
 import { closeDatabase, migrateToLatest, withTransaction, type DatabaseClient, type NewUser } from '@acbp/database';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
@@ -180,19 +177,5 @@ describe.skipIf(!hasTestDatabase)('platform-admin tenant read (real PostgreSQL, 
     for (const v of [gucs.a, gucs.c, gucs.u]) expect(v === '' || v === null).toBe(true);
   });
 
-  test('NO-IMPERSONATION source guard: the admin path contains no impersonation-shaped identifier or membership write', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const sources = [
-      readFileSync(join(here, 'admin-service.ts'), 'utf8'),
-      readFileSync(join(here, '..', '..', '..', 'database', 'src', 'admin-access.ts'), 'utf8'),
-    ];
-    for (const src of sources) {
-      for (const forbidden of [/impersonat/i, /actAsUser/i, /assumedUserId/i, /delegatedSession/i]) {
-        expect(forbidden.test(src)).toBe(false);
-      }
-      // The admin path never writes a membership and never touches member/profile tables.
-      expect(/insertInto\((['"`])(memberships|company_memberships)\1\)/.test(src)).toBe(false);
-      expect(src.includes('company_profiles')).toBe(false);
-    }
-  });
+  // NOTE: the no-impersonation SOURCE guard lives in admin-boundary.test.ts (always runs — no database needed).
 });
