@@ -11,6 +11,8 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Membership | A | (user_id, account_id, company scope) | User↔Account/Company + role | invited→active→revoked | M | — | Life of account | role changes audited | MVP |
 | Company | C (root) | company_id, account_id | owns everything below | draft→onboarding→active→paused→deactivating→deactivated (→deleted) | M | — | Until deletion + retention | company.* events | MVP |
 | Company profile | C | profile_id | 1:1 Company | with company | V | founder-provided business data | With company | version history | MVP |
+| Provisioning checkpoint | C | (company_id, step) | 6 canonical steps per Company (ACBP-P1-012; CDR-018) | pending→completed / pending→failed (retry ≤3; no durable running) | M (current state; history = audit) | — | With company | provisioning.* audit-only events | MVP |
+| Workspace area | C | (company_id, area) | closed set: mission_draft, research, roadmap, documents (ACBP-P1-012) | registered | A (append-only) | — | With company | via provisioning step audits | MVP |
 | Interview session | C | session_id | has Questions/Answers; feeds Understanding | not_started→in_progress→waiting_for_user→ready_for_review→confirmed→superseded | M (state) | founder answers | With company | interview.* | MVP |
 | Question | C | question_id, session_id | belongs to session; may depend on prior Answer | asked→answered/skipped | I | — | With session | — | MVP |
 | Answer | C | answer_id, question_id | 1:1 Question; source for memory items | given→revised(new row) | A (revisions append) | founder content | With session | corrections audited | MVP |

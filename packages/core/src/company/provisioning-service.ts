@@ -199,11 +199,22 @@ export async function getProvisioningStatus(client: DatabaseClient, params: Prov
 
 type StepOutcome = 'completed_step' | 'failed_step' | 'exhausted' | 'all_completed' | 'inconsistent' | 'denied';
 
+/** A retry authorization from resume Phase A: the EXACT (step, attempt) the owner's request may retry. A failed
+ *  row that does not match (e.g. failed by a CONCURRENT resume after this run's gate, or already consumed) is
+ *  never retried by this run — it halts, so no attempt ever executes without its own user authorization. */
+interface RetryAuthorization {
+  readonly step: ProvisioningStepName;
+  readonly fromAttempt: number;
+}
+
 /**
  * Execute AT MOST ONE step in a fresh CompanyScope transaction (see the module header for the full protocol).
- * `causationId` ties the system step events of a retry run back to the user's `retry_requested` audit event.
+ * When the locked row is a FAILED step, execution requires a matching {@link RetryAuthorization}; the
+ * `provisioning.retry_requested` (USER actor) audit is then written IN THIS SAME transaction — so it is
+ * recorded exactly once per EXECUTED retry, with an exact `next_attempt`, and its event id becomes the
+ * `causation_id` of this attempt's system step events.
  */
-async function executeNextStep(client: DatabaseClient, params: ProvisioningParams, causationId: string | undefined, options: ProvisioningOpOptions): Promise<StepOutcome> {
+async function executeNextStep(client: DatabaseClient, params: ProvisioningParams, retryAuth: RetryAuthorization | undefined, options: ProvisioningOpOptions): Promise<StepOutcome> {
   const audit = options.auditWriter ?? writeAuditEvent;
   const run = await runInCompanyScope(
     client,
@@ -223,6 +234,14 @@ async function executeNextStep(client: DatabaseClient, params: ProvisioningParam
       if (row.status === 'failed' && row.attempt >= MAX_PROVISIONING_ATTEMPTS) return 'exhausted';
       const fromAttempt = row.attempt;
       const attempt = fromAttempt + 1;
+      let causationId: string | undefined;
+      if (row.status === 'failed') {
+        // A failed step may only run again under a MATCHING user retry authorization (same step, same committed
+        // attempt). A mismatch — the step failed AFTER this run's gate, or the authorization was already consumed
+        // by a concurrent resume — HALTS without mutation (never a silent, unaudited automatic retry).
+        if (retryAuth === undefined || retryAuth.step !== next || retryAuth.fromAttempt !== fromAttempt) return 'failed_step';
+        causationId = await audit(scope, provisioningRetryRequested({ companyId: params.companyId, step: next, nextAttempt: attempt }), { actorType: 'user', ...opts(options) });
+      }
       const auditCtx = { actorType: 'system' as const, ...(causationId !== undefined ? { causationId } : {}), ...opts(options) };
 
       // Chronology: the started audit precedes the effect, but ALL of it commits (or rolls back) together —
@@ -308,9 +327,11 @@ export async function resumeProvisioning(client: DatabaseClient, params: Provisi
   const audit = options.auditWriter ?? writeAuditEvent;
 
   // Phase A (own transaction): authorize provisioning:resume (OWNER only) and gate on the current state under
-  // a company-row lock; emit `provisioning.retry_requested` (USER actor) when this resume retries a failed step.
+  // a company-row lock. When the next incomplete step has FAILED, Phase A AUTHORIZES its retry — the
+  // `retry_requested` audit itself is written by the step transaction that actually executes it (exactly once
+  // per executed retry, with an exact next_attempt; a concurrent consumption makes the authorization inert).
   type PhaseGate =
-    | { readonly gate: 'proceed'; readonly retryEventId?: string }
+    | { readonly gate: 'proceed'; readonly retry?: RetryAuthorization }
     | { readonly gate: 'already_completed' }
     | { readonly gate: 'conflict' }
     | { readonly gate: 'forbidden' };
@@ -355,12 +376,12 @@ export async function resumeProvisioning(client: DatabaseClient, params: Provisi
         }
       }
 
-      // A retry (the next incomplete step has FAILED before) is an explicit USER action — audited as such.
+      // A retry (the next incomplete step has FAILED before) requires this run's explicit user authorization —
+      // returned to Phase B; the executing step transaction records the retry_requested audit itself.
       const next = flags.nextIncompleteStep;
       const nextRow = next !== null ? likes.find((r) => r.step === next) : undefined;
-      if (nextRow !== undefined && nextRow.status === 'failed') {
-        const retryEventId = await audit(scope, provisioningRetryRequested({ companyId: params.companyId, step: nextRow.step, nextAttempt: nextRow.attempt + 1 }), { actorType: 'user', ...opts(options) });
-        return { gate: 'proceed', retryEventId };
+      if (next !== null && nextRow !== undefined && nextRow.status === 'failed') {
+        return { gate: 'proceed', retry: { step: next, fromAttempt: nextRow.attempt } };
       }
       return { gate: 'proceed' };
     },
@@ -372,11 +393,12 @@ export async function resumeProvisioning(client: DatabaseClient, params: Provisi
   if (gate.gate === 'conflict') return { status: 'conflict' };
 
   // Phase B: the sequential step loop — each step in its own fresh CompanyScope transaction. Bounded by the
-  // step count + 1 (each iteration either advances or halts; it can never spin).
+  // step count + 1 (each iteration either advances or halts; it can never spin). The retry authorization is
+  // (step, attempt)-exact, so passing it every iteration is safe: once consumed (or superseded by a concurrent
+  // run) it can never match again.
   if (gate.gate === 'proceed') {
-    const causationId = gate.retryEventId;
     for (let i = 0; i < PROVISIONING_STEPS.length + 1; i++) {
-      const outcome = await executeNextStep(client, params, causationId, options);
+      const outcome = await executeNextStep(client, params, gate.retry, options);
       if (outcome === 'denied') return { status: 'forbidden' }; // membership revoked mid-run — coarse denial
       if (outcome === 'completed_step') continue;
       if (outcome === 'all_completed') {

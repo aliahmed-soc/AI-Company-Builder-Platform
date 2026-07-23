@@ -365,6 +365,9 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
   test('illegal transitions are rejected: cannot pause a draft, cannot resume an active', async () => {
     const draft = await createCompanyFor('Draft Co');
     expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'onboarding' }); // post-P1-012 a fresh company is onboarding
+    // A genuinely DRAFT company (the backfilled pre-P1-012 shape) still cannot be paused either.
+    await seed.kysely.updateTable('companies').set({ status: 'draft' }).where('id', '=', draft).execute();
+    expect(await pauseCompany(app, { userId: ownerId, accountId, companyId: draft })).toMatchObject({ status: 'invalid_transition', from: 'draft' });
     const active = await createActiveCompany('Active Co');
     expect(await resumeCompany(app, { userId: ownerId, accountId, companyId: active })).toMatchObject({ status: 'invalid_transition', from: 'active' });
     // Owner resume requires the company be PAUSED — it cannot force the system-driven onboarding→active

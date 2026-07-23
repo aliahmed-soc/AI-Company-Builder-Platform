@@ -86,7 +86,8 @@ export interface ProvisioningStepDTO {
 /** The redacted, client-facing provisioning status (ordered six-step view + derived flags). */
 export interface ProvisioningStatusDTO {
   readonly companyId: string;
-  /** Truthful company lifecycle status at read time ('draft' | 'onboarding' | 'active' | 'paused'). */
+  /** Truthful company lifecycle status at read time ('draft' | 'onboarding' | 'active' | 'paused' — or the
+   *  defensive 'unknown' for an out-of-set stored value, mirroring COMP-008's honest display rule). */
   readonly companyStatus: string;
   /** All six steps in canonical order. */
   readonly steps: readonly ProvisioningStepDTO[];

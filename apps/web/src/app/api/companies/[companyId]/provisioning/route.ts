@@ -16,5 +16,9 @@ export async function GET(request: Request, context: { params: Promise<{ company
     // ANY query parameter is unsupported on this route.
     return new Response(JSON.stringify(genericErrorBody(400)), { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' } });
   }
-  return toCompaniesResponse(await getProvisioningForRequest(companyId));
+  try {
+    return toCompaniesResponse(await getProvisioningForRequest(companyId));
+  } catch {
+    return new Response(JSON.stringify(genericErrorBody(500)), { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  }
 }

@@ -18,5 +18,11 @@ export async function POST(request: Request, context: { params: Promise<{ compan
   if ([...new URL(request.url).searchParams.keys()].length > 0) {
     return new Response(JSON.stringify(genericErrorBody(400)), { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' } });
   }
-  return toCompaniesResponse(await resumeProvisioningForRequest(companyId));
+  try {
+    return toCompaniesResponse(await resumeProvisioningForRequest(companyId));
+  } catch {
+    // An unexpected mid-step error (e.g. a transient DB failure) rolled the step back; the durable checkpoints
+    // are untouched and a later resume continues. Return the BOUNDED generic envelope — never framework detail.
+    return new Response(JSON.stringify(genericErrorBody(500)), { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  }
 }

@@ -149,20 +149,32 @@ _Read this first on resume, then continue automatically to "Next executable acti
   to mark Done / ready / merge / delete branch.
 
 ## P1-012 slice plan (CDR-018)
-- Slice 1 — CDR-018 + planning records + draft PR; provisioning contracts (closed step/status/failure-code enums,
-  ProvisioningStep/ProvisioningStatus DTOs), `provisioning:read`/`provisioning:resume` authz, six audit event
-  registrations; exhaustive unit tests.
-- Slice 2 — migration 0010 (`provisioning_steps` + `company_workspace_areas`; CHECKs; FORCE RLS dual-key;
-  column-limited UPDATE; backfill pending checkpoints for draft/onboarding) + real-PG RLS/privilege/lifecycle tests.
-- Slice 3 — creation-transaction integration (6 pending checkpoints + draft→onboarding + provisioning.started,
-  all atomic with the existing bootstrap) + rollback tests + post-commit inline resume invocation.
-- Slice 4 — step executor (fresh CompanyScope tx/step; FOR UPDATE; attempt cap 3; no committed running) + material
-  effects + resume orchestration + completion transition (onboarding→active) + kill-and-resume/exhaustion/
-  concurrency tests.
-- Slice 5 — GET/POST provisioning APIs + runtime composition + web tests + production build.
-- Slice 6 — adversarial tests + docs + independent reviews + final verification (owner gate).
+- Slice 1 — **DONE** (`69d15fa` + completeness-registry fix `d0dbe2f`): contracts (closed step/status/failure-code
+  enums, DTOs, flag derivations), `provisioning:read`/`provisioning:resume`, six audit registrations + factories +
+  operation partition. Draft **PR #14**.
+- Slice 2 — **DONE** (`bcd12a2`; CI 30010682316): migration 0010 (CHECK-pinned tables; FORCE RLS dual-key;
+  column-limited UPDATE; idempotent draft/onboarding backfill with BYPASSRLS guard) + real-PG
+  RLS/privilege/backfill/down-up suite; all 22 existing suites' drop-lists extended.
+- Slice 3 — **DONE** (`7e0a5d4`; CI 30011303006): creation tx atomically adds 6 pending checkpoints +
+  draft→onboarding + provisioning.started (selective-writer rollback proven); creation returns onboarding.
+- Slice 4 — **DONE** (`ae4fd5c`; CI 30012231249): fresh-scope step executor (FOR UPDATE + status/attempt guards;
+  no committed running; cap 3), material effects (verify profile/activity; idempotent area inserts), resume
+  orchestration (Phase A company-row-locked gates; USER retry_requested + causation; backfilled-draft bring-up;
+  paused/inconsistent fail closed), completion transition (locks + gate + idempotent activation),
+  createCompany post-commit INLINE auto-run (provisioningRunner seam); 12-test real-PG suite (kill-and-resume at
+  every checkpoint, exhaustion, concurrency single-effect/single-activation, authz matrix, DTO privacy, GUC
+  cleanup, provisioning audit completeness).
+- Slice 5 — **DONE** (`5933fe3`; CI 30012614309): GET …/provisioning + POST …/provisioning/resume (param-free,
+  body never parsed) + runtime wiring + web tests + prod build (both routes ƒ dynamic).
+- Slice 6 — **DONE (pending owner gate)**: three independent reviews (security/RLS/audit; correctness/
+  concurrency/state-machine; scope/migration/taxonomy) — NO Critical/High; R2's 2 Medium (concurrent-retry
+  authorization/audit gaps) FIXED STRUCTURALLY (retry_requested written in the executing step tx under an exact
+  (step, attempt) Phase-A authorization; unauthorized failed rows halt); 6 further Lows fixed, 5 accepted with
+  documented rationale (`docs/implementation/P1-012-REVIEW-COVERAGE.md` register). Architecture docs complete
+  (PROVISIONING.md new; TENANCY/AUTHORIZATION/EVENT-CATALOG/AUDIT/DATA-ARCHITECTURE/API-CONTRACTS updated).
+  Local gate green on the Slice 6 candidate (674 passed / 277 PG-dependent skips; build; audit; diff-check).
 
 ## Next executable action
-Commit the planning change (CDR-018 + agent records; NO production code), open the draft PR, then implement Slice 1
-under TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit (zero-skip PG). Stop only at a
-genuinely new owner decision or the complete final owner gate.
+**AT THE FINAL OWNER GATE** once the Slice 6 commit's exact-head hosted CI is green. AWAIT OWNER AUTHORIZATION for:
+backlog ACBP-P1-012→Done, PR #14 ready, squash-merge "ACBP-P1-012: Workspace provisioning" (no Co-Authored-By),
+exact-main CI, branch delete. Do NOT self-authorize; do NOT begin P1-013.

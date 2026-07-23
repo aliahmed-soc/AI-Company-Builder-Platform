@@ -175,7 +175,9 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
         // inconsistency; throw so the whole bootstrap rolls back (fail-closed).
         throw platformError('internal', { code: ErrorCodes.INTERNAL_ERROR, internalMessage: 'Company bootstrap could not transition draft→onboarding.' });
       }
-      await audit(companyScope, provisioningStarted({ companyId: company.id, stepCount: PROVISIONING_STEPS.length }), auditContext(options));
+      // SYSTEM actor (CDR-018 §8: automatic provisioning is a system action; consistent with the backfilled-
+      // draft bring-up path) — the scope-bound actor_id still records whose create request drove it.
+      await audit(companyScope, provisioningStarted({ companyId: company.id, stepCount: PROVISIONING_STEPS.length }), { actorType: 'system', ...auditContext(options) });
       options.logger?.info('company.created', { metadata: { accountId: params.accountId, companyId: company.id, creationMode: input.creationMode } });
 
       const status: CompanyStatus = 'onboarding';
@@ -196,8 +198,10 @@ export async function createCompany(client: DatabaseClient, params: CreateCompan
     const runner = options.provisioningRunner ?? resumeProvisioning;
     try {
       const provisioned = await runner(client, { userId: params.actingUserId, accountId: params.accountId, companyId: created.companyId }, options);
-      if (provisioned.status === 'ok' && provisioned.provisioning.completed) {
-        return { ...created, companyStatus: 'active' }; // truthful final status after successful auto-provisioning
+      // Truthfulness: report `active` only when the transactionally-read company status says so (the steps-only
+      // `completed` flag could momentarily lead the not-yet-committed activation of a concurrent run).
+      if (provisioned.status === 'ok' && provisioned.provisioning.companyStatus === 'active') {
+        return { ...created, companyStatus: 'active' };
       }
     } catch {
       // Logged coarsely; the company itself was created successfully and remains resumable.

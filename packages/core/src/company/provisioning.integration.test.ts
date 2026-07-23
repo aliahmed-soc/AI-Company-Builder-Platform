@@ -240,6 +240,60 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     expect(areas).toHaveLength(4); // no duplicate area rows
   });
 
+  test('CONCURRENT resumes racing a FAILED step: no unaudited automatic retry; each executed retry is user-authorized exactly once', async () => {
+    const co = await createOnboarding('Retry Race Co');
+    const failResearch = { stepEffects: { research: failEffect('internal_error') } };
+    // Wave 1: two concurrent resumes on a FRESH sequence with research failing. Whichever run reaches research
+    // first commits its controlled failure (attempt 1); the OTHER run holds no retry authorization for that
+    // just-failed attempt → it HALTS. Exactly ONE committed attempt, ZERO retry events.
+    const [w1a, w1b] = await Promise.all([
+      resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
+      resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
+    ]);
+    expect(w1a.status).toBe('ok');
+    expect(w1b.status).toBe('ok');
+    expect((await stepRows(co)).find((s) => s.step === 'research')).toMatchObject({ status: 'failed', attempt: 1 });
+    expect((await auditNames(co)).filter((n) => n === 'provisioning.retry_requested')).toHaveLength(0);
+    expect((await auditNames(co)).filter((n) => n === 'provisioning.step_failed')).toHaveLength(1);
+
+    // Wave 2: two concurrent resumes RETRYING the failed step. Both Phase A's authorize (research, attempt 1);
+    // only the run that actually executes consumes it (retry_requested written IN that step transaction); the
+    // other's authorization no longer matches attempt 2 → halts. Exactly ONE executed retry, ONE retry event.
+    const [w2a, w2b] = await Promise.all([
+      resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
+      resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
+    ]);
+    expect(w2a.status).toBe('ok');
+    expect(w2b.status).toBe('ok');
+    expect((await stepRows(co)).find((s) => s.step === 'research')).toMatchObject({ status: 'failed', attempt: 2 });
+    const retries = await seed.kysely.selectFrom('audit_events').selectAll().where('company_id', '=', co).where('name', '=', 'provisioning.retry_requested').execute();
+    expect(retries).toHaveLength(1);
+    expect(retries[0]?.actor_type).toBe('user');
+    expect(retries[0]?.payload).toEqual({ step: 'research', next_attempt: 2 }); // exact — audited at execution time
+    expect((await auditNames(co)).filter((n) => n === 'provisioning.step_failed')).toHaveLength(2);
+  });
+
+  test('recovery: crash between the sixth step and activation (all completed + onboarding) — resume activates exactly once', async () => {
+    const co = await createOnboarding('Almost Done Co');
+    // Simulate the crash window: all six checkpoints durably completed, activation transaction never ran.
+    await seed.kysely
+      .updateTable('provisioning_steps')
+      .set({ status: 'completed', attempt: 1, started_at: sql<Date>`now()`, completed_at: sql<Date>`now()` })
+      .where('company_id', '=', co)
+      .execute();
+    expect(await companyStatus(co)).toBe('onboarding');
+    const r = await resumeProvisioning(app, { userId: ownerId, accountId, companyId: co });
+    expect(r.status).toBe('ok');
+    if (r.status === 'ok') {
+      expect(r.provisioning.completed).toBe(true);
+      expect(r.provisioning.companyStatus).toBe('active');
+    }
+    expect(await companyStatus(co)).toBe('active');
+    const names = await auditNames(co);
+    expect(names.filter((n) => n === 'provisioning.completed')).toHaveLength(1);
+    expect(names.filter((n) => n === 'provisioning.step_started')).toHaveLength(0); // no step was re-executed
+  });
+
   test('completed provisioning: resume is a pure idempotent read (no mutation, no rerun)', async () => {
     const co = await createOnboarding('Done Co');
     expect((await resumeProvisioning(app, { userId: ownerId, accountId, companyId: co })).status).toBe('ok');
