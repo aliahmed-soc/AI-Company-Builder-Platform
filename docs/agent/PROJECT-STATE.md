@@ -3,18 +3,19 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-002 "Question and answer persistence"** (M2), branch `p2-002-question-answer-persistence` from
-  `main` @ `6cf537e`, governed by **CDR-023**. Deps P2-001 (Done); no owner gate (the Q&A data model,
-  append-only revision semantics, and dual-keyed tenancy are pinned by canon).
-- **Design (CDR-023):** `interview_questions` (immutable, ordered per session) + `interview_answers`
-  (append-only — a revision is a new row, current = max revision per question) on migration 0013; operations
-  record/revise/skip/read Q&A, idempotent no-op on identical resubmit; authz reuses `interview:participate`
-  (writes) + `interview:read`. **Persistence-only** — audit-store/domain-event emission DEFERRED (canon routes
-  the audited correction to the M3 `understanding.corrected`; EVENT-CATALOG marks `interview.question_answered`
-  audit "—"; no consumer/outbox exists). Accountability lives in the append-only authored rows. Flagged in
-  CDR-023 §4 + PR for owner visibility (additive/reversible).
-- **ACBP-P2-001 — Done** (squash `6cf537e`, PR #20; exact-main CI 30071214096 green). Migrations now 0001–0012;
-  still exactly 3 SECURITY DEFINER (all 0006). Phase 2: 1 Done / 11 Planned.
+- **ACBP-P2-002 finalization.** Status **Done**; feature head `71657ae` (review fixes), exact-head CI
+  **30075033944 green** — real-PG Q&A suites (append-only revisions, idempotent no-op, concurrent
+  distinct-both-persist + identical-collapse, NOT-NULL author, cross-tenant isolation) + HTTP adversarial all
+  passed. Both independent reviews CLEAN with an explicit verdict that the CDR-023 §4 audit-deferral is
+  acceptable and NOT an owner gate; all observations fixed (P2-002-REVIEW-COVERAGE.md). Sequence: finalization
+  records commit → exact-commit CI → PR #21 ready → recheck main/PR#10 → squash-merge **"ACBP-P2-002: Question
+  and answer persistence"** (no Co-Authored-By) → exact-main CI → delete branch → next Phase 2 ticket.
+- Migrations 0001–0013; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime; `interview_questions` (immutable) + `interview_answers` (append-only, NOT-NULL author) dual-keyed
+  FORCE RLS. **Persistence-only** — no audit/domain event (deferred; CDR-023 §4).
+- **ACBP-P2-001 — Done** (squash `6cf537e`, PR #20). Phase 2: 2 Done / 10 Planned. Next candidates: P2-005
+  (adaptive orchestration; deps P2-003+P2-002 — P2-003 gated by IOQ-13, so P2-005 is blocked); **P2-006** typed
+  memory (deps P1-005 Done — UNBLOCKED); P2-003 gateway gated by IOQ-13.
 - **PR #10** still OPEN/draft/external — inspect GitHub state only; never touch.
 
 ## ACBP-P2-001 detail (Done) — branch `p2-001-interview-session-state-machine`, PR #20, CDR-022
