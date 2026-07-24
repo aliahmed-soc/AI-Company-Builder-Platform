@@ -41,7 +41,7 @@ export interface SliceBOps {
   evaluateAnswer(c: DatabaseClient, p: Qids & { questionId: string; answerText: string }, o: { gateway: SliceBGateway }): Promise<Status<{ verdict: string }>>;
   suggestAssumptionForSkip(c: DatabaseClient, p: Qids & { questionId: string }, o: { gateway: SliceBGateway }): Promise<Status>;
   getSessionQa(c: DatabaseClient, p: Qids): Promise<Status<{ qa: { items: ReadonlyArray<unknown> } }>>;
-  listMemoryItems(c: DatabaseClient, p: Ids): Promise<Status<{ items: ReadonlyArray<{ type: string; sourceType: string }> }>>;
+  listMemoryItems(c: DatabaseClient, p: Ids): Promise<Status<{ items: ReadonlyArray<{ type: string; sourceType: string; content: string }> }>>;
   generateUnderstanding(c: DatabaseClient, p: Ids, o: { gateway: SliceBGateway }): Promise<Status<{ document: { documentId: string; version: number; items: ReadonlyArray<unknown> } }>>;
   recordUnderstandingReview(c: DatabaseClient, p: Ids & { itemId: string; decision: string; note?: string | null; expectedVersion: number }): Promise<Status>;
   confirmUnderstanding(c: DatabaseClient, p: Ids & { expectedVersion: number }): Promise<Status>;
@@ -92,8 +92,10 @@ export async function runSliceBJourney(deps: SliceBJourneyDeps): Promise<{ reado
   const q1 = await ops.addInterviewQuestion(product, { ...qBase, prompt: 'Who is your target customer?' });
   const clear = await ops.evaluateAnswer(product, { ...qBase, questionId: q1.question?.questionId ?? '', answerText: 'Small coffee shops in Cairo.' }, { gateway: makeGateway('interview', { kind: 'respond', output: '{"verdict":"clear"}' }) });
   const memAfterFact = await ops.listMemoryItems(product, iBase);
-  const hasFact = (memAfterFact.items ?? []).some((i) => i.type === 'user_fact' && i.sourceType === 'interview_answer');
-  record('a clear answer is classified as a user_fact memory item', 'MEM-001', clear.status === 'ok' && clear.verdict === 'clear' && hasFact, `evaluateAnswer verdict=${clear.verdict ?? clear.status}; user_fact present=${String(hasFact)}`);
+  // Falsifiable: the fact must exist AND carry the founder's own answer text (proving the answer flowed through the
+  // classification path into memory, not merely that some user_fact appeared).
+  const hasFact = (memAfterFact.items ?? []).some((i) => i.type === 'user_fact' && i.sourceType === 'interview_answer' && i.content.includes('coffee shops'));
+  record('a clear answer is classified as a user_fact memory item carrying the answer', 'MEM-001', clear.status === 'ok' && clear.verdict === 'clear' && hasFact, `evaluateAnswer verdict=${clear.verdict ?? clear.status}; user_fact carrying the answer present=${String(hasFact)}`);
 
   // ── 4. Classification — an "I don't know" becomes a labeled ai_assumption (facts stay distinct) ────
   const q2 = await ops.addInterviewQuestion(product, { ...qBase, prompt: 'What is your pricing model?' });
@@ -148,7 +150,10 @@ export async function runSliceBJourney(deps: SliceBJourneyDeps): Promise<{ reado
   const names = new Set(audits.map((a) => a.name));
   const expectedAudits = ['interview.started', 'memory.item_created', 'understanding.generated', 'understanding.confirmed', 'understanding.corrected'];
   const allPresent = expectedAudits.every((n) => names.has(n));
-  const tenantActorCorrect = audits.length > 0 && audits.every((a) => a.account_id === accountId && a.actor_id === userId);
+  // Scope the tenant+actor assertion to the JOURNEY's own events (not the seed's provisioning/company.created rows),
+  // so the guarantee is decoupled from how the fixture seeds companies.
+  const journeyAudits = audits.filter((a) => expectedAudits.includes(a.name));
+  const tenantActorCorrect = journeyAudits.length > 0 && journeyAudits.every((a) => a.account_id === accountId && a.actor_id === userId);
   record('the durable audit trail records the whole slice, tenant + actor stamped', 'ACT-001/NFR-001', allPresent && tenantActorCorrect, `events={${[...names].sort().join(', ')}}; all expected present=${String(allPresent)}; tenant+actor stamped=${String(tenantActorCorrect)}`);
 
   // ── 13. NEGATIVE — fallback-flag demo (ADR-019 non-silent fallback) ────────────────────────────────

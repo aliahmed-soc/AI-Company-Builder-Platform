@@ -8,7 +8,8 @@ UNDER-003, MEM-001 (+ the M2/M3 exit demonstration). **Governing:** MILESTONE-PL
 The M2/M3 **Slice B** milestone-exit demonstration: an end-to-end founder-discovery journey
 **interview → follow-ups → classification → understanding → edit → confirm**, proven against the deterministic
 **FakeModelProvider** (CDR-026 §3) — no live model, no real key, no snapshot pin. This is a **vertical-slice
-integration + runnable demo** ticket (type "Testing"): it wires and regression-guards nine already-merged tickets into
+integration + runnable demo** ticket (type "Testing"): it wires and regression-guards the already-merged discovery/
+understanding tickets (P2-001/002/003/005/006/008/009/010) into
 one journey; it adds NO migration, NO new authz/audit event, NO new architecture/authorization/tenant-isolation
 decision.
 
@@ -33,8 +34,10 @@ the deferred owner gate.
    memory item (facts vs assumptions remain distinct — UNDER-002/MEM-001).
 5. **Resumability** — `suspendInterviewSession` → `resumeInterviewSession` round-trips the state
    (in_progress ⇄ waiting_for_user) and the Q&A is intact afterward (DISC-007 "resumability live-demoed").
-6. **Understanding generated** — `generateUnderstanding` produces a versioned, classified document from that memory
-   (UNDER-001).
+6. **Understanding generated** — `generateUnderstanding` reads that typed memory and produces a versioned, classified
+   document via the gateway (UNDER-001). (With the deterministic fake the model→document *derivation* is fixed, not
+   exercised — the step proves the generation pipeline versions/classifies/persists + audits/meters; the live
+   derivation is the deferred live-provider surface, CDR-026 §0.)
 7. **Planning blocked pre-confirm** — `isCurrentUnderstandingConfirmed` = false (the strategy gate is closed).
 8. **Edit** — `recordUnderstandingReview` (an `edited` decision on an item of the current version) records the
    owner's correction (UNDER-003).

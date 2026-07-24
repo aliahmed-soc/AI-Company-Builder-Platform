@@ -3,7 +3,18 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-009 understanding review + confirmation — DONE / FINALIZING (autonomous window; finalization pre-authorized).**
+- **ACBP-P2-012 Slice B integration: confirmed understanding — IN PROGRESS (autonomous window; finalization pre-authorized).**
+  Branch `p2-012-slice-b` (from main `875a00c`), draft PR **#30**, CDR-031. (P2-009 merged `40548cf`; brace-expansion CI
+  hotfix merged `875a00c`; Phase 2 was 9/12.) Selected via canon discovery over P2-007/P2-011 — P2-012 is the M2/M3
+  milestone-exit E2E on the critical spine, deps P2-009 + P2-010 both Done, fully buildable on the deterministic
+  FakeModelProvider, NO owner gate. The founder-discovery vertical slice (interview → adaptive follow-ups →
+  classification → understanding → edit → confirm → correction → fallback-flag negative), composing the merged
+  P2-001/002/005/006/008/009 use cases. `runSliceBJourney` (@acbp/test-support) implemented ONCE, shared by the CI
+  suite + `pnpm demo:slice-b` (no drift; the Slice A/CDR-021 precedent); the core use cases + gateway factory are
+  INJECTED (test-support must not import @acbp/core — workspace cycle). No migration, no new authz/audit, no live
+  provider. Commit `51cb256` pushed; CI `30134235216` in flight. Local: E2E 1/1, demo 13/13, unit 927, boundaries (no
+  cycle)+typecheck+lint+secrets+encoding+boundary-tests clean. Remaining: docs + review + finalization. PR #10 untouched.
+- **ACBP-P2-009 understanding review + confirmation — DONE (merged squash `40548cf`, PR #28).**
   Backlog **Done**. Independent 10-dimension adversarial review **CLEAN** (no Blocker/Critical/High; 4 Low/Medium fixed
   — D1 confirmed metadata `{version}` docs; D2 repo chronological ordering; P1 CDR confirm-precondition wording; P2
   correction_ref wording; P2-009-REVIEW-COVERAGE.md). Finalization head `1fcc8fc` pushed; finalization-records commit

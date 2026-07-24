@@ -56,6 +56,11 @@ try {
     if (!step.ok) exitCode = 1;
   }
 
+  // Defense-in-depth (matches the CI suite): the journey must have run its FULL 13-step sequence, not a truncated one.
+  if (steps.length !== 13) {
+    exitCode = 1;
+    console.log(`FAIL  [sequence] expected 13 journey steps, got ${steps.length} (a truncated run must not read as a pass)`);
+  }
   const failures = steps.filter((s) => !s.ok).length;
   console.log(`\n${steps.length - failures}/${steps.length} steps passed`);
   console.log(exitCode === 0 ? '\nSlice B demo PASSED — understanding generated, edited, confirmed, and a correction re-blocked planning; fallbacks stayed honest.' : '\nSlice B demo FAILED — see the FAIL steps above.');
