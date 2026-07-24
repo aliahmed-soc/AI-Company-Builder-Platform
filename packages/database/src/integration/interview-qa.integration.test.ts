@@ -117,8 +117,9 @@ describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, r
     const q = await insertQuestion(accountA, companyA1, sessionA, 1);
     expect(await asApp({ 'app.current_account': accountA }, (k) => k.selectFrom('interview_questions').selectAll().execute())).toHaveLength(0);
     await expect(asApp({ 'app.current_account': accountA }, (k) => sql`insert into interview_questions (session_id, account_id, company_id, position, prompt) values (${sessionA}::uuid, ${accountA}::uuid, ${companyA1}::uuid, 2, 'x')`.execute(k))).rejects.toThrow();
-    // Under A's scope, writing a row stamped for B is refused by WITH CHECK.
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_answers (question_id, revision, session_id, account_id, company_id, status, content) values (${q}::uuid, 1, ${sessionB}::uuid, ${accountB}::uuid, ${companyB1}::uuid, 'answered', 'x')`.execute(k))).rejects.toThrow();
+    // Under A's scope, writing a row stamped for B is refused by WITH CHECK (author supplied so the RLS policy,
+    // not the NOT NULL author column, is what rejects it).
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_answers (question_id, revision, session_id, account_id, company_id, status, content, created_by_user_id) values (${q}::uuid, 1, ${sessionB}::uuid, ${accountB}::uuid, ${companyB1}::uuid, 'answered', 'x', ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 
   test('APPEND-ONLY / IMMUTABLE: no UPDATE or DELETE on questions or answers (regardless of scope)', async () => {
@@ -148,6 +149,8 @@ describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, r
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'answered', null)).rejects.toThrow();
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'skipped', 'nope')).rejects.toThrow();
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'bogus', 'x')).rejects.toThrow();
+    // The author is REQUIRED (created_by_user_id NOT NULL — accountability is structural).
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_answers (question_id, revision, session_id, account_id, company_id, status, content) values (${q}::uuid, 5, ${sessionA}::uuid, ${accountA}::uuid, ${companyA1}::uuid, 'answered', 'x')`.execute(k))).rejects.toThrow();
     // The valid shapes are accepted.
     await insertAnswer(accountA, companyA1, sessionA, q, 1, 'skipped', null);
     const q2 = await insertQuestion(accountA, companyA1, sessionA, 2);

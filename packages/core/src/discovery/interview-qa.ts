@@ -49,6 +49,8 @@ export type RecordAnswerResult =
 export type GetSessionQaResult = { readonly status: 'ok'; readonly qa: SessionQADTO } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
 
 const PROMPT_MAX = 4_000;
+/** Bounded append retries under concurrent revision contention (see recordInterviewAnswer). */
+const MAX_APPEND_ATTEMPTS = 5;
 
 // ── add a question (the persistence primitive; P2-005 drives generation) ───────────────────────────────
 export async function addInterviewQuestion(client: DatabaseClient, params: InterviewQaParams & { prompt: unknown }, options: InterviewQaOptions = {}): Promise<AddQuestionResult> {
@@ -88,30 +90,36 @@ export async function recordInterviewAnswer(client: DatabaseClient, params: Inte
       const question = await repo.findQuestion(params.questionId);
       if (question === undefined || question.session_id !== params.sessionId) return { status: 'not_found' };
 
-      const answers = await repo.listAnswers(params.questionId);
-      const current = currentRevision(answers);
-      if (current !== null && isSameAnswer({ status: assertStatus(current.status), content: current.content }, submission.value)) {
-        // Idempotent: an identical resubmission creates no new revision.
-        return { status: 'ok', answer: toAnswerDTO(current), created: false };
+      // Bounded retry so a CONCURRENT DISTINCT answer is never dropped (security review LOW): the
+      // (question_id, revision) PK + ON CONFLICT DO NOTHING serializes writers on the revision number. On a
+      // conflict we re-read the new current answer and re-evaluate — if the winner wrote the SAME content we
+      // intended, this becomes the idempotent no-op; if the winner wrote DIFFERENT content, our answer appends
+      // at the next revision (both are retained — the append-only history the ticket guarantees). CDR-023 §2.
+      for (let attempt = 0; attempt < MAX_APPEND_ATTEMPTS; attempt++) {
+        const current = await repo.currentAnswer(params.questionId);
+        if (current !== undefined && isSameAnswer({ status: assertStatus(current.status), content: current.content }, submission.value)) {
+          return { status: 'ok', answer: toAnswerDTO(current), created: false };
+        }
+        const nextRev = (current?.revision ?? 0) + 1;
+        const inserted = await repo.appendAnswer({
+          accountId: params.accountId,
+          companyId: params.companyId,
+          sessionId: params.sessionId,
+          questionId: params.questionId,
+          revision: nextRev,
+          status: submission.value.status,
+          content: submission.value.content,
+          authorUserId: params.userId,
+        });
+        if (inserted !== undefined) {
+          options.logger?.info('interview.answer_recorded', { metadata: { accountId: params.accountId, companyId: params.companyId, revision: nextRev } });
+          return { status: 'ok', answer: toAnswerDTO(inserted), created: true };
+        }
+        // Conflict: a concurrent writer took `nextRev`. Loop to re-read and re-evaluate.
       }
-      const nextRev = (current?.revision ?? 0) + 1;
-      const inserted = await repo.appendAnswer({
-        accountId: params.accountId,
-        companyId: params.companyId,
-        sessionId: params.sessionId,
-        questionId: params.questionId,
-        revision: nextRev,
-        status: submission.value.status,
-        content: submission.value.content,
-        authorUserId: params.userId,
-      });
-      if (inserted === undefined) {
-        // Concurrent writer took this revision — return the (now-current) answer.
-        const raced = await repo.currentAnswer(params.questionId);
-        return raced !== undefined ? { status: 'ok', answer: toAnswerDTO(raced), created: false } : { status: 'not_found' };
-      }
-      options.logger?.info('interview.answer_recorded', { metadata: { accountId: params.accountId, companyId: params.companyId, revision: nextRev } });
-      return { status: 'ok', answer: toAnswerDTO(inserted), created: true };
+      // Extreme contention exhausted the retries — return the current answer truthfully (never a 500).
+      const final = await repo.currentAnswer(params.questionId);
+      return final !== undefined ? { status: 'ok', answer: toAnswerDTO(final), created: false } : { status: 'not_found' };
     },
     optionsFor(options),
   );

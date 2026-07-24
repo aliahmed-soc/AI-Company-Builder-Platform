@@ -8,7 +8,6 @@ import {
   isAnswerStatus,
   validateAnswerSubmission,
   currentRevision,
-  nextRevision,
   deriveQuestionLifecycle,
   isSameAnswer,
   type AnswerSubmission,
@@ -63,11 +62,6 @@ describe('revision derivations', () => {
     expect(currentRevision(revs)?.revision).toBe(3);
     expect(currentRevision([])).toBeNull();
     expect(currentRevision([{ revision: 1 }])?.revision).toBe(1);
-  });
-  test('nextRevision is max+1, or 1 for the first answer', () => {
-    expect(nextRevision([])).toBe(1);
-    expect(nextRevision(revs)).toBe(4);
-    expect(nextRevision([{ revision: 5 }])).toBe(6);
   });
 });
 

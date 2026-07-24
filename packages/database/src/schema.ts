@@ -370,7 +370,7 @@ export interface InterviewAnswersTable {
   company_id: ColumnType<string, string, never>;
   status: ColumnType<string, string, never>;
   content: ColumnType<string | null, string | null | undefined, never>;
-  created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 

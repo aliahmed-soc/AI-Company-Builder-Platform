@@ -57,7 +57,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('company_id', 'uuid', (col) => col.notNull())
     .addColumn('status', 'text', (col) => col.notNull())
     .addColumn('content', 'text')
-    .addColumn('created_by_user_id', 'uuid')
+    // Author of the revision — NOT NULL so accountability is STRUCTURAL, not convention: an answer is always
+    // founder-authored (the sole insert path passes the server-verified user id), and there is no other write
+    // path (grants are select+insert only). This makes the append-only history tamper-resistant AND attributed.
+    .addColumn('created_by_user_id', 'uuid', (col) => col.notNull())
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addPrimaryKeyConstraint('interview_answers_pk', ['question_id', 'revision'])
     .addForeignKeyConstraint('interview_answers_question_fk', ['question_id'], 'interview_questions', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))

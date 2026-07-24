@@ -125,24 +125,40 @@ describe.skipIf(!hasTestDatabase)('interview Q&A use cases (real PostgreSQL, res
     expect((await recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: unknownQuestion, status: 'answered', content: 'x' })).status).toBe('not_found');
   });
 
-  test('CONCURRENT revisions are graceful: two records race a revision, both ok, exactly one new row per revision', async () => {
+  test('CONCURRENT DISTINCT revisions both persist (no lost content): the loser re-appends at the next revision', async () => {
     const s = await startSessionA();
     const q = await addInterviewQuestion(product, { ...base(w.aOwner, s), prompt: 'Q' });
     if (q.status !== 'ok') return;
     await recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v1' });
-    // Two concurrent revisions over v1 → the (question_id, revision) PK + ON CONFLICT DO NOTHING makes the
-    // loser return the current answer (no 23505/500). At most one new row lands per revision number.
+    // Two concurrent DISTINCT revisions over v1. The (question_id, revision) PK + ON CONFLICT DO NOTHING
+    // serializes on the revision number, and the bounded retry re-appends the loser's distinct content at the
+    // next revision — no 23505/500, no lost content. Both callers succeed.
     const [x, y] = await Promise.all([
       recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v2a' }),
       recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v2b' }),
     ]);
     expect(x.status).toBe('ok');
     expect(y.status).toBe('ok');
-    const rows = await owner.kysely.selectFrom('interview_answers').selectAll().where('question_id', '=', q.question.questionId).execute();
-    // No duplicate revision numbers, and history is a clean 1..N sequence.
-    const revisions = rows.map((r) => r.revision).sort((a, b) => a - b);
-    expect(new Set(revisions).size).toBe(revisions.length); // unique
-    expect(revisions[0]).toBe(1);
+    const rows = await owner.kysely.selectFrom('interview_answers').selectAll().where('question_id', '=', q.question.questionId).orderBy('revision', 'asc').execute();
+    // Exactly THREE revisions with unique, gapless numbers, and BOTH concurrent answers are retained.
+    expect(rows.map((r) => r.revision)).toEqual([1, 2, 3]);
+    expect(new Set(rows.map((r) => r.content))).toEqual(new Set(['v1', 'v2a', 'v2b']));
+  });
+
+  test('CONCURRENT IDENTICAL revisions collapse to a single new row (idempotent under a race)', async () => {
+    const s = await startSessionA();
+    const q = await addInterviewQuestion(product, { ...base(w.aOwner, s), prompt: 'Q' });
+    if (q.status !== 'ok') return;
+    await recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v1' });
+    // Two concurrent IDENTICAL revisions → exactly one new row; the loser sees the winner's row via the retry
+    // and collapses to the idempotent no-op.
+    const [x, y] = await Promise.all([
+      recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v2' }),
+      recordInterviewAnswer(product, { ...base(w.aOwner, s), questionId: q.question.questionId, status: 'answered', content: 'v2' }),
+    ]);
+    expect(x.status === 'ok' && y.status === 'ok').toBe(true);
+    const rows = await owner.kysely.selectFrom('interview_answers').selectAll().where('question_id', '=', q.question.questionId).orderBy('revision', 'asc').execute();
+    expect(rows.map((r) => r.content)).toEqual(['v1', 'v2']); // one new revision, not two
   });
 
   test('cross-tenant isolation: tenant B never sees A1’s questions/answers', async () => {

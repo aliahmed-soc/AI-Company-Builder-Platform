@@ -58,7 +58,11 @@ the privilege level; no DELETE/TRUNCATE.
   FIRST answer is `revision = 1`; a subsequent, **different** answer is a new `revision = max+1`. Resubmitting
   the **identical** current answer (same status + content) is a **no-op** returning the current answer — this
   satisfies API-CONTRACTS "Answer submission idempotent per question" via the `company_profiles` rename
-  precedent (a no-op when nothing changed), without a separate idempotency-token column.
+  precedent (a no-op when nothing changed), without a separate idempotency-token column. **Concurrency:** the
+  `(question_id, revision)` PK + `ON CONFLICT DO NOTHING` serializes writers on the revision number, and the use
+  case **retries (bounded)** on a conflict — re-reading the new current answer and re-evaluating. So two
+  concurrent DISTINCT answers each land as their own revision (both retained, no lost content); a concurrent
+  IDENTICAL answer collapses to the idempotent no-op. No writer ever sees a duplicate-key error.
 - **Skip** ("I don't know") (`interview:participate`): a `skipped` answer row with NULL content. Re-skipping an
   already-skipped question is a no-op.
 - **Read Q&A** (`interview:read`): a session's questions in order, each with its current answer + a bounded
@@ -88,11 +92,26 @@ audit-store event or domain event is emitted by P2-002**:
 - The P2-001 contracts registry already records this: `interview.question_answered` is deliberately **not** in
   the closed `AUDIT_EVENTS` set ("a P2-002 concern and is NOT registered").
 
+The **load-bearing argument** is not doc-precedence (the CLAUDE.md priority actually ranks the backlog *above*
+the architecture docs) but the ticket's own scope + the governing ADR:
+
+- P2-002's own backlog **acceptance / required-tests / verification / rollback** columns are pure persistence —
+  *"Revision creates new row; history retained"* / *"Revision tests"* / *"API suite"* / *"Append-only"*. None
+  names an audit-event emission. The "Revisions audited" security-column note is the obligation of **DISC-008**,
+  a **cross-milestone** requirement (Discovery + Understanding) whose only listed test is **"Dependency
+  re-evaluation tests"** — which cannot exist until dependents exist (M3), and which the traceability routes
+  through WORKFLOW §2 `superseded` + `understanding.corrected`.
+- **ADR-015** (the governing ADR) reserves an in-transaction audit write for **high-risk operations**
+  (approvals, policy decisions, lifecycle transitions, ledger writes, emergency stops). A founder editing their
+  own interview answer is not in that set — so ADR-015 does not oblige an in-tx audit event for an answer write.
+
 **Therefore P2-002 persists and emits nothing.** Accountability is preserved at the data layer: every
-answer/revision row is an **immutable, authored (`created_by_user_id`), timestamped** append — a complete,
-queryable, never-mutated history that satisfies "history retained". The audit-store correction event
-(`understanding.corrected`, M3) and the `interview.question_answered` domain fan-out are **deferred to when
-their consumers and the outbox exist** — exactly as P2-001 deferred `interview.started`'s activity projection.
+answer/revision row is an **immutable, authored (`created_by_user_id NOT NULL`), timestamped** append — the
+`acbp_app` role holds no UPDATE/DELETE grant on the table at all, so the history is tamper-resistant at the
+privilege level, which is the core property an audit trail provides, and it satisfies "history retained". The
+audit-store correction event (`understanding.corrected`, M3) and the `interview.question_answered` domain
+fan-out are **deferred to when their consumers and the outbox exist** — exactly as P2-001 deferred
+`interview.started`'s activity projection.
 
 **Owner-visibility note:** this is the single interpretation made on a point where the backlog's one-word
 "revisions audited" shorthand and the specific EVENT-CATALOG "—" / traceability→M3 routing diverge. It is

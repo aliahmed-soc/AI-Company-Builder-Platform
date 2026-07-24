@@ -103,12 +103,6 @@ export function currentRevision<T extends RevisionLike>(revisions: readonly T[])
   return best;
 }
 
-/** The next revision number to assign (max + 1, or 1 for the first answer). */
-export function nextRevision(revisions: readonly RevisionLike[]): number {
-  const cur = currentRevision(revisions);
-  return cur === null ? 1 : cur.revision + 1;
-}
-
 /** Derive a question's lifecycle from its current answer (null = still `asked`). */
 export function deriveQuestionLifecycle(current: { readonly status: AnswerStatus } | null): QuestionLifecycle {
   if (current === null) return 'asked';
