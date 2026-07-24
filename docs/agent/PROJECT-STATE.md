@@ -3,14 +3,34 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P1-015 finalization** — status **Done**; PR #17 ready → squash-merge → exact-main CI → branch
-  cleanup, under the standing Phase 1 authorization. **This is the last Planned ticket in Phase 1: with it
-  Done, all 15 Phase 1 tickets are Done.**
-- Feature head `8b8471b`; exact-head CI **30064683125 green** — 104 files / 1159 passed / 0 failed / 0 skipped,
-  3m06s (5-minute ceiling), including the new hosted `pnpm demo:slice-a` step (11/11 steps, live denial).
-  Prior slice head `2f03a70` (CI 30063164730 green, 104f/1157/0-skip).
+- **PHASE 1 COMPLETE.** All 15 Phase 1 backlog rows are **Done**. `origin/main` @ **`85fcb8f`** (P1-015 squash,
+  PR #17); exact-main CI **30065559857 green** — 104 files / 1159 passed / 0 failed / 0 skipped, plus the
+  hosted `pnpm demo:slice-a` step 11/11, High+ audit clean.
+- **Next: Phase 2.** Under the standing autonomous authorization, pick the first canonical Ready/unblocked
+  Phase 2 ticket by dependency + milestone order (not ticket-number order), run discovery, and implement in
+  TDD slices with per-slice exact-head hosted-green CI and independent review before finalization.
+- **P0-005 remains Blocked** (the one non-Done P0/P1 row) — a known blocked dependency; stop only if a Phase 2
+  ticket becomes genuinely blocked on it.
+- **PR #10** (`p1-004-last-owner-race-fix`) still OPEN/draft/external — inspect GitHub state only; never touch.
 
-## ACBP-P1-015 detail
+## Phase 1 completion evidence (2026-07-24)
+- **Tickets:** ACBP-P1-001…P1-015 all Done. Squash SHAs for the tickets closed in this session's arc:
+  P1-010 `093ec3f` (PR #11), P1-011 (PR #13), P1-012 `c1990ad`… see below, P1-013 `c1990ad`… (PR #15),
+  P1-014 **`b559d37`** (PR #16), P1-015 **`85fcb8f`** (PR #17). Final `origin/main` = `85fcb8f`.
+- **Migrations:** 0001–0011, ordered and intact. No 0012.
+- **SECURITY DEFINER:** exactly three, all in `0006_bootstrap_functions.ts`
+  (`acbp_provision_account`, `acbp_resolve_own_membership`, `acbp_accept_invite`).
+- **Runtime role:** `acbp_app` created NOLOGIN/NOSUPERUSER/NOBYPASSRLS/NOCREATEDB/NOCREATEROLE/NOINHERIT;
+  BYPASSRLS granted to no one; no `DATABASE_URL` in `apps/web` runtime source (owner connection is
+  migration/test-only).
+- **Evidence discipline:** hosted CI on the exact SHA is the trust-critical DB evidence; zero-skip PostgreSQL
+  preflight enforced; production `next build` is recorded separately and never conflated with hosted CI.
+- **Post-completion audit:** backlog P0 20 Done + P0-005 Blocked; P1 15 Done; no abandoned P1 branches (only
+  `main` + external PR #10); secret/encoding/boundary checks 0; no temp/scratch/secret artifacts tracked
+  (only `.env.example`). One records-only staleness (this file's Active section) fixed on branch
+  `records-phase1-complete`.
+
+## ACBP-P1-015 detail (Done, squash `85fcb8f`, PR #17)
 - Branch `p1-015-slice-a-secure-company-creation` from `main` @ `b559d37`, **PR #17**. Governed by **CDR-021**.
   - **Design (CDR-021):** the M1 exit criterion made executable — sign in → internal mapping → account →
     company → switch → cross-company access DENIED, with the audit/activity trail verified. The journey is
@@ -261,11 +281,13 @@ _Read this first on resume, then continue automatically to "Next executable acti
   updates) + independent reviews + final verification (owner gate).
 
 ## Next executable action
-Push the P1-015 review-repair slice, require exact-head hosted-green CI (zero-skip PG, and the new Slice A demo
-step must pass), then finalize P1-015: mark it Done, mark PR #17 ready, squash-merge as
-**"ACBP-P1-015: Slice A integration: secure company creation"** (no Co-Authored-By), verify exact-main CI,
-delete the branch, and confirm Phase 1 has no remaining Planned ticket. Then return the Phase 1 completion
-report.
+Phase 1 is complete and merged (`85fcb8f`). Begin Phase 2: `git fetch --prune`, confirm clean/equal
+exact-main hosted-green state, inspect PR #10 via GitHub state only, read the Phase 2 backlog, and select the
+first canonical Ready/unblocked ticket by dependency + milestone order (never by ticket number alone). Run
+canonical discovery; when canon resolves every foundational decision and no mandatory owner gate applies, make
+the least-authority reversible recommendation, record it, open one branch + draft PR, and implement in TDD
+slices — each pushed, each exact-head hosted-green (zero-skip PG), independently reviewed before finalization,
+squash-merged, exact-main-CI-verified, branch deleted — then continue to the next Ready/unblocked ticket.
 
 ## Local integration environment (learned 2026-07-24)
 Local real-PostgreSQL runs ARE possible on this machine, contrary to the older "unrunnable" note below — two
