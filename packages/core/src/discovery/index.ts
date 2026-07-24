@@ -11,4 +11,14 @@ export {
   type InterviewTransitionResult,
   type GetInterviewResult,
 } from './interview-session.js';
+export {
+  addInterviewQuestion,
+  recordInterviewAnswer,
+  getSessionQa,
+  type InterviewQaParams,
+  type InterviewQaOptions,
+  type AddQuestionResult,
+  type RecordAnswerResult,
+  type GetSessionQaResult,
+} from './interview-qa.js';
 
