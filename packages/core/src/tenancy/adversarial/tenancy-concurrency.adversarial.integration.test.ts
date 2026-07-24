@@ -170,11 +170,14 @@ describe.skipIf(!hasTestDatabase)('deterministic tenancy concurrency (real Postg
     expect(healthyResult.value.company).toBe(w.companyA1); // its context was never cleared by the peer
     expect(healthyResult.value.activityCompanies.every((c) => c === w.companyA1)).toBe(true);
 
-    // Pooled reuse after the mixed outcome remains isolated and clean.
+    // Pooled reuse after the mixed outcome remains isolated and clean: account-keyed `companies` shows
+    // account B's companies (never account A's), and the dual-keyed detail table is confined to B1.
     const residual = await withTenantTransaction(product, { accountId: w.accountB, companyId: w.companyB1, actorId: w.bOwner }, async (scope) => {
-      const rows = await sql<{ id: string }>`select id from companies order by id`.execute(scope.db);
-      return rows.rows.map((r) => r.id);
+      const companies = await sql<{ id: string }>`select id from companies order by id`.execute(scope.db);
+      const detail = await sql<{ company_id: string }>`select distinct company_id from provisioning_steps`.execute(scope.db);
+      return { companies: companies.rows.map((r) => r.id).sort(), detail: detail.rows.map((r) => r.company_id) };
     });
-    expect(residual).toEqual([w.companyB1]);
+    expect(residual.companies, 'TX-GUC-ROLLBACK-CLEANUP: reused connection must see account B only').toEqual([w.companyB1, w.companyB2].sort());
+    expect(residual.detail, 'TX-GUC-ROLLBACK-CLEANUP: dual-keyed detail confined to B1').toEqual([w.companyB1]);
   });
 });
