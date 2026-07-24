@@ -58,6 +58,10 @@ export type { MemoryItemExecutor, NewMemoryItemInput, ListMemoryItemsOptions } f
 // requires a validated CompanyScope (dual-keyed RLS). Written in-tx with the gateway work (fail-closed).
 export { UsageEventRepository } from './usage-event-repository.js';
 export type { UsageEventExecutor, NewUsageEventInput, ListUsageEventsOptions } from './usage-event-repository.js';
+// Understanding generation (ACBP-P2-008; CDR-029). Versioned append-only documents + classified items; every
+// method requires a validated CompanyScope (dual-keyed RLS). Written in-tx with the audit event.
+export { UnderstandingRepository } from './understanding-repository.js';
+export type { UnderstandingExecutor, NewUnderstandingDocumentInput, NewUnderstandingItemInput, ListUnderstandingOptions } from './understanding-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -138,6 +142,12 @@ export type {
   UsageEventsTable,
   UsageEventRow,
   NewUsageEvent,
+  UnderstandingDocumentsTable,
+  UnderstandingDocumentRow,
+  NewUnderstandingDocument,
+  UnderstandingItemsTable,
+  UnderstandingItemRow,
+  NewUnderstandingItem,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

@@ -90,13 +90,13 @@ describe.skipIf(!hasTestDatabase)('read-through reconciliation (real PostgreSQL)
     client = createTestDatabase();
     // Full drop incl. _acbp_migration_probe so a re-migrate cannot conflict when another integration
     // suite (shared CI database) created it first and this suite dropped kysely_migration.
-    for (const t of ['usage_events', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+    for (const t of ['usage_events', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     const r = await migrateToLatest(client);
     expect(r.error).toBeUndefined();
   });
   afterAll(async () => {
     if (client) {
-      for (const t of ['usage_events', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(client);
     }
   });
