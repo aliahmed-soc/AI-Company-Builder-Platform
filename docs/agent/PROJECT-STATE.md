@@ -3,8 +3,12 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-012 Slice B integration: confirmed understanding — IN PROGRESS (autonomous window; finalization pre-authorized).**
-  Branch `p2-012-slice-b` (from main `875a00c`), draft PR **#30**, CDR-031. (P2-009 merged `40548cf`; brace-expansion CI
+- **ACBP-P2-012 Slice B integration: confirmed understanding — DONE / FINALIZING (autonomous window; finalization pre-authorized).**
+  Backlog **Done**. Independent 8-dimension adversarial review **CLEAN** (no Blocker/Critical/High; 6 Low — 4 fixed:
+  step-3 falsifiability, step-12 seed-audit decoupling, demo truncation guard, CDR wording; 2 accepted with rationale —
+  P2-012-REVIEW-COVERAGE.md). Finalization records committed; sequence = exact-head CI (zero-skip) → PR #30 ready →
+  verify MERGEABLE + recheck main/PR#10 → squash-merge "ACBP-P2-012: Slice B integration: confirmed understanding"
+  (no Co-Authored-By) → exact-main CI → FF main → delete branch. Branch `p2-012-slice-b` (from main `875a00c`), PR **#30**, CDR-031. (P2-009 merged `40548cf`; brace-expansion CI
   hotfix merged `875a00c`; Phase 2 was 9/12.) Selected via canon discovery over P2-007/P2-011 — P2-012 is the M2/M3
   milestone-exit E2E on the critical spine, deps P2-009 + P2-010 both Done, fully buildable on the deterministic
   FakeModelProvider, NO owner gate. The founder-discovery vertical slice (interview → adaptive follow-ups →
