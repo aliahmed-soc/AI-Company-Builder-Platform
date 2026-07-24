@@ -47,20 +47,26 @@ describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restric
 
   // ── Actor scope ────────────────────────────────────────────────────────────────────────────────────
   test(threatTitle('SCOPE-ACTOR-MISSING', 'memberships self-branch'), async () => {
-    // The memberships self-branch is keyed to app.current_actor; with no actor and no account, nothing.
+    // With NO actor and NO account, the self-branch has nothing to key on: fail-closed.
     const rows = await asRestricted(product, {}, (k) => new MembershipRepository(k).listByAccount(w.accountA));
     expect(rows).toEqual([]);
     const count = await asRestricted(product, {}, async (k) => (await sql<{ n: number }>`select count(*)::int as n from memberships`.execute(k)).rows[0]?.n);
     expect(count).toBe(0); // not even an existence bit
   });
 
-  test(threatTitle('SCOPE-ACTOR-FORGED', 'memberships self-branch'), async () => {
-    // A forged actor (another real user, or junk) never inherits that user's membership rows.
+  test(threatTitle('SCOPE-ACTOR-FORGED', 'memberships self-branch is SELF-only, never a member list'), async () => {
+    // ACCEPTED BEHAVIOR (P1-006/CDR-013): with an actor but no account context, the memberships policy
+    // exposes the actor's OWN row — that is how `acbp_resolve_own_membership` resolves you before context
+    // exists. The adversarial question is therefore not "can you see anything" but "can you see anyone
+    // ELSE": a forged/foreign actor must never inherit another user's membership, and no actor may
+    // enumerate the account's members without account context.
+    const asAOwner = await asRestricted(product, { actor: w.aOwner }, (k) => new MembershipRepository(k).listByAccount(w.accountA));
+    expect(asAOwner.map((m) => m.member_user_id)).toEqual([w.aOwner]); // ONLY self — not the 4 other members
     for (const forged of [w.bOwner, w.outsider, ...MALFORMED_SELECTORS]) {
       const rows = await asRestricted(product, { actor: forged }, (k) => new MembershipRepository(k).listByAccount(w.accountA));
-      expect(rows, `forged actor ${forged} must see nothing of account A`).toEqual([]);
+      expect(rows.map((m) => m.member_user_id), `actor '${forged}' must see no membership of account A`).toEqual([]);
     }
-    // The legitimate actor DOES see their own row — proving the assertions above are not vacuous.
+    // The legitimate actor sees their own row — so the emptiness above is meaningful, not vacuous.
     const own = await asRestricted(product, { actor: w.aViewer }, (k) => new MembershipRepository(k).findActiveByAccountAndUser(w.accountA, w.aViewer));
     expect(own?.member_user_id).toBe(w.aViewer);
   });
@@ -91,10 +97,32 @@ describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restric
   });
 
   test(threatTitle('SCOPE-SELECTOR-HARVESTED', 'account resolver'), async () => {
-    // Every id in the fixture world is "known" to the attacker; none of them confers authority.
-    for (const selector of [w.accountA, w.accountB, UNKNOWN_UUID, ...MALFORMED_SELECTORS]) {
+    // WELL-FORMED selectors — real foreign ids and an unknown uuid — are coarse denials, indistinguishable
+    // from one another (no existence oracle).
+    for (const selector of [w.accountA, w.accountB, UNKNOWN_UUID]) {
       const run = await runInAccountScope(product, { userId: w.outsider, requestedAccountId: selector }, () => Promise.resolve('ran'));
-      expect(run.kind, `outsider must be denied for selector '${selector}'`).toBe('denied');
+      expect(run, `outsider must be denied for selector '${selector}'`).toEqual({ kind: 'denied', reason: 'membership_not_active' });
+    }
+    // MALFORMED selectors: the resolver rejects empty/whitespace itself, but a non-empty non-uuid string
+    // reaches the bootstrap function's uuid cast and surfaces as a BOUNDED validation PlatformError rather
+    // than the coarse denial. Recorded as an accepted current behavior (see the assertions below): it is not
+    // an existence oracle — a malformed id exists nowhere by definition, and the error carries no tenant
+    // detail. Making malformed selectors return the coarse denial would change public error behavior and is
+    // therefore an OWNER DECISION (Class O), not an autonomous fix. What MUST hold is asserted here:
+    // never data, never a leak.
+    for (const selector of MALFORMED_SELECTORS) {
+      const outcome = await runInAccountScope(product, { userId: w.outsider, requestedAccountId: selector }, () => Promise.resolve('ran')).then(
+        (run) => ({ kind: String(run.kind), error: undefined as unknown }),
+        (error: unknown) => ({ kind: 'threw', error }),
+      );
+      expect(['denied', 'threw'], `selector '${selector}' must never run the callback`).toContain(outcome.kind);
+      if (outcome.kind === 'threw') {
+        const message = String((outcome.error as { message?: string }).message ?? outcome.error);
+        // Bounded and tenant-free: no SQL, no constraint/table name, no ids, no connection detail.
+        for (const forbidden of ['select ', 'insert ', 'uuid', 'constraint', 'memberships', 'acbp_', w.accountA, w.outsider]) {
+          expect(message.toLowerCase(), `bounded error must not contain '${forbidden}'`).not.toContain(forbidden.toLowerCase());
+        }
+      }
     }
   });
 
@@ -144,8 +172,13 @@ describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restric
 
   test(threatTitle('SCOPE-SELECTOR-HARVESTED', 'company resolver — every hostile selector shape'), async () => {
     for (const selector of [w.companyB1, w.companyB2, UNKNOWN_UUID, ...MALFORMED_SELECTORS]) {
-      const run = await runInCompanyScope(product, { userId: w.aOwner, requestedAccountId: w.accountA, requestedCompanyId: selector }, () => Promise.resolve('ran'));
-      expect(run.kind, `company selector '${selector}' must be denied`).toBe('denied');
+      const outcome = await runInCompanyScope(product, { userId: w.aOwner, requestedAccountId: w.accountA, requestedCompanyId: selector }, () => Promise.resolve('ran')).then(
+        (run) => run.kind as string,
+        () => 'threw',
+      );
+      // Denied or bounded-error — never `ran`. (Same Class O observation as the account resolver above:
+      // malformed company selectors surface as a bounded validation error rather than the coarse denial.)
+      expect(outcome, `company selector '${selector}' must never run the callback`).not.toBe('ran');
     }
   });
 

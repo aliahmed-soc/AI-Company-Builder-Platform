@@ -131,9 +131,12 @@ describe.skipIf(!hasTestDatabase)('stale + revoked authority (real PostgreSQL, r
     // The fixture's revoked account member and a fresh pending invite are both non-authorities.
     const revoked = await runInAccountScope(product, { userId: w.aRevoked, requestedAccountId: w.accountA }, () => Promise.resolve('ran'));
     expect(revoked).toEqual({ kind: 'denied', reason: 'membership_not_active' });
+    // A pending invite is NOT bound to a user yet (memberships_invited_shape: invited rows carry an email +
+    // token hash and member_user_id IS NULL) — which is itself the invariant: an unaccepted invite cannot
+    // confer authority on anyone, because it names no user at all.
     await owner.kysely
       .insertInto('memberships')
-      .values({ account_id: w.accountA, member_user_id: w.outsider, role: 'viewer', status: 'invited', invited_email: 'outsider@example.com', invite_token_hash: 'a'.repeat(64) })
+      .values({ account_id: w.accountA, member_user_id: null, role: 'viewer', status: 'invited', invited_email: 'outsider@example.com', invite_token_hash: 'a'.repeat(64) })
       .execute();
     const invited = await runInAccountScope(product, { userId: w.outsider, requestedAccountId: w.accountA }, () => Promise.resolve('ran'));
     expect(invited).toEqual({ kind: 'denied', reason: 'membership_not_active' });
