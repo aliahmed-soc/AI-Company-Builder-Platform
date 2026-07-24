@@ -121,6 +121,17 @@ describe.skipIf(!hasTestDatabase)('understanding generation (real PostgreSQL, re
     expect(await docsFor(w.companyA1)).toHaveLength(0);
   });
 
+  test('concurrent generation produces a valid, gap-free version chain (no duplicate, no uncaught throw)', async () => {
+    const gwA = gatewayWith({ kind: 'respond', output: '{"items":[{"class":"fact","content":"A.","confidence":0.9}]}' });
+    const gwB = gatewayWith({ kind: 'respond', output: '{"items":[{"class":"fact","content":"B.","confidence":0.9}]}' });
+    const [ra, rb] = await Promise.all([generateUnderstanding(product, base(), { gateway: gwA }), generateUnderstanding(product, base(), { gateway: gwB })]);
+    expect(ra.status).toBe('ok');
+    expect(rb.status).toBe('ok');
+    const rows = await docsFor(w.companyA1);
+    // Exactly two documents with DISTINCT, gap-free versions 1 and 2 (the version-race retry resolved the collision).
+    expect(rows.map((d) => d.version)).toEqual([1, 2]);
+  });
+
   test('version sequencing + prior-version immutability: two generations → v1 then v2, v1 unchanged', async () => {
     const gw1 = gatewayWith({ kind: 'respond', output: '{"items":[{"class":"fact","content":"First.","confidence":0.9}]}' });
     const r1 = await generateUnderstanding(product, base(), { gateway: gw1 });

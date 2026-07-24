@@ -48,8 +48,13 @@ export class UnderstandingRepository {
     return (typeof max === 'number' ? max : 0) + 1;
   }
 
-  /** Insert an understanding document version. The `(company_id, version)` unique constraint rejects a collision. */
-  insertDocument(input: NewUnderstandingDocumentInput): Promise<UnderstandingDocumentRow> {
+  /**
+   * Insert an understanding document version. `ON CONFLICT (company_id, version) DO NOTHING` makes a CONCURRENT
+   * generation at the same computed version GRACEFUL — the loser inserts nothing and returns `undefined`, and the
+   * caller recomputes the next version and retries (a valid, gap-free chain; never an uncaught duplicate-key throw).
+   * Returns the inserted row, or `undefined` on a version race.
+   */
+  insertDocument(input: NewUnderstandingDocumentInput): Promise<UnderstandingDocumentRow | undefined> {
     return this.#db
       .insertInto('understanding_documents')
       .values({
@@ -60,8 +65,9 @@ export class UnderstandingRepository {
         overall_confidence: input.overallConfidence,
         created_by_user_id: input.createdByUserId,
       })
+      .onConflict((oc) => oc.columns(['company_id', 'version']).doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
   }
 
   /** Insert one classified item of a document version. */

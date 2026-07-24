@@ -17,11 +17,15 @@ NOT open it. Review/confirm (the 5 controls + the planning gate) is **P2-009**, 
 
 The understanding document is a set of **classified items** in the CLOSED 6-class set the diagram names:
 `fact · preference · constraint · assumption · research_finding · open_question`. Each item carries `content`,
-`confidence` (numeric in [0,1]), and a `source_ref` (the memory item it derives from — provenance, MEM-003). The
-6 classes map from the P2-006 memory types (`user_fact`→fact, `user_preference`→preference, `constraint`→
-constraint, `ai_assumption`→assumption, `research_finding`→research_finding) plus `open_question` for gaps the
-interview left unanswered — so the classification is **derived from provenance, not invented** (UNDER-002: type set
-by source path, never by content — a generated claim can never become a `fact`).
+`confidence` (numeric in [0,1]), and a `source_ref` provenance link column. The 6 understanding classes
+CORRESPOND to the P2-006 memory types (`user_fact`↔fact, `user_preference`↔preference, `constraint`↔constraint,
+`ai_assumption`↔assumption, `research_finding`↔research_finding) plus `open_question` for interview gaps. In v1 the
+model performs the classification (the `understanding.generate` template) and `source_ref` is stored `null` —
+per-item linkage back to the exact source memory item is DEFERRED (the memory is fed to the prompt without ids, so
+the model cannot cite them; the `source_ref` column is in place for that later linkage). **UNDER-002 is preserved
+regardless:** `understanding_items` is a SEPARATE, clearly-generated, versioned, confidence-scored artifact — it
+never writes to authoritative typed `memory_items`, so a model-classified "fact" can never launder into the
+memory substrate (where type is set by source path, never content).
 
 ## 2. Sections + "present / unknown / assumed" + confidence per section (acceptance)
 
@@ -38,9 +42,12 @@ Confidence is numeric; a band label (low/medium/high) is derived for display, no
 
 ## 3. Partial generation labeled partial ("Partial generation labeled partial")
 
-If the model call fails, returns a malformed payload, or produces only some sections, the document is persisted
-with `status = 'partial'` (honest degradation — never a `complete` document that silently omits sections). A
-fully-generated document is `status = 'complete'`. This mirrors P2-005's static-fallback honesty.
+A gateway FAILURE (error outcome) or a MALFORMED/unparseable output persists **NOTHING** — the caller gets a
+`generation_failed` result and no document is written (a failure must never masquerade as a partial
+understanding). `status = 'partial'` is reserved for a SUCCESSFULLY-parsed output that the model itself FLAGS
+`partial: true` (it could not fully analyse the available information) — honest degradation, persisted with its
+classified items. A normally-parsed output is `status = 'complete'`. (Unknown sections in a complete document are
+NOT "partial" — an empty section is a genuine, honestly-surfaced gap, §2.)
 
 ## 4. Versioned (DATA-ARCHITECTURE `V`; "Versioned")
 

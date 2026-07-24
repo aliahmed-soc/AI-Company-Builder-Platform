@@ -75,6 +75,8 @@ export type GenerateUnderstandingResult =
   | { readonly status: 'generation_failed' };
 
 const MEMORY_PROMPT_MAX = 12_000;
+/** Bounded retries for the version-assignment race (a concurrent generation may take the computed version). */
+const MAX_VERSION_ATTEMPTS = 5;
 
 /** Format the confirmed memory items into the bounded `{{memory}}` prompt text (type-labeled, no ids/PII). */
 export function formatMemoryForPrompt(items: readonly MemoryItemDTO[]): string {
@@ -137,16 +139,23 @@ export async function generateUnderstanding(client: DatabaseClient, params: Gene
     async (scope, role): Promise<GenerateUnderstandingResult> => {
       if (checkAuthorization(role, 'understanding:generate', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
       const repo = new UnderstandingRepository(scope.db);
-      const version = await repo.nextVersion(params.companyId);
-      const doc = await repo.insertDocument({ accountId: params.accountId, companyId: params.companyId, version, status, overallConfidence: confidence, createdByUserId: params.userId });
+      // Assign the next version race-safely: a concurrent generation may take the same computed version, so the
+      // insert is ON CONFLICT DO NOTHING (returns undefined) and we recompute + retry — a valid, gap-free chain,
+      // never an uncaught duplicate-key throw (review L1).
+      let doc: UnderstandingDocumentRow | undefined;
+      for (let attempt = 0; attempt < MAX_VERSION_ATTEMPTS && doc === undefined; attempt += 1) {
+        const version = await repo.nextVersion(params.companyId);
+        doc = await repo.insertDocument({ accountId: params.accountId, companyId: params.companyId, version, status, overallConfidence: confidence, createdByUserId: params.userId });
+      }
+      if (doc === undefined) return { status: 'generation_failed' }; // extreme concurrent contention — nothing persisted
       const itemDTOs: UnderstandingItemDTO[] = [];
       for (const it of parsed.items) {
         await repo.insertItem({ accountId: params.accountId, companyId: params.companyId, documentId: doc.id, itemClass: it.class, content: it.content, confidence: it.confidence, sourceRef: null });
         itemDTOs.push({ class: it.class, content: it.content, confidence: it.confidence });
       }
       // understanding.generated in the SAME transaction — an audit failure rolls the whole document+items back.
-      await audit(scope, understandingGenerated({ documentId: doc.id, version, status, itemCount: parsed.items.length }), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
-      deps.logger?.info('understanding.generated', { metadata: { accountId: params.accountId, companyId: params.companyId, version, status, itemCount: parsed.items.length } });
+      await audit(scope, understandingGenerated({ documentId: doc.id, version: doc.version, status, itemCount: parsed.items.length }), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+      deps.logger?.info('understanding.generated', { metadata: { accountId: params.accountId, companyId: params.companyId, version: doc.version, status, itemCount: parsed.items.length } });
       return { status: 'ok', document: toDocumentDTO(doc, sections, itemDTOs) };
     },
     optsBase,
