@@ -76,24 +76,42 @@ describe.skipIf(!hasTestDatabase)('deterministic tenancy concurrency (real Postg
   });
 
   test(threatTitle('TX-CONCURRENT-COMPANIES', 'A1/A2 same account and A1/B1 across accounts'), async () => {
-    const read = async (barrier: { arrive: () => Promise<void> }, accountId: string, companyId: string, actorId: string): Promise<{ company: string; ids: string[]; pid: number }> =>
+    // WHICH KEY GOVERNS WHAT (accepted architecture — CDR-015):
+    //   • `companies` rows are ACCOUNT-keyed: every company of the caller's account is visible inside an
+    //     account-or-company scope. That is deliberate — it is how the portfolio enumerates candidates —
+    //     and authorization to a SPECIFIC company is decided in @acbp/core from company membership.
+    //   • company-DETAIL tables (activity_events, provisioning_steps, company_profiles,
+    //     company_memberships) are DUAL-keyed and confine to the single company in scope.
+    // The concurrency proof therefore asserts account-level confinement on `companies` and company-level
+    // confinement on a detail table — asserting per-company confinement on `companies` would be asserting
+    // something the design never claimed.
+    const read = async (
+      barrier: { arrive: () => Promise<void> },
+      accountId: string,
+      companyId: string,
+      actorId: string,
+    ): Promise<{ company: string; pid: number; companyIds: string[]; detailCompanyIds: string[] }> =>
       withTenantTransaction(product, { accountId, companyId, actorId }, async (scope) => {
         await barrier.arrive();
         const ctx = await sql<{ company: string; pid: number }>`select current_setting('app.current_company', true) as company, pg_backend_pid() as pid`.execute(scope.db);
-        const rows = await sql<{ id: string }>`select id from companies order by id`.execute(scope.db);
-        return { company: ctx.rows[0]!.company, pid: ctx.rows[0]!.pid, ids: rows.rows.map((r) => r.id) };
+        const companies = await sql<{ id: string }>`select id from companies order by id`.execute(scope.db);
+        const detail = await sql<{ company_id: string }>`select distinct company_id from provisioning_steps order by company_id`.execute(scope.db);
+        return { company: ctx.rows[0]!.company, pid: ctx.rows[0]!.pid, companyIds: companies.rows.map((r) => r.id), detailCompanyIds: detail.rows.map((r) => r.company_id) };
       });
 
-    // Same account, two companies — the dual key must still confine each to its own company row.
+    // Same account, two companies, simultaneously.
     const sameAccount = createBarrier(2);
     const [a1, a2] = await Promise.all([read(sameAccount, w.accountA, w.companyA1, w.aOwner), read(sameAccount, w.accountA, w.companyA2, w.aOwner)]);
     expect(a1.pid).not.toBe(a2.pid);
     expect(a1.company).toBe(w.companyA1);
     expect(a2.company).toBe(w.companyA2);
-    expect(a1.ids, 'TX-CONCURRENT-COMPANIES A1/A2: A1 scope must see only A1').toEqual([w.companyA1]);
-    expect(a2.ids, 'TX-CONCURRENT-COMPANIES A1/A2: A2 scope must see only A2').toEqual([w.companyA2]);
+    const accountACompanies = [w.companyA1, w.companyA2].sort();
+    expect(a1.companyIds.sort(), 'TX-CONCURRENT-COMPANIES A1/A2: account-keyed companies — account A only').toEqual(accountACompanies);
+    expect(a2.companyIds.sort(), 'TX-CONCURRENT-COMPANIES A1/A2: account-keyed companies — account A only').toEqual(accountACompanies);
+    expect(a1.detailCompanyIds, 'TX-CONCURRENT-COMPANIES A1/A2: dual-keyed detail — A1 scope sees ONLY A1').toEqual([w.companyA1]);
+    expect(a2.detailCompanyIds, 'TX-CONCURRENT-COMPANIES A1/A2: dual-keyed detail — A2 scope sees ONLY A2').toEqual([w.companyA2]);
 
-    // Across accounts, three-way.
+    // Across accounts, three-way — the cross-tenant case that matters most.
     const crossAccount = createBarrier(3);
     const [x1, y1, y2] = await Promise.all([
       read(crossAccount, w.accountA, w.companyA1, w.aOwner),
@@ -101,9 +119,13 @@ describe.skipIf(!hasTestDatabase)('deterministic tenancy concurrency (real Postg
       read(crossAccount, w.accountB, w.companyB2, w.bOwner),
     ]);
     expect(new Set([x1.pid, y1.pid, y2.pid]).size, 'three simultaneous scopes must hold three distinct backends').toBe(3);
-    expect(x1.ids, 'TX-CONCURRENT-COMPANIES A1/B1: A1 must not see B rows').toEqual([w.companyA1]);
-    expect(y1.ids, 'TX-CONCURRENT-COMPANIES A1/B1: B1 must not see A rows').toEqual([w.companyB1]);
-    expect(y2.ids, 'TX-CONCURRENT-COMPANIES B1/B2: B2 must see only itself').toEqual([w.companyB2]);
+    expect(x1.companyIds.sort(), 'TX-CONCURRENT-COMPANIES A1/B1: account A must not see ANY account B company').toEqual(accountACompanies);
+    const accountBCompanies = [w.companyB1, w.companyB2].sort();
+    expect(y1.companyIds.sort(), 'TX-CONCURRENT-COMPANIES A1/B1: account B must not see ANY account A company').toEqual(accountBCompanies);
+    expect(y2.companyIds.sort(), 'TX-CONCURRENT-COMPANIES B1/B2: account B only').toEqual(accountBCompanies);
+    expect(x1.detailCompanyIds, 'TX-CONCURRENT-COMPANIES A1/B1: detail rows confined to A1').toEqual([w.companyA1]);
+    expect(y1.detailCompanyIds, 'TX-CONCURRENT-COMPANIES A1/B1: detail rows confined to B1').toEqual([w.companyB1]);
+    expect(y2.detailCompanyIds, 'TX-CONCURRENT-COMPANIES B1/B2: detail rows confined to B2').toEqual([w.companyB2]);
   });
 
   test(threatTitle('TX-CONCURRENT-COMPANIES', 'concurrent production use cases return each caller their own company'), async () => {

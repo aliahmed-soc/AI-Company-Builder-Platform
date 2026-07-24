@@ -74,7 +74,10 @@ describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restric
   // ── Account scope ──────────────────────────────────────────────────────────────────────────────────
   test(threatTitle('SCOPE-ACCOUNT-MISSING', 'account_profiles + memberships'), async () => {
     expect(await asRestricted(product, { actor: w.aOwner }, (k) => new AccountProfileRepository(k).findByAccount(w.accountA))).toBeUndefined();
-    expect(await asRestricted(product, { actor: w.aOwner }, (k) => new MembershipRepository(k).listByAccount(w.accountA))).toEqual([]);
+    // memberships is the ONE exception, by design: the actor's own row remains visible through the
+    // self-branch (see the SCOPE-ACTOR-FORGED test). No OTHER member is revealed without account context.
+    const members = await asRestricted(product, { actor: w.aOwner }, (k) => new MembershipRepository(k).listByAccount(w.accountA));
+    expect(members.map((m) => m.member_user_id)).toEqual([w.aOwner]);
     // A write with no account context affects nothing (fail-closed, not an error).
     const updated = await asRestricted(product, { actor: w.aOwner }, (k) => new AccountProfileRepository(k).update(w.accountA, { display_name: 'hijacked' }));
     expect(updated).toBeUndefined();
