@@ -12,7 +12,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { createMemoryItem, listMemoryItems } from './memory-item.js';
+import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem } from './memory-item.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
@@ -122,6 +122,56 @@ describe.skipIf(!hasTestDatabase)('typed memory use cases (real PostgreSQL, rest
     await createMemoryItem(product, { ...base(w.aOwner), ...fact() });
     const after = await owner.kysely.selectFrom('activity_events').select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow();
     expect(Number(after.n)).toBe(Number(before.n)); // memory.item_created is NOT in the closed activity taxonomy
+  });
+
+  test('EDIT = versioned supersede: new user_edit version + old.superseded_by, audited; owner-only; version-guarded (P2-010)', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'original' }) });
+    if (created.status !== 'ok') throw new Error('setup');
+    const oldId = created.item.memoryItemId;
+
+    // A viewer may NOT edit (memory:edit is owner-only).
+    expect((await editMemoryItem(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, targetId: oldId, type: 'user_fact', content: 'x' })).status).toBe('forbidden');
+
+    const edited = await editMemoryItem(product, { ...base(w.aOwner), targetId: oldId, type: 'user_fact', content: 'corrected' });
+    expect(edited.status).toBe('ok');
+    if (edited.status !== 'ok') return;
+    // The new version is a user_edit whose source_ref cites the corrected item.
+    expect(edited.item.sourceType).toBe('user_edit');
+    expect(edited.item.sourceRef).toBe(oldId);
+    expect(edited.item.content).toBe('corrected');
+    // The OLD row now points at the new version (superseded, never overwritten — content intact).
+    const oldRow = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', oldId).executeTakeFirstOrThrow();
+    expect(oldRow.superseded_by).toBe(edited.item.memoryItemId);
+    expect(oldRow.content).toBe('original');
+    // A supersede audit event (subject = the OLD id; new version's {item_type, source_type}).
+    const audits = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'memory.item_superseded').execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.subject_id).toBe(oldId);
+    expect(audits[0]!.payload).toEqual({ item_type: 'user_fact', source_type: 'user_edit' });
+    // Version-guarded: editing the already-superseded old row → conflict.
+    expect((await editMemoryItem(product, { ...base(w.aOwner), targetId: oldId, type: 'user_fact', content: 'again' })).status).toBe('conflict');
+    // currentOnly list excludes the superseded row.
+    const current = await listMemoryItems(product, { ...base(w.aOwner), currentOnly: true });
+    expect(current.status === 'ok' && current.items.map((i) => i.memoryItemId)).toEqual([edited.item.memoryItemId]);
+  });
+
+  test('EDIT audit atomicity: a failing audit writer persists NO supersede (old stays current, no new version)', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'original' }) });
+    if (created.status !== 'ok') throw new Error('setup');
+    const boom = () => Promise.reject(new Error('boom'));
+    await expect(editMemoryItem(product, { ...base(w.aOwner), targetId: created.item.memoryItemId, type: 'user_fact', content: 'corrected' }, { auditWriter: boom })).rejects.toThrow();
+    // The whole edit rolled back: old row still current, and no new version was inserted.
+    const rows = await owner.kysely.selectFrom('memory_items').selectAll().execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.superseded_by).toBeNull();
+  });
+
+  test('getMemoryItem returns a single item; not_found for an unknown id; forbidden for an outsider', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact() });
+    if (created.status !== 'ok') throw new Error('setup');
+    expect((await getMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId })).status).toBe('ok');
+    expect((await getMemoryItem(product, { ...base(w.aOwner), memoryItemId: '00000000-0000-4000-8000-0000000000ff' })).status).toBe('not_found');
+    expect((await getMemoryItem(product, { userId: w.outsider, accountId: w.accountA, companyId: w.companyA1, memoryItemId: created.item.memoryItemId })).status).toBe('forbidden');
   });
 
   test('CONCURRENT creation appends distinct rows (append-only; no overwrite)', async () => {

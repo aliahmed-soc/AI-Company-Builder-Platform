@@ -155,6 +155,13 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     for (const forbidden of ['id', 'account_id', 'company_id', 'created_at']) {
       expect(interview).not.toContain(forbidden);
     }
+    // Memory items (ACBP-P2-010): EDIT=supersede grants column-level UPDATE on EXACTLY `superseded_by` — the
+    // content/type/source/confidence/confirmation/identity columns stay immutable (no destructive overwrite).
+    const memory = byTable.get('memory_items') ?? [];
+    expect(memory).toEqual(['superseded_by']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'content', 'type', 'source_type', 'source_ref', 'confidence', 'confirmation_state', 'created_at']) {
+      expect(memory).not.toContain(forbidden);
+    }
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {

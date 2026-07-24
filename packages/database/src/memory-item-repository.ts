@@ -21,9 +21,11 @@ export interface NewMemoryItemInput {
   readonly createdByUserId: string | null;
 }
 
-/** Bounded list options. `limit` is clamped by the caller/use case; `type` filters to a single memory type. */
+/** Bounded list options. `limit` is clamped by the caller/use case; `type` filters to a single memory type;
+ *  `currentOnly` restricts to live (not-yet-superseded) items. */
 export interface ListMemoryItemsOptions {
   readonly type?: string;
+  readonly currentOnly?: boolean;
   readonly limit: number;
 }
 
@@ -62,6 +64,25 @@ export class MemoryItemRepository {
   list(options: ListMemoryItemsOptions): Promise<MemoryItemRow[]> {
     let q = this.#db.selectFrom('memory_items').selectAll();
     if (options.type !== undefined) q = q.where('type', '=', options.type);
+    // `currentOnly` shows only live items (not yet superseded) — the browser's default view.
+    if (options.currentOnly === true) q = q.where('superseded_by', 'is', null);
     return q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+  }
+
+  /** A single memory item by id (RLS-confined; undefined when absent/invisible). */
+  findById(id: string): Promise<MemoryItemRow | undefined> {
+    return this.#db.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /**
+   * Point a still-CURRENT item's `superseded_by` at its correcting new version (ACBP-P2-010 edit). Version-guarded:
+   * the UPDATE only fires while the row is still current (`superseded_by IS NULL`), so a concurrent edit that
+   * already superseded it matches 0 rows — the caller maps that to a bounded conflict. Only `superseded_by` is
+   * touched (the narrow column-level UPDATE grant, migration 0015); content/type/source stay immutable. Returns
+   * the number of rows updated (1 on success, 0 on a lost race).
+   */
+  async supersede(oldId: string, newId: string): Promise<number> {
+    const r = await this.#db.updateTable('memory_items').set({ superseded_by: newId }).where('id', '=', oldId).where('superseded_by', 'is', null).executeTakeFirst();
+    return Number(r.numUpdatedRows);
   }
 }

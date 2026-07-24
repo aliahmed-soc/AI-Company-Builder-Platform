@@ -390,7 +390,9 @@ export interface MemoryItemsTable {
   source_ref: ColumnType<string, string, never>;
   confidence: ColumnType<number | null, number | null | undefined, never>;
   confirmation_state: ColumnType<string, string | undefined, never>;
-  superseded_by: ColumnType<string | null, string | null | undefined, never>;
+  // `superseded_by` gains a column-level UPDATE grant in migration 0015 (ACBP-P2-010 edit=supersede), so it is
+  // the ONE updatable column; every other column stays `never` (immutable to the app role — no content overwrite).
+  superseded_by: ColumnType<string | null, string | null | undefined, string | null>;
   created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }

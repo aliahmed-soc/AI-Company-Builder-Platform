@@ -18,6 +18,7 @@ import { checkAuthorization } from '../authz/authz-service.js';
 import {
   validateMemorySubmission,
   memoryItemCreated,
+  memoryItemSuperseded,
   isMemoryType,
   isMemorySourceType,
   type AuditEvent,
@@ -52,8 +53,27 @@ export interface ListMemoryItemsParams {
   readonly companyId: string;
   /** Optional single-type filter (invalid values are ignored → no filter). */
   readonly type?: unknown;
+  /** When true, only live (not-yet-superseded) items are returned — the browser's default view. */
+  readonly currentOnly?: boolean;
   /** Requested page size; clamped to [1, MEMORY_LIST_MAX_LIMIT]. */
   readonly limit?: unknown;
+}
+export interface EditMemoryItemParams {
+  /** Server-verified internal user id (NEVER a browser claim). */
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  /** The CURRENT memory item to correct (must not already be superseded). */
+  readonly targetId: string;
+  readonly type: unknown;
+  readonly content: unknown;
+  readonly confidence?: unknown;
+}
+export interface GetMemoryItemParams {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly memoryItemId: string;
 }
 export interface MemoryOptions {
   readonly correlationId?: string;
@@ -64,6 +84,13 @@ export interface MemoryOptions {
 
 export type CreateMemoryItemResult = { readonly status: 'ok'; readonly item: MemoryItemDTO } | { readonly status: 'forbidden' } | { readonly status: 'validation'; readonly error: PublicErrorEnvelope };
 export type ListMemoryItemsResult = { readonly status: 'ok'; readonly items: readonly MemoryItemDTO[] } | { readonly status: 'forbidden' };
+export type EditMemoryItemResult =
+  | { readonly status: 'ok'; readonly item: MemoryItemDTO }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'not_found' }
+  | { readonly status: 'conflict' }
+  | { readonly status: 'validation'; readonly error: PublicErrorEnvelope };
+export type GetMemoryItemResult = { readonly status: 'ok'; readonly item: MemoryItemDTO } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
 
 // ── create (audited in-transaction) ────────────────────────────────────────────────────────────────────
 export async function createMemoryItem(client: DatabaseClient, params: CreateMemoryItemParams, options: MemoryOptions = {}): Promise<CreateMemoryItemResult> {
@@ -110,7 +137,10 @@ export async function listMemoryItems(client: DatabaseClient, params: ListMemory
       if (checkAuthorization(role, 'memory:read', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
       const typeFilter = isMemoryType(params.type) ? params.type : undefined;
       const limit = clampLimit(params.limit);
-      const rows = await new MemoryItemRepository(scope.db).list(typeFilter !== undefined ? { type: typeFilter, limit } : { limit });
+      const opts: { type?: MemoryType; currentOnly?: boolean; limit: number } = { limit };
+      if (typeFilter !== undefined) opts.type = typeFilter;
+      if (params.currentOnly === true) opts.currentOnly = true;
+      const rows = await new MemoryItemRepository(scope.db).list(opts);
       return { status: 'ok', items: rows.map(toDTO) };
     },
     optionsFor(options),
@@ -118,7 +148,71 @@ export async function listMemoryItems(client: DatabaseClient, params: ListMemory
   return unwrap(run);
 }
 
+// ── edit = versioned supersede (owner-only; audited in-tx) ─────────────────────────────────────────────
+/**
+ * Correct a memory item by SUPERSEDING it (never overwrite — DATA-ARCHITECTURE §3). Inserts a NEW `user_edit`
+ * version (whose `source_ref` cites the corrected item) and points the OLD row's `superseded_by` at it, guarded
+ * so only the CURRENT (not-yet-superseded) row can be edited. `memory.item_superseded` is written in the SAME
+ * transaction, so an audit failure rolls the whole edit back. Owner-only (`memory:edit`).
+ */
+export async function editMemoryItem(client: DatabaseClient, params: EditMemoryItemParams, options: MemoryOptions = {}): Promise<EditMemoryItemResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<EditMemoryItemResult> => {
+      if (checkAuthorization(role, 'memory:edit', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
+      // The correction is a user_edit whose source_ref is the item it corrects; type-by-source-path lets a
+      // user_edit carry any of the 8 types.
+      const submission = validateMemorySubmission({ type: params.type, content: params.content, sourceType: 'user_edit', sourceRef: params.targetId, confidence: params.confidence });
+      if (!submission.ok) return { status: 'validation', error: submission.error };
+
+      const repo = new MemoryItemRepository(scope.db);
+      const target = await repo.findById(params.targetId);
+      if (target === undefined) return { status: 'not_found' };
+      if (target.superseded_by !== null) return { status: 'conflict' }; // already corrected by someone else
+
+      const created = await repo.insert({
+        accountId: params.accountId,
+        companyId: params.companyId,
+        type: submission.value.type,
+        content: submission.value.content,
+        sourceType: submission.value.sourceType,
+        sourceRef: submission.value.sourceRef,
+        confidence: submission.value.confidence,
+        createdByUserId: params.userId,
+      });
+      const updated = await repo.supersede(params.targetId, created.id);
+      if (updated === 0) return { status: 'conflict' }; // raced: the target was superseded between load and update
+      await audit(scope, memoryItemSuperseded({ supersededItemId: params.targetId, newItemType: created.type, newSourceType: created.source_type }), auditContext(options));
+      options.logger?.info('memory.item_superseded', { metadata: { accountId: params.accountId, companyId: params.companyId, itemType: created.type } });
+      return { status: 'ok', item: toDTO(created) };
+    },
+    optionsFor(options),
+  );
+  return unwrapExtended(run);
+}
+
+// ── get a single item ──────────────────────────────────────────────────────────────────────────────────
+export async function getMemoryItem(client: DatabaseClient, params: GetMemoryItemParams, options: MemoryOptions = {}): Promise<GetMemoryItemResult> {
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<GetMemoryItemResult> => {
+      if (checkAuthorization(role, 'memory:read', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
+      const row = await new MemoryItemRepository(scope.db).findById(params.memoryItemId);
+      return row === undefined ? { status: 'not_found' } : { status: 'ok', item: toDTO(row) };
+    },
+    optionsFor(options),
+  );
+  return unwrapExtended(run);
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────
+/** Like `unwrap`, but preserves the richer result unions (not_found/conflict) instead of collapsing to ok|forbidden. */
+function unwrapExtended<T extends { status: string }>(run: { kind: 'ran'; value: T } | { kind: 'denied'; reason: string }): T | { status: 'forbidden' } {
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
 function clampLimit(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return MEMORY_LIST_DEFAULT_LIMIT;
   const n = Math.floor(value);

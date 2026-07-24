@@ -2,11 +2,17 @@
 export {
   createMemoryItem,
   listMemoryItems,
+  editMemoryItem,
+  getMemoryItem,
   MEMORY_LIST_DEFAULT_LIMIT,
   MEMORY_LIST_MAX_LIMIT,
   type CreateMemoryItemParams,
   type ListMemoryItemsParams,
+  type EditMemoryItemParams,
+  type GetMemoryItemParams,
   type MemoryOptions,
   type CreateMemoryItemResult,
   type ListMemoryItemsResult,
+  type EditMemoryItemResult,
+  type GetMemoryItemResult,
 } from './memory-item.js';
