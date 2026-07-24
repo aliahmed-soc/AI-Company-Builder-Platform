@@ -106,4 +106,9 @@ export class UnderstandingRepository {
   listItems(documentId: string): Promise<UnderstandingItemRow[]> {
     return this.#db.selectFrom('understanding_items').selectAll().where('document_id', '=', documentId).orderBy('id', 'asc').execute();
   }
+
+  /** A single item by id (RLS-confined; undefined when absent/invisible). */
+  findItem(id: string): Promise<UnderstandingItemRow | undefined> {
+    return this.#db.selectFrom('understanding_items').selectAll().where('id', '=', id).executeTakeFirst();
+  }
 }
