@@ -19,15 +19,21 @@ export class InterviewSessionRepository {
     this.#db = db;
   }
 
-  /** Insert a new session directly in `in_progress` with `started_at = now()` (the real not_started→in_progress
-   *  entry is applied at creation — CDR-022 §2). Returns the server-generated row. The partial unique index
-   *  rejects a second open session for the company; the caller maps that conflict to a safe result. */
-  async insertStarted(accountId: string, companyId: string): Promise<InterviewSessionRow> {
+  /**
+   * Insert a new session in `in_progress` with `started_at = now()` (the not_started→in_progress entry applied
+   * atomically at creation — CDR-022 §2), UNLESS the company already has an open (non-superseded) session. The
+   * `ON CONFLICT ... DO NOTHING` targets the partial unique index, so a concurrent first-start does not raise a
+   * 23505: the loser simply inserts nothing and gets `undefined`, and the caller returns the existing open
+   * session (created: false) — graceful idempotency even under a race. Returns the inserted row, or `undefined`
+   * when an open session already existed.
+   */
+  async insertStartedIfAbsent(accountId: string, companyId: string): Promise<InterviewSessionRow | undefined> {
     return this.#db
       .insertInto('interview_sessions')
       .values({ account_id: accountId, company_id: companyId, state: 'in_progress', started_at: sql<Date>`now()` })
+      .onConflict((oc) => oc.column('company_id').where('state', '<>', 'superseded').doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
   }
 
   /** The single OPEN (non-superseded) session for a company, or undefined. RLS confines to the current scope. */
@@ -38,11 +44,6 @@ export class InterviewSessionRepository {
   /** A session by id (RLS-confined to the current company scope). */
   findById(sessionId: string): Promise<InterviewSessionRow | undefined> {
     return this.#db.selectFrom('interview_sessions').selectAll().where('id', '=', sessionId).executeTakeFirst();
-  }
-
-  /** Lock a session row `FOR UPDATE` so a concurrent transition serializes on it (undefined when absent/invisible). */
-  lockById(sessionId: string): Promise<InterviewSessionRow | undefined> {
-    return this.#db.selectFrom('interview_sessions').selectAll().where('id', '=', sessionId).forUpdate().executeTakeFirst();
   }
 
   /**

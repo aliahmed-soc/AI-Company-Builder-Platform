@@ -62,6 +62,25 @@ describe.skipIf(!hasTestDatabase)('interview session use cases (real PostgreSQL,
     expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'interview.started').where('company_id', '=', w.companyA1).execute()).toHaveLength(1);
   });
 
+  test('CONCURRENT first-starts are graceful: exactly one session + one audit, both callers get ok (no 500)', async () => {
+    // Two truly concurrent starts for the SAME company. The one-open-session partial index + ON CONFLICT DO
+    // NOTHING makes the loser return the winner's session (created: false) rather than raising a duplicate-key
+    // error — no 23505/500, no orphan, no second audit.
+    const [a, b] = await Promise.all([
+      startInterviewSession(product, paramsFor(w.aOwner, w.companyA1, w.accountA)),
+      startInterviewSession(product, paramsFor(w.aOwner, w.companyA1, w.accountA)),
+    ]);
+    expect(a.status).toBe('ok');
+    expect(b.status).toBe('ok');
+    // Exactly one is the creator; both resolve to the SAME session id.
+    if (a.status === 'ok' && b.status === 'ok') {
+      expect([a.created, b.created].filter(Boolean)).toHaveLength(1);
+      expect(a.session.sessionId).toBe(b.session.sessionId);
+    }
+    expect(await owner.kysely.selectFrom('interview_sessions').selectAll().where('company_id', '=', w.companyA1).execute()).toHaveLength(1);
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'interview.started').where('company_id', '=', w.companyA1).execute()).toHaveLength(1);
+  });
+
   test('EXACT kill-and-resume: suspend, then the durable state survives independent transactions and a storage read', async () => {
     await startInterviewSession(product, paramsFor(w.aOwner, w.companyA1, w.accountA));
     const suspended = await suspendInterviewSession(product, paramsFor(w.aOwner, w.companyA1, w.accountA));

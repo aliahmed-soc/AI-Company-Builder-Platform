@@ -82,8 +82,16 @@ export async function startInterviewSession(client: DatabaseClient, params: Inte
       const existing = await repo.findOpen(params.companyId);
       if (existing !== undefined) return { status: 'ok', session: toDTO(existing), created: false };
 
-      const row = await repo.insertStarted(params.accountId, params.companyId);
+      // Insert-if-absent: ON CONFLICT DO NOTHING on the one-open-session partial index makes a CONCURRENT
+      // first-start graceful — the loser inserts nothing and returns the winner's open session (created: false),
+      // never a 23505/500 (security review LOW).
+      const row = await repo.insertStartedIfAbsent(params.accountId, params.companyId);
+      if (row === undefined) {
+        const raced = await repo.findOpen(params.companyId);
+        return raced !== undefined ? { status: 'ok', session: toDTO(raced), created: false } : { status: 'forbidden' };
+      }
       // interview.started in the SAME transaction — a write failure rolls the insert back (no orphaned session).
+      // Written ONLY for a genuinely new session (the conflict path above created nothing to audit).
       await audit(scope, interviewStarted({ sessionId: row.id }), auditContext(options));
       options.logger?.info('interview.started', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return { status: 'ok', session: toDTO(row), created: true };

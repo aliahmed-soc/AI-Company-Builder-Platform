@@ -43,8 +43,14 @@ outgoing transition). Legal transitions, server-enforced (invalid → rejected +
 
 The **full** legal-transition map lives in `@acbp/contracts` so illegal transitions are rejected uniformly
 from day one; only the three P2-001 rows have executable operations. The contract mints the initial state
-`not_started`; `startInterviewSession` performs the real `not_started → in_progress` transition (it does not
-insert directly into `in_progress`), so the state machine is genuinely exercised, not bypassed.
+`not_started` (the DB column default), and `startInterviewSession` applies the `not_started → in_progress`
+entry **atomically at creation**: the row is born in `in_progress` with `started_at = now()` — the state the
+entry transition produces — rather than persisting a `not_started` row and issuing a separate UPDATE (a
+pointless extra write, since nothing observes the intermediate state). The `in_progress ⇄ waiting_for_user`
+cycle that `suspend`/`resume` drive genuinely exercises the machine's guard on every transition, and the
+`not_started` state remains a valid, guarded member of the map for a future auto-provisioning-on-activation
+trigger. The insert uses `ON CONFLICT DO NOTHING` on the one-open-session partial index, so a concurrent
+first-start is idempotent (the loser returns the winner's session) rather than raising a duplicate-key error.
 
 ## 3. Exact resume + "recovers to last confirmed answer"
 
@@ -92,7 +98,10 @@ exactly three; no BYPASSRLS; no owner runtime connection). Mirrors the P1-012 du
 - `state text not null default 'not_started'`, `CHECK (state in (…the six…))` — the **full** canonical set, so
   no CHECK churn as later tickets add transitions.
 - `started_at timestamptz` (set on the first entry to `in_progress`); `created_at`, `updated_at` (`not null
-  default now()`). Shape CHECK: `state = 'not_started' or started_at is not null`.
+  default now()`). Shape CHECK is a **biconditional**: `started_at` is set **iff** the session has left
+  `not_started` — `(state = 'not_started' AND started_at IS NULL) OR (state <> 'not_started' AND started_at IS
+  NOT NULL)`. (This is stricter than a one-directional "not_started or started_at not null": a `not_started`
+  row can never carry a spurious timestamp.)
 - **One open session per company:** a partial unique index on `(company_id) WHERE state <> 'superseded'`
   (a company has at most one non-superseded session; historical superseded sessions accumulate).
 - Timestamp columns for `ready_for_review`/`confirmed`/`superseded` are **deferred** to the tickets that
