@@ -57,6 +57,13 @@ export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ st
   return { ok: true, input: { status: r.obj['status'], content: r.obj['content'] } };
 }
 
+/** Parse a memory-item create body → { type, content, sourceType, sourceRef, confidence } (raw; domain validates). */
+export async function parseCreateMemoryBody(request: HttpRequest): Promise<Parsed<{ type: unknown; content: unknown; sourceType: unknown; sourceRef: unknown; confidence: unknown }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  return { ok: true, input: { type: r.obj['type'], content: r.obj['content'], sourceType: r.obj['sourceType'], sourceRef: r.obj['sourceRef'], confidence: r.obj['confidence'] } };
+}
+
 /**
  * Run a companies request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500
  * envelope (ACBP-P1-014 Class R restoration).
@@ -131,6 +138,13 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       // The redacted session Q&A: questions in order, each with current answer + full revision history +
       // derived lifecycle. No accountId/actor ids.
       return jsonResponse(200, { qa: result.qa });
+    case 'memory_item':
+      // The redacted typed memory item (ACBP-P2-006): type, content, sourceType, sourceRef, confidence,
+      // confirmationState, supersededBy, createdAt. No accountId/actor. 201 Created.
+      return jsonResponse(201, { item: result.item });
+    case 'memory_list':
+      // The company's memory items (redacted; newest-first, bounded). No accountId/actor ids.
+      return jsonResponse(200, { items: result.items });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':
