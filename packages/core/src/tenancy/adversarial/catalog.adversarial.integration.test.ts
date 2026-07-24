@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -48,6 +48,9 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // Interview sessions (ACBP-P2-001; CDR-022): INSERT/SELECT at the table level; the state/started_at/updated_at
   // UPDATE is COLUMN-LEVEL (identity columns immutable), so it shows in column_privileges, not here.
   interview_sessions: ['INSERT', 'SELECT'],
+  // Interview Q&A (ACBP-P2-002; CDR-023): both append-only/immutable — SELECT+INSERT only, no UPDATE/DELETE.
+  interview_questions: ['INSERT', 'SELECT'],
+  interview_answers: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {

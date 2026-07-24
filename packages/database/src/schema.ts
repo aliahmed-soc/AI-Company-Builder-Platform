@@ -342,6 +342,38 @@ export interface InterviewSessionsTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/**
+ * Interview questions (ACBP-P2-002; CDR-023; DATA-ARCHITECTURE Question `I`). IMMUTABLE, ordered per session;
+ * grants are SELECT + INSERT only, so no column is updatable by the app role. The `answered/skipped` lifecycle
+ * is derived from `interview_answers`, never stored here.
+ */
+export interface InterviewQuestionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  session_id: ColumnType<string, string, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  position: ColumnType<number, number, never>;
+  prompt: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Interview answers (ACBP-P2-002; CDR-023; DATA-ARCHITECTURE Answer `A`). APPEND-ONLY: a revision is a NEW row,
+ * PK `(question_id, revision)`, current = max(revision) per question. Grants are SELECT + INSERT only — never an
+ * in-place edit. `content` is NULL iff `status = 'skipped'`.
+ */
+export interface InterviewAnswersTable {
+  question_id: ColumnType<string, string, never>;
+  revision: ColumnType<number, number, never>;
+  session_id: ColumnType<string, string, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  status: ColumnType<string, string, never>;
+  content: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -357,6 +389,8 @@ export interface DatabaseSchema {
   company_workspace_areas: CompanyWorkspaceAreasTable;
   platform_admins: PlatformAdminsTable;
   interview_sessions: InterviewSessionsTable;
+  interview_questions: InterviewQuestionsTable;
+  interview_answers: InterviewAnswersTable;
 }
 
 // Repository-facing row shapes.
@@ -393,3 +427,7 @@ export type NewCompanyWorkspaceArea = Insertable<CompanyWorkspaceAreasTable>;
 export type InterviewSessionRow = Selectable<InterviewSessionsTable>;
 export type NewInterviewSession = Insertable<InterviewSessionsTable>;
 export type InterviewSessionUpdate = Updateable<InterviewSessionsTable>;
+export type InterviewQuestionRow = Selectable<InterviewQuestionsTable>;
+export type NewInterviewQuestion = Insertable<InterviewQuestionsTable>;
+export type InterviewAnswerRow = Selectable<InterviewAnswersTable>;
+export type NewInterviewAnswer = Insertable<InterviewAnswersTable>;
