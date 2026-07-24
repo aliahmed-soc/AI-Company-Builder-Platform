@@ -36,6 +36,12 @@ describe('parseUnderstanding — deny-by-default', () => {
   test('accepts an empty item list (a document with no derived items is valid — all sections unknown)', () => {
     const r = parseUnderstanding('{"items":[]}');
     expect(r.ok && r.value.items).toEqual([]);
+    expect(r.ok && r.value.partial).toBe(false); // absent partial → complete
+  });
+  test('the optional partial flag: true → partial; a non-boolean partial is rejected', () => {
+    const p = parseUnderstanding('{"items":[{"class":"fact","content":"x","confidence":0.9}],"partial":true}');
+    expect(p.ok && p.value.partial).toBe(true);
+    expect(parseUnderstanding('{"items":[],"partial":"yes"}').ok).toBe(false);
   });
   test('rejects bad class, out-of-range confidence, blank/over-long content, non-array, malformed JSON', () => {
     expect(parseUnderstanding('{"items":[{"class":"user_fact","content":"x","confidence":0.5}]}').ok).toBe(false);

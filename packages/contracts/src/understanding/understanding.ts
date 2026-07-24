@@ -45,7 +45,7 @@ export interface UnderstandingSection {
   readonly status: SectionStatus;
 }
 
-export type UnderstandingParse = { readonly ok: true; readonly value: { readonly items: readonly UnderstandingItemInput[] } } | { readonly ok: false };
+export type UnderstandingParse = { readonly ok: true; readonly value: { readonly items: readonly UnderstandingItemInput[]; readonly partial: boolean } } | { readonly ok: false };
 
 const FAIL = { ok: false } as const;
 
@@ -68,6 +68,11 @@ export function parseUnderstanding(raw: string): UnderstandingParse {
   if (typeof root !== 'object' || root === null) return FAIL;
   const list = (root as { items?: unknown }).items;
   if (!Array.isArray(list) || list.length > MAX_UNDERSTANDING_ITEMS) return FAIL;
+  // Optional `partial` flag — the model signals it could not fully analyse (honest partial labeling, CDR-029 §3).
+  // Absent → complete; any non-boolean present → reject (deny-by-default, no silent coercion).
+  const rawPartial = (root as { partial?: unknown }).partial;
+  if (rawPartial !== undefined && typeof rawPartial !== 'boolean') return FAIL;
+  const partial = rawPartial === true;
   const items: UnderstandingItemInput[] = [];
   for (const raw of list) {
     if (typeof raw !== 'object' || raw === null) return FAIL;
@@ -79,7 +84,7 @@ export function parseUnderstanding(raw: string): UnderstandingParse {
     if (!isFiniteInRange(confidence, 0, 1)) return FAIL;
     items.push({ class: cls, content: content.trim(), confidence });
   }
-  return { ok: true, value: { items } };
+  return { ok: true, value: { items, partial } };
 }
 
 /** Roll classified items up into one section per class: count, mean confidence, and derived status. */

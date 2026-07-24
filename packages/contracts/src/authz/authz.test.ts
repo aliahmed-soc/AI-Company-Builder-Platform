@@ -44,6 +44,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Memory browser (ACBP-P2-010; CDR-025): editing (versioned correction) + deleting (soft delete) are OWNER-only.
   'memory:edit': ['owner'],
   'memory:delete': ['owner'],
+  // Understanding generation (ACBP-P2-008; CDR-029): generate + read = any active company member.
+  'understanding:generate': ['owner', 'viewer'],
+  'understanding:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

@@ -81,6 +81,11 @@ export const AUTHZ_ACTIONS = [
   // ratified CDR-025 §0 decision).
   'memory:edit',
   'memory:delete',
+  // Understanding generation (ACBP-P2-008; CDR-029). Any active company member may GENERATE an understanding
+  // document version and READ it — part of the discovery flow (like interview:participate + memory:write). The
+  // owner-only CONFIRM / per-item review is P2-009, which registers its own action when it implements that effect.
+  'understanding:generate',
+  'understanding:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -157,6 +162,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // API-CONTRACTS "Owner (edit/delete)").
   'memory:edit': ['owner'],
   'memory:delete': ['owner'],
+  // Understanding generation (ACBP-P2-008; CDR-029): generate + read = any active company member (owner|viewer);
+  // owner-only confirm is P2-009's separate action.
+  'understanding:generate': ['owner', 'viewer'],
+  'understanding:read': ['owner', 'viewer'],
 };
 
 /**
