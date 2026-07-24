@@ -374,6 +374,27 @@ export interface InterviewAnswersTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Typed memory items (ACBP-P2-006; CDR-024; MEM-001/003; DATA-ARCHITECTURE §3). Company-owned, dual-keyed
+ * FORCE RLS. The closed 8-value `type` (set by source path) + 6-value `source_type` provenance + resolvable
+ * `source_ref`. P2-006 grants are SELECT + INSERT only (append-only); `superseded_by`/`confirmation_state`
+ * advance in P2-010/M3, so they are `never` on update for the app role here.
+ */
+export interface MemoryItemsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  type: ColumnType<string, string, never>;
+  content: ColumnType<string, string, never>;
+  source_type: ColumnType<string, string, never>;
+  source_ref: ColumnType<string, string, never>;
+  confidence: ColumnType<number | null, number | null | undefined, never>;
+  confirmation_state: ColumnType<string, string | undefined, never>;
+  superseded_by: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -391,6 +412,7 @@ export interface DatabaseSchema {
   interview_sessions: InterviewSessionsTable;
   interview_questions: InterviewQuestionsTable;
   interview_answers: InterviewAnswersTable;
+  memory_items: MemoryItemsTable;
 }
 
 // Repository-facing row shapes.
@@ -431,3 +453,5 @@ export type InterviewQuestionRow = Selectable<InterviewQuestionsTable>;
 export type NewInterviewQuestion = Insertable<InterviewQuestionsTable>;
 export type InterviewAnswerRow = Selectable<InterviewAnswersTable>;
 export type NewInterviewAnswer = Insertable<InterviewAnswersTable>;
+export type MemoryItemRow = Selectable<MemoryItemsTable>;
+export type NewMemoryItem = Insertable<MemoryItemsTable>;

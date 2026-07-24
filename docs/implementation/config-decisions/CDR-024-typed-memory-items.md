@@ -41,9 +41,10 @@ DATA-ARCHITECTURE §3 exactly:
   **specific pinned revision** the item was derived from (the exact revision, not "current"), keeping the link
   stable under later answer revisions. Shape validated in `@acbp/contracts`.
 - `confidence double precision` (nullable; `CHECK (confidence is null or (confidence >= 0 and confidence <= 1))`)
-  and `confidence_class text` (nullable) — canonical columns (§3 "numeric + class per PRD §7 bands"). The COLUMN
-  is P2-006; **scoring/population is P2-008/UNDER-002**, so items are created with null confidence unless a
-  caller supplies it.
+  — the canonical numeric confidence (§3 "numeric + class per PRD §7 bands"). P2-006 stores the **number**; the
+  **class band** (PRD §7) is *derived* from the number by the Understanding layer (**P2-008/UNDER-002**), which
+  also owns confidence *scoring* — so items are created with null confidence unless a caller supplies it, and no
+  `confidence_class` column is added in P2-006 (the class is a derivation, not stored state).
 - `created_by_user_id uuid` (nullable — an item may be worker/system-authored, e.g. `model_generation`;
   founder-authored items carry the server-verified user id). Author accountability is also captured in the
   audit event (§4).
