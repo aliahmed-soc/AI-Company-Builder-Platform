@@ -46,13 +46,17 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
   }
   const scope = (a: string, c: string) => ({ 'app.current_account': a, 'app.current_company': c });
 
-  /** Insert a session row as the app role under company scope; returns its id. */
+  /** Insert a session row as the app role under company scope; returns its id. `now()` is inline SQL (a bound
+   *  string 'now()' would not cast to timestamptz). A not_started session has a null started_at; any started
+   *  state gets started_at = now() to satisfy the shape CHECK. */
   async function insertSession(a: string, c: string, state?: string): Promise<string> {
     return asApp(scope(a, c), async (k) => {
-      const r =
-        state === undefined
-          ? await sql<{ id: string }>`insert into interview_sessions (account_id, company_id) values (${a}::uuid, ${c}::uuid) returning id`.execute(k)
-          : await sql<{ id: string }>`insert into interview_sessions (account_id, company_id, state, started_at) values (${a}::uuid, ${c}::uuid, ${state}, ${state === 'not_started' ? null : 'now()'}) returning id`.execute(k);
+      let r: { rows: Array<{ id: string }> };
+      if (state === undefined || state === 'not_started') {
+        r = await sql<{ id: string }>`insert into interview_sessions (account_id, company_id, state) values (${a}::uuid, ${c}::uuid, ${state ?? 'not_started'}) returning id`.execute(k);
+      } else {
+        r = await sql<{ id: string }>`insert into interview_sessions (account_id, company_id, state, started_at) values (${a}::uuid, ${c}::uuid, ${state}, now()) returning id`.execute(k);
+      }
       return r.rows[0]!.id;
     });
   }
@@ -67,12 +71,15 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     await sql`alter role acbp_app login password ${sql.lit(APP_TEST_PASSWORD)}`.execute(su.kysely);
     app = appRoleClient();
 
-    // FK targets: two accounts + three companies (A1, A2 under account A; B1 under account B). Owner connection.
-    const u = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_iv', 'user_iv', now()) returning id`.execute(su.kysely);
+    // FK targets: two accounts (distinct owner users — accounts_owner_unique = one personal account per user)
+    // + three companies (A1, A2 under account A; B1 under account B). Owner connection.
+    const u = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_iv', 'user_iv_u', now()) returning id`.execute(su.kysely);
     userU = u.rows[0]!.id;
+    const v = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_iv', 'user_iv_v', now()) returning id`.execute(su.kysely);
+    const userV = v.rows[0]!.id;
     const a = await sql<{ id: string }>`insert into accounts (created_by_user_id) values (${userU}::uuid) returning id`.execute(su.kysely);
     accountA = a.rows[0]!.id;
-    const b = await sql<{ id: string }>`insert into accounts (created_by_user_id) values (${userU}::uuid) returning id`.execute(su.kysely);
+    const b = await sql<{ id: string }>`insert into accounts (created_by_user_id) values (${userV}::uuid) returning id`.execute(su.kysely);
     accountB = b.rows[0]!.id;
     const mk = async (acc: string): Promise<string> => (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${acc}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     companyA1 = await mk(accountA);
@@ -188,9 +195,10 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
     const pols = await sql<{ policyname: string; cmd: string }>`select policyname, cmd from pg_policies where tablename = 'interview_sessions' order by policyname`.execute(su.kysely);
     expect(pols.rows.map((p) => `${p.policyname}:${p.cmd}`)).toEqual(['interview_sessions_insert:INSERT', 'interview_sessions_select:SELECT', 'interview_sessions_update:UPDATE']);
-    // Grants: SELECT, INSERT, UPDATE only (no DELETE); and the UPDATE is column-limited (identity cols excluded).
+    // TABLE-LEVEL grants: INSERT + SELECT only (no DELETE). The UPDATE is COLUMN-LEVEL, so it does NOT appear in
+    // role_table_grants (the provisioning_steps precedent) — it is asserted separately against column_privileges.
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'interview_sessions' order by privilege_type`.execute(su.kysely);
-    expect(grants.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT', 'UPDATE']);
+    expect(grants.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT']);
     const updatableCols = await sql<{ column_name: string }>`select column_name from information_schema.column_privileges where grantee = 'acbp_app' and table_name = 'interview_sessions' and privilege_type = 'UPDATE' order by column_name`.execute(su.kysely);
     expect(updatableCols.rows.map((c) => c.column_name)).toEqual(['started_at', 'state', 'updated_at']);
     // No other role (incl. PUBLIC) holds any grant beyond acbp_app and the table owner.
