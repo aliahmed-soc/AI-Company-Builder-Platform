@@ -92,8 +92,23 @@ this append-only, immutable usage_events row — the durable source record of ev
 `audit_events` entry. Registering model.call_completed in the closed `AUDIT_EVENTS` store AND writing usage_events
 would double-record the same fact; EVENT-CATALOG frames it as a "usage source record", so P2-003 persists it as
 the append-only usage event (which satisfies "audited" = durable + immutable + attributed). This mirrors the
-CDR-023/CDR-024 audit-mechanism decisions; additive/reversible. **Fail-closed:** if the usage-event write fails,
-the whole call transaction rolls back and the metered work does not succeed (USAGE-001; ADR-013).
+CDR-023/CDR-024 audit-mechanism decisions; additive/reversible.
+
+**Fail-closed + transaction shape:** the usage-event insert is the ONLY DB write in a gateway call (the model call
+itself is external, non-DB), so the composition writes it in its OWN short tenant transaction (dual-keyed RLS)
+AFTER the model call — never holding a connection across the external call. Fail-closed still holds trivially:
+that write is atomic, and if it fails the call throws and the output is withheld (there is no other DB effect to
+roll back). USAGE-001; ADR-013.
+
+**Usage accumulation across attempts (resolves the P2-003 review MEDIUM):** ONE usage event is written per
+`callModel`, and its token counts are the SUM of tokens consumed across EVERY provider call in that invocation —
+each bounded re-ask and each fallback attempt that returned a response. Metering the final attempt only would
+under-report a re-asked call (the discarded bad output really cost tokens). Retryable infra failures (timeout /
+rate_limited / provider_unavailable) throw without returning usage, so they contribute zero. `estimated_cost` is
+computed from that accumulated total. Latency is the whole-call wall-clock. (Rollups/credits remain deferred —
+P5-014/P6-009.) **Money discipline:** the gateway defensively coerces the injected pricing function's result to a
+non-negative integer (`Math.trunc`, non-finite → 0) before it reaches the integer micro-units column, so a
+mis-implemented pricing config can never be silently rounded.
 
 ## 6. Schema — migration 0017 `usage_events`
 

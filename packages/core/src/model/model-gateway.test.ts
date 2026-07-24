@@ -72,6 +72,9 @@ describe('callModel — contract + metering', () => {
     expect((prov.provider as FakeModelProvider).callCount).toBe(2); // one re-ask
     expect(events).toHaveLength(1);
     expect(events[0]?.outcome).toBe('ok');
+    // The single event meters BOTH attempts' tokens (the discarded bad output cost tokens too) — accumulation.
+    expect(events[0]).toMatchObject({ inputTokens: 24, outputTokens: 16 });
+    expect(res.tokenUsage).toEqual({ inputTokens: 24, outputTokens: 16, totalTokens: 40 });
   });
 
   test('re-ask is bounded: still-invalid after the cap → invalid_output', async () => {
@@ -81,7 +84,9 @@ describe('callModel — contract + metering', () => {
     expect(res.outcome).toBe('error');
     expect(res.errorCategory).toBe('invalid_output');
     expect((prov.provider as FakeModelProvider).callCount).toBe(2); // initial + 1 bounded re-ask
-    expect(events[0]).toMatchObject({ outcome: 'error', errorCategory: 'invalid_output', inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0 });
+    // Both attempts returned a (bad) response, so BOTH consumed tokens — the single event meters the SUM
+    // (2× the default fake usage 12/8), not zero and not just the last try (CDR-026 §5 accumulation).
+    expect(events[0]).toMatchObject({ outcome: 'error', errorCategory: 'invalid_output', inputTokens: 24, outputTokens: 16, estimatedCostMicros: 24 * 2 + 16 * 3 });
   });
 });
 
