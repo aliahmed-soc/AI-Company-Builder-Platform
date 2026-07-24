@@ -71,8 +71,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
-  await sql`drop policy if exists memory_items_select on public.memory_items`.execute(db);
-  await sql`drop policy if exists memory_items_insert on public.memory_items`.execute(db);
-  await sql`revoke all on public.memory_items from ${APP_ROLE}`.execute(db);
-  await db.schema.dropTable('memory_items').ifExists().execute();
+  // Dropping the table with CASCADE removes its RLS policies and the app-role grants atomically, and never
+  // errors on a missing relation — unlike a separate `drop policy if exists … on public.memory_items`, whose
+  // IF EXISTS guards only the POLICY, not the table, so it raises "relation does not exist" when a down-to-an-
+  // earlier-migration path runs this after the table is already gone.
+  await db.schema.dropTable('memory_items').ifExists().cascade().execute();
 }
