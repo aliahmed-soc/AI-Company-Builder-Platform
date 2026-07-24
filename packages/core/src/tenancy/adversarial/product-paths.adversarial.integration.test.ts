@@ -105,7 +105,7 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
     expect(statuses.every((s) => s.status !== 'paused')).toBe(true);
   });
 
-  test(threatTitle('ORACLE-FOREIGN-ID', 'a real foreign company and an unknown company are indistinguishable'), async () => {
+  test(`${threatTitle('ORACLE-FOREIGN-ID', 'company read')} [ORACLE-UNKNOWN-ID] a real foreign company and an unknown company are indistinguishable`, async () => {
     const foreign = await getCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyB1 });
     const unknown = await getCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: UNKNOWN_UUID });
     expect(foreign.status, 'ORACLE-FOREIGN-ID vs ORACLE-UNKNOWN-ID: statuses must match').toBe(unknown.status);

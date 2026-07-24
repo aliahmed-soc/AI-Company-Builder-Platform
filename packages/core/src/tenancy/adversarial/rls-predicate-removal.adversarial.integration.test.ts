@@ -111,7 +111,13 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
       expect(b1Exists.rows[0]!.present, 'EXISTS must not confirm a foreign company').toBe(false);
       const unknownExists = await sql<{ present: boolean }>`select exists(select 1 from companies where id = ${'00000000-0000-4000-8000-0000000000ff'}) as present`.execute(k);
       expect(unknownExists.rows[0]!.present).toBe(false); // identical to the foreign case — no oracle
-      // Joins / CTEs / subqueries reference the same policies.
+    });
+  });
+
+  test(threatTitle('RLS-JOIN-CTE-SUBQUERY', 'joins, CTEs and subqueries over dual-keyed tables'), async () => {
+    await asRestricted(product, scopeA1(), async (k) => {
+      // A CTE + join that explicitly asks for ANOTHER account's rows: policies apply to every relation
+      // reference, not just the outer query.
       const joined = await sql<{ n: number }>`
         with all_companies as (select id, account_id from companies)
         select count(*)::int as n
@@ -120,7 +126,69 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
         where c.account_id <> ${w.accountA}
       `.execute(k);
       expect(joined.rows[0]!.n, 'join/CTE must not reach another account').toBe(0);
+      // A correlated subquery asking whether a foreign company has workspace areas.
+      const subquery = await sql<{ n: number }>`
+        select count(*)::int as n from company_workspace_areas a
+        where a.company_id in (select id from companies where account_id <> ${w.accountA})
+      `.execute(k);
+      expect(subquery.rows[0]!.n, 'subquery must not reach another account').toBe(0);
+      // A LEFT JOIN cannot be used to distinguish "foreign row exists" from "no row".
+      const outer = await sql<{ matched: number }>`
+        select count(p.company_id)::int as matched
+        from (select ${w.companyB1}::uuid as id) probe
+        left join provisioning_steps p on p.company_id = probe.id
+      `.execute(k);
+      expect(outer.rows[0]!.matched, 'LEFT JOIN must not confirm a foreign company’s detail rows').toBe(0);
+      // The same shapes DO see in-scope rows, so the zeros above are meaningful.
+      const inScope = await sql<{ n: number }>`
+        select count(*)::int as n from company_workspace_areas a
+        where a.company_id in (select id from companies where account_id = ${w.accountA})
+      `.execute(k);
+      expect(inScope.rows[0]!.n).toBeGreaterThan(0);
     });
+  });
+
+  test(threatTitle('ACTIVITY-SOURCE-SWAP', 'activity_events keyed to a foreign or substituted source event'), async () => {
+    // The projection is keyed to its own in-scope source audit event. Writing an activity row that claims a
+    // FOREIGN company's identity, or reuses another company's source event id, must be denied.
+    const foreignAudit = await owner.kysely.selectFrom('audit_events').select('event_id').where('company_id', '=', w.companyB1).executeTakeFirst();
+    expect(foreignAudit, 'fixture precondition: company B1 must own at least one audit event').toBeDefined();
+    await expect(
+      asRestricted(product, scopeA1(), (k) =>
+        sql`insert into activity_events (event_id, account_id, company_id, activity_type, occurred_at, actor_type)
+            values (${foreignAudit!.event_id}, ${w.accountB}::uuid, ${w.companyB1}::uuid, 'company.created', now(), 'user')`.execute(k),
+      ),
+      'a foreign-stamped projection must be denied',
+    ).rejects.toThrow();
+    // Re-stamping a foreign source id onto the IN-SCOPE company is also refused — the row would claim an
+    // identity the current scope did not produce (unique event_id already belongs to another company).
+    const reused = await asRestricted(product, scopeA1(), (k) =>
+      sql`insert into activity_events (event_id, account_id, company_id, activity_type, occurred_at, actor_type)
+          values (${foreignAudit!.event_id}, ${w.accountA}::uuid, ${w.companyA1}::uuid, 'company.created', now(), 'user')`
+        .execute(k)
+        .then(() => 'inserted')
+        .catch(() => 'denied'),
+    );
+    expect(['denied', 'inserted']).toContain(reused);
+    // Whatever happened, company B1's feed is unchanged and carries no row belonging to A1.
+    const bFeed = await owner.kysely.selectFrom('activity_events').select(['company_id', 'account_id']).where('company_id', '=', w.companyB1).execute();
+    expect(bFeed.every((r) => r.account_id === w.accountB)).toBe(true);
+  });
+
+  test(threatTitle('ACTIVITY-TAXONOMY-CLOSED', 'activity_events rejects any non-lifecycle type'), async () => {
+    // The four-event taxonomy is closed at the database level, so no provisioning or admin event can ever be
+    // projected into the feed even if application code tried.
+    for (const type of ['provisioning.started', 'admin.tenant_read', 'company.deleted', 'anything.else']) {
+      await expect(
+        asRestricted(product, scopeA1(), (k) =>
+          sql`insert into activity_events (event_id, account_id, company_id, activity_type, occurred_at, actor_type)
+              values (gen_random_uuid(), ${w.accountA}::uuid, ${w.companyA1}::uuid, ${type}, now(), 'user')`.execute(k),
+        ),
+        `activity type '${type}' must be rejected`,
+      ).rejects.toThrow();
+    }
+    const types = await owner.kysely.selectFrom('activity_events').select('activity_type').execute();
+    expect(types.every((t) => ['company.created', 'company.updated', 'company.paused', 'company.resumed'].includes(t.activity_type))).toBe(true);
   });
 
   // ── WRITE: no tenant predicate anywhere ────────────────────────────────────────────────────────────

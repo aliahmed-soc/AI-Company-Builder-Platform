@@ -181,7 +181,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     expect(statuses.every((s) => s.status !== 'paused')).toBe(true);
   });
 
-  test('[ORACLE-FOREIGN-ID] a real foreign id and an unknown id are byte-identical; malformed ids never succeed or leak', async () => {
+  test('[ORACLE-FOREIGN-ID][ORACLE-UNKNOWN-ID][ORACLE-MALFORMED-ID] foreign and unknown ids are byte-identical; malformed ids never succeed or leak', async () => {
     await signInAs(w.aOwner);
     const get = async (companyId: string): Promise<{ status: number; body: string }> => {
       const res = await companyRoute.GET(new Request(`https://app.test/api/companies/${companyId}`), { params: Promise.resolve({ companyId }) });
