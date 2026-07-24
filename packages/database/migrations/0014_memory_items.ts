@@ -40,7 +40,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addForeignKeyConstraint('memory_items_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('memory_items_account_fk', ['account_id'], 'accounts', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('memory_items_author_fk', ['created_by_user_id'], 'users', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
-    .addForeignKeyConstraint('memory_items_superseded_fk', ['superseded_by'], 'memory_items', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
+    // NOTE: `superseded_by` is a plain uuid column here (no self-FK). The supersede OPERATION — which sets this
+    // forward pointer — is P2-010 (CDR-024 §7); P2-010 adds the self-FK + the column-level UPDATE grant when it
+    // implements the operation. Keeping the column FK-free in P2-006 avoids a self-referential constraint on a
+    // table that is append-only in this ticket.
     // The CLOSED 8-value type enum (MEM-001) and 6-value source_type enum (MEM-003).
     .addCheckConstraint('memory_items_type_valid', sql`type in ('user_fact', 'user_preference', 'constraint', 'ai_assumption', 'research_finding', 'approved_decision', 'measured_outcome', 'correction')`)
     .addCheckConstraint('memory_items_source_type_valid', sql`source_type in ('interview_answer', 'user_edit', 'task_result', 'model_generation', 'imported_document', 'system_measurement')`)
