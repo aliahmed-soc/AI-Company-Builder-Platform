@@ -390,3 +390,6 @@ export type NewProvisioningStep = Insertable<ProvisioningStepsTable>;
 export type ProvisioningStepUpdate = Updateable<ProvisioningStepsTable>;
 export type CompanyWorkspaceAreaRow = Selectable<CompanyWorkspaceAreasTable>;
 export type NewCompanyWorkspaceArea = Insertable<CompanyWorkspaceAreasTable>;
+export type InterviewSessionRow = Selectable<InterviewSessionsTable>;
+export type NewInterviewSession = Insertable<InterviewSessionsTable>;
+export type InterviewSessionUpdate = Updateable<InterviewSessionsTable>;

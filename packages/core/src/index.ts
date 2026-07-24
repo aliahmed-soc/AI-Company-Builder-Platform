@@ -7,5 +7,6 @@ export * from './tenancy/index.js';
 export * from './authz/index.js';
 export * from './audit/index.js';
 export * from './admin/index.js';
+export * from './discovery/index.js';
 export * from './composition/index.js';
 
