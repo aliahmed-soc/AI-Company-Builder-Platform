@@ -2,3 +2,5 @@
 // through this index (scaffold-spec rule 10).
 export * from './interview.js';
 export * from './qa.js';
+export * from './orchestration-types.js';
+export * from './orchestration.js';
