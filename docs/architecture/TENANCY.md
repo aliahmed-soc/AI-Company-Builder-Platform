@@ -157,3 +157,11 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
   DELETE/TRUNCATE, and a partial unique index enforcing one open (non-superseded) session per company. No
   BYPASSRLS, no owner runtime connection, no new SECURITY DEFINER (allowlist stays exactly three), migrations
   now 0001–0012. See `docs/architecture/INTERVIEW.md`.
+- **P2-002** — **implemented** (CDR-023): the **Q&A** layer (migration 0013) — `interview_questions` (immutable)
+  and `interview_answers` (append-only), both company-owned, dual-keyed FORCE-RLS, `SELECT`+`INSERT` grants only.
+- **P2-006** — **implemented** (CDR-024): **typed memory** (migration 0014). One company-owned, dual-keyed
+  FORCE-RLS table (`memory_items`) with fail-closed select/insert policies requiring both `app.current_account`
+  AND `app.current_company` (a validated `CompanyScope`) — cross-company reads are impossible (MEM-003
+  trust-critical). `SELECT`+`INSERT` grants only (append-only for P2-006; the supersede/confirm/delete
+  operations + their column-level UPDATE grant are P2-010). No BYPASSRLS, no owner runtime, no new SECURITY
+  DEFINER (allowlist stays exactly three), migrations now 0001–0014. See `docs/architecture/MEMORY.md`.
