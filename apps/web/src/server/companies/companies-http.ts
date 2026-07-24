@@ -109,6 +109,13 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
         exhausted: result.provisioning.exhausted,
         completed: result.provisioning.completed,
       });
+    case 'interview':
+      // The redacted interview session DTO (ACBP-P2-001; CDR-022): sessionId, companyId, state, honest phase,
+      // and timestamps. No accountId, actor ids, or internal detail.
+      return jsonResponse(200, { session: result.session });
+    case 'company_not_active':
+      // An interview can only start on an active company (WORKFLOW §2). Coarse, non-oracle 409.
+      return jsonResponse(409, { error: 'company_not_active' });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':

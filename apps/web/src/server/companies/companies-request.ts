@@ -8,8 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult } from '@acbp/core';
+import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO } from '@acbp/contracts';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -28,7 +28,9 @@ export type CompaniesRequestResult =
   | { readonly status: 'transitioned'; readonly companyStatus: string }
   | { readonly status: 'activity'; readonly page: ActivityPage }
   | { readonly status: 'portfolio'; readonly page: PortfolioPage }
-  | { readonly status: 'provisioning'; readonly provisioning: ProvisioningStatusDTO };
+  | { readonly status: 'provisioning'; readonly provisioning: ProvisioningStatusDTO }
+  | { readonly status: 'interview'; readonly session: InterviewSessionDTO }
+  | { readonly status: 'company_not_active' };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -43,6 +45,10 @@ export interface CompanyRuntime {
   getCompanyPortfolio(params: { userId: string; accountId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetPortfolioResult>;
   getProvisioningStatus(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetProvisioningResult>;
   resumeProvisioning(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ResumeProvisioningResult>;
+  startInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StartInterviewResult>;
+  suspendInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<InterviewTransitionResult>;
+  resumeInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<InterviewTransitionResult>;
+  getInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetInterviewResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -233,4 +239,63 @@ export function pauseCompanyForRequest(companyId: string, deps: CompaniesRequest
 }
 export function resumeCompanyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   return transitionForRequest('resume', companyId, deps);
+}
+
+// Interview sessions (ACBP-P2-001; CDR-022). participate/read = any active company member (the domain enforces
+// it from the fresh company role). companyId is a membership-validated selector; accountId + userId are
+// server-resolved. NO request body — the action is the whole payload (like pause/resume). start returns the
+// company's (possibly pre-existing) open session; suspend/resume are the exact-resume transitions; get reads it.
+export async function startInterviewForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.startInterviewSession({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'interview', session: r.session };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'company_not_active':
+      return { status: 'company_not_active' };
+  }
+}
+
+async function interviewTransitionForRequest(kind: 'suspend' | 'resume', companyId: string, deps: CompaniesRequestDeps): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const params = { userId: ctx.userId, accountId: ctx.accountId, companyId };
+  const r = kind === 'suspend' ? await runtime.suspendInterviewSession(params, { logger: companiesLogger() }) : await runtime.resumeInterviewSession(params, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'interview', session: r.session };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'invalid_transition':
+      return { status: 'invalid_transition', from: r.from };
+  }
+}
+
+export function suspendInterviewForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  return interviewTransitionForRequest('suspend', companyId, deps);
+}
+export function resumeInterviewForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  return interviewTransitionForRequest('resume', companyId, deps);
+}
+
+export async function getInterviewForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getInterviewSession({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'interview', session: r.session };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+  }
 }

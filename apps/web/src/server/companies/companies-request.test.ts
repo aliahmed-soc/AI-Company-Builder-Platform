@@ -11,6 +11,10 @@ import {
   getPortfolioForRequest,
   getProvisioningForRequest,
   resumeProvisioningForRequest,
+  startInterviewForRequest,
+  suspendInterviewForRequest,
+  resumeInterviewForRequest,
+  getInterviewForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -38,10 +42,15 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     getCompanyPortfolio: () => Promise.resolve({ status: 'ok', page: EMPTY_PORTFOLIO }),
     getProvisioningStatus: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
     resumeProvisioning: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
+    startInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO, created: true }),
+    suspendInterviewSession: () => Promise.resolve({ status: 'ok', session: { ...INTERVIEW_DTO, state: 'waiting_for_user', phase: 'awaiting_input' } }),
+    resumeInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO }),
+    getInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO }),
     ...overrides,
   };
 }
 
+const INTERVIEW_DTO = { sessionId: 'sess_1', companyId: 'co_1', state: 'in_progress' as const, phase: 'in_progress' as const, startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
 const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 const EMPTY_PORTFOLIO = { items: [], nextCursor: null } as const;
 const PORTFOLIO_ITEM = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' } as const;
@@ -208,5 +217,39 @@ describe('provisioning requests (ACBP-P1-012)', () => {
     expect((await getProvisioningForRequest('c', { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await resumeProvisioningForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await resumeProvisioningForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
+  });
+});
+
+describe('interview requests (ACBP-P2-001)', () => {
+  test('start resolves under the caller\'s own account; companyId is the only route input', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      startInterviewSession: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', session: INTERVIEW_DTO, created: true });
+      },
+    });
+    const r = await startInterviewForRequest('co_req', { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'interview', session: INTERVIEW_DTO });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req' }]);
+  });
+
+  test('start maps company_not_active / forbidden; get + transitions map ok / not_found / invalid_transition', async () => {
+    expect((await startInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ startInterviewSession: () => Promise.resolve({ status: 'company_not_active' }) }) })).status).toBe('company_not_active');
+    expect((await startInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ startInterviewSession: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await getInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).status).toBe('interview');
+    expect((await getInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ getInterviewSession: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
+    expect((await suspendInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).status).toBe('interview');
+    expect((await resumeInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime() })).status).toBe('interview');
+    const invalid = await resumeInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resumeInterviewSession: () => Promise.resolve({ status: 'invalid_transition', from: 'in_progress' }) }) });
+    expect(invalid).toEqual({ status: 'invalid_transition', from: 'in_progress' });
+    expect((await suspendInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ suspendInterviewSession: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
+  });
+
+  test('unauthenticated / unverified / deleted are refused across the interview endpoints', async () => {
+    expect((await startInterviewForRequest('c', { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await getInterviewForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await resumeInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
   });
 });

@@ -40,6 +40,8 @@ describe('toCompaniesResponse', () => {
     [{ status: 'activity', page: { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } }, 200],
     [{ status: 'portfolio', page: { items: [], nextCursor: null } }, 200],
     [{ status: 'provisioning', provisioning: { companyId: 'co', companyStatus: 'onboarding', steps: [], nextIncompleteStep: null, resumable: false, exhausted: false, completed: false } }, 200],
+    [{ status: 'interview', session: { sessionId: 's', companyId: 'co', state: 'in_progress', phase: 'in_progress', startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } }, 200],
+    [{ status: 'company_not_active' }, 409],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],
@@ -86,5 +88,20 @@ describe('toCompaniesResponse', () => {
     const body: unknown = await res.json();
     expect(body).toEqual({ companyId: 'co_1', companyStatus: 'onboarding', steps: [step], nextIncompleteStep: 'research', resumable: true, exhausted: false, completed: false });
     expect(JSON.stringify(body)).not.toContain('accountId');
+  });
+
+  test('interview returns the redacted session DTO under { session } (no accountId/actor)', async () => {
+    const session = { sessionId: 'sess_1', companyId: 'co_1', state: 'waiting_for_user', phase: 'awaiting_input', startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:05.000Z' } as const;
+    const res = toCompaniesResponse({ status: 'interview', session });
+    expect(res.status).toBe(200);
+    const body: unknown = await res.json();
+    expect(body).toEqual({ session });
+    expect(JSON.stringify(body)).not.toContain('accountId');
+  });
+
+  test('company_not_active is a coarse 409 with no oracle detail', async () => {
+    const res = toCompaniesResponse({ status: 'company_not_active' });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'company_not_active' });
   });
 });

@@ -49,6 +49,7 @@ import { getCompanyActivity, type GetActivityParams, type GetActivityResult, typ
 import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, type GetPortfolioOptions } from '../company/portfolio-service.js';
 import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, type GetProvisioningResult, type ResumeProvisioningResult, type ProvisioningOpOptions } from '../company/provisioning-service.js';
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
+import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -145,6 +146,16 @@ export interface ClerkIdentityRuntime {
    * `forbidden`.
    */
   adminReadCompanyOverview(params: AdminReadParams, options?: AdminOpOptions): Promise<AdminReadResult>;
+  /**
+   * Interview session lifecycle (ACBP-P2-001; CDR-022). Company-scoped; participate/read = any active company
+   * member. `start` (not_started→in_progress) requires the company be active and emits interview.started in the
+   * same transaction; suspend/resume are the exact-resume in_progress⇄waiting_for_user transitions; get returns
+   * the company's current open session. companyId is a membership-validated selector.
+   */
+  startInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<StartInterviewResult>;
+  suspendInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<InterviewTransitionResult>;
+  resumeInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<InterviewTransitionResult>;
+  getInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<GetInterviewResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -212,6 +223,18 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getProvisioningStatus(params, options) {
       return getProvisioningStatus(client, params, options ?? {});
+    },
+    startInterviewSession(params, options) {
+      return startInterviewSession(client, params, options ?? {});
+    },
+    suspendInterviewSession(params, options) {
+      return suspendInterviewSession(client, params, options ?? {});
+    },
+    resumeInterviewSession(params, options) {
+      return resumeInterviewSession(client, params, options ?? {});
+    },
+    getInterviewSession(params, options) {
+      return getInterviewSession(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});
