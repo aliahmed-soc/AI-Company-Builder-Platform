@@ -3,3 +3,4 @@
 // contract. The provider-facing `ModelProvider` lives under adapters/ (a distinct, lower seam).
 export * from './gateway.js';
 export * from './usage.js';
+export * from './template.js';
