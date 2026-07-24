@@ -11,10 +11,18 @@ _Read this first on resume, then continue automatically to "Next executable acti
   reality (dependents = M3/M4, don't exist). **Recommended answer:** soft delete via a nullable `deleted_at`
   column + `memory.item_deleted` in-tx event + DEFER propagation. **Until ratified, the delete
   operation/column/event are NOT built.**
-- **Proceeding on the canon-resolved, delete-INDEPENDENT half** (CDR-025 §1–§5): edit = versioned supersede
-  (`memory:edit` owner-only; new user_edit version + old.`superseded_by`; version-guarded; `memory.item_superseded`
-  audited in-tx), read/filter/get surface, migration 0015 (column-level `UPDATE (superseded_by)` grant — the 0012
-  precedent). P2-010 will be **WIP, NOT Done** at window end (delete is gated).
+- **WIP (edit + read half) — Slices 1–4 hosted-green** (head `3f03492`; PR #23 draft): Slice 1 `f82f5b2`
+  (`memory:edit` owner-only + `memory.item_superseded` audit), Slice 2–3 `49e899c` (migration **0015**
+  column-level `UPDATE (superseded_by)` grant + dual-keyed UPDATE policy; core `editMemoryItem` versioned
+  supersede + `getMemoryItem` + `currentOnly` list), Slice 4 `3f03492` (GET filtered list, GET single, PATCH
+  edit routes). Real-PG proven: supersede + audit + version-guard conflict + audit atomicity + narrow column
+  grant. **Slice 5 (HTTP adversarial + docs + independent reviews) NOT done; DELETE §0-gated → P2-010 is NOT
+  Done.** Migrations now 0001–0015 (branch); still exactly 3 SECURITY DEFINER; `memory_items` gains a narrow
+  `UPDATE(superseded_by)` grant + policy (content/type/source/identity still immutable).
+- **RESUME:** await the CDR-025 §0 owner answer on deletion semantics; then build delete (soft-delete column +
+  `memory.item_deleted` + operation, migration 0016) + Slice 5 (adversarial + docs + reviews) → finalize. The
+  edit/read half is complete and green. LOCAL PG: a disposable Windows-native 5433 DB was used (torn down at
+  window end); `.env.local` untouched.
 - **P2-001/P2-002/P2-006 — Done.** Phase 2: 3 Done / 9 Planned. P2-003/P2-005 gated by IOQ-13.
 
 ## ACBP-P2-006 detail (Done) — branch `p2-006-typed-memory-items`, PR #22, CDR-024
