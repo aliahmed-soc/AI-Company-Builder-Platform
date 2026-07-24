@@ -32,7 +32,7 @@ import {
   teardown,
   assertRestrictedRole,
   type TwoTenantWorld,
-} from '../../packages/core/src/tenancy/adversarial/two-tenant-harness.js';
+} from '../../../../../packages/core/src/tenancy/adversarial/two-tenant-harness.js';
 
 /** The provider user id the mocked session presents. Mutated per test; read by the mock. */
 let sessionProviderUserId = '';
@@ -109,12 +109,12 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = 'whsec_adversarial_synthetic';
     process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_adversarial';
 
-    companiesRoute = await import('../../apps/web/src/app/api/companies/route.js');
-    companyRoute = await import('../../apps/web/src/app/api/companies/[companyId]/route.js');
-    pauseRoute = await import('../../apps/web/src/app/api/companies/[companyId]/pause/route.js');
-    activityRoute = await import('../../apps/web/src/app/api/companies/[companyId]/activity/route.js');
-    provisioningRoute = await import('../../apps/web/src/app/api/companies/[companyId]/provisioning/route.js');
-    adminReadRoute = await import('../../apps/web/src/app/api/admin/accounts/[accountId]/companies/[companyId]/read/route.js');
+    companiesRoute = await import('../../app/api/companies/route.js');
+    companyRoute = await import('../../app/api/companies/[companyId]/route.js');
+    pauseRoute = await import('../../app/api/companies/[companyId]/pause/route.js');
+    activityRoute = await import('../../app/api/companies/[companyId]/activity/route.js');
+    provisioningRoute = await import('../../app/api/companies/[companyId]/provisioning/route.js');
+    adminReadRoute = await import('../../app/api/admin/accounts/[accountId]/companies/[companyId]/read/route.js');
   }, 90_000);
   afterAll(async () => {
     await teardown(owner, product);
