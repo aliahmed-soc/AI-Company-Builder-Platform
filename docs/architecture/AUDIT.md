@@ -143,7 +143,7 @@ never the founder content or the raw `source_ref` value (data minimization):
 
 The M3 domain fan-out (`understanding.corrected` → memory) and the `interview.question_answered` → memory
 consumer remain deferred (no outbox yet); the deletion-propagation to dependent understanding/plans is likewise
-M3/M4 (CDR-025 §8).
+M3/M4 (CDR-025 §7).
 
 Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company,
 provisioning, admin, interview, and memory subsets, each domain's real-PostgreSQL producer test provides a

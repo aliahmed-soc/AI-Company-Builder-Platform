@@ -77,6 +77,16 @@ export class MemoryItemRepository {
   }
 
   /**
+   * Load an item by id AND lock the row `FOR UPDATE` (ACBP-P2-010 edit). Concurrent editors serialize on the
+   * lock: the loser blocks until the winner commits, then re-reads the now-superseded row and conflicts BEFORE
+   * inserting anything — so a lost edit race leaves no orphaned new version (the insert-then-guarded-supersede
+   * ordering is made race-safe by the lock). RLS-confined; undefined when absent/invisible.
+   */
+  findByIdForUpdate(id: string): Promise<MemoryItemRow | undefined> {
+    return this.#db.selectFrom('memory_items').selectAll().where('id', '=', id).forUpdate().executeTakeFirst();
+  }
+
+  /**
    * Point a still-CURRENT item's `superseded_by` at its correcting new version (ACBP-P2-010 edit). Version-guarded:
    * the UPDATE only fires while the row is still current (`superseded_by IS NULL`), so a concurrent edit that
    * already superseded it matches 0 rows — the caller maps that to a bounded conflict. Only `superseded_by` is

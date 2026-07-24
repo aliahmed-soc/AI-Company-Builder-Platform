@@ -155,6 +155,26 @@ describe.skipIf(!hasTestDatabase)('typed memory use cases (real PostgreSQL, rest
     expect(current.status === 'ok' && current.items.map((i) => i.memoryItemId)).toEqual([edited.item.memoryItemId]);
   });
 
+  test('CONCURRENT edit: FOR-UPDATE lock serializes — exactly one supersede, ONE new version, no orphan', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'v1' }) });
+    if (created.status !== 'ok') throw new Error('setup');
+    const oldId = created.item.memoryItemId;
+    const [x, y] = await Promise.all([
+      editMemoryItem(product, { ...base(w.aOwner), targetId: oldId, type: 'user_fact', content: 'edit-A' }),
+      editMemoryItem(product, { ...base(w.aOwner), targetId: oldId, type: 'user_fact', content: 'edit-B' }),
+    ]);
+    expect([x.status, y.status].sort()).toEqual(['conflict', 'ok']); // one wins, the loser conflicts (no orphan)
+    const rows = await owner.kysely.selectFrom('memory_items').selectAll().where('company_id', '=', w.companyA1).execute();
+    // Exactly TWO rows: the original (now superseded) + the ONE winning new version. The loser inserted nothing.
+    expect(rows).toHaveLength(2);
+    const current = rows.filter((r) => r.superseded_by === null && r.deleted_at === null);
+    expect(current).toHaveLength(1); // exactly one active version — no orphaned user_edit item
+    const oldRow = rows.find((r) => r.id === oldId)!;
+    expect(oldRow.superseded_by).toBe(current[0]!.id);
+    // Exactly one supersede audit event.
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'memory.item_superseded').where('subject_id', '=', oldId).execute()).toHaveLength(1);
+  });
+
   test('EDIT audit atomicity: a failing audit writer persists NO supersede (old stays current, no new version)', async () => {
     const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'original' }) });
     if (created.status !== 'ok') throw new Error('setup');

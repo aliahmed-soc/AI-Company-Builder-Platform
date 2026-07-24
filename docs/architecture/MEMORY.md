@@ -98,6 +98,6 @@ UPDATE policy governs all three.
 Context assembly, provenance ranking, MEM-004 instruction precedence (P2-007); understanding generation +
 confidence-class scoring + confirmation-state advancement (P2-008/M3); **deletion propagation** to dependent
 understanding/plans — P2-010 durably records the delete + its audit; the propagation of staleness to dependents
-belongs to M3/P2-009 (understanding) and M4 (plans), which do not exist yet (CDR-025 §8); the domain fan-out of
+belongs to M3/P2-009 (understanding) and M4 (plans), which do not exist yet (CDR-025 §7); the domain fan-out of
 `memory.item_created` and the memory consumption of `interview.question_answered` / `understanding.corrected`
 (M3, no outbox yet). No restore/undelete/purge/physical-delete in P2-010.

@@ -181,7 +181,10 @@ export async function editMemoryItem(client: DatabaseClient, params: EditMemoryI
       if (!submission.ok) return { status: 'validation', error: submission.error };
 
       const repo = new MemoryItemRepository(scope.db);
-      const target = await repo.findById(params.targetId);
+      // Lock the target row FOR UPDATE so concurrent edits serialize: the loser blocks, then re-reads the
+      // now-superseded row and conflicts HERE — before inserting anything — so no orphaned new version is ever
+      // committed (the insert-then-supersede ordering is made race-safe by the lock).
+      const target = await repo.findByIdForUpdate(params.targetId);
       if (target === undefined) return { status: 'not_found' };
       // Only the CURRENT active version is editable — a superseded historical version or a deleted item cannot be
       // edited (its state conflicts with the operation).
@@ -231,7 +234,7 @@ export async function getMemoryItem(client: DatabaseClient, params: GetMemoryIte
  * clock) + `deleted_by_user_id`, guarded so only an active item transitions (a superseded/already-deleted item →
  * bounded `conflict`; a concurrent delete loses the guard → `conflict`, so exactly one transition + one audit).
  * `memory.item_deleted` is written in the SAME transaction (audit-or-nothing — a failure leaves the row live and
- * no audit row). No content overwrite, no hard delete, no dependent propagation (CDR-025 §8, deferred to M3/M4).
+ * no audit row). No content overwrite, no hard delete, no dependent propagation (CDR-025 §7, deferred to M3/M4).
  */
 export async function deleteMemoryItem(client: DatabaseClient, params: DeleteMemoryItemParams, options: MemoryOptions = {}): Promise<DeleteMemoryItemResult> {
   const audit = options.auditWriter ?? writeAuditEvent;

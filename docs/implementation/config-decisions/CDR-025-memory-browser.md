@@ -18,7 +18,7 @@ CLAUDE.md lists **"deletion semantics"** among the mandatory owner gates. The ow
 recommendations below, so this is now the implemented contract: **(A)** soft delete via nullable `deleted_at
 timestamptz` + `deleted_by_user_id uuid` (FK users); **(B)** a `memory.item_deleted` audit event written in the
 same transaction as every successful deletion; **(C)** propagation of the deletion into understanding/plans is
-deferred to the M3/M4 tickets that introduce those systems (CDR-025 §8). Implemented in migration 0016 + the
+deferred to the M3/M4 tickets that introduce those systems (§7). Implemented in migration 0016 + the
 core `deleteMemoryItem` operation + the DELETE route. The original gate analysis (kept for the record):
 
 P2-010 operationalizes memory deletion for the first time. Canon **constrains but does not fully pin** it, and
@@ -110,7 +110,18 @@ delete migration (later), not here.
 
 ## 6. Out of scope / deferred
 
-**§0-gated (owner):** the delete operation + its soft-delete column + `memory.item_deleted` + deletion
-propagation. **Later tickets:** context assembly + provenance ranking + MEM-004 precedence (P2-007); understanding
-generation + confidence scoring + confirmation-state advancement (P2-008/P2-009); the E2E Slice B demo (P2-012);
-interview/answer generation (P2-005). No hard delete, no in-place content overwrite (both violate canon).
+**Later tickets:** context assembly + provenance ranking + MEM-004 precedence (P2-007); understanding generation
++ confidence scoring + confirmation-state advancement (P2-008/P2-009); the E2E Slice B demo (P2-012);
+interview/answer generation (P2-005). No hard delete, no in-place content overwrite, no restore/undelete/purge/
+physical delete (all violate canon or exceed P2-010 scope).
+
+## 7. Deletion-propagation deferral (owner-ratified)
+
+The backlog lists "Deletion propagates staleness flags" as P2-010 behavior, but the dependents do not exist yet:
+understanding + its staleness machinery are **M3/P2-009**, and plans/dependent artifacts are **M4** — P2-010's
+only dependency is P2-006. Per the owner's ratified decision, P2-010 **durably records** the deletion state
+(`deleted_at`/`deleted_by_user_id`) and the `memory.item_deleted` audit event; the **propagation** of that
+deletion into understanding, plans, or other dependent artifacts is **deferred** to those later tickets. No
+placeholder dependent tables, flags, queues, events, or workers are created. Future consumers detect a deletion
+through the durable memory row + the audit history; no downstream system currently exists to update. This
+resolves the backlog wording without pretending nonexistent dependents were updated.
