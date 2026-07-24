@@ -399,6 +399,32 @@ export interface MemoryItemsTable {
   deleted_by_user_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
+/**
+ * Model-gateway usage events (ACBP-P2-003; CDR-026 §6; ADR-011, ADR-013; USAGE-001, invariant 9;
+ * DATA-ARCHITECTURE Usage event). Company-owned, dual-keyed FORCE RLS. APPEND-ONLY: grants are SELECT +
+ * INSERT only — every column is `never` on update (a row is immutable once written; a correction is a new
+ * row). Bounded, non-secret metadata only — NO prompt/response content. `estimated_cost_micros` is integer
+ * micro-units (never a float); `error_category` is present iff `outcome = 'error'`.
+ */
+export interface UsageEventsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  kind: ColumnType<string, string | undefined, never>;
+  provider: ColumnType<string, string, never>;
+  model: ColumnType<string, string, never>;
+  task_class: ColumnType<string, string, never>;
+  outcome: ColumnType<string, string, never>;
+  error_category: ColumnType<string | null, string | null | undefined, never>;
+  input_tokens: ColumnType<number, number, never>;
+  output_tokens: ColumnType<number, number, never>;
+  estimated_cost_micros: ColumnType<number, number, never>;
+  fallback_used: ColumnType<boolean, boolean, never>;
+  latency_ms: ColumnType<number, number, never>;
+  correlation_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -417,6 +443,7 @@ export interface DatabaseSchema {
   interview_questions: InterviewQuestionsTable;
   interview_answers: InterviewAnswersTable;
   memory_items: MemoryItemsTable;
+  usage_events: UsageEventsTable;
 }
 
 // Repository-facing row shapes.
@@ -459,3 +486,5 @@ export type InterviewAnswerRow = Selectable<InterviewAnswersTable>;
 export type NewInterviewAnswer = Insertable<InterviewAnswersTable>;
 export type MemoryItemRow = Selectable<MemoryItemsTable>;
 export type NewMemoryItem = Insertable<MemoryItemsTable>;
+export type UsageEventRow = Selectable<UsageEventsTable>;
+export type NewUsageEvent = Insertable<UsageEventsTable>;

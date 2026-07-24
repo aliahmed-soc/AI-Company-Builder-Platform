@@ -3,6 +3,28 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P2-003 model gateway — DONE (owner-authorized finalization); squash-merging PR #24.** Branch
+  `p2-003-model-gateway` (from main `10b4e2e`). Feature head **`52653f2`**; exact-head hosted CI **30109799579
+  green, ZERO-SKIP** (CI preflight "fails if integration tests would silently skip" → OK; 121/121 test files;
+  real-PG append-only/RLS/CHECK/FK negative assertions all executed). A **second independent review round** ran
+  five parallel read-only reviewers (canon/scope · contract · tests · security · docs): security CLEAN, scope
+  CLEAN; all actionable findings FIXED (timeout bound to `taskClass`; fail-closed on `outputSchemaRef` with no
+  wired validator; retry/re-ask CLAMPED to owner-ratified ceilings; generation-deadline + unwired-validator +
+  row-level-canary tests; `@acbp/core` gateway README; doc precision truth-ups) — ledger in
+  `docs/implementation/P2-003-REVIEW-COVERAGE.md`. Also fixed a real hosted-CI drop-list collision
+  (`usage_events` added to all schema-reset lists + the P1-014 catalog; commit `52653f2`). **IOQ-13 owner-RATIFIED** ("Adopt proposed defaults": interactive
+  30s / generation 120s / retries ≤2) → recorded in **CDR-026** + IOQ marked Resolved. Built the provider-neutral
+  gateway ABSTRACTION + a deterministic FAKE provider (the only wired adapter): `callModel` (ADR-011 contract,
+  per-class timeout, bounded retry ≤2 + re-ask ≤1, fallback eligibility [generation ineligible — no silent
+  fallback], seven-value normalized taxonomy, redacted logging, company-policy pre-check) + APPEND-ONLY
+  `usage_events` (migration 0017, dual-keyed FORCE RLS, SELECT+INSERT only, integer micro-units) with FAIL-CLOSED
+  metering. **The LIVE provider path (real key + `gpt-5.1` snapshot pin [CDR-001 §8] + ADR-019 §13 eval gate) is a
+  DEFERRED owner gate — CDR-026 §0 — NOT built.** 5 committed slices' worth (contracts → 0017 → gateway+fake →
+  composition → docs). Evidence: full static gate green; unit 850/850; real-PG usage_events 8/8 + composition 5/5
+  (0 skips on disposable DB). **NEXT (owner gate): authorize the finalization sequence** — backlog Planned→Done →
+  records commit → push + draft PR → exact-head hosted CI green (zero skips) → mark PR ready → squash-merge
+  **"ACBP-P2-003: Model gateway v1 with usage recording"** (no Co-Authored-By) → exact-main CI → delete branch →
+  next Ready Phase 2 ticket (P2-004/P2-005/P2-007 unblock once P2-003 Done).
 - **ACBP-P2-010 finalization.** Status **Done**; feature head `b9441f1` (review fixes), exact-head CI
   **30102561583 green** (local full suite 116 files / 1319 / 0 skipped). The memory browser: list/filter/get +
   owner edit (versioned supersede) + owner **soft delete** — the CDR-025 §0 deletion semantics were an owner

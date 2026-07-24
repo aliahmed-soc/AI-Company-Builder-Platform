@@ -43,6 +43,12 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Activity event | C | event_id | projection feeding the feed | recorded | **A** | redacted content | With company | is activity | MVP |
 | Audit event | C/A/G | audit_id, correlation_id | references any object | recorded | **A** (immutable, invariant 11) | actor, context (redacted) | AOQ retention (≥ product data) | is the audit | MVP |
 | Usage event | C | usage_event_id | links run/tool call/model call | recorded | **A** (invariant 9) | — | ≥ billing retention | reconciliation | MVP |
+<!-- IMPLEMENTED for MODEL CALLS (ACBP-P2-003; CDR-026 §6): table `usage_events` (migration 0017) — company-owned,
+     dual-keyed FORCE RLS, APPEND-ONLY (SELECT+INSERT grants only; NO update/delete grant, NO update policy —
+     invariant 9). v1 `kind = 'model_call'`; `estimated_cost_micros` is integer micro-units (never a float);
+     `error_category` present iff `outcome='error'` (the seven-value taxonomy). Tool/worker usage kinds + the account
+     usage rollup arrive with their tickets (P5-004/P5-014/P6-009). -->
+
 | Account usage rollup | A | (account_id, period) | aggregates usage events across companies | maintained | M (derived; rebuildable from ledger) | — | ≥ billing retention | reconciliation | MVP (ADR-003) |
 | Credit transaction | A/C | credit_txn_id | grants/spends/refunds/expiry; corrections reference originals | recorded | **A** (invariant 10) | — | ≥ billing retention | BILL-002 | MVP |
 | Notification | C/A | notification_id | references source event | queued→delivered/failed | M (state) | — | Short (config) | delivery log | Post-MVP |

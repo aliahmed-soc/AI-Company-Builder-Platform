@@ -70,6 +70,14 @@ Retention default: activity-projected events with company data; audit-relevant e
 | tool.call_requested / tool.call_started | Dispatcher | (record) | tool_call_id, tool_id+version, risk_class, policy_eval_ref, approval_ref?, idempotency_key | TOOL-002 completeness | ≥ audit |
 | tool.call_completed / tool.call_failed | Dispatcher | Coordinator, usage | tool_call_id, outcome, receipt_ref (external effects: **required for success claim**, invariant 20), error_category | audit-grade for external classes | ≥ audit |
 | model.call_completed | Model gateway | Usage ledger | call_id, provider, model+version, token_usage, est_cost, fallback_used, latency_ms, outcome | usage source record | ≥ billing |
+<!-- IMPLEMENTED (ACBP-P2-003; CDR-026 §5): `model.call_completed` is realized as the APPEND-ONLY `usage_events`
+     row (migration 0017) — the durable, immutable usage source record for every model call, written FAIL-CLOSED in
+     the gateway. It carries bounded metadata only (provider, model@version, token_usage, estimated_cost_micros
+     [integer micro-units], fallback_used, latency_ms, outcome, task_class, correlation_id) — NO prompt/response
+     content. Because that append-only row IS the durable record, it is not ALSO written to `audit_events` (avoids
+     double-recording; mirrors the CDR-023/CDR-024 audit-mechanism decisions). `usage.recorded`/rollups stay
+     deferred (P5-014/P6-009). -->
+
 | usage.recorded | Usage ledger | Rollup maintainer, UI | usage_event_id, kind, quantities, company_id, account_id | append-only ledger | ≥ billing |
 | usage.limit_reached | Usage ledger | Policy engine, notification, Decision Room | limit_type, scope, threshold (hard/soft) | audited | ≥ billing |
 | document.generated | Document module | activity, Decision Room results | document_id, version, provenance_ref (worker, run, model_version) | audited | with company |
