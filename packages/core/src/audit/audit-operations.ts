@@ -29,6 +29,7 @@ import {
   memoryItemCreated,
   memoryItemSuperseded,
   memoryItemDeleted,
+  understandingGenerated,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -58,6 +59,8 @@ export const AUDITED_OPERATIONS = {
   'memory.supersede': 'memory.item_superseded',
   // Memory browser (ACBP-P2-010; CDR-025 §0) — a memory item was soft-deleted.
   'memory.delete': 'memory.item_deleted',
+  // Understanding generation (ACBP-P2-008; CDR-029 §6) — a classified understanding document version was generated.
+  'understanding.generate': 'understanding.generated',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -70,16 +73,18 @@ export type ProvisioningAuditedOperation = 'provisioning.start' | 'provisioning.
 export type AdminAuditedOperation = 'admin.tenant_read';
 export type InterviewAuditedOperation = 'interview.start';
 export type MemoryAuditedOperation = 'memory.create' | 'memory.supersede' | 'memory.delete';
+export type UnderstandingAuditedOperation = 'understanding.generate';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
 export const ADMIN_AUDITED_OPERATION_IDS: readonly AdminAuditedOperation[] = ['admin.tenant_read'];
 export const INTERVIEW_AUDITED_OPERATION_IDS: readonly InterviewAuditedOperation[] = ['interview.start'];
 export const MEMORY_AUDITED_OPERATION_IDS: readonly MemoryAuditedOperation[] = ['memory.create', 'memory.supersede', 'memory.delete'];
+export const UNDERSTANDING_AUDITED_OPERATION_IDS: readonly UnderstandingAuditedOperation[] = ['understanding.generate'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -138,6 +143,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => memoryItemSuperseded({ supersededItemId: subjectId, newItemType: 'user_fact', newSourceType: 'user_edit' });
     case 'memory.delete':
       return (subjectId) => memoryItemDeleted({ memoryItemId: subjectId, itemType: 'user_fact', sourceType: 'user_edit' });
+    case 'understanding.generate':
+      return (subjectId) => understandingGenerated({ documentId: subjectId, version: 1, status: 'complete', itemCount: 0 });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

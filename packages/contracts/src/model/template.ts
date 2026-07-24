@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -86,6 +86,18 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'The founder answered "I don\'t know". Propose exactly one reasonable, clearly-labeled assumption to fill the gap, grounded in their earlier answers. Keep it to a single sentence, phrased explicitly as an assumption.' },
       { role: 'user', text: 'Question: {{question}}\nEarlier answers:\n{{prior_answers}}' },
+    ],
+  },
+  // Understanding generation (ACBP-P2-008; DISC → UNDER-001). Classifies the confirmed memory into the closed
+  // 6-class set with confidence; the structured output is enforced by the gateway output schema, not this wording.
+  {
+    family: 'understanding.generate',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['memory'],
+    segments: [
+      { role: 'system', text: 'You produce a structured business-understanding document from the founder\'s confirmed information. Classify each item as one of: fact, preference, constraint, assumption, research_finding, or open_question, and give each a confidence between 0 and 1. Do not invent facts; mark genuine gaps as open_question. Return only the structured items.' },
+      { role: 'user', text: 'Confirmed information:\n{{memory}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).

@@ -69,6 +69,10 @@ export const AUDIT_EVENTS = {
   // Subject = the deleted item. Metadata = the bounded {item_type, source_type, transition:'active_to_deleted'}
   // — never content, never the raw source_ref.
   'memory.item_deleted': { schemaVersion: 1, subjectType: 'memory_item' },
+  // Understanding generation (ACBP-P2-008; CDR-029 §6; UNDER-001) — a classified understanding document version was
+  // generated. AUDITED in-tx with the persist (audit-or-nothing). Subject = the document id; metadata carries only
+  // the bounded {version, status, item_count} — never the generated content.
+  'understanding.generated': { schemaVersion: 1, subjectType: 'understanding_document' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -257,6 +261,15 @@ export function interviewStarted(input: { readonly sessionId: string }): AuditEv
  */
 export function memoryItemCreated(input: { readonly memoryItemId: string; readonly itemType: string; readonly sourceType: string }): AuditEvent {
   return makeEvent('memory.item_created', input.memoryItemId, 'success', { item_type: input.itemType, source_type: input.sourceType });
+}
+
+/**
+ * `understanding.generated` (ACBP-P2-008; CDR-029). Subject = the understanding document id; metadata is the
+ * bounded {version, status, item_count} — never the generated content. Written in the same transaction as the
+ * document+items insert (audit-or-nothing).
+ */
+export function understandingGenerated(input: { readonly documentId: string; readonly version: number; readonly status: string; readonly itemCount: number }): AuditEvent {
+  return makeEvent('understanding.generated', input.documentId, 'success', { version: input.version, status: input.status, item_count: input.itemCount });
 }
 
 /**

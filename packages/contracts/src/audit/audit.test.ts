@@ -84,6 +84,8 @@ describe('event-name registry (deny unregistered)', () => {
       'memory.item_superseded',
       // Memory browser (ACBP-P2-010; CDR-025 §0) — a memory item soft delete is audited.
       'memory.item_deleted',
+      // Understanding generation (ACBP-P2-008; CDR-029 §6) — a document version generation is audited.
+      'understanding.generated',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
