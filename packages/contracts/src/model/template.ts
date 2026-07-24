@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -62,6 +62,30 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'You help interview a founder about their business. Ask at most three concise, specific follow-up questions. Never repeat what was already answered. Return only the questions.' },
       { role: 'user', text: 'Focus area: {{focus_area}}\nPrior answers:\n{{prior_answers}}' },
+    ],
+  },
+  // Answer-quality detection (ACBP-P2-005; DISC-003/004). Classifies a founder answer as clear/vague/
+  // contradictory; the structured verdict is enforced by the gateway output schema, not this wording.
+  {
+    family: 'interview.answer_quality',
+    version: 1,
+    taskClass: 'classification',
+    slots: ['answer', 'prior_answers'],
+    segments: [
+      { role: 'system', text: 'You review a founder\'s interview answer. Decide whether it is clear, vague (too generic to be useful), or contradictory (conflicts with an earlier answer). For vague, give one specific clarifying question with an example; for contradictory, briefly describe the conflict. Return only the structured verdict.' },
+      { role: 'user', text: 'Answer: {{answer}}\nEarlier answers:\n{{prior_answers}}' },
+    ],
+  },
+  // Assumption suggestion on an "I don't know" answer (ACBP-P2-005; DISC-005). Produces ONE clearly-labeled
+  // assumption; it is stored as an ai_assumption memory item, never as a stated fact.
+  {
+    family: 'interview.assumption',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['question', 'prior_answers'],
+    segments: [
+      { role: 'system', text: 'The founder answered "I don\'t know". Propose exactly one reasonable, clearly-labeled assumption to fill the gap, grounded in their earlier answers. Keep it to a single sentence, phrased explicitly as an assumption.' },
+      { role: 'user', text: 'Question: {{question}}\nEarlier answers:\n{{prior_answers}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).

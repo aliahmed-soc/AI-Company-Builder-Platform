@@ -36,6 +36,9 @@ describe('template registry — resolution', () => {
     expect(latestTemplate('interview.followups').taskClass).toBe('generation');
     expect(latestTemplate('extraction.fields').taskClass).toBe('extraction');
     expect(latestTemplate('classification.intent').taskClass).toBe('classification');
+    // ACBP-P2-005 additions: answer-quality detection classifies; assumption suggestion generates.
+    expect(latestTemplate('interview.answer_quality').taskClass).toBe('classification');
+    expect(latestTemplate('interview.assumption').taskClass).toBe('generation');
   });
 
   test('latestTemplateRef pins family@version and round-trips', () => {
