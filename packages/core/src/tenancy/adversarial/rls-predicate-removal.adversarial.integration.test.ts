@@ -62,8 +62,8 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
 
   test(threatTitle('RLS-PREDICATE-REMOVED-READ', 'dual-keyed company-detail tables'), async () => {
     await asRestricted(product, scopeA1(), async (k) => {
-      // These four carry BOTH keys (dual-keyed policies).
-      for (const table of ['company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas'] as const) {
+      // These three are strictly dual-keyed: account AND company must both match.
+      for (const table of ['activity_events', 'provisioning_steps', 'company_workspace_areas'] as const) {
         const rows = await sql<{ company_id: string; account_id: string }>`select company_id, account_id from ${sql.table(table)}`.execute(k);
         expect(rows.rows.every((r) => r.company_id === w.companyA1), `${table}: predicate-free read leaked another company`).toBe(true);
         expect(rows.rows.every((r) => r.account_id === w.accountA), `${table}: predicate-free read leaked another account`).toBe(true);
@@ -73,6 +73,22 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
       const profiles = await sql<{ company_id: string }>`select company_id from company_profiles`.execute(k);
       expect(profiles.rows.length, 'company_profiles: the in-scope profile must be visible').toBeGreaterThan(0);
       expect(profiles.rows.every((r) => r.company_id === w.companyA1), 'company_profiles: predicate-free read leaked another company').toBe(true);
+
+      // company_memberships carries an ACCOUNT-BOUND SELF-BRANCH by design (policy: account matches AND
+      // (company matches OR member_user_id = actor)) — that is how a caller resolves their own company
+      // membership before company context exists. The adversarial invariant is therefore: every visible row
+      // is either IN the scoped company or belongs to the ACTOR themselves, always within the actor's own
+      // account, and never another user's membership in another company.
+      const memberships = await sql<{ company_id: string; account_id: string; member_user_id: string }>`select company_id, account_id, member_user_id from company_memberships`.execute(k);
+      expect(memberships.rows.length).toBeGreaterThan(0);
+      expect(memberships.rows.every((r) => r.account_id === w.accountA), 'company_memberships: leaked another account').toBe(true);
+      expect(
+        memberships.rows.every((r) => r.company_id === w.companyA1 || r.member_user_id === w.aOwner),
+        'company_memberships: a row was visible that is neither in-scope nor the actor’s own',
+      ).toBe(true);
+      // Concretely: aViewer's membership in A1 is visible (in scope), bothCompanies' membership in A2 is NOT.
+      expect(memberships.rows.some((r) => r.company_id === w.companyA1 && r.member_user_id === w.aViewer)).toBe(true);
+      expect(memberships.rows.some((r) => r.company_id === w.companyA2 && r.member_user_id === w.bothCompanies)).toBe(false);
       // `companies` is account-keyed by design (CDR-015) — the predicate-free read must still never cross
       // the ACCOUNT boundary.
       const companies = await sql<{ id: string; account_id: string }>`select id, account_id from companies`.execute(k);
