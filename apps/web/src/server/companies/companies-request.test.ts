@@ -15,6 +15,8 @@ import {
   suspendInterviewForRequest,
   resumeInterviewForRequest,
   getInterviewForRequest,
+  recordAnswerForRequest,
+  getQaForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -46,11 +48,15 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     suspendInterviewSession: () => Promise.resolve({ status: 'ok', session: { ...INTERVIEW_DTO, state: 'waiting_for_user', phase: 'awaiting_input' } }),
     resumeInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO }),
     getInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO }),
+    recordInterviewAnswer: () => Promise.resolve({ status: 'ok', answer: ANSWER_DTO, created: true }),
+    getSessionQa: () => Promise.resolve({ status: 'ok', qa: QA_DTO }),
     ...overrides,
   };
 }
 
 const INTERVIEW_DTO = { sessionId: 'sess_1', companyId: 'co_1', state: 'in_progress' as const, phase: 'in_progress' as const, startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+const ANSWER_DTO = { questionId: 'q_1', revision: 1, status: 'answered' as const, content: 'hi', createdAt: '2026-01-01T00:00:00.000Z' };
+const QA_DTO = { sessionId: 'sess_1', items: [] as const };
 const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 const EMPTY_PORTFOLIO = { items: [], nextCursor: null } as const;
 const PORTFOLIO_ITEM = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' } as const;
@@ -251,5 +257,42 @@ describe('interview requests (ACBP-P2-001)', () => {
     expect((await startInterviewForRequest('c', { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await getInterviewForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await resumeInterviewForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ resolveInternalUser: () => Promise.resolve({ status: 'deleted' }) }) })).status).toBe('forbidden');
+  });
+});
+
+describe('Q&A requests (ACBP-P2-002)', () => {
+  test('record answer resolves the open session then persists; get reads it', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      getInterviewSession: () => Promise.resolve({ status: 'ok', session: INTERVIEW_DTO }),
+      recordInterviewAnswer: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', answer: ANSWER_DTO, created: true });
+      },
+    });
+    const r = await recordAnswerForRequest('co_req', 'q_9', { status: 'answered', content: 'hi' }, { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'answer', answer: ANSWER_DTO, created: true });
+    // The session id came from the resolved OPEN session, not the client.
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req', sessionId: 'sess_1', questionId: 'q_9', status: 'answered', content: 'hi' }]);
+    expect((await getQaForRequest('co_req', { identity: identityDeps(), runtime })).status).toBe('qa');
+  });
+
+  test('no open session → not_found; forbidden + validation propagate; idempotent no-op → created:false', async () => {
+    // No open interview session collapses both Q&A endpoints to not_found (never leaks that questions exist).
+    const noSession = fakeRuntime({ getInterviewSession: () => Promise.resolve({ status: 'not_found' }) });
+    expect((await recordAnswerForRequest('c', 'q', { status: 'answered', content: 'x' }, { identity: identityDeps(), runtime: noSession })).status).toBe('not_found');
+    expect((await getQaForRequest('c', { identity: identityDeps(), runtime: noSession })).status).toBe('not_found');
+    // A forbidden session resolution is forbidden.
+    expect((await getQaForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ getInterviewSession: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    // Domain outcomes propagate.
+    expect((await recordAnswerForRequest('c', 'q', { status: 'skipped' }, { identity: identityDeps(), runtime: fakeRuntime({ recordInterviewAnswer: () => Promise.resolve({ status: 'ok', answer: ANSWER_DTO, created: false }) }) }))).toEqual({ status: 'answer', answer: ANSWER_DTO, created: false });
+    expect((await recordAnswerForRequest('c', 'q', { status: 'bad' }, { identity: identityDeps(), runtime: fakeRuntime({ recordInterviewAnswer: () => Promise.resolve({ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }) }) })).status).toBe('validation');
+    expect((await recordAnswerForRequest('c', 'q', { status: 'answered', content: 'x' }, { identity: identityDeps(), runtime: fakeRuntime({ recordInterviewAnswer: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
+  });
+
+  test('unauthenticated / unverified refused on the Q&A endpoints', async () => {
+    expect((await recordAnswerForRequest('c', 'q', { status: 'answered', content: 'x' }, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await getQaForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
   });
 });

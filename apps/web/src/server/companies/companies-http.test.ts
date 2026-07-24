@@ -42,6 +42,8 @@ describe('toCompaniesResponse', () => {
     [{ status: 'provisioning', provisioning: { companyId: 'co', companyStatus: 'onboarding', steps: [], nextIncompleteStep: null, resumable: false, exhausted: false, completed: false } }, 200],
     [{ status: 'interview', session: { sessionId: 's', companyId: 'co', state: 'in_progress', phase: 'in_progress', startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } }, 200],
     [{ status: 'company_not_active' }, 409],
+    [{ status: 'answer', answer: { questionId: 'q', revision: 2, status: 'answered', content: 'hi', createdAt: '2026-01-01T00:00:00.000Z' }, created: true }, 200],
+    [{ status: 'qa', qa: { sessionId: 's', items: [] } }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],

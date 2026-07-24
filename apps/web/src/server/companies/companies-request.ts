@@ -8,8 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult } from '@acbp/core';
+import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO } from '@acbp/contracts';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -30,7 +30,9 @@ export type CompaniesRequestResult =
   | { readonly status: 'portfolio'; readonly page: PortfolioPage }
   | { readonly status: 'provisioning'; readonly provisioning: ProvisioningStatusDTO }
   | { readonly status: 'interview'; readonly session: InterviewSessionDTO }
-  | { readonly status: 'company_not_active' };
+  | { readonly status: 'company_not_active' }
+  | { readonly status: 'answer'; readonly answer: AnswerDTO; readonly created: boolean }
+  | { readonly status: 'qa'; readonly qa: SessionQADTO };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -49,6 +51,8 @@ export interface CompanyRuntime {
   suspendInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<InterviewTransitionResult>;
   resumeInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<InterviewTransitionResult>;
   getInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetInterviewResult>;
+  recordInterviewAnswer(params: { userId: string; accountId: string; companyId: string; sessionId: string; questionId: string; status: unknown; content?: unknown }, options?: { logger?: Logger }): Promise<RecordAnswerResult>;
+  getSessionQa(params: { userId: string; accountId: string; companyId: string; sessionId: string }, options?: { logger?: Logger }): Promise<GetSessionQaResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -293,6 +297,58 @@ export async function getInterviewForRequest(companyId: string, deps: CompaniesR
   switch (r.status) {
     case 'ok':
       return { status: 'interview', session: r.session };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+  }
+}
+
+// Q&A persistence (ACBP-P2-002; CDR-023). The operations target the company's OPEN interview session (resolved
+// via getInterviewSession — a null/no session collapses to not_found), so the client never supplies a session
+// id. participate/read = any active company member (enforced in @acbp/core). accountId + userId are
+// server-resolved; companyId + questionId are membership-validated selectors.
+type ResolvedSession = { readonly userId: string; readonly accountId: string; readonly sessionId: string } | Early;
+async function resolveActorAccountSession(companyId: string, deps: CompaniesRequestDeps): Promise<ResolvedSession> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx;
+  const session = await runtime.getInterviewSession({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (session.status) {
+    case 'ok':
+      return { userId: ctx.userId, accountId: ctx.accountId, sessionId: session.session.sessionId };
+    case 'forbidden':
+      return { kind: 'result', result: { status: 'forbidden' } };
+    case 'not_found':
+      return { kind: 'result', result: { status: 'not_found' } };
+  }
+}
+
+export async function recordAnswerForRequest(companyId: string, questionId: string, input: { status: unknown; content?: unknown }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const s = await resolveActorAccountSession(companyId, deps);
+  if ('kind' in s) return s.result;
+  const runtime = await runtimeOf(deps);
+  const r = await runtime.recordInterviewAnswer({ userId: s.userId, accountId: s.accountId, companyId, sessionId: s.sessionId, questionId, status: input.status, content: input.content }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'answer', answer: r.answer, created: r.created };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'validation':
+      return { status: 'validation', error: r.error };
+  }
+}
+
+export async function getQaForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const s = await resolveActorAccountSession(companyId, deps);
+  if ('kind' in s) return s.result;
+  const runtime = await runtimeOf(deps);
+  const r = await runtime.getSessionQa({ userId: s.userId, accountId: s.accountId, companyId, sessionId: s.sessionId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'qa', qa: r.qa };
     case 'forbidden':
       return { status: 'forbidden' };
     case 'not_found':
