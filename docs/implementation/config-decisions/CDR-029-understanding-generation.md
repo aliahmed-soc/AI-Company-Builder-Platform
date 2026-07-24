@@ -25,14 +25,16 @@ by source path, never by content — a generated claim can never become a `fact`
 
 ## 2. Sections + "present / unknown / assumed" + confidence per section (acceptance)
 
-Each of the 6 classes is a **section**. A section's `status` is:
-- **present** — it has one or more confident items,
-- **unknown** — no items (a genuine gap; surfaced honestly, never fabricated),
-- **assumed** — its content rests only on assumptions (assumption-class provenance).
-Each section has a `confidence` (the aggregate of its items' confidences; an empty/unknown section = 0). The
-**overall document confidence = the WEAKEST section (min)** — UNDER-005's weakest-section rule (a document is only
-as trustworthy as its least-supported area). Confidence is numeric; a band label (low/medium/high) is derived for
-display, not stored as an independent source of truth.
+Each of the 6 classes is a **section**. A section's `confidence` is the aggregate (mean) of its items'
+confidences (an empty section = 0). A section's `status` is derived from that confidence against a fixed
+threshold `SECTION_CONFIDENCE_THRESHOLD = 0.5`:
+- **present** — ≥1 item AND section confidence ≥ threshold (well-supported),
+- **assumed** — ≥1 item but section confidence < threshold (weakly-supported / assumption-grade — surfaced
+  honestly as low-confidence, not presented as established),
+- **unknown** — 0 items (a genuine gap; surfaced honestly, never fabricated).
+The **overall document confidence = the WEAKEST section (min over the non-unknown sections; 0 if all unknown)** —
+UNDER-005's weakest-section rule (a document is only as trustworthy as its least-supported covered area).
+Confidence is numeric; a band label (low/medium/high) is derived for display, not stored as a separate truth.
 
 ## 3. Partial generation labeled partial ("Partial generation labeled partial")
 
