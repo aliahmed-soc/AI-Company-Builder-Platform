@@ -16,8 +16,21 @@ _Read this first on resume, then continue automatically to "Next executable acti
   metadata `{item_type, source_type}` only — flagged in CDR-024 §4 for owner visibility (new event name;
   implements the canonical "All changes audited"; additive/reversible). Out of scope: context assembly (P2-007),
   understanding/confidence-scoring (P2-008), the browser + edit/delete/supersede (P2-010).
-- **WINDOW NOTE:** started late in the 6-hour autonomous window; if not finishable, leave clean/pushed/resumable
-  (branch + draft PR intact, NOT marked Done).
+- **WINDOW NOTE (P2-006 PARKED — WIP, NOT Done):** the 6-hour window closed with P2-006 at Slice 2. Slice 1
+  (contracts + authz + `memory.item_created` audit registration) is **hosted-green** (`0cc3d8f`). Slice 2
+  (migration 0014 + real-PG suite, head `97e05a1`) is **pushed but RED** on a **migration-CYCLE blocker**:
+  seven pre-existing down/up tests (admin, interview-qa, interview-sessions, provisioning, activity,
+  database "reverse fully and re-apply", user-mapping) fail with `relation "public.memory_items" does not
+  exist` (42P01, RangeVarGetRelidExtended) during a MULTI-step `migrateDown`/`migrateTo(earlier)`. NOTE: the
+  NEW `memory-items.integration.test.ts` (which rolls down ONE step to 0013) PASSES, and 0014.up is the
+  standard 0012/0013 pattern — so 0014.up is fine and single-step down is fine; only multi-step reverse breaks.
+  0014.down was already made robust (`drop table if exists … cascade`) and the self-FK removed, without effect,
+  so the cause is NOT 0014.down's SQL. **RESUME:** reproduce locally (needs PostgreSQL — this session's local
+  PG was blocked by an external process holding port 5432; use a disposable PG on another port) by running
+  `packages/database/src/integration/database.integration.test.ts` "migrations reverse fully and re-apply",
+  step through the `migrateDown` loop to see which migration's down/up actually raises the 42P01, and fix.
+  Then continue P2-006 slices 3–5 (core create/list + audited-in-tx, API, adversarial+docs), reviews, finalize.
+  Branch `p2-006-typed-memory-items`, draft PR #22, CDR-024 — all intact; **main is untouched and green**.
 - **ACBP-P2-002 — Done** (squash `1c49c55`, PR #21). Phase 2: 2 Done / 10 Planned. P2-003/P2-005 gated by open
   question IOQ-13; P2-006 is the sole unblocked ticket.
 
