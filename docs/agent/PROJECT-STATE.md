@@ -3,9 +3,9 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **NO ACTIVE TICKET.** ACBP-P1-013 finalization is owner-authorized and in progress (backlog **Done**; PR #15
-  ready → squash-merge → exact-main CI → branch cleanup). **ACBP-P1-014** (Tenant-isolation adversarial test
-  suite) remains **Planned/unstarted** — starting it requires explicit owner authorization.
+- **ACBP-P1-014 finalization in progress** (backlog **Done**; PR #16 ready → squash-merge → exact-main CI →
+  branch cleanup) under the standing Phase 1 authorization. **ACBP-P1-015** (Slice A integration: secure
+  company creation) is next: discovery then implementation, also under that authorization.
 
 ## Closed in this session
 - Ticket: **ACBP-P1-013** — Administrative-access foundation (status: **Done**, owner-authorized 2026-07-24).

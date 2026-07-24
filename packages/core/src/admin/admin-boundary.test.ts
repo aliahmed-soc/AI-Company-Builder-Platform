@@ -28,17 +28,45 @@ function adminPathSources(): ReadonlyArray<readonly [string, string]> {
   return files;
 }
 
-/** Strip // and /* *\/ comments so prose DESCRIBING a prohibition never trips the code scan. */
-function codeOf(path: string): string {
-  return readFileSync(path, 'utf8')
+/**
+ * Strip // and block comments so prose DESCRIBING a prohibition never trips the code scan.
+ *
+ * Line endings are normalized FIRST (ACBP-P1-014 Class T defect): on a CRLF working copy every line ends
+ * with `\r`, and since `.` does not match `\r` and `$` (without the `m` flag) only matches end-of-string,
+ * `/\/\/.*$/` matched nothing — the helper silently degraded into a raw-source scan and reported every
+ * descriptive comment as a violation. CI checks out LF, so this could only ever fail on Windows.
+ */
+export function stripComments(source: string): string {
+  return source
+    .replace(/\r\n?/g, '\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map((line) => line.replace(/\/\/.*$/, ''))
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+    .map((line) => line.replace(/\/\/.*/, ''))
+    .join('\n');
+}
+
+function codeOf(path: string): string {
+  return stripComments(readFileSync(path, 'utf8'));
 }
 
 describe('admin path no-impersonation boundary — ACBP-P1-013/CDR-019', () => {
   const sources = adminPathSources();
+
+  // The guard is only as good as its comment stripping: without this self-test the helper can silently
+  // degrade (it did — see stripComments) and every assertion below becomes either vacuous or noisy.
+  test.each([
+    ['LF', '\n'],
+    ['CRLF', '\r\n'],
+  ])('SELF-TEST (%s): comments are stripped, code is not', (_label, eol) => {
+    const src = ['// no impersonation here', 'const ok = 1;', '/* block: actAsUser */', 'const runAsTenant = 2;', 'const x = 3; // trailing assumedUserId'].join(eol);
+    const code = stripComments(src);
+    expect(code).not.toContain('impersonation');
+    expect(code).not.toContain('actAsUser');
+    expect(code).not.toContain('assumedUserId');
+    expect(code).toContain('const ok = 1;');
+    expect(code).toContain('const runAsTenant = 2;'); // real code survives — the scan must still see it
+    expect(code).toContain('const x = 3;');
+  });
 
   test('the scan actually covers the admin path (route + web layer + core + primitive)', () => {
     const labels = sources.map(([p]) => p.replace(/\\/g, '/'));

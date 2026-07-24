@@ -6,7 +6,7 @@
 // rows filtered to the actor's active company memberships; `cursor`/`limit` from the query string (the domain
 // validates — invalid limit → 400, not clamped). All domain access goes through @acbp/core. Other methods → 405.
 import { createCompanyForRequest, getPortfolioForRequest } from '@/server/companies/companies-request';
-import { parseCreateCompanyBody, toCompaniesResponse } from '@/server/companies/companies-http';
+import { parseCreateCompanyBody, respondToCompaniesRequest } from '@/server/companies/companies-http';
 import { genericErrorBody } from '@/server/webhooks/http';
 
 export const runtime = 'nodejs';
@@ -20,7 +20,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!parsed.ok) {
     return new Response(JSON.stringify(genericErrorBody(parsed.status)), { status: parsed.status, headers: { 'content-type': 'application/json; charset=utf-8' } });
   }
-  return toCompaniesResponse(await createCompanyForRequest(parsed.input));
+  return respondToCompaniesRequest(() => createCompanyForRequest(parsed.input));
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -32,5 +32,5 @@ export async function GET(request: Request): Promise<Response> {
   }
   const cursor = params.get('cursor') ?? undefined;
   const limit = params.get('limit') ?? undefined;
-  return toCompaniesResponse(await getPortfolioForRequest({ ...(cursor !== undefined ? { cursor } : {}), ...(limit !== undefined ? { limit } : {}) }));
+  return respondToCompaniesRequest(() => getPortfolioForRequest({ ...(cursor !== undefined ? { cursor } : {}), ...(limit !== undefined ? { limit } : {}) }));
 }

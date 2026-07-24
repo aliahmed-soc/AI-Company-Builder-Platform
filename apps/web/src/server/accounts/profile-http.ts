@@ -56,6 +56,21 @@ export async function parseProfileUpdateBody(request: RawBodyRequest & { readonl
 }
 
 /** Map a bounded profile result to a safe HTTP response. Success carries the view; errors stay generic. */
+
+/**
+ * Run a request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500 envelope
+ * (ACBP-P1-014 Class R restoration of the accepted 'all cross-boundary HTTP errors are bounded + sanitized'
+ * invariant). Success and denial semantics are untouched; only the previously-unmapped throw path changes,
+ * from a framework-generated error to a bounded internal_error envelope with status 500.
+ */
+export async function respondToProfileRequest(run: () => Promise<ProfileRequestResult>): Promise<Response> {
+  try {
+    return toProfileResponse(await run());
+  } catch {
+    return jsonResponse(500, genericErrorBody(500));
+  }
+}
+
 export function toProfileResponse(result: ProfileRequestResult): Response {
   switch (result.status) {
     case 'ok':

@@ -9,10 +9,19 @@ export default defineConfig({
   resolve: {
     // Resolve @acbp/* aliases the same way tsconfig.base.json does, so tests and the
     // TypeScript compiler agree on module resolution.
-    alias: [{ find: /^@acbp\/(.*)$/, replacement: resolve(import.meta.dirname, 'packages/$1/src/index.ts') }],
+    alias: [
+      { find: /^@acbp\/(.*)$/, replacement: resolve(import.meta.dirname, 'packages/$1/src/index.ts') },
+      // apps/web's own "@/..." path alias (apps/web/tsconfig.json). Needed so the ACBP-P1-014 adversarial
+      // suite can import and drive the REAL Next route handlers against a real database.
+      { find: /^@\/(.*)$/, replacement: resolve(import.meta.dirname, 'apps/web/src/$1') },
+    ],
   },
   test: {
-    include: ['apps/**/*.test.{ts,mts}', 'packages/**/*.test.{ts,mts}', 'tools/**/*.test.{ts,mts,mjs}'],
+    // `tests/` holds CROSS-LAYER suites that belong to no single package — specifically the ACBP-P1-014
+    // adversarial tests that drive apps/web route handlers against a real database. Such a test must import
+    // both layers, which the dependency-boundary rule (rightly) forbids inside apps/ or packages/; the
+    // checker scans apps/ + packages/ only, so a repo-level test creates no production dependency edge.
+    include: ['apps/**/*.test.{ts,mts}', 'packages/**/*.test.{ts,mts}', 'tools/**/*.test.{ts,mts,mjs}', 'tests/**/*.test.{ts,mts}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/build/**'],
     environment: 'node',
     globals: false,

@@ -33,14 +33,19 @@ const SRC_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
  * while preserving line numbers (block comments -> spaces keeping newlines; whole-line
  * `//` comments -> empty line). Import specifiers never legitimately contain `//`, so this
  * cannot hide a real workspace/relative/@acbp import.
+ *
+ * ORDER IS LOAD-BEARING (ACBP-P1-014 finding): line comments are removed FIRST. Removing block
+ * comments first let a `//` comment containing `/*` — e.g. a documented glob such as `api/**` —
+ * open a PHANTOM block comment that ran to the next real `*\/`, blanking every line in between.
+ * A file whose header mentioned such a glob therefore had its entire import list erased and the
+ * checker reported it clean, silently disabling the layer gate for that file.
  */
 function stripComments(src) {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
-  out = out
+  const withoutLineComments = src
     .split('\n')
     .map((ln) => (/^\s*\/\//.test(ln) ? '' : ln))
     .join('\n');
-  return out;
+  return withoutLineComments.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 }
 
 // ---- Layer model (from REPOSITORY-SCAFFOLD-SPEC.md per-package table) -------------------

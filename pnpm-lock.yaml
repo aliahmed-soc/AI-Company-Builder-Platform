@@ -175,6 +175,12 @@ importers:
       '@acbp/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@acbp/database':
+        specifier: workspace:*
+        version: link:../database
+      kysely:
+        specifier: ^0.28.17
+        version: 0.28.17
 
 packages:
 

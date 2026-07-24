@@ -50,6 +50,25 @@ export async function parseRenameCompanyBody(request: HttpRequest): Promise<Pars
   return { ok: true, input: { name: r.obj['name'], description: r.obj['description'] } };
 }
 
+/**
+ * Run a companies request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500
+ * envelope (ACBP-P1-014 Class R restoration).
+ *
+ * Why: the accepted platform invariant is that every cross-boundary/HTTP error is bounded and sanitized. The
+ * P1-012/P1-013 routes already wrap their handlers, but the older company routes let a thrown PlatformError
+ * escape the handler — e.g. a malformed `companyId` reaches the resolver's uuid cast and raises 22P02. The
+ * framework would then produce its own 500, outside our envelope contract. This restores the invariant
+ * without changing any success or denial semantics: statuses and bodies for every already-mapped outcome are
+ * untouched; only the previously-unmapped throw path becomes `{"error":"internal_error"}` with status 500.
+ */
+export async function respondToCompaniesRequest(run: () => Promise<CompaniesRequestResult>): Promise<Response> {
+  try {
+    return toCompaniesResponse(await run());
+  } catch {
+    return jsonResponse(500, genericErrorBody(500));
+  }
+}
+
 /** Map a bounded companies result to a safe HTTP response. */
 export function toCompaniesResponse(result: CompaniesRequestResult): Response {
   switch (result.status) {
