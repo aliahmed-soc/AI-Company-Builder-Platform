@@ -409,7 +409,13 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
     // security in-session, switching role, granting BYPASSRLS, and — the most dangerous — composing a
     // database client from the environment WITHOUT `{ role: 'app' }`, which silently yields the owner
     // connection. `parseDatabaseConfig` is legitimately defined in @acbp/config, so that file is exempt.
-    const forbidden = [/disableRls/i, /skipTenantFilter/i, /withoutTenantPredicate/i, /bypassTenant/i, /unsafeNoScope/i, /allowCrossTenant/i, /runAsTenant/i, /setArbitraryTenant/i, /crossTenantQuery/i, /row_security\s*=\s*off/i, /\bset\s+role\b/i, /bypassrls/i];
+    // Seam IDENTIFIERS are forbidden everywhere, including migrations.
+    const forbidden = [/disableRls/i, /skipTenantFilter/i, /withoutTenantPredicate/i, /bypassTenant/i, /unsafeNoScope/i, /allowCrossTenant/i, /runAsTenant/i, /setArbitraryTenant/i, /crossTenantQuery/i];
+    // SQL-semantic seams are forbidden in application code but NOT in migrations, where `bypassrls`,
+    // `set role` and row-security DDL appear legitimately (revoking BYPASSRLS, guarding against a bypassing
+    // role, enabling FORCE RLS). The migration-side facts are pinned independently by the catalog suite,
+    // which asserts acbp_app is NOBYPASSRLS and every tenant table has ENABLE + FORCE RLS.
+    const forbiddenInAppCode = [/row_security\s*=\s*off/i, /\bset\s+role\b/i, /bypassrls/i];
     const walk = (dir: string): void => {
       let entries;
       try {
@@ -434,6 +440,8 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
           .join('\n')
           .replace(/\/\*[\s\S]*?\*\//g, '');
         if (forbidden.some((p) => p.test(code))) offenders.push(full);
+        const isMigration = full.includes(join('packages', 'database', 'migrations'));
+        if (!isMigration && forbiddenInAppCode.some((p) => p.test(code))) offenders.push(`${full} (SQL-level RLS bypass in application code)`);
         // An owner-connection seam in a RUNTIME layer: composing a client from the environment without the
         // restricted role. Scoped to core + web, because the owner connection is legitimate and required in
         // the migration CLI and the database package's own integration harness (which are not runtime paths).
