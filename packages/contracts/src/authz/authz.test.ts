@@ -47,6 +47,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Understanding generation (ACBP-P2-008; CDR-029): generate + read = any active company member.
   'understanding:generate': ['owner', 'viewer'],
   'understanding:read': ['owner', 'viewer'],
+  // Understanding review + confirmation (ACBP-P2-009; CDR-030): both OWNER-only.
+  'understanding:review': ['owner'],
+  'understanding:confirm': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

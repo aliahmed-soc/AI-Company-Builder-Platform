@@ -86,6 +86,14 @@ export const AUTHZ_ACTIONS = [
   // owner-only CONFIRM / per-item review is P2-009, which registers its own action when it implements that effect.
   'understanding:generate',
   'understanding:read',
+  // Understanding review + confirmation (ACBP-P2-009; CDR-030 §2/§3). Both OWNER-ONLY: `understanding:review` is the
+  // five per-item controls (approve/edit/reject/request-evidence/request-research) AND the correction that supersedes
+  // a confirmation; `understanding:confirm` is the owner-only overall confirm that unlocks strategy (API-CONTRACTS
+  // "Owner (confirm)", UNDER-003 "Owner-only confirm"). DISTINCT from the owner+viewer `understanding:read`/`:generate`
+  // grant — a corrective, owner-authority operation is not folded into the read/participate grant (no overloading, the
+  // closed-registry convention P2-010 established for memory:edit/delete).
+  'understanding:review',
+  'understanding:confirm',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -166,6 +174,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // owner-only confirm is P2-009's separate action.
   'understanding:generate': ['owner', 'viewer'],
   'understanding:read': ['owner', 'viewer'],
+  // Understanding review + confirmation (ACBP-P2-009; CDR-030): both OWNER-only (per-item decisions + correction, and
+  // the overall confirm) — API-CONTRACTS "Owner (confirm)", UNDER-003 "Owner-only confirm".
+  'understanding:review': ['owner'],
+  'understanding:confirm': ['owner'],
 };
 
 /**

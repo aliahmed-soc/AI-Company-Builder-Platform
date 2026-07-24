@@ -463,6 +463,43 @@ export interface UnderstandingItemsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Understanding item reviews (ACBP-P2-009; CDR-030 §5). Append-only per-item review decisions over an immutable
+ * understanding item. Company-owned, dual-keyed FORCE RLS, APPEND-ONLY (SELECT+INSERT only). `decision` = the closed
+ * 5-value control set; `note` (nullable, bounded) = edited text / reject reason / request note. The item's effective
+ * review state is its LATEST row. Every column is `never` on update.
+ */
+export interface UnderstandingItemReviewsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  document_id: ColumnType<string, string, never>;
+  item_id: ColumnType<string, string, never>;
+  decision: ColumnType<string, string, never>;
+  note: ColumnType<string | null, string | null | undefined, never>;
+  decided_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Understanding confirmation events (ACBP-P2-009; CDR-030 §5). The per-version confirm/correct lifecycle. Company-owned,
+ * dual-keyed FORCE RLS, APPEND-ONLY (SELECT+INSERT only). `kind` = the closed 2-value set (`confirmed` | `corrected`);
+ * UNIQUE `(document_id, kind)`. `correction_ref` + `dependents_flagged` are set ONLY for `corrected` (DISC-008). A
+ * version is confirmed-and-active IFF it has a `confirmed` and no `corrected` event. Every column is `never` on update.
+ */
+export interface UnderstandingConfirmationEventsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  document_id: ColumnType<string, string, never>;
+  version: ColumnType<number, number, never>;
+  kind: ColumnType<string, string, never>;
+  actor_user_id: ColumnType<string, string, never>;
+  correction_ref: ColumnType<string | null, string | null | undefined, never>;
+  dependents_flagged: ColumnType<number | null, number | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -484,6 +521,8 @@ export interface DatabaseSchema {
   usage_events: UsageEventsTable;
   understanding_documents: UnderstandingDocumentsTable;
   understanding_items: UnderstandingItemsTable;
+  understanding_item_reviews: UnderstandingItemReviewsTable;
+  understanding_confirmation_events: UnderstandingConfirmationEventsTable;
 }
 
 // Repository-facing row shapes.
@@ -532,3 +571,7 @@ export type UnderstandingDocumentRow = Selectable<UnderstandingDocumentsTable>;
 export type NewUnderstandingDocument = Insertable<UnderstandingDocumentsTable>;
 export type UnderstandingItemRow = Selectable<UnderstandingItemsTable>;
 export type NewUnderstandingItem = Insertable<UnderstandingItemsTable>;
+export type UnderstandingItemReviewRow = Selectable<UnderstandingItemReviewsTable>;
+export type NewUnderstandingItemReview = Insertable<UnderstandingItemReviewsTable>;
+export type UnderstandingConfirmationEventRow = Selectable<UnderstandingConfirmationEventsTable>;
+export type NewUnderstandingConfirmationEvent = Insertable<UnderstandingConfirmationEventsTable>;

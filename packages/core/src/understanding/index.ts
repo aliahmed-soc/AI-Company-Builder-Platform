@@ -11,3 +11,20 @@ export {
   type UnderstandingSectionDTO,
   type UnderstandingItemDTO,
 } from './understanding-generation.js';
+export {
+  recordUnderstandingReview,
+  confirmUnderstanding,
+  correctUnderstanding,
+  isCurrentUnderstandingConfirmed,
+  STRATEGY_DEPENDENT_COUNT,
+  type UnderstandingReviewOptions,
+  type RecordReviewParams,
+  type RecordReviewResult,
+  type UnderstandingReviewDTO,
+  type ConfirmParams,
+  type ConfirmResult,
+  type CorrectParams,
+  type CorrectResult,
+  type GateParams,
+  type GateResult,
+} from './understanding-review.js';

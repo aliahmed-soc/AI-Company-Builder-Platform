@@ -63,8 +63,13 @@ BYPASSRLS; no owner runtime connection). Company-scoped, mirroring the P1-012 du
 
 Two closed authz actions, checked against the caller's **company**-membership role (API-CONTRACTS "Company
 member"): `interview:read` and `interview:participate`, both `owner | viewer`. There is deliberately **no**
-`interview:confirm` yet — the owner-only `ready_for_review → confirmed` transition's operation belongs to P2-009,
-which registers that action when it implements the confirmation effect.
+`interview:confirm` action. P2-009 implemented the owner-only confirmation gate at the **understanding-version**
+grain (`understanding:confirm` / `understanding:review`; CDR-030), NOT as an `interview_sessions` state transition:
+P2-008 decoupled understanding generation from the session (`understanding_documents` carries no `session_id`), so
+the confirmation gate is an understanding-version concept (the strategy-unlock token). Syncing the
+`interview_sessions` `ready_for_review → confirmed → superseded` state machine to that gate is the deferred **P2-012**
+Slice B integration — this doc's transition table below (rows for those transitions) records the session-state intent,
+not a P2-009 effect.
 
 ## Audit — `interview.started` (audit-only; activity projection deferred)
 
