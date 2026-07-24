@@ -28,6 +28,7 @@
     "dev:worker": "pnpm --filter @acbp/worker dev",
     "local:doctor": "node tools/local/doctor.mjs",
     "ci:preflight": "node tools/ci/preflight.mjs",
+    "demo:slice-a": "tsx tools/demo/slice-a.mjs",
     "local:db:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action setup",
     "local:db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action start",
     "local:db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action stop",
