@@ -26,6 +26,7 @@ import {
   adminTenantRead,
   ADMIN_READ_SCOPE,
   interviewStarted,
+  memoryItemCreated,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -49,6 +50,8 @@ export const AUDITED_OPERATIONS = {
   'admin.tenant_read': 'admin.tenant_read',
   // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — the one durable session event.
   'interview.start': 'interview.started',
+  // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation.
+  'memory.create': 'memory.item_created',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -60,15 +63,17 @@ export type CompanyAuditedOperation = 'company.create' | 'company.update' | 'com
 export type ProvisioningAuditedOperation = 'provisioning.start' | 'provisioning.step_start' | 'provisioning.step_complete' | 'provisioning.step_fail' | 'provisioning.retry_request' | 'provisioning.complete';
 export type AdminAuditedOperation = 'admin.tenant_read';
 export type InterviewAuditedOperation = 'interview.start';
+export type MemoryAuditedOperation = 'memory.create';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
 export const ADMIN_AUDITED_OPERATION_IDS: readonly AdminAuditedOperation[] = ['admin.tenant_read'];
 export const INTERVIEW_AUDITED_OPERATION_IDS: readonly InterviewAuditedOperation[] = ['interview.start'];
+export const MEMORY_AUDITED_OPERATION_IDS: readonly MemoryAuditedOperation[] = ['memory.create'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -121,6 +126,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => adminTenantRead({ companyId: subjectId, reason: 'canonical sample reason', scope: ADMIN_READ_SCOPE });
     case 'interview.start':
       return (subjectId) => interviewStarted({ sessionId: subjectId });
+    case 'memory.create':
+      return (subjectId) => memoryItemCreated({ memoryItemId: subjectId, itemType: 'user_fact', sourceType: 'interview_answer' });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

@@ -13,4 +13,5 @@ export * from './portfolio/index.js';
 export * from './provisioning/index.js';
 export * from './admin/index.js';
 export * from './interview/index.js';
+export * from './memory/index.js';
 

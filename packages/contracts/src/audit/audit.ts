@@ -57,6 +57,10 @@ export const AUDIT_EVENTS = {
   // activity fan-out is DEFERRED (CDR-022 §4) so P1-009's closed activity taxonomy is not expanded in a
   // persistence slice. `interview.question_answered` (EVENT-CATALOG:48) is a P2-002 concern and is NOT registered.
   'interview.started': { schemaVersion: 1, subjectType: 'interview_session' },
+  // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item was created. AUDITED (MEM-003 "All changes audited"),
+  // written in the same transaction as the insert. Subject = the memory item id; metadata carries only the
+  // bounded {item_type, source_type} references — never the content or the raw source_ref value.
+  'memory.item_created': { schemaVersion: 1, subjectType: 'memory_item' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -234,4 +238,15 @@ export function adminTenantRead(input: { readonly companyId: string; readonly re
  */
 export function interviewStarted(input: { readonly sessionId: string }): AuditEvent {
   return makeEvent('interview.started', input.sessionId, 'success', {});
+}
+
+// ── Typed memory factory (ACBP-P2-006; CDR-024 §4). Subject = the memory item id. ────────────────────────────
+
+/**
+ * A typed memory item was created. Metadata is EXACTLY `{item_type, source_type}` — bounded provenance
+ * references only; NEVER the memory content or the raw source_ref value (data minimization). Written in the
+ * same transaction as the item insert.
+ */
+export function memoryItemCreated(input: { readonly memoryItemId: string; readonly itemType: string; readonly sourceType: string }): AuditEvent {
+  return makeEvent('memory.item_created', input.memoryItemId, 'success', { item_type: input.itemType, source_type: input.sourceType });
 }
