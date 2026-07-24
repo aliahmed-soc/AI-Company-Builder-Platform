@@ -11,6 +11,7 @@
 // The fixture OWNER client performs the revocation (simulating an operator/API change made elsewhere); the
 // protected action is always attempted on the RESTRICTED product client.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from './two-tenant-harness.js';
 import { threatTitle } from './threat-inventory.js';
@@ -41,12 +42,21 @@ describe.skipIf(!hasTestDatabase)('stale + revoked authority (real PostgreSQL, r
     w = await seedTwoTenantWorld(owner, product);
   });
 
-  /** Revoke an ACCOUNT membership through the fixture client (an operator action happening elsewhere). */
+  /**
+   * Revoke an ACCOUNT membership through the fixture client (an operator action happening elsewhere).
+   * `revoked_at` is mandatory: the `memberships_revoked_has_ts` CHECK rejects a revoked row without it, so
+   * the fixture must produce the same shape production does.
+   */
   async function revokeAccountMembership(accountId: string, userId: string): Promise<void> {
-    const n = await owner.kysely.updateTable('memberships').set({ status: 'revoked' }).where('account_id', '=', accountId).where('member_user_id', '=', userId).executeTakeFirst();
+    const n = await owner.kysely
+      .updateTable('memberships')
+      .set({ status: 'revoked', revoked_at: sql<Date>`now()` })
+      .where('account_id', '=', accountId)
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
     expect(Number(n.numUpdatedRows)).toBeGreaterThan(0);
   }
-  /** Revoke a COMPANY membership through the fixture client. */
+  /** Revoke a COMPANY membership through the fixture client (company_memberships carries no timestamp CHECK). */
   async function revokeCompanyMembership(companyId: string, userId: string): Promise<void> {
     const n = await owner.kysely.updateTable('company_memberships').set({ status: 'revoked' }).where('company_id', '=', companyId).where('member_user_id', '=', userId).executeTakeFirst();
     expect(Number(n.numUpdatedRows)).toBeGreaterThan(0);
@@ -111,7 +121,8 @@ describe.skipIf(!hasTestDatabase)('stale + revoked authority (real PostgreSQL, r
       await revokeCompanyMembership(w.companyA1, w.aViewer); // committed by the OWNER client, out of band
       return 'in-flight';
     });
-    expect(run).toEqual({ kind: 'ran', value: 'in-flight' });
+    // (runInCompanyScope also returns the resolved `role`, so match structurally rather than exactly.)
+    expect(run).toMatchObject({ kind: 'ran', value: 'in-flight' });
     const next = await runInCompanyScope(product, { userId: w.aViewer, requestedAccountId: w.accountA, requestedCompanyId: w.companyA1 }, () => Promise.resolve('ran'));
     expect(next.kind).toBe('denied');
   });
