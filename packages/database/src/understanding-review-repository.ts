@@ -56,9 +56,13 @@ export class UnderstandingReviewRepository {
       .executeTakeFirstOrThrow();
   }
 
-  /** The review decisions of a document version (RLS-confined), in insertion order (oldest → newest). */
+  /**
+   * The review decisions of a document version (RLS-confined), chronological (oldest → newest) so a consumer may
+   * take the LAST row as an item's effective decision. Ordered by `created_at` (the insertion clock) with `id` as a
+   * deterministic tiebreak for same-instant rows — NOT by `id` alone, which is a random UUID (not time-ordered).
+   */
   listReviews(documentId: string): Promise<UnderstandingItemReviewRow[]> {
-    return this.#db.selectFrom('understanding_item_reviews').selectAll().where('document_id', '=', documentId).orderBy('id', 'asc').execute();
+    return this.#db.selectFrom('understanding_item_reviews').selectAll().where('document_id', '=', documentId).orderBy('created_at', 'asc').orderBy('id', 'asc').execute();
   }
 
   /**
@@ -84,8 +88,12 @@ export class UnderstandingReviewRepository {
       .executeTakeFirst();
   }
 
-  /** The confirmation-lifecycle events of a document version (RLS-confined), oldest → newest. */
+  /**
+   * The confirmation-lifecycle events of a document version (RLS-confined), chronological (oldest → newest). Ordered
+   * by `created_at` with `id` as a deterministic tiebreak — NOT by the random-UUID `id` alone. (The `isVersionConfirmed`
+   * gate predicate is order-independent, but a chronological list keeps any future "last event wins" consumer correct.)
+   */
   listConfirmationEvents(documentId: string): Promise<UnderstandingConfirmationEventRow[]> {
-    return this.#db.selectFrom('understanding_confirmation_events').selectAll().where('document_id', '=', documentId).orderBy('id', 'asc').execute();
+    return this.#db.selectFrom('understanding_confirmation_events').selectAll().where('document_id', '=', documentId).orderBy('created_at', 'asc').orderBy('id', 'asc').execute();
   }
 }

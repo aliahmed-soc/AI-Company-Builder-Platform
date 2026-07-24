@@ -66,17 +66,21 @@ closed-registry, no-overloading convention established by P2-010's `memory:edit`
 `understanding_confirmation_events` for the **current** understanding version. Preconditions:
 - the version being confirmed is the company's **current (max) version** and `expected_version` matches (a stale
   confirm of a superseded version is rejected);
-- "Must-sections resolved" (WORKFLOW §2): the required sections are not left unaddressed — for MVP this is the
-  current-version + expected_version check plus that at least one review decision exists / the document is present;
-  the closed section set is the six understanding classes (0019). (No new "must-section" config is invented; the
+- "Must-sections resolved" (WORKFLOW §2): the required sections are not left unaddressed — for MVP the ENFORCED
+  precondition is **document-present + current-version + expected_version match + not-already-superseded** (a version
+  with a `corrected` event cannot be re-confirmed). Per-item review is AVAILABLE but is **not** a hard gate on confirm:
+  the owner-only confirm is itself the authoritative review act, and canon does not quantify "review done" into a
+  specific decision count, so requiring ≥1 recorded decision is deliberately NOT enforced (the safer, non-inventing
+  interpretation). The closed section set is the six understanding classes (0019). (No new "must-section" config is invented; the
   gate is version-currency + reviewed.)
 
 **Effect:** the confirmation event is the queryable **strategy-unlock token**. `isCurrentUnderstandingConfirmed`
 (a company-scoped read) is true IFF the current version has a `confirmed` event and **no** `corrected` event. Strategy
 generation (P3-001) consults this predicate; **planning is blocked while it is false** ("planning blocked pre-confirm"
-acceptance). Confirming writes `understanding.confirmed` (metadata `{version, confirmed_by}`) **in the same
-transaction** (ADR-015 audit-or-nothing). Idempotency: `UNIQUE(document_id, kind)` + `ON CONFLICT DO NOTHING` — a
-repeat confirm of an already-confirmed version is a graceful no-op.
+acceptance). Confirming writes `understanding.confirmed` (metadata `{version}` — the confirming actor is the
+SERVER-STAMPED audit actor, never duplicated into metadata) **in the same transaction** (ADR-015 audit-or-nothing).
+Idempotency: `UNIQUE(document_id, kind)` + `ON CONFLICT DO NOTHING` — a repeat confirm of an already-confirmed version
+is a graceful no-op.
 
 ## 4. Correction / supersede — DISC-008 dependents flagged (WORKFLOW §2 line 31)
 
@@ -115,9 +119,13 @@ reset-list lesson — never omit a table from a reset list).
 
 ## 6. Audit + tenancy + composition
 
-Two NEW registered audit events (already catalogued as P2-009 in EVENT-CATALOG): `understanding.confirmed`
-(subject `understanding_document`, metadata `{version, confirmed_by}`) and `understanding.corrected` (subject
-`understanding_document`, metadata `{version, correction_ref, dependents_flagged}`). Both are added to the
+THREE NEW registered audit events (catalogued as P2-009 in EVENT-CATALOG): `understanding.item_reviewed` (subject
+`understanding_item`, metadata `{decision, version}`), `understanding.confirmed` (subject `understanding_document`,
+metadata `{version}` — the confirming actor is the SERVER-STAMPED audit actor, never in metadata), and
+`understanding.corrected` (subject `understanding_document`, metadata `{version, correction_ref, dependents_flagged}`).
+`correction_ref` is a **bounded** reference (≤256 chars; by convention an id / short code) — the "not content"
+property is a caller convention, bounded but not content-validated (it stays within the caller's own tenant-scoped
+audit trail). All three are added to the
 `@acbp/contracts` `AUDIT_EVENTS` registry and the `@acbp/core` `AUDITED_OPERATIONS` compile-exhaustive partition in
 the **same** change (the two must move together). Two NEW authored operations map to them:
 `understanding.review-decision` (per-item; audited so item decisions are non-repudiable — BACKLOG "Item decisions

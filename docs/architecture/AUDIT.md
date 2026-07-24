@@ -152,7 +152,8 @@ never the founder content or the raw `source_ref` value (data minimization):
   audit actor.
 - `understanding.corrected` (`{version, correction_ref, dependents_flagged}`) — a material correction superseded a
   confirmation, flagging dependents (P2-009; CDR-030; DISC-008). Written in the SAME transaction as the
-  correction-event row; subject = the document id; `correction_ref` is a bounded reference (never content),
+  correction-event row; subject = the document id; `correction_ref` is a bounded reference (≤256 chars; by convention
+  an id / short code, not content — bounded but not content-validated),
   `dependents_flagged` is the count of downstream strategy stages re-blocked (MVP: 1 = strategy).
 
 The M3 domain fan-out (`understanding.corrected` → memory) and the `interview.question_answered` → memory
