@@ -34,12 +34,14 @@ DATA-ARCHITECTURE §3 exactly:
 - `content text` — the business content (bounded).
 - **`source_type text`** — `CHECK (source_type in (…the six…))`: `interview_answer`, `user_edit`, `task_result`,
   `model_generation`, `imported_document`, `system_measurement` (MEM-003).
-- **`source_ref text NOT NULL`** — a **resolvable** link to the originating record (MEM-003: "100% of items
-  carry a resolvable source link"; "source-less legacy items are flagged 'unsourced', never presented as
-  fact"). For `source_type = interview_answer` the substrate exposes no single-column answer id — an answer's
-  identity is the **composite `(question_id, revision)`** (migration 0013) — so `source_ref` encodes the
-  **specific pinned revision** the item was derived from (the exact revision, not "current"), keeping the link
-  stable under later answer revisions. Shape validated in `@acbp/contracts`.
+- **`source_ref text NOT NULL`** — a link to the originating record (MEM-003: "100% of items carry a source
+  link"; "source-less legacy items are flagged 'unsourced', never presented as fact"). P2-006 enforces that it
+  is **non-empty and bounded (≤256)** at both the contract and the DB — that is what makes every item
+  *source-linked* (the acceptance criterion). It does **not** validate the per-source-type *shape* or verify
+  that the ref resolves to a live row: a hard FK is impossible for a polymorphic source, and deep resolvability
+  is the consumer's concern (**P2-007** context assembly). By **convention**, for `source_type =
+  interview_answer` the ref encodes the pinned `(question_id, revision)` (0013 has no single-column answer id),
+  so the link cites the exact revision the item was derived from; P2-006 does not parse or enforce that encoding.
 - `confidence double precision` (nullable; `CHECK (confidence is null or (confidence >= 0 and confidence <= 1))`)
   — the canonical numeric confidence (§3 "numeric + class per PRD §7 bands"). P2-006 stores the **number**; the
   **class band** (PRD §7) is *derived* from the number by the Understanding layer (**P2-008/UNDER-002**), which

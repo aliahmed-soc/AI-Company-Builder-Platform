@@ -74,7 +74,8 @@ export async function createMemoryItem(client: DatabaseClient, params: CreateMem
     async (scope, role): Promise<CreateMemoryItemResult> => {
       if (checkAuthorization(role, 'memory:write', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
       // The type is validated AND proven consistent with the source path (a generated claim can never be a
-      // user_fact); untyped/unknown-source/over-long/missing-source_ref submissions are rejected — bounded error.
+      // user_fact); untyped/unknown-source/over-long content/empty-or-over-long source_ref submissions are
+      // rejected — bounded error. (source_ref is enforced non-empty + bounded; deep resolvability is P2-007.)
       const submission = validateMemorySubmission({ type: params.type, content: params.content, sourceType: params.sourceType, sourceRef: params.sourceRef, confidence: params.confidence });
       if (!submission.ok) return { status: 'validation', error: submission.error };
 
@@ -148,12 +149,17 @@ function toDTO(row: MemoryItemRow): MemoryItemDTO {
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
-/** The DB CHECKs guarantee valid values; coerce defensively (an out-of-set value would be data corruption). */
+// The DB CHECKs guarantee `type`/`source_type` are always in-set, so these are can't-happen paths. If one ever
+// fired it would mean row corruption — for a TRUST-CRITICAL field we FAIL CLOSED (throw) rather than silently
+// relabel an unknown value as the most-trusted `user_fact`/`user_edit` (security review LOW). The throw is
+// unreachable in practice; it never serves a corrupt row as if it were a founder-stated fact.
 function assertType(value: string): MemoryType {
-  return isMemoryType(value) ? value : 'user_fact';
+  if (!isMemoryType(value)) throw new Error('memory item invariant: type is out of the closed set (row corruption)');
+  return value;
 }
 function assertSourceType(value: string): MemorySourceType {
-  return isMemorySourceType(value) ? value : 'user_edit';
+  if (!isMemorySourceType(value)) throw new Error('memory item invariant: source_type is out of the closed set (row corruption)');
+  return value;
 }
 function unwrap<T extends { status: string }>(run: { kind: 'ran'; value: T } | { kind: 'denied'; reason: string }): T | { status: 'forbidden' } {
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };

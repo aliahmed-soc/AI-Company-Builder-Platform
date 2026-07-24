@@ -64,9 +64,4 @@ export class MemoryItemRepository {
     if (options.type !== undefined) q = q.where('type', '=', options.type);
     return q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
   }
-
-  /** A single memory item by id (RLS-confined; undefined when absent/invisible). */
-  findById(id: string): Promise<MemoryItemRow | undefined> {
-    return this.#db.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirst();
-  }
 }

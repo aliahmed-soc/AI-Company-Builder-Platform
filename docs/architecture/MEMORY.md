@@ -18,7 +18,7 @@ model arrives with P2-010), and carries its provenance. Migration `0014` (`memor
 | `type` | the **CLOSED 8-value** enum — `user_fact`, `user_preference`, `constraint`, `ai_assumption`, `research_finding`, `approved_decision`, `measured_outcome`, `correction` |
 | `content` | the business content (1–10 000 chars) |
 | `source_type` | the **CLOSED 6-value** provenance enum — `interview_answer`, `user_edit`, `task_result`, `model_generation`, `imported_document`, `system_measurement` |
-| `source_ref` | **NOT NULL** — a resolvable link to the originating record (MEM-003). For `interview_answer` it encodes the pinned `(question_id, revision)` (0013 has no single-column answer id) |
+| `source_ref` | **NOT NULL**, non-empty, bounded (≤256) — the source link (MEM-003 "source-linked"). By convention `interview_answer` refs encode the pinned `(question_id, revision)`; P2-006 does NOT shape-check the encoding or verify resolvability (a polymorphic ref has no hard FK — deep resolution is P2-007's concern) |
 | `confidence` | nullable numeric in `[0,1]` — the class band (PRD §7) is *derived* by P2-008; P2-006 stores the number |
 | `confirmation_state` | `proposed`→`accepted`→`validated`/`invalidated` (UNDER-004); created `proposed`, advanced in M3 |
 | `superseded_by` | nullable self-FK forward pointer (DATA-ARCHITECTURE §3); always null in P2-006 (the supersede OPERATION is P2-010) |
@@ -37,7 +37,7 @@ Cross-company reads are impossible (MEM-003 trust-critical, proven by the real-P
 ## Operations (`@acbp/core`)
 
 - **`createMemoryItem`** (`memory:write`): validate the submission (known type + known source_type +
-  type-by-source-path + non-empty bounded content + resolvable non-empty `source_ref` + confidence in `[0,1]`);
+  type-by-source-path + non-empty bounded content + non-empty bounded `source_ref` + confidence in `[0,1]`);
   insert the item (`proposed`, `superseded_by` null, server-verified author); write **`memory.item_created`** in
   the SAME transaction. Runs under the caller's validated `CompanyScope` on the restricted `acbp_app` role.
 - **`listMemoryItems`** (`memory:read`): the company's items, newest-first with a deterministic total order
