@@ -19,11 +19,13 @@ import {
   currentRevision,
   deriveQuestionLifecycle,
   isAnswerStatus,
+  isQuestionSource,
   validationError,
   type AnswerDTO,
   type QuestionDTO,
   type QuestionWithAnswerDTO,
   type SessionQADTO,
+  type QuestionSource,
   type PublicErrorEnvelope,
 } from '@acbp/contracts';
 import type { MemberRole } from '../members/roles.js';
@@ -49,11 +51,13 @@ export type RecordAnswerResult =
 export type GetSessionQaResult = { readonly status: 'ok'; readonly qa: SessionQADTO } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
 
 const PROMPT_MAX = 4_000;
+/** Rationale bound (matches the migration-0018 CHECK). */
+const RATIONALE_MAX = 1_000;
 /** Bounded append retries under concurrent revision contention (see recordInterviewAnswer). */
 const MAX_APPEND_ATTEMPTS = 5;
 
 // ── add a question (the persistence primitive; P2-005 drives generation) ───────────────────────────────
-export async function addInterviewQuestion(client: DatabaseClient, params: InterviewQaParams & { prompt: unknown }, options: InterviewQaOptions = {}): Promise<AddQuestionResult> {
+export async function addInterviewQuestion(client: DatabaseClient, params: InterviewQaParams & { prompt: unknown; rationale?: unknown; source?: unknown }, options: InterviewQaOptions = {}): Promise<AddQuestionResult> {
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
@@ -62,12 +66,22 @@ export async function addInterviewQuestion(client: DatabaseClient, params: Inter
       if (typeof params.prompt !== 'string' || params.prompt.length === 0 || params.prompt.length > PROMPT_MAX) {
         return { status: 'validation', error: validationError({ message: 'Question prompt is invalid.', fields: ['prompt'] }).toPublic() };
       }
+      // Adaptive-orchestration metadata (ACBP-P2-005): a bounded "why we ask" rationale and the closed source.
+      // Both optional (the P2-002 primitive omits them → null rationale + DB-default 'adaptive' source).
+      if (params.rationale !== undefined && params.rationale !== null && (typeof params.rationale !== 'string' || params.rationale.length === 0 || params.rationale.length > RATIONALE_MAX)) {
+        return { status: 'validation', error: validationError({ message: 'Question rationale is invalid.', fields: ['rationale'] }).toPublic() };
+      }
+      if (params.source !== undefined && !isQuestionSource(params.source)) {
+        return { status: 'validation', error: validationError({ message: 'Question source is invalid.', fields: ['source'] }).toPublic() };
+      }
       // The session must be visible in this scope (RLS) before a question can attach to it.
       const session = await new InterviewSessionRepository(scope.db).findById(params.sessionId);
       if (session === undefined) return { status: 'not_found' };
       const repo = new InterviewQaRepository(scope.db);
       const position = await repo.nextQuestionPosition(params.sessionId);
-      const row = await repo.insertQuestion(params.accountId, params.companyId, params.sessionId, position, params.prompt);
+      const rationale = typeof params.rationale === 'string' ? params.rationale : null;
+      const source: QuestionSource | undefined = isQuestionSource(params.source) ? params.source : undefined;
+      const row = await repo.insertQuestion(params.accountId, params.companyId, params.sessionId, position, params.prompt, rationale, source);
       return { status: 'ok', question: toQuestionDTO(row) };
     },
     optionsFor(options),
@@ -165,7 +179,11 @@ function optionsFor(options: InterviewQaOptions): { correlationId?: string; logg
   return o;
 }
 function toQuestionDTO(row: InterviewQuestionRow): QuestionDTO {
-  return { questionId: row.id, position: row.position, prompt: row.prompt, createdAt: new Date(row.created_at).toISOString() };
+  return { questionId: row.id, position: row.position, prompt: row.prompt, rationale: row.rationale, source: assertSource(row.source), createdAt: new Date(row.created_at).toISOString() };
+}
+/** The DB CHECK guarantees a valid source; coerce defensively (an out-of-set value would be data corruption). */
+function assertSource(value: string): QuestionSource {
+  return isQuestionSource(value) ? value : 'adaptive';
 }
 function toAnswerDTO(row: InterviewAnswerRow): AnswerDTO {
   return { questionId: row.question_id, revision: row.revision, status: assertStatus(row.status), content: row.content, createdAt: new Date(row.created_at).toISOString() };

@@ -37,7 +37,9 @@ Model-assisted, per the diagram. A submitted answer is checked via a gateway cal
 - **vague** → return ONE clarifying prompt (`detail`) + examples; the answer is NOT yet stored to memory (the
   founder re-answers). One clarify pass per answer (no unbounded loops).
 - **contradictory** → surface the conflict (`detail`) back to the founder as a question — **never a silent
-  override** (MEM-004 spirit); the founder resolves it. The contradiction is recorded (audit).
+  override** (MEM-004 spirit); the founder resolves it. No memory is written on a contradiction. Per the backlog,
+  P2-005's audit column is "Model usage metered" — the accountability is the fail-closed metered model call; a
+  registered conflict-EVENT audit is P2-007 ("Conflict events audited"), not P2-005.
 - **clear** → store the answer to typed memory (P2-006 `createMemoryItem`, `user_fact`/`constraint`/… by the
   interview source path).
 Detection is exercised by **seeded-defect / scripted-session** tests against the fake provider (backlog
@@ -69,10 +71,12 @@ No new grant beyond the existing SELECT+INSERT; the dual-keyed FORCE-RLS policie
 
 ## 7. Metering + audit + tenancy
 
-Every model call meters usage (the gateway writes `usage_events`, fail-closed — P2-003). The orchestration runs
-under `runInCompanyScope` (the restricted `acbp_app` role, dual-keyed RLS) exactly like the other interview use
-cases. A contradiction detection event is audited (`interview.*` — a new registered audit event; contract-level,
-additive). Question/answer/memory writes reuse the existing audited primitives.
+Every model call meters usage (the gateway writes `usage_events`, fail-closed — P2-003); that IS P2-005's audit
+per the backlog ("Model usage metered"). The orchestration composes the existing SCOPED primitives (getSessionQa,
+addInterviewQuestion, createMemoryItem), each running under `runInCompanyScope` (the restricted `acbp_app` role,
+dual-keyed RLS) — the model call happens BETWEEN scoped operations, never inside a held transaction. Memory
+writes reuse `createMemoryItem` (audited `memory.item_created`). NO new audit event is registered in P2-005; the
+conflict-EVENT audit is P2-007.
 
 ## 8. Slice plan
 
