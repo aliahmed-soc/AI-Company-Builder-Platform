@@ -9,5 +9,6 @@ export * from './audit/index.js';
 export * from './admin/index.js';
 export * from './discovery/index.js';
 export * from './memory/index.js';
+export * from './model/index.js';
 export * from './composition/index.js';
 
