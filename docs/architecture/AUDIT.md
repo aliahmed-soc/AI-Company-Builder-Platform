@@ -126,9 +126,22 @@ activity-projected:
   admit a 512-code-point astral-plane reason (up to 1024 UTF-16 units), the per-value metadata bound was raised
   512→1024 UTF-16 units (total-payload bound unchanged; boundary tests pin both).
 
+One durable, in-transaction **interview** event (ACBP-P2-001; CDR-022) — `interview.started`, emitted on
+`not_started→in_progress` in the session-start transaction.
+
+One durable, in-transaction **typed-memory** event (ACBP-P2-006; CDR-024) — AUDIT-ONLY, never activity-projected:
+
+- `memory.item_created` (`{item_type, source_type}`) — a typed memory item was created (MEM-003 "all changes
+  audited"). Written in the SAME transaction as the insert (audit-or-nothing: a write failure rolls the item
+  back, so no memory is ever unaudited); subject = the memory item id; actor/account/company stamped server-side
+  from the CompanyScope. Metadata is EXACTLY `{item_type, source_type}` — never the founder content or the raw
+  `source_ref` value (data minimization). The M3 domain fan-out (`understanding.corrected` → memory) and the
+  `interview.question_answered` → memory consumer remain deferred (no outbox yet).
+
 Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company,
-provisioning, and admin subsets, each domain's real-PostgreSQL producer test provides a **compile-exhaustive**
-driver over its subset, and a compile-time guard asserts the partition covers exactly the full operation set.
+provisioning, admin, interview, and memory subsets, each domain's real-PostgreSQL producer test provides a
+**compile-exhaustive** driver over its subset, and a compile-time guard asserts the partition covers exactly the
+full operation set.
 
 ## Explicitly deferred (still interim structured logs — NOT durable)
 

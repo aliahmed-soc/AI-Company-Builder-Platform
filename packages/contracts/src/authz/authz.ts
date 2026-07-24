@@ -69,6 +69,12 @@ export const AUTHZ_ACTIONS = [
   // confirmation effect (the P1-010→P1-013 per-ticket action convention).
   'interview:read',
   'interview:participate',
+  // Typed memory (ACBP-P2-006; CDR-024 §3). Checked against the caller's COMPANY-membership role: any active
+  // company member may READ the memory items and WRITE (create) a typed item. There is deliberately NO
+  // `memory:edit`/`memory:delete` action yet — the owner-only edit/delete/supersede operations belong to the
+  // memory browser (P2-010), which registers those actions when it implements them.
+  'memory:read',
+  'memory:write',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -137,6 +143,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // role governs). Confirmation (owner-only) is a separate future action, not part of this participate grant.
   'interview:read': ['owner', 'viewer'],
   'interview:participate': ['owner', 'viewer'],
+  // Typed memory (ACBP-P2-006; CDR-024 §3): read + write = any active company member (owner|viewer). Edit/delete
+  // (owner-only per API-CONTRACTS) are P2-010's separate actions, not part of this write grant.
+  'memory:read': ['owner', 'viewer'],
+  'memory:write': ['owner', 'viewer'],
 };
 
 /**

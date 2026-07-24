@@ -48,6 +48,7 @@ Retention default: activity-projected events with company data; audit-relevant e
 | interview.question_answered | Discovery | Understanding (incremental), memory (deferred — see note) | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |
 | understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
+| memory.item_created | Memory (P2-006) | audit only — never activity | item_type, source_type (no content, no raw source_ref) | audited in-tx (MEM-003 "all changes audited"); CDR-024 §4; actor/account/company server-stamped | with company |
 | understanding.confirmed | Understanding | Strategy (unlock), activity | understanding_version, confirmed_by | audited | permanent |
 | strategy.generated | Strategy | activity | option_ids[], similarity_check_result | — | with company |
 | strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |

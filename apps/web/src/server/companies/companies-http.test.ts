@@ -44,6 +44,8 @@ describe('toCompaniesResponse', () => {
     [{ status: 'company_not_active' }, 409],
     [{ status: 'answer', answer: { questionId: 'q', revision: 2, status: 'answered', content: 'hi', createdAt: '2026-01-01T00:00:00.000Z' }, created: true }, 200],
     [{ status: 'qa', qa: { sessionId: 's', items: [] } }, 200],
+    [{ status: 'memory_item', item: { memoryItemId: 'm', type: 'user_fact', content: 'hi', sourceType: 'interview_answer', sourceRef: 'r', confidence: null, confirmationState: 'proposed', supersededBy: null, createdAt: '2026-01-01T00:00:00.000Z' } }, 201],
+    [{ status: 'memory_list', items: [] }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],

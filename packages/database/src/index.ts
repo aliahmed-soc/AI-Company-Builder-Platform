@@ -52,6 +52,8 @@ export { InterviewSessionRepository } from './interview-repository.js';
 export type { InterviewExecutor } from './interview-repository.js';
 export { InterviewQaRepository } from './interview-qa-repository.js';
 export type { InterviewQaExecutor } from './interview-qa-repository.js';
+export { MemoryItemRepository } from './memory-item-repository.js';
+export type { MemoryItemExecutor, NewMemoryItemInput, ListMemoryItemsOptions } from './memory-item-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -126,6 +128,9 @@ export type {
   InterviewAnswersTable,
   InterviewAnswerRow,
   NewInterviewAnswer,
+  MemoryItemsTable,
+  MemoryItemRow,
+  NewMemoryItem,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

@@ -18,6 +18,7 @@ import {
   companyPaused,
   companyResumed,
   interviewStarted,
+  memoryItemCreated,
   type AuditEventName,
 } from './index.js';
 
@@ -75,6 +76,8 @@ describe('event-name registry (deny unregistered)', () => {
     ].concat([
       // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — exactly one audit-only session event.
       'interview.started',
+      // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
+      'memory.item_created',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -207,5 +210,11 @@ describe('typed factories', () => {
 
   test('interviewStarted rejects an empty subject id (no session, no event)', () => {
     expect(() => interviewStarted({ sessionId: '' })).toThrow();
+  });
+
+  test('memoryItemCreated carries only bounded {item_type, source_type} — never content or source_ref', () => {
+    const ev = memoryItemCreated({ memoryItemId: 'mem_1', itemType: 'user_fact', sourceType: 'interview_answer' });
+    expect(ev).toEqual({ name: 'memory.item_created', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'success', metadata: { item_type: 'user_fact', source_type: 'interview_answer' } });
+    expect(Object.isFrozen(ev)).toBe(true);
   });
 });

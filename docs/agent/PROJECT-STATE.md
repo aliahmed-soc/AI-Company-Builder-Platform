@@ -3,7 +3,51 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-002 finalization.** Status **Done**; feature head `71657ae` (review fixes), exact-head CI
+- **ACBP-P2-006 finalization.** Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
+  **30090738122 green** (real-PG memory suites + HTTP adversarial + reverse-fully migration cycle; local full
+  suite 115 files / 1286 / 0 skipped). Both independent reviews CLEAN with explicit CORRECT verdicts on the
+  migration root-cause fix and the audit atomicity/decision (not an owner gate); all findings fixed
+  (P2-006-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI → PR #22 ready → recheck
+  main/PR#10 → squash-merge **"ACBP-P2-006: Typed memory items with provenance"** (no Co-Authored-By) →
+  exact-main CI → delete branch → next Phase 2 ticket.
+- Migrations 0001–0014; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime; `memory_items` dual-keyed FORCE RLS (SELECT+INSERT only). `memory.item_created` audited in-tx.
+- **Migration-cycle blocker (prior window) — ROOT-CAUSED + FIXED (Class T):** a window-1 bulk drop-list edit had
+  inserted `memory_items` into migration `0013`'s down loop → 42P01 on multi-step migrate-down. Fixed
+  (`cb43315`): 0013.down reverted to its own tables; the two speculative changes reverted (0014 self-FK restored,
+  0014.down standard pattern). Diagnosed on a disposable PostgreSQL (Windows-native 5433, isolated DB,
+  command-local env; `.env.local` untouched).
+- **P2-001/P2-002/P2-006 — Done.** Phase 2: **3 Done / 9 Planned.** P2-003/P2-005 gated by open question IOQ-13.
+- **Design (CDR-024):** `memory_items` (migration 0014) with the **closed 8-type enum** (user_fact,
+  user_preference, constraint, ai_assumption, research_finding, approved_decision, measured_outcome,
+  correction; type set by source path, untyped rejected), 6-value `source_type` + resolvable `source_ref`
+  (encodes the pinned interview-answer `(question_id, revision)`), nullable confidence/superseded_by (populated
+  by P2-008/P2-010), confirmation_state default 'proposed'. Dual-keyed FORCE RLS, SELECT+INSERT only
+  (append-only for P2-006; supersede is P2-010). Operations create + list; authz `memory:write`/`memory:read`
+  (owner|viewer). **Audit REQUIRED** (contrast P2-002): `memory.item_created` written in-transaction (ADR-015),
+  metadata `{item_type, source_type}` only — flagged in CDR-024 §4 for owner visibility (new event name;
+  implements the canonical "All changes audited"; additive/reversible). Out of scope: context assembly (P2-007),
+  understanding/confidence-scoring (P2-008), the browser + edit/delete/supersede (P2-010).
+- **Migration-cycle blocker — ROOT-CAUSED + FIXED (window 2).** The 42P01 `relation "public.memory_items" does
+  not exist` in the multi-step `migrateDown`/`migrateTo(earlier)` suites was **Class T**: a window-1 bulk
+  drop-list edit (adding `memory_items` to test cleanup lists) also matched and edited **migration `0013`'s down
+  loop**, so `0013.down` ran `drop policy/revoke … on public.memory_items`. During a down PAST 0013, `0014.down`
+  had already dropped `memory_items` (step 0, success), so `0013.down` raised 42P01 at step 1. The single-step
+  memory-items test passed because it never reached `0013.down`. Fix: `0013.down` reverted to its own tables
+  (`['interview_answers','interview_questions']` — matches main). Also reverted the two window-1 speculative
+  changes made for the wrong hypothesis: `0014` self-FK on `superseded_by` **restored** (integrity), and
+  `0014.down` restored to the standard policy-drop+revoke+drop-table pattern (matches 0012/0013). Verified on a
+  disposable PostgreSQL (Docker daemon unresponsive → used the Windows-native 5433 cluster, isolated
+  `acbp_p2006_test` DB, command-local env — `.env.local` untouched): full suite **114 files / 1277 tests / 0
+  failed / 0 skipped**, including reverse-fully-and-reapply + the 8 previously-failing suites.
+- **Next:** push the fix (exact-head hosted CI green, zero skips), then P2-006 slices 3–5 (core create/list +
+  audited-in-tx `memory.item_created`, API, adversarial+docs), reviews, finalize. Branch
+  `p2-006-typed-memory-items`, draft PR #22, CDR-024; **main untouched/green** at `1c49c55`.
+- **ACBP-P2-002 — Done** (squash `1c49c55`, PR #21). Phase 2: 2 Done / 10 Planned. P2-003/P2-005 gated by open
+  question IOQ-13; P2-006 is the sole unblocked ticket.
+
+## ACBP-P2-002 detail (Done) — branch `p2-002-question-answer-persistence`, PR #21, CDR-023
+- Status **Done**; feature head `71657ae` (review fixes), exact-head CI
   **30075033944 green** — real-PG Q&A suites (append-only revisions, idempotent no-op, concurrent
   distinct-both-persist + identical-collapse, NOT-NULL author, cross-tenant isolation) + HTTP adversarial all
   passed. Both independent reviews CLEAN with an explicit verdict that the CDR-023 §4 audit-deferral is

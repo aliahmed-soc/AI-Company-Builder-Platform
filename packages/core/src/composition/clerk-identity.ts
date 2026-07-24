@@ -51,6 +51,7 @@ import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, typ
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
 import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
 import { recordInterviewAnswer, getSessionQa, type InterviewQaParams, type InterviewQaOptions, type RecordAnswerResult, type GetSessionQaResult } from '../discovery/interview-qa.js';
+import { createMemoryItem, listMemoryItems, type CreateMemoryItemParams, type ListMemoryItemsParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult } from '../memory/memory-item.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -164,6 +165,13 @@ export interface ClerkIdentityRuntime {
    */
   recordInterviewAnswer(params: InterviewQaParams & { questionId: string; status: unknown; content?: unknown }, options?: InterviewQaOptions): Promise<RecordAnswerResult>;
   getSessionQa(params: InterviewQaParams, options?: InterviewQaOptions): Promise<GetSessionQaResult>;
+  /**
+   * Typed memory (ACBP-P2-006; CDR-024). `createMemoryItem` persists a typed item (type set by source path)
+   * and audits `memory.item_created` in the same transaction; `listMemoryItems` returns the company's items.
+   * Both company-scoped; write/read = any active company member.
+   */
+  createMemoryItem(params: CreateMemoryItemParams, options?: MemoryOptions): Promise<CreateMemoryItemResult>;
+  listMemoryItems(params: ListMemoryItemsParams, options?: MemoryOptions): Promise<ListMemoryItemsResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -249,6 +257,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getSessionQa(params, options) {
       return getSessionQa(client, params, options ?? {});
+    },
+    createMemoryItem(params, options) {
+      return createMemoryItem(client, params, options ?? {});
+    },
+    listMemoryItems(params, options) {
+      return listMemoryItems(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});

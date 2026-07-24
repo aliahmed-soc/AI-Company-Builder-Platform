@@ -15,6 +15,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'company.update',
       // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — deliberately approved addition.
       'interview.start',
+      // Typed memory (ACBP-P2-006; CDR-024 §4) — deliberately approved addition.
+      'memory.create',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -39,6 +41,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['provisioning.complete']).toBe('provisioning.completed');
     expect(AUDITED_OPERATIONS['admin.tenant_read']).toBe('admin.tenant_read');
     expect(AUDITED_OPERATIONS['interview.start']).toBe('interview.started');
+    expect(AUDITED_OPERATIONS['memory.create']).toBe('memory.item_created');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

@@ -38,6 +38,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Interview sessions (ACBP-P2-001; CDR-022 §6): read + participate = any active company member.
   'interview:read': ['owner', 'viewer'],
   'interview:participate': ['owner', 'viewer'],
+  // Typed memory (ACBP-P2-006; CDR-024 §3): read + write = any active company member.
+  'memory:read': ['owner', 'viewer'],
+  'memory:write': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

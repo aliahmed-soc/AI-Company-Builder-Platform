@@ -8,8 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult } from '@acbp/core';
+import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -32,7 +32,9 @@ export type CompaniesRequestResult =
   | { readonly status: 'interview'; readonly session: InterviewSessionDTO }
   | { readonly status: 'company_not_active' }
   | { readonly status: 'answer'; readonly answer: AnswerDTO; readonly created: boolean }
-  | { readonly status: 'qa'; readonly qa: SessionQADTO };
+  | { readonly status: 'qa'; readonly qa: SessionQADTO }
+  | { readonly status: 'memory_item'; readonly item: MemoryItemDTO }
+  | { readonly status: 'memory_list'; readonly items: readonly MemoryItemDTO[] };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -53,6 +55,8 @@ export interface CompanyRuntime {
   getInterviewSession(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetInterviewResult>;
   recordInterviewAnswer(params: { userId: string; accountId: string; companyId: string; sessionId: string; questionId: string; status: unknown; content?: unknown }, options?: { logger?: Logger }): Promise<RecordAnswerResult>;
   getSessionQa(params: { userId: string; accountId: string; companyId: string; sessionId: string }, options?: { logger?: Logger }): Promise<GetSessionQaResult>;
+  createMemoryItem(params: { userId: string; accountId: string; companyId: string; type: unknown; content: unknown; sourceType: unknown; sourceRef: unknown; confidence?: unknown }, options?: { logger?: Logger }): Promise<CreateMemoryItemResult>;
+  listMemoryItems(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ListMemoryItemsResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -353,5 +357,36 @@ export async function getQaForRequest(companyId: string, deps: CompaniesRequestD
       return { status: 'forbidden' };
     case 'not_found':
       return { status: 'not_found' };
+  }
+}
+
+// Typed memory (ACBP-P2-006; CDR-024). accountId + userId are server-resolved; companyId is a membership-
+// validated selector. The type is set by the source path (a generated claim can never become a user_fact —
+// enforced in @acbp/core). write/read = any active company member.
+export async function createMemoryForRequest(companyId: string, input: { type: unknown; content: unknown; sourceType: unknown; sourceRef: unknown; confidence: unknown }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.createMemoryItem({ userId: ctx.userId, accountId: ctx.accountId, companyId, type: input.type, content: input.content, sourceType: input.sourceType, sourceRef: input.sourceRef, confidence: input.confidence }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'memory_item', item: r.item };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'validation':
+      return { status: 'validation', error: r.error };
+  }
+}
+
+export async function listMemoryForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listMemoryItems({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'memory_list', items: r.items };
+    case 'forbidden':
+      return { status: 'forbidden' };
   }
 }
