@@ -21,4 +21,19 @@ export {
   type RecordAnswerResult,
   type GetSessionQaResult,
 } from './interview-qa.js';
+export {
+  generateAdaptiveBatch,
+  evaluateAnswer,
+  suggestAssumptionForSkip,
+  formatPriorAnswers,
+  type ModelGateway,
+  type OrchestrationDeps,
+  type OrchestrationOptions,
+  type GenerateBatchParams,
+  type EvaluateAnswerParams,
+  type SuggestAssumptionParams,
+  type GenerateBatchResult,
+  type EvaluateAnswerResult,
+  type SuggestAssumptionResult,
+} from './orchestration.js';
 

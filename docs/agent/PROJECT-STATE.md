@@ -3,6 +3,24 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P2-005 adaptive question orchestration — FINALIZING (autonomous window; finalization pre-authorized).**
+  Branch `p2-005-adaptive-orchestration` (from main `68a022b`), PR **#26**, CDR-028. Selected via canon discovery
+  over P2-005 vs P2-007 (both Ready/unblocked; P2-005 is on the M2/M3 critical path, P2-007 only feeds a Phase-5
+  worker). Delivers the adaptive interview ENGINE (diagram 04: batch→ask→answer/IDK/pause→vague/contradiction
+  check→store→loop): contracts (parseFollowUps/parseAnswerQuality/parseAssumption deny-by-default + QuestionSource);
+  migration 0018 (`interview_questions.rationale` + `.source`, additive immutable); two registry templates
+  (interview.answer_quality/assumption); pure DISC rules (≤3 cap, static-fallback flag, fail-open detection,
+  assumption→ai_assumption); use cases (generateAdaptiveBatch/evaluateAnswer/suggestAssumptionForSkip) composing
+  the scoped primitives + the P2-003 gateway (model call BETWEEN scopes); composition validator. Built TDD; unit +
+  **real-PG integration 8/8** (adaptive persist+metering, static fallback, ≤3 rule, clear→user_fact, vague/contra
+  no-memory, IDK→ai_assumption, non-member forbidden). Uses the deterministic FAKE provider; **live generation +
+  the HTTP orchestration routes are the deferred owner gate CDR-026 §0** — the engine is proven by the scripted
+  integration suite (CDR-028 §8). Independent security/scope review **CLEAN** (no Crit/High/Med; 3 LOW retained;
+  API-deferral accepted as documented/precedent-consistent — P2-005-REVIEW-COVERAGE.md). Web build + audit green;
+  unit 888/0. **Finalization sequence:** records commit → push → exact-head hosted CI (zero-skip) → PR #26 ready →
+  squash-merge "ACBP-P2-005: Adaptive question orchestration" (no Co-Authored-By) → exact-main CI → delete branch →
+  next Ready ticket. Phase 2 after merge: **7/12 Done**; P2-007 (context assembly) + P2-008 (understanding, deps
+  P2-005+P2-006) become the next Ready candidates.
 - **ACBP-P2-004 prompt/template registry — DONE (autonomous window).** Branch `p2-004-prompt-template-registry`
   (from main `d95fafb`), PR **#25**. Provider-neutral versioned template registry in `@acbp/contracts`
   (`model/template.ts`): `TemplateDefinition {family, version, taskClass, segments, slots}`, `resolveTemplateRef`

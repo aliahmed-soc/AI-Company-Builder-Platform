@@ -354,6 +354,10 @@ export interface InterviewQuestionsTable {
   company_id: ColumnType<string, string, never>;
   position: ColumnType<number, number, never>;
   prompt: ColumnType<string, string, never>;
+  // Adaptive-orchestration columns (ACBP-P2-005; migration 0018). Set at INSERT, immutable like the rest of the
+  // row. `rationale` = the "why we ask" (DISC-006); `source` = 'adaptive' | 'static_fallback' (default 'adaptive').
+  rationale: ColumnType<string | null, string | null | undefined, never>;
+  source: ColumnType<string, string | undefined, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 

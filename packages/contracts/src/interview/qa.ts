@@ -10,6 +10,7 @@
 // lifecycle is DERIVED from the answers, never a mutable column. An answer is APPEND-ONLY (`A`): a revision is a
 // NEW row, and the current answer is the highest revision per question. This module owns the pure derivations.
 import { validationError } from '../errors.js';
+import type { QuestionSource } from './orchestration.js';
 import type { PublicErrorEnvelope } from '../errors.js';
 
 /** The closed answer statuses. `skipped` is the "I don't know" path — a skip records no founder content. */
@@ -56,6 +57,10 @@ export interface QuestionDTO {
   readonly questionId: string;
   readonly position: number;
   readonly prompt: string;
+  /** The "why we ask" rationale (DISC-006), or null for legacy/manually-seeded questions. (ACBP-P2-005) */
+  readonly rationale: string | null;
+  /** How the question was produced: 'adaptive' (model) | 'static_fallback' (flagged non-adaptive). (ACBP-P2-005) */
+  readonly source: QuestionSource;
   readonly createdAt: string;
 }
 

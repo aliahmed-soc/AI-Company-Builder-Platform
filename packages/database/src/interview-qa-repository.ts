@@ -24,11 +24,21 @@ export class InterviewQaRepository {
   }
 
   /** Insert an immutable question at `position`. The `(session_id, position)` unique constraint rejects a slot
-   *  collision (a concurrent add at the same computed position → the loser retries at the caller's discretion). */
-  insertQuestion(accountId: string, companyId: string, sessionId: string, position: number, prompt: string): Promise<InterviewQuestionRow> {
+   *  collision (a concurrent add at the same computed position → the loser retries at the caller's discretion).
+   *  `rationale` (the "why we ask", DISC-006) and `source` ('adaptive' | 'static_fallback', DISC-002 — migration
+   *  0018) are optional: omitting `source` applies the DB default 'adaptive'; omitting `rationale` stores null. */
+  insertQuestion(accountId: string, companyId: string, sessionId: string, position: number, prompt: string, rationale?: string | null, source?: string): Promise<InterviewQuestionRow> {
     return this.#db
       .insertInto('interview_questions')
-      .values({ account_id: accountId, company_id: companyId, session_id: sessionId, position, prompt })
+      .values({
+        account_id: accountId,
+        company_id: companyId,
+        session_id: sessionId,
+        position,
+        prompt,
+        ...(rationale !== undefined ? { rationale } : {}),
+        ...(source !== undefined ? { source } : {}),
+      })
       .returningAll()
       .executeTakeFirstOrThrow();
   }

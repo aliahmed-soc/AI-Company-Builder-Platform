@@ -7,3 +7,4 @@ export {
   type CallModelOptions,
   type BoundModelGateway,
 } from './model-gateway.js';
+export { interviewOutputValidator } from './interview-gateway.js';
