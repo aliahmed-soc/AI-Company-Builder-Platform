@@ -1,0 +1,104 @@
+# Interview sessions (ACBP-P2-001)
+
+The durable, company-scoped founder-discovery **session envelope**: the entity, the server-enforced state
+machine, exact resume, and the one audited event. Delivered under **CDR-022**; requirement **DISC-007**;
+governing **ADR-008** (durability/checkpoint semantics); state machine **WORKFLOW-STATE-MACHINES.md §2**.
+
+This is the persistence substrate every later M2/M3 discovery ticket attaches to. It is deliberately narrow:
+questions/answers/revisions (P2-002), question generation and adaptivity (P2-005), the model gateway (P2-003),
+typed memory (P2-006), and understanding/strategy generation (M3) are **out of scope** and build on top of it.
+
+## State machine
+
+```
+not_started → in_progress ⇄ waiting_for_user → ready_for_review → confirmed ⏹ → superseded ⏹
+```
+
+Six states, closed and fully decided now (`@acbp/contracts` `INTERVIEW_SESSION_STATES`). Terminal: `confirmed`
+(produces the understanding version) and `superseded` (no outgoing transition). The **full** legal-transition
+map lives in the contract (`isLegalInterviewTransition`), so illegal transitions are rejected uniformly from
+day one — but P2-001 gives executable operations to only three of them:
+
+| Transition | Operation (P2-001) | Notes |
+|---|---|---|
+| not_started → in_progress | `startInterviewSession` | pre = company **active**; emits `interview.started`; idempotent |
+| in_progress → waiting_for_user | `suspendInterviewSession` | the user pauses / leaves |
+| waiting_for_user → in_progress | `resumeInterviewSession` | **exact resume** (DISC-007) |
+| in_progress → ready_for_review | later (M3) | effect = understanding draft |
+| ready_for_review → confirmed | later (P2-009, owner-only) | effect = strategy unlock |
+| confirmed → superseded | later (P2-002, DISC-008) | opens a new session/version |
+
+The state machine is **server-enforced**: a transition is validated against the contract map, and the
+repository UPDATE carries the `from`-state predicate as an optimistic-concurrency backstop (a racing transition
+finds the row no longer in `from` and applies nothing).
+
+## Exact resume + recovery
+
+- **"Close/reopen restores exactly" (DISC-007):** the durable `interview_sessions` row is the single source of
+  truth. Closing performs no write; reopening is a consistent read of the same committed row. A company has at
+  most one **open** (non-superseded) session, so the operations target it — the caller never needs a session id.
+- **"Recovers to last confirmed answer" (DISC-007 edge):** realized as **atomic transitions** — every
+  transition writes state (+ any effect + audit) in ONE transaction, so a failed transition rolls back wholly
+  and a reader never observes a half-applied state. In P2-001 there are no answers yet, so the checkpoint is the
+  session's last committed state; per-*answer* checkpoint recovery becomes meaningful in P2-002.
+
+The M2 kill-and-resume proof (real PostgreSQL) starts a session, suspends it to `waiting_for_user`, then shows
+the durable state survives independent transactions **and** a direct storage-layer read before resuming.
+
+## Data model — `interview_sessions` (migration 0012)
+
+Additive expand migration (0001–0011 untouched; **no** new SECURITY DEFINER function — still exactly three; no
+BYPASSRLS; no owner runtime connection). Company-scoped, mirroring the P1-012 dual-keyed FORCE-RLS pattern:
+
+- `id` (server-generated uuid, the `session_id`), `account_id`, `company_id` (FKs, cascade); `state` (CHECK the
+  closed six states); `started_at` (set on the first entry to `in_progress`); `created_at`; `updated_at`.
+  Shape CHECK: `started_at` is set iff `state <> 'not_started'`.
+- **One open session per company:** a partial unique index on `(company_id) WHERE state <> 'superseded'`.
+- **Least privilege:** `grant select, insert`; `grant update (state, started_at, updated_at)` only — identity
+  columns are immutable to `acbp_app` at the privilege level; no DELETE/TRUNCATE.
+- **FORCE RLS**, dual-keyed fail-closed policies (select/insert/update) requiring `account_id = current_account
+  AND company_id = current_company` — a validated `CompanyScope`, never account-only authority.
+
+## Authorization (ADR-022)
+
+Two closed authz actions, checked against the caller's **company**-membership role (API-CONTRACTS "Company
+member"): `interview:read` and `interview:participate`, both `owner | viewer`. There is deliberately **no**
+`interview:confirm` yet — the owner-only `ready_for_review → confirmed` transition's operation belongs to P2-009,
+which registers that action when it implements the confirmation effect.
+
+## Audit — `interview.started` (audit-only; activity projection deferred)
+
+Exactly one durable event: `interview.started`, emitted on `not_started → in_progress`, company-scoped (the
+writer stamps `company_id`/`account_id` from the `CompanyScope`; subject = the session id; empty metadata). It
+is registered in the closed `AUDIT_EVENTS` set and produced by exactly one approved operation
+(`interview.start`) in the core audit-completeness partition.
+
+`interview.started` is shipped **audit-only**. EVENT-CATALOG lists it as also fanning out to the activity feed,
+but projecting it would extend P1-009's deliberately **closed** activity taxonomy (which the P1-014 adversarial
+suite pins), a change better isolated to when the discovery activity/memory surface (M3) consumes it.
+Audit-only-now → project-later is additive and reversible (CDR-022 §4). `interview.question_answered`
+(EVENT-CATALOG:48) is a P2-002 concern and is not introduced here.
+
+## HTTP API
+
+All authenticated; the acting user + account are server-resolved; `companyId` is a membership-validated
+selector; no request body and no query parameters are accepted (any query → bounded 400); every handler wraps
+throws into the bounded generic 500 envelope.
+
+| Method + path | Operation |
+|---|---|
+| `GET  /api/companies/{companyId}/interview` | current open session |
+| `POST /api/companies/{companyId}/interview` | start (idempotent) |
+| `POST /api/companies/{companyId}/interview/suspend` | in_progress → waiting_for_user |
+| `POST /api/companies/{companyId}/interview/resume` | waiting_for_user → in_progress |
+
+Responses: `200 { session }` (redacted DTO — sessionId, companyId, state, honest phase, timestamps; no
+accountId/actor); `company_not_active` → coarse `409`; `invalid_transition` → `409 { from }`; `not_found` →
+`404`; any denial → one opaque `403`.
+
+## Deferred (explicit)
+
+Activity projection of `interview.started`; questions/answers/revisions and `interview.question_answered`
+(P2-002); generation/adaptivity/batching (P2-005); gateway + usage (P2-003); memory (P2-006);
+understanding/strategy generation and the effects of the `ready_for_review`/`confirmed`/`superseded`
+transitions (M3); the `interview:confirm` authz action (P2-009); per-answer checkpoint recovery (P2-002).
