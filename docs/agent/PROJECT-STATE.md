@@ -3,10 +3,19 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **PHASE 2 begun.** Phase 1 complete + merged (`origin/main` was `85fcb8f`; records `21d8029`). Now on
-  **ACBP-P2-001 "Interview session persistence and state machine"** (M2), branch
-  `p2-001-interview-session-state-machine` from `main`, governed by **CDR-022**. No owner gate (canon fully
-  pins the state set, resume semantics, tenancy keying and events).
+- **ACBP-P2-001 finalization.** Status **Done**; feature head `28020b6` (review fixes), exact-head CI
+  **30070692829 green** — 108 test files, audit clean, real-PG interview suites + kill-and-resume +
+  concurrent-start all passed. Both independent reviews returned no security defect (security CLEAN); all
+  observations fixed (P2-001-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI →
+  PR #20 ready → recheck main/PR#10 → squash-merge **"ACBP-P2-001: Interview session persistence and state
+  machine"** (no Co-Authored-By) → exact-main CI → delete branch → next Phase 2 ticket.
+- Migrations 0001–0012; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime connection; `interview_sessions` dual-keyed FORCE RLS.
+- **11 Phase 2 tickets remain Planned.** Next candidates: P2-002 (Q&A persistence, deps P2-001 now Done) or
+  P2-006 (typed memory, deps P1-005 Done). P2-003 gated by open question IOQ-13.
+- **PR #10** still OPEN/draft/external — inspect GitHub state only; never touch.
+
+## ACBP-P2-001 detail (Done) — branch `p2-001-interview-session-state-machine`, PR #20, CDR-022
 - **Design (CDR-022):** the durable, company-scoped interview **session envelope** + server-enforced state
   machine (§2 six states) + exact resume + `interview.started` (audit-only; activity projection DEFERRED so
   P1-009's closed taxonomy isn't expanded in a persistence slice) + illegal-transition rejection. P2-001
