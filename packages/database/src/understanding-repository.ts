@@ -97,6 +97,11 @@ export class UnderstandingRepository {
     return this.#db.selectFrom('understanding_documents').selectAll().where('id', '=', id).executeTakeFirst();
   }
 
+  /** The company's CURRENT (highest-version) understanding document (RLS-confined); undefined when none exists yet. */
+  currentDocument(companyId: string): Promise<UnderstandingDocumentRow | undefined> {
+    return this.#db.selectFrom('understanding_documents').selectAll().where('company_id', '=', companyId).orderBy('version', 'desc').limit(1).executeTakeFirst();
+  }
+
   /** The items of a document version (RLS-confined), in insertion order. */
   listItems(documentId: string): Promise<UnderstandingItemRow[]> {
     return this.#db.selectFrom('understanding_items').selectAll().where('document_id', '=', documentId).orderBy('id', 'asc').execute();
