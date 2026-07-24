@@ -119,6 +119,26 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
     expect(row.superseded_by).toBe(id2);
   });
 
+  test('soft delete (0016): deleted_at/deleted_by_user_id updatable; PAIR + mutual-exclusion CHECKs; content/hard-delete still forbidden', async () => {
+    const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
+    // The two delete columns ARE updatable (0016 grant) — mark it deleted.
+    await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now(), deleted_by_user_id = ${userU}::uuid where id = ${id}::uuid`.execute(k));
+    const row = await asApp(scope(accountA, companyA1), (k) => k.selectFrom('memory_items').select(['deleted_at', 'deleted_by_user_id']).where('id', '=', id).executeTakeFirstOrThrow());
+    expect(row.deleted_at).not.toBeNull();
+    expect(row.deleted_by_user_id).toBe(userU);
+    // PAIR check: deleted_at without deleted_by_user_id (and vice versa) is rejected.
+    const id2 = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now() where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_by_user_id = ${userU}::uuid where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    // Mutual-exclusion: a row cannot be both superseded and deleted.
+    const id3 = await insertItem(accountA, companyA1, 'user_fact', 'user_edit', 'c', id2);
+    await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set superseded_by = ${id3}::uuid where id = ${id2}::uuid`.execute(k));
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now(), deleted_by_user_id = ${userU}::uuid where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    // A hard DELETE and a content UPDATE are still forbidden even for a deleted row.
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`delete from memory_items where id = ${id}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set content = 'x' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
+  });
+
   test('closed type + source CHECKs; the TYPE-BY-SOURCE-PATH CHECK (generated source can never be user_fact)', async () => {
     await expect(insertItem(accountA, companyA1, 'opinion', 'interview_answer')).rejects.toThrow(); // bad type
     await expect(insertItem(accountA, companyA1, 'user_fact', 'guess')).rejects.toThrow(); // bad source

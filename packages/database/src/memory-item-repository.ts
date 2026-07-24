@@ -4,7 +4,7 @@
 // under the correct RLS scope — every method requires a validated COMPANY scope (the dual-keyed policies deny
 // anything else). Kysely parameterized queries only; no raw SQL interpolation. There is deliberately NO
 // update/delete method: P2-006 creates + lists only (supersede/confirm/delete are P2-010/M3).
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DatabaseSchema, MemoryItemRow } from './schema.js';
 
 export type MemoryItemExecutor = Kysely<DatabaseSchema>;
@@ -62,9 +62,11 @@ export class MemoryItemRepository {
    * `(created_at desc, id desc)`, optionally filtered to a single `type`, bounded by `limit`.
    */
   list(options: ListMemoryItemsOptions): Promise<MemoryItemRow[]> {
-    let q = this.#db.selectFrom('memory_items').selectAll();
+    // Deleted items are ALWAYS omitted from the browser (CDR-025 §6; no includeDeleted toggle). The row stays in
+    // storage for history/audit, but never surfaces through list/get.
+    let q = this.#db.selectFrom('memory_items').selectAll().where('deleted_at', 'is', null);
     if (options.type !== undefined) q = q.where('type', '=', options.type);
-    // `currentOnly` shows only live items (not yet superseded) — the browser's default view.
+    // `currentOnly` further restricts to live items (not yet superseded) — the browser's default view.
     if (options.currentOnly === true) q = q.where('superseded_by', 'is', null);
     return q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
   }
@@ -83,6 +85,24 @@ export class MemoryItemRepository {
    */
   async supersede(oldId: string, newId: string): Promise<number> {
     const r = await this.#db.updateTable('memory_items').set({ superseded_by: newId }).where('id', '=', oldId).where('superseded_by', 'is', null).executeTakeFirst();
+    return Number(r.numUpdatedRows);
+  }
+
+  /**
+   * Soft-delete an item: set `deleted_at = now()` (SERVER clock) + `deleted_by_user_id`, guarded so ONLY a
+   * current active item transitions (`superseded_by IS NULL AND deleted_at IS NULL`). A concurrent delete or a
+   * supersede that already moved the row matches 0 rows → the caller maps that to a bounded conflict, so at most
+   * one transaction performs the transition (and thus writes one audit event). Only the two delete columns are
+   * touched (0016 grant); content/type/source stay immutable. Returns the number of rows updated.
+   */
+  async softDelete(id: string, deletedByUserId: string): Promise<number> {
+    const r = await this.#db
+      .updateTable('memory_items')
+      .set({ deleted_at: sql<Date>`now()`, deleted_by_user_id: deletedByUserId })
+      .where('id', '=', id)
+      .where('superseded_by', 'is', null)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
     return Number(r.numUpdatedRows);
   }
 }

@@ -12,7 +12,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem } from './memory-item.js';
+import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, deleteMemoryItem } from './memory-item.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
@@ -172,6 +172,80 @@ describe.skipIf(!hasTestDatabase)('typed memory use cases (real PostgreSQL, rest
     expect((await getMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId })).status).toBe('ok');
     expect((await getMemoryItem(product, { ...base(w.aOwner), memoryItemId: '00000000-0000-4000-8000-0000000000ff' })).status).toBe('not_found');
     expect((await getMemoryItem(product, { userId: w.outsider, accountId: w.accountA, companyId: w.companyA1, memoryItemId: created.item.memoryItemId })).status).toBe('forbidden');
+  });
+
+  test('DELETE = soft delete (owner-only, audited): deleted_at + actor server-set; omitted from list/get; row survives (P2-010)', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'to delete' }) });
+    if (created.status !== 'ok') throw new Error('setup');
+    const id = created.item.memoryItemId;
+
+    // A viewer may NOT delete (owner-only).
+    expect((await deleteMemoryItem(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, memoryItemId: id })).status).toBe('forbidden');
+
+    const del = await deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: id });
+    expect(del.status === 'ok' && del.memoryItemId).toBe(id);
+    // deleted_at is server-written; deleted_by_user_id is the real actor.
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+    expect(row.deleted_by_user_id).toBe(w.aOwner);
+    expect(row.content).toBe('to delete'); // the row SURVIVES (soft delete; owner inspection sees history)
+    // Exactly one memory.item_deleted event; metadata carries no content.
+    const audits = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'memory.item_deleted').execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]!.subject_id).toBe(id);
+    expect(audits[0]!.actor_id).toBe(w.aOwner);
+    expect(audits[0]!.actor_type).toBe('user');
+    expect(audits[0]!.payload).toEqual({ item_type: 'user_fact', source_type: 'interview_answer', transition: 'active_to_deleted' });
+    // Omitted from list + get; re-delete and edit-after-delete are rejected.
+    const afterDel = await listMemoryItems(product, base(w.aOwner));
+    expect(afterDel.status === 'ok' && afterDel.items).toHaveLength(0);
+    expect((await getMemoryItem(product, { ...base(w.aOwner), memoryItemId: id })).status).toBe('not_found');
+    expect((await deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: id })).status).toBe('conflict');
+    expect((await editMemoryItem(product, { ...base(w.aOwner), targetId: id, type: 'user_fact', content: 'x' })).status).toBe('conflict');
+  });
+
+  test('DELETE rejects a superseded historical version; a foreign item is not_found (no existence oracle)', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact({ content: 'v1' }) });
+    if (created.status !== 'ok') throw new Error('setup');
+    const edited = await editMemoryItem(product, { ...base(w.aOwner), targetId: created.item.memoryItemId, type: 'user_fact', content: 'v2' });
+    if (edited.status !== 'ok') return;
+    // The old (superseded) version cannot be deleted.
+    expect((await deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId })).status).toBe('conflict');
+    // A foreign tenant deleting A1's item → forbidden (denied at scope); an unknown id → not_found (no oracle).
+    expect((await deleteMemoryItem(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, memoryItemId: edited.item.memoryItemId })).status).toBe('forbidden');
+    expect((await deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: '00000000-0000-4000-8000-0000000000ff' })).status).toBe('not_found');
+  });
+
+  test('DELETE audit atomicity: a failing audit writer leaves the row live and no audit row', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact() });
+    if (created.status !== 'ok') throw new Error('setup');
+    const boom = () => Promise.reject(new Error('boom'));
+    await expect(deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId }, { auditWriter: boom })).rejects.toThrow();
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', created.item.memoryItemId).executeTakeFirstOrThrow();
+    expect(row.deleted_at).toBeNull();
+    expect(row.deleted_by_user_id).toBeNull();
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'memory.item_deleted').execute()).toHaveLength(0);
+  });
+
+  test('CONCURRENT delete: exactly one state transition + one audit event; the loser gets conflict', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact() });
+    if (created.status !== 'ok') throw new Error('setup');
+    const [x, y] = await Promise.all([
+      deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId }),
+      deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId }),
+    ]);
+    const statuses = [x.status, y.status].sort();
+    expect(statuses).toEqual(['conflict', 'ok']); // exactly one ok, one conflict
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'memory.item_deleted').where('subject_id', '=', created.item.memoryItemId).execute()).toHaveLength(1);
+  });
+
+  test('DELETE writes NO activity_events row (memory.item_deleted is audit-only)', async () => {
+    const created = await createMemoryItem(product, { ...base(w.aOwner), ...fact() });
+    if (created.status !== 'ok') throw new Error('setup');
+    const before = await owner.kysely.selectFrom('activity_events').select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow();
+    await deleteMemoryItem(product, { ...base(w.aOwner), memoryItemId: created.item.memoryItemId });
+    const after = await owner.kysely.selectFrom('activity_events').select((eb) => eb.fn.countAll<string>().as('n')).executeTakeFirstOrThrow();
+    expect(Number(after.n)).toBe(Number(before.n));
   });
 
   test('CONCURRENT creation appends distinct rows (append-only; no overwrite)', async () => {

@@ -19,6 +19,7 @@ import {
   validateMemorySubmission,
   memoryItemCreated,
   memoryItemSuperseded,
+  memoryItemDeleted,
   isMemoryType,
   isMemorySourceType,
   type AuditEvent,
@@ -75,6 +76,13 @@ export interface GetMemoryItemParams {
   readonly companyId: string;
   readonly memoryItemId: string;
 }
+export interface DeleteMemoryItemParams {
+  /** Server-verified internal user id (NEVER a browser claim). */
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly memoryItemId: string;
+}
 export interface MemoryOptions {
   readonly correlationId?: string;
   readonly logger?: Logger;
@@ -91,6 +99,11 @@ export type EditMemoryItemResult =
   | { readonly status: 'conflict' }
   | { readonly status: 'validation'; readonly error: PublicErrorEnvelope };
 export type GetMemoryItemResult = { readonly status: 'ok'; readonly item: MemoryItemDTO } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
+export type DeleteMemoryItemResult =
+  | { readonly status: 'ok'; readonly memoryItemId: string }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'not_found' }
+  | { readonly status: 'conflict' };
 
 // ── create (audited in-transaction) ────────────────────────────────────────────────────────────────────
 export async function createMemoryItem(client: DatabaseClient, params: CreateMemoryItemParams, options: MemoryOptions = {}): Promise<CreateMemoryItemResult> {
@@ -170,7 +183,9 @@ export async function editMemoryItem(client: DatabaseClient, params: EditMemoryI
       const repo = new MemoryItemRepository(scope.db);
       const target = await repo.findById(params.targetId);
       if (target === undefined) return { status: 'not_found' };
-      if (target.superseded_by !== null) return { status: 'conflict' }; // already corrected by someone else
+      // Only the CURRENT active version is editable — a superseded historical version or a deleted item cannot be
+      // edited (its state conflicts with the operation).
+      if (target.superseded_by !== null || target.deleted_at !== null) return { status: 'conflict' };
 
       const created = await repo.insert({
         accountId: params.accountId,
@@ -201,7 +216,43 @@ export async function getMemoryItem(client: DatabaseClient, params: GetMemoryIte
     async (scope, role): Promise<GetMemoryItemResult> => {
       if (checkAuthorization(role, 'memory:read', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
       const row = await new MemoryItemRepository(scope.db).findById(params.memoryItemId);
-      return row === undefined ? { status: 'not_found' } : { status: 'ok', item: toDTO(row) };
+      // Deleted items are omitted from the browser (CDR-025 §6) — a deleted item reads as not_found.
+      if (row === undefined || row.deleted_at !== null) return { status: 'not_found' };
+      return { status: 'ok', item: toDTO(row) };
+    },
+    optionsFor(options),
+  );
+  return unwrapExtended(run);
+}
+
+// ── delete = soft delete (owner-only; audited in-tx) ───────────────────────────────────────────────────
+/**
+ * Soft-delete a CURRENT active memory item (CDR-025 §0; owner-only `memory:delete`). Sets `deleted_at` (server
+ * clock) + `deleted_by_user_id`, guarded so only an active item transitions (a superseded/already-deleted item →
+ * bounded `conflict`; a concurrent delete loses the guard → `conflict`, so exactly one transition + one audit).
+ * `memory.item_deleted` is written in the SAME transaction (audit-or-nothing — a failure leaves the row live and
+ * no audit row). No content overwrite, no hard delete, no dependent propagation (CDR-025 §8, deferred to M3/M4).
+ */
+export async function deleteMemoryItem(client: DatabaseClient, params: DeleteMemoryItemParams, options: MemoryOptions = {}): Promise<DeleteMemoryItemResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<DeleteMemoryItemResult> => {
+      if (checkAuthorization(role, 'memory:delete', { accountId: params.accountId, actorId: params.userId }, options).kind === 'deny') return { status: 'forbidden' };
+      const repo = new MemoryItemRepository(scope.db);
+      const target = await repo.findById(params.memoryItemId);
+      if (target === undefined) return { status: 'not_found' };
+      // Delete is permitted only for a current active item; a superseded historical version or an already-deleted
+      // item cannot be deleted (bounded conflict — no re-delete, no deleting history).
+      if (target.superseded_by !== null || target.deleted_at !== null) return { status: 'conflict' };
+
+      const updated = await repo.softDelete(params.memoryItemId, params.userId);
+      if (updated === 0) return { status: 'conflict' }; // raced: a concurrent delete/supersede moved it first
+      // memory.item_deleted in the SAME transaction — an audit failure rolls the delete back (row stays live).
+      await audit(scope, memoryItemDeleted({ memoryItemId: params.memoryItemId, itemType: target.type, sourceType: target.source_type }), auditContext(options));
+      options.logger?.info('memory.item_deleted', { metadata: { accountId: params.accountId, companyId: params.companyId, itemType: target.type, sourceType: target.source_type } });
+      return { status: 'ok', memoryItemId: params.memoryItemId };
     },
     optionsFor(options),
   );

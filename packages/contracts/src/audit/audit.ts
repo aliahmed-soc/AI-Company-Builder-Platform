@@ -65,6 +65,10 @@ export const AUDIT_EVENTS = {
   // the subject; the forward pointer now targets the new version). AUDITED in-tx (a lifecycle transition,
   // ADR-015). Metadata carries only the bounded {item_type, source_type} of the new version — never content.
   'memory.item_superseded': { schemaVersion: 1, subjectType: 'memory_item' },
+  // Memory browser (ACBP-P2-010; CDR-025 §0 owner decision) — an item was SOFT-deleted. AUDITED in-tx.
+  // Subject = the deleted item. Metadata = the bounded {item_type, source_type, transition:'active_to_deleted'}
+  // — never content, never the raw source_ref.
+  'memory.item_deleted': { schemaVersion: 1, subjectType: 'memory_item' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -261,4 +265,13 @@ export function memoryItemCreated(input: { readonly memoryItemId: string; readon
  */
 export function memoryItemSuperseded(input: { readonly supersededItemId: string; readonly newItemType: string; readonly newSourceType: string }): AuditEvent {
   return makeEvent('memory.item_superseded', input.supersededItemId, 'success', { item_type: input.newItemType, source_type: input.newSourceType });
+}
+
+/**
+ * A memory item was SOFT-deleted (ACBP-P2-010; CDR-025 §0). Subject = the deleted item id. Metadata is EXACTLY
+ * `{item_type, source_type, transition:'active_to_deleted'}` — bounded references only, never content or the raw
+ * source_ref.
+ */
+export function memoryItemDeleted(input: { readonly memoryItemId: string; readonly itemType: string; readonly sourceType: string }): AuditEvent {
+  return makeEvent('memory.item_deleted', input.memoryItemId, 'success', { item_type: input.itemType, source_type: input.sourceType, transition: 'active_to_deleted' });
 }
