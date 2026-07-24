@@ -3,14 +3,20 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **PHASE 1 COMPLETE.** All 15 Phase 1 backlog rows are **Done**. `origin/main` @ **`85fcb8f`** (P1-015 squash,
-  PR #17); exact-main CI **30065559857 green** — 104 files / 1159 passed / 0 failed / 0 skipped, plus the
-  hosted `pnpm demo:slice-a` step 11/11, High+ audit clean.
-- **Next: Phase 2.** Under the standing autonomous authorization, pick the first canonical Ready/unblocked
-  Phase 2 ticket by dependency + milestone order (not ticket-number order), run discovery, and implement in
-  TDD slices with per-slice exact-head hosted-green CI and independent review before finalization.
-- **P0-005 remains Blocked** (the one non-Done P0/P1 row) — a known blocked dependency; stop only if a Phase 2
-  ticket becomes genuinely blocked on it.
+- **PHASE 2 begun.** Phase 1 complete + merged (`origin/main` was `85fcb8f`; records `21d8029`). Now on
+  **ACBP-P2-001 "Interview session persistence and state machine"** (M2), branch
+  `p2-001-interview-session-state-machine` from `main`, governed by **CDR-022**. No owner gate (canon fully
+  pins the state set, resume semantics, tenancy keying and events).
+- **Design (CDR-022):** the durable, company-scoped interview **session envelope** + server-enforced state
+  machine (§2 six states) + exact resume + `interview.started` (audit-only; activity projection DEFERRED so
+  P1-009's closed taxonomy isn't expanded in a persistence slice) + illegal-transition rejection. P2-001
+  implements start/suspend/resume + read; the ready_for_review/confirmed/superseded transitions are defined in
+  the contract but their effects belong to later M2/M3 tickets. Migration 0012 `interview_sessions`
+  (dual-keyed FORCE RLS, column-immutable identity, one-open-session-per-company partial unique index). Authz
+  `interview:read`/`interview:participate` (owner|viewer). Four slices (contracts → migration → core → API).
+- **Selected over** P2-006 (unblocked but downstream/parallelizable) and P2-003 (gated by open question
+  IOQ-13). P2-001 is the root of the M2 dependency tree.
+- **P0-005 remains Blocked** — a known blocked dependency; stop only if a Phase 2 ticket becomes blocked on it.
 - **PR #10** (`p1-004-last-owner-race-fix`) still OPEN/draft/external — inspect GitHub state only; never touch.
 
 ## Phase 1 completion evidence (2026-07-24)
