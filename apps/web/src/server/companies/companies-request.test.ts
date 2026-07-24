@@ -19,6 +19,8 @@ import {
   getQaForRequest,
   createMemoryForRequest,
   listMemoryForRequest,
+  editMemoryForRequest,
+  getMemoryForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -54,6 +56,8 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     getSessionQa: () => Promise.resolve({ status: 'ok', qa: QA_DTO }),
     createMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
     listMemoryItems: () => Promise.resolve({ status: 'ok', items: [MEMORY_DTO] }),
+    editMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
+    getMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
     ...overrides,
   };
 }
@@ -317,17 +321,39 @@ describe('typed memory requests (ACBP-P2-006)', () => {
     expect(r).toEqual({ status: 'memory_item', item: MEMORY_DTO });
     // account + user are server-resolved; company is the selector; the raw body fields pass through to the domain.
     expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req', type: 'user_fact', content: 'hi', sourceType: 'interview_answer', sourceRef: 'q1:1', confidence: null }]);
-    expect((await listMemoryForRequest('co_req', { identity: identityDeps(), runtime })).status).toBe('memory_list');
+    expect((await listMemoryForRequest('co_req', {}, { identity: identityDeps(), runtime })).status).toBe('memory_list');
   });
 
   test('forbidden + validation propagate; a request cannot forge account/company (they are server-resolved)', async () => {
     expect((await createMemoryForRequest('c', body, { identity: identityDeps(), runtime: fakeRuntime({ createMemoryItem: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
     expect((await createMemoryForRequest('c', body, { identity: identityDeps(), runtime: fakeRuntime({ createMemoryItem: () => Promise.resolve({ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }) }) })).status).toBe('validation');
-    expect((await listMemoryForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ listMemoryItems: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await listMemoryForRequest('c', {}, { identity: identityDeps(), runtime: fakeRuntime({ listMemoryItems: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+  });
+
+  test('edit (supersede) + get: statuses propagate; the filter passes through to the runtime', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      listMemoryItems: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', items: [MEMORY_DTO] });
+      },
+    });
+    // The type + currentOnly filter reaches the runtime with server-resolved account/company.
+    await listMemoryForRequest('co_f', { type: 'user_fact', currentOnly: true }, { identity: identityDeps(), runtime });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_f', type: 'user_fact', currentOnly: true }]);
+    // edit → memory_edited (200); get → memory_item_single.
+    expect((await editMemoryForRequest('c', 'm1', { type: 'user_fact', content: 'x', confidence: null }, { identity: identityDeps(), runtime: fakeRuntime() }))).toEqual({ status: 'memory_edited', item: MEMORY_DTO });
+    expect((await getMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime() })).status).toBe('memory_item_single');
+    // edit domain outcomes propagate: forbidden (viewer), conflict (version guard), not_found, validation.
+    expect((await editMemoryForRequest('c', 'm1', { type: 'x', content: 'y', confidence: null }, { identity: identityDeps(), runtime: fakeRuntime({ editMemoryItem: () => Promise.resolve({ status: 'conflict' }) }) })).status).toBe('conflict');
+    expect((await editMemoryForRequest('c', 'm1', { type: 'x', content: 'y', confidence: null }, { identity: identityDeps(), runtime: fakeRuntime({ editMemoryItem: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+    expect((await getMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime({ getMemoryItem: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
   });
 
   test('unauthenticated / unverified refused on the memory endpoints', async () => {
     expect((await createMemoryForRequest('c', body, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
-    expect((await listMemoryForRequest('c', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await listMemoryForRequest('c', {}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+    expect((await editMemoryForRequest('c', 'm1', { type: 'x', content: 'y', confidence: null }, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
   });
 });

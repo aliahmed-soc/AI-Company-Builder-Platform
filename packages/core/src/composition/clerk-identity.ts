@@ -51,7 +51,7 @@ import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, typ
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
 import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
 import { recordInterviewAnswer, getSessionQa, type InterviewQaParams, type InterviewQaOptions, type RecordAnswerResult, type GetSessionQaResult } from '../discovery/interview-qa.js';
-import { createMemoryItem, listMemoryItems, type CreateMemoryItemParams, type ListMemoryItemsParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult } from '../memory/memory-item.js';
+import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, type CreateMemoryItemParams, type ListMemoryItemsParams, type EditMemoryItemParams, type GetMemoryItemParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult, type EditMemoryItemResult, type GetMemoryItemResult } from '../memory/memory-item.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -172,6 +172,8 @@ export interface ClerkIdentityRuntime {
    */
   createMemoryItem(params: CreateMemoryItemParams, options?: MemoryOptions): Promise<CreateMemoryItemResult>;
   listMemoryItems(params: ListMemoryItemsParams, options?: MemoryOptions): Promise<ListMemoryItemsResult>;
+  editMemoryItem(params: EditMemoryItemParams, options?: MemoryOptions): Promise<EditMemoryItemResult>;
+  getMemoryItem(params: GetMemoryItemParams, options?: MemoryOptions): Promise<GetMemoryItemResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -263,6 +265,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     listMemoryItems(params, options) {
       return listMemoryItems(client, params, options ?? {});
+    },
+    editMemoryItem(params, options) {
+      return editMemoryItem(client, params, options ?? {});
+    },
+    getMemoryItem(params, options) {
+      return getMemoryItem(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});
