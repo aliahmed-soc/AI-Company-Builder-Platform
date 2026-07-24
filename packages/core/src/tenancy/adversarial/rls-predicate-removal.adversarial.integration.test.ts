@@ -62,11 +62,17 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
 
   test(threatTitle('RLS-PREDICATE-REMOVED-READ', 'dual-keyed company-detail tables'), async () => {
     await asRestricted(product, scopeA1(), async (k) => {
-      for (const table of ['company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas'] as const) {
+      // These four carry BOTH keys (dual-keyed policies).
+      for (const table of ['company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas'] as const) {
         const rows = await sql<{ company_id: string; account_id: string }>`select company_id, account_id from ${sql.table(table)}`.execute(k);
         expect(rows.rows.every((r) => r.company_id === w.companyA1), `${table}: predicate-free read leaked another company`).toBe(true);
         expect(rows.rows.every((r) => r.account_id === w.accountA), `${table}: predicate-free read leaked another account`).toBe(true);
       }
+      // company_profiles carries company_id only (its policy joins through the company), so the confinement
+      // assertion is company-scoped.
+      const profiles = await sql<{ company_id: string }>`select company_id from company_profiles`.execute(k);
+      expect(profiles.rows.length, 'company_profiles: the in-scope profile must be visible').toBeGreaterThan(0);
+      expect(profiles.rows.every((r) => r.company_id === w.companyA1), 'company_profiles: predicate-free read leaked another company').toBe(true);
       // `companies` is account-keyed by design (CDR-015) — the predicate-free read must still never cross
       // the ACCOUNT boundary.
       const companies = await sql<{ id: string; account_id: string }>`select id, account_id from companies`.execute(k);
@@ -159,9 +165,11 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
   });
 
   test(threatTitle('RLS-ON-CONFLICT-CROSS-TENANT', 'conflict handling cannot read, mutate or confirm a foreign row'), async () => {
-    // company_workspace_areas is (company_id, area) unique. Target a FOREIGN company's area row and try to
-    // use ON CONFLICT to learn about it or change it.
-    await owner.kysely.insertInto('company_workspace_areas').values({ account_id: w.accountB, company_id: w.companyB1, area: 'research' }).execute();
+    // company_workspace_areas is (company_id, area) unique and provisioning already registered B1's areas
+    // during the fixture bootstrap — so a real foreign row exists to collide with, which is precisely the
+    // condition this attack needs.
+    const existingForeign = await owner.kysely.selectFrom('company_workspace_areas').select(['company_id', 'area']).where('company_id', '=', w.companyB1).where('area', '=', 'research').execute();
+    expect(existingForeign, 'fixture precondition: B1 must already own a research area row').toHaveLength(1);
     const attempt = await asRestricted(product, scopeA1(), (k) =>
       sql`insert into company_workspace_areas (account_id, company_id, area)
           values (${w.accountB}::uuid, ${w.companyB1}::uuid, 'research')
@@ -171,9 +179,9 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
         .catch(() => 'denied'),
     );
     expect(attempt, 'a foreign-stamped ON CONFLICT insert must be denied by WITH CHECK').toBe('denied');
-    // The foreign row is unchanged and was never revealed.
-    const foreign = await owner.kysely.selectFrom('company_workspace_areas').select(['company_id', 'area']).where('company_id', '=', w.companyB1).execute();
-    expect(foreign).toHaveLength(1);
+    // The foreign row is unchanged and was never revealed (its area set is exactly what it was).
+    const foreignAfter = await owner.kysely.selectFrom('company_workspace_areas').select('area').where('company_id', '=', w.companyB1).where('area', '=', 'research').execute();
+    expect(foreignAfter).toHaveLength(1);
     // An IN-SCOPE ON CONFLICT works normally — the denial above is specific, not blanket.
     const inScope = await asRestricted(product, scopeA1(), (k) =>
       sql`insert into company_workspace_areas (account_id, company_id, area)
