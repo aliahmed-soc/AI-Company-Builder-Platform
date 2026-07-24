@@ -3,8 +3,13 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-009 understanding review + confirmation — IN PROGRESS (autonomous window; finalization pre-authorized).**
-  Branch `p2-009-understanding-review` (from main `9e11466`), draft PR **#28**, CDR-030. (P2-008 merged `9e11466`;
+- **ACBP-P2-009 understanding review + confirmation — DONE / FINALIZING (autonomous window; finalization pre-authorized).**
+  Backlog **Done**. Independent 10-dimension adversarial review **CLEAN** (no Blocker/Critical/High; 4 Low/Medium fixed
+  — D1 confirmed metadata `{version}` docs; D2 repo chronological ordering; P1 CDR confirm-precondition wording; P2
+  correction_ref wording; P2-009-REVIEW-COVERAGE.md). Finalization head `1fcc8fc` pushed; finalization-records commit
+  next; sequence = exact-head CI (zero-skip) → PR #28 ready → verify MERGEABLE + recheck main/PR#10 → squash-merge
+  "ACBP-P2-009: Understanding review and confirmation" (no Co-Authored-By) → exact-main CI → FF main → delete branch.
+  Branch `p2-009-understanding-review` (from main `9e11466`), PR **#28**, CDR-030. (P2-008 merged `9e11466`;
   Phase 2 was 8/12.) Selected via canon discovery over P2-007/P2-011 (P2-009 is the M2/M3 critical spine → P2-012 +
   P3-001; no owner gate — Usage "—" so no live model, additive migration in the existing pattern). Implements the
   owner review + confirmation gate over an understanding VERSION (not the session — P2-008 decoupled it; session-state
