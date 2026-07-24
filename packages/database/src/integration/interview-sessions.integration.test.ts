@@ -208,8 +208,9 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
+    // This migration is applied (not that it is the LAST or ONLY one — later tickets add migrations on top).
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
-    expect(migs.rows.at(-1)?.name).toBe('0012_interview_sessions');
-    expect(migs.rows).toHaveLength(12);
+    expect(migs.rows.map((m) => m.name)).toContain('0012_interview_sessions');
+    expect(migs.rows.length).toBeGreaterThanOrEqual(12);
   });
 });
