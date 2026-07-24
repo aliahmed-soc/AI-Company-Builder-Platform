@@ -21,7 +21,10 @@ function resolveAliasTarget(subpath) {
   const bare = subpath.replace(/\.js$/, '');
   for (const candidate of [subpath, `${bare}.ts`, `${bare}.tsx`, `${bare}/index.ts`]) {
     const url = new URL(candidate, WEB_SRC);
-    if (existsSync(url)) return url.href;
+    // Clamp to WEB_SRC so the alias can ONLY ever map inside apps/web/src, enforcing the guarantee rather
+    // than merely relying on route source never containing `..`. A specifier that escapes the tree is
+    // treated as no match, so it falls through to the real resolver (and its real error).
+    if (url.href.startsWith(WEB_SRC.href) && existsSync(url)) return url.href;
   }
   return null;
 }
