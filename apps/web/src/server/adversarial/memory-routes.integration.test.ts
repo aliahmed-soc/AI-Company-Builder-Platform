@@ -147,9 +147,12 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database �
       expect(Object.keys((await g.json()) as Record<string, unknown>)).toEqual(['error']);
     }
     // A query parameter is rejected before anything else.
-    const withQuery = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?type=user_fact`), { params: Promise.resolve({ companyId: w.companyA1 }) });
-    expect(withQuery.status).toBe(400);
-    // The route exposes only GET + POST — no PATCH/DELETE (supersede/delete are P2-010).
+    // `type`/`currentOnly` are now VALID browser filters (P2-010); an UNKNOWN query param is still a bounded 400.
+    const known = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?type=user_fact&currentOnly=true`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(known.status).toBe(200);
+    const unknown = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?bogus=1`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(unknown.status).toBe(400);
+    // The collection route exposes only GET + POST — no PATCH/DELETE (delete is the P2-010 §0-gated sub-feature).
     const r = route as unknown as Record<string, unknown>;
     expect(typeof r['PATCH']).toBe('undefined');
     expect(typeof r['DELETE']).toBe('undefined');
