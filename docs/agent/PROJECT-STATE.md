@@ -3,7 +3,26 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-002 finalization.** Status **Done**; feature head `71657ae` (review fixes), exact-head CI
+- **ACBP-P2-006 "Typed memory items with provenance"** (M2), branch `p2-006-typed-memory-items` from `main` @
+  `1c49c55`, governed by **CDR-024**. Deps P1-005 (Done); the only unblocked Ready P2 ticket. No owner gate —
+  the memory data model is fully pinned by canon (DATA-ARCHITECTURE §3).
+- **Design (CDR-024):** `memory_items` (migration 0014) with the **closed 8-type enum** (user_fact,
+  user_preference, constraint, ai_assumption, research_finding, approved_decision, measured_outcome,
+  correction; type set by source path, untyped rejected), 6-value `source_type` + resolvable `source_ref`
+  (encodes the pinned interview-answer `(question_id, revision)`), nullable confidence/superseded_by (populated
+  by P2-008/P2-010), confirmation_state default 'proposed'. Dual-keyed FORCE RLS, SELECT+INSERT only
+  (append-only for P2-006; supersede is P2-010). Operations create + list; authz `memory:write`/`memory:read`
+  (owner|viewer). **Audit REQUIRED** (contrast P2-002): `memory.item_created` written in-transaction (ADR-015),
+  metadata `{item_type, source_type}` only — flagged in CDR-024 §4 for owner visibility (new event name;
+  implements the canonical "All changes audited"; additive/reversible). Out of scope: context assembly (P2-007),
+  understanding/confidence-scoring (P2-008), the browser + edit/delete/supersede (P2-010).
+- **WINDOW NOTE:** started late in the 6-hour autonomous window; if not finishable, leave clean/pushed/resumable
+  (branch + draft PR intact, NOT marked Done).
+- **ACBP-P2-002 — Done** (squash `1c49c55`, PR #21). Phase 2: 2 Done / 10 Planned. P2-003/P2-005 gated by open
+  question IOQ-13; P2-006 is the sole unblocked ticket.
+
+## ACBP-P2-002 detail (Done) — branch `p2-002-question-answer-persistence`, PR #21, CDR-023
+- Status **Done**; feature head `71657ae` (review fixes), exact-head CI
   **30075033944 green** — real-PG Q&A suites (append-only revisions, idempotent no-op, concurrent
   distinct-both-persist + identical-collapse, NOT-NULL author, cross-tenant isolation) + HTTP adversarial all
   passed. Both independent reviews CLEAN with an explicit verdict that the CDR-023 §4 audit-deferral is
