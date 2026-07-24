@@ -21,8 +21,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
+import { createCompany } from '../../company/company-service.js';
+import { pauseCompany } from '../../company/company-lifecycle.js';
+
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
@@ -36,7 +42,7 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
     product = createRestrictedProductClient();
     await assertRestrictedRole(product);
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   }, 60_000);
   afterAll(async () => {
     await teardown(owner, product);
@@ -54,17 +60,38 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
       const profiles = await sql<{ account_id: string }>`select account_id from account_profiles`.execute(k);
       expect(profiles.rows.every((r) => r.account_id === w.accountA)).toBe(true);
       const members = await sql<{ account_id: string }>`select account_id from memberships`.execute(k);
+      expect(members.rows.length, 'memberships: the in-scope rows must be visible').toBeGreaterThan(0);
       expect(members.rows.every((r) => r.account_id === w.accountA)).toBe(true);
-      const audits = await sql<{ account_id: string }>`select account_id from audit_events`.execute(k);
-      expect(audits.rows.every((r) => r.account_id === w.accountA)).toBe(true);
     });
+  });
+
+  test(threatTitle('RLS-PREDICATE-REMOVED-READ', 'audit_events under BOTH account-only and company scope'), async () => {
+    // audit_events_select is `account matches AND (company_id is null OR company_id = CURRENT_COMPANY)`.
+    // With account context ONLY, company-stamped rows are correctly invisible — so a bare `every()` there
+    // would be vacuous over an empty set. This test therefore asserts BOTH halves with non-emptiness
+    // preconditions, which is what makes cross-COMPANY audit confinement provable at the RLS layer.
+    const stamped = await asRestricted(product, scopeA1(), async (k) => (await sql<{ account_id: string; company_id: string | null }>`select account_id, company_id from audit_events`.execute(k)).rows);
+    expect(stamped.length, 'company scope must expose this company’s audit rows').toBeGreaterThan(0);
+    expect(stamped.every((r) => r.account_id === w.accountA), 'audit read crossed an account').toBe(true);
+    expect(stamped.every((r) => r.company_id === null || r.company_id === w.companyA1), 'audit read crossed a company').toBe(true);
+    // A2 belongs to the SAME account and its rows must NOT appear while scoped to A1.
+    const a2Rows = await owner.kysely.selectFrom('audit_events').select('event_id').where('company_id', '=', w.companyA2).execute();
+    expect(a2Rows.length, 'fixture precondition: A2 must own audit rows').toBeGreaterThan(0);
+    const visibleIds = await asRestricted(product, scopeA1(), async (k) => (await sql<{ event_id: string }>`select event_id from audit_events`.execute(k)).rows.map((r) => r.event_id));
+    expect(a2Rows.every((r) => !visibleIds.includes(r.event_id)), 'a same-account sibling company’s audit rows leaked').toBe(true);
+    // Account-only scope sees the account-level rows (company_id null) and no company-stamped row at all.
+    const accountOnly = await asRestricted(product, { actor: w.aOwner, account: w.accountA }, async (k) => (await sql<{ company_id: string | null }>`select company_id from audit_events`.execute(k)).rows);
+    expect(accountOnly.every((r) => r.company_id === null), 'account-only scope exposed a company-stamped audit row').toBe(true);
   });
 
   test(threatTitle('RLS-PREDICATE-REMOVED-READ', 'dual-keyed company-detail tables'), async () => {
     await asRestricted(product, scopeA1(), async (k) => {
-      // These three are strictly dual-keyed: account AND company must both match.
+      // These three are strictly dual-keyed: account AND company must both match. Each carries a
+      // non-emptiness precondition so a fixture or grant regression can never turn `every()` into a
+      // tautology over an empty result.
       for (const table of ['activity_events', 'provisioning_steps', 'company_workspace_areas'] as const) {
         const rows = await sql<{ company_id: string; account_id: string }>`select company_id, account_id from ${sql.table(table)}`.execute(k);
+        expect(rows.rows.length, `${table}: the in-scope rows must be visible (else the assertions below are vacuous)`).toBeGreaterThan(0);
         expect(rows.rows.every((r) => r.company_id === w.companyA1), `${table}: predicate-free read leaked another company`).toBe(true);
         expect(rows.rows.every((r) => r.account_id === w.accountA), `${table}: predicate-free read leaked another account`).toBe(true);
       }
@@ -192,20 +219,68 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
   });
 
   // ── WRITE: no tenant predicate anywhere ────────────────────────────────────────────────────────────
-  test(threatTitle('RLS-PREDICATE-REMOVED-WRITE', 'UPDATE with no WHERE cannot touch a foreign row'), async () => {
-    const before = await owner.kysely.selectFrom('companies').select(['id', 'status']).orderBy('id').execute();
-    await asRestricted(product, scopeA1(), async (k) => {
+  test(threatTitle('RLS-PREDICATE-REMOVED-WRITE', 'UPDATE with no WHERE affects EXACTLY the one in-scope row'), async () => {
+    const before = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).execute()).map((r) => [r.id, r.status]));
+    expect(before.get(w.companyA1)).toBe('active'); // precondition: the statement below can actually change something
+    const affected = await asRestricted(product, scopeA1(), async (k) => {
       // `update companies set status = 'paused'` — every company in the database is a candidate.
       const result = await sql`update companies set status = 'paused'`.execute(k);
-      expect(Number(result.numAffectedRows ?? 0), 'predicate-free UPDATE must affect only in-scope rows').toBeLessThanOrEqual(2);
+      return Number(result.numAffectedRows ?? 0);
     });
-    const after = await owner.kysely.selectFrom('companies').select(['id', 'status']).orderBy('id').execute();
-    const changed = after.filter((row, i) => row.status !== before[i]?.status).map((r) => r.id);
-    expect(changed.every((id) => id === w.companyA1 || id === w.companyA2), 'a foreign company was mutated').toBe(true);
-    const b = after.filter((r) => r.id === w.companyB1 || r.id === w.companyB2);
-    expect(b.every((r) => r.status !== 'paused'), 'account B companies must be untouched').toBe(true);
+    // companies_update is DUAL-keyed (account AND company), so exactly ONE row may change: A1. Asserting a
+    // bound like "<= 2" would tolerate a same-account cross-company write — the very regression this exists
+    // to catch — and asserting nothing about the count would let a no-op masquerade as confinement.
+    expect(affected, 'predicate-free UPDATE must affect exactly the one company in scope').toBe(1);
+    const after = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).execute()).map((r) => [r.id, r.status]));
+    expect(after.get(w.companyA1), 'the in-scope company must be the one that changed').toBe('paused');
+    expect(after.get(w.companyA2), 'a SAME-ACCOUNT sibling company must not change').toBe(before.get(w.companyA2));
+    expect(after.get(w.companyB1), 'a foreign company must not change').toBe(before.get(w.companyB1));
+    expect(after.get(w.companyB2), 'a foreign company must not change').toBe(before.get(w.companyB2));
     // Restore for the remaining tests.
-    await owner.kysely.updateTable('companies').set({ status: 'active' }).where('account_id', '=', w.accountA).execute();
+    await owner.kysely.updateTable('companies').set({ status: 'active' }).where('id', '=', w.companyA1).execute();
+  });
+
+  test(threatTitle('RLS-PREDICATE-REMOVED-WRITE', 'account-scoped tables: predicate-free UPDATE stays inside the account'), async () => {
+    // account_profiles/accounts carry UPDATE grants and had no predicate-removal coverage at all.
+    const beforeB = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountB).executeTakeFirstOrThrow();
+    const affected = await asRestricted(product, { actor: w.aOwner, account: w.accountA }, async (k) => {
+      const r = await sql`update account_profiles set display_name = 'pwned-by-predicate-removal'`.execute(k);
+      return Number(r.numAffectedRows ?? 0);
+    });
+    expect(affected, 'exactly the caller’s own account profile may change').toBe(1);
+    const afterA = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountA).executeTakeFirstOrThrow();
+    const afterB = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountB).executeTakeFirstOrThrow();
+    expect(afterA.display_name).toBe('pwned-by-predicate-removal');
+    expect(afterB.display_name, 'another account’s profile was mutated by a predicate-free UPDATE').toBe(beforeB.display_name);
+  });
+
+  test(threatTitle('RLS-FORGED-DUAL-KEY-INSERT', 'company_profiles and companies and provisioning_steps'), async () => {
+    // company_profiles has the schema's most complex WITH CHECK (an EXISTS join back through companies).
+    // A hole there would let an attacker append a new profile VERSION to a foreign company — defacing B1
+    // without ever reading it — so it gets explicit coverage.
+    await expect(
+      asRestricted(product, scopeA1(), (k) =>
+        sql`insert into company_profiles (company_id, name, revision) values (${w.companyB1}::uuid, 'Defaced', 99)`.execute(k),
+      ),
+      'appending a profile version to a FOREIGN company must be denied',
+    ).rejects.toThrow();
+    // A company row stamped for another account.
+    await expect(
+      asRestricted(product, scopeA1(), (k) =>
+        sql`insert into companies (account_id, status, creation_mode) values (${w.accountB}::uuid, 'active', 'own_idea')`.execute(k),
+      ),
+      'creating a company inside a FOREIGN account must be denied',
+    ).rejects.toThrow();
+    // A provisioning checkpoint stamped for a foreign company.
+    await expect(
+      asRestricted(product, scopeA1(), (k) =>
+        sql`insert into provisioning_steps (account_id, company_id, step, step_order) values (${w.accountB}::uuid, ${w.companyB1}::uuid, 'profile', 1)`.execute(k),
+      ),
+      'seeding a checkpoint for a FOREIGN company must be denied',
+    ).rejects.toThrow();
+    // Nothing landed.
+    const profiles = await owner.kysely.selectFrom('company_profiles').select('name').where('company_id', '=', w.companyB1).execute();
+    expect(profiles.every((p) => p.name !== 'Defaced')).toBe(true);
   });
 
   test(threatTitle('RLS-PREDICATE-REMOVED-WRITE', 'DELETE and TRUNCATE are not granted at all'), async () => {
@@ -281,11 +356,21 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
   test(threatTitle('RLS-COLUMN-PRIVILEGE', 'column-limited UPDATE cannot alter identity or scope columns'), async () => {
     // provisioning_steps grants UPDATE only on outcome columns. Identity/scope columns must be unwritable
     // even for an in-scope row, and even with no WHERE predicate.
-    for (const column of ['account_id', 'company_id', 'step', 'step_order'] as const) {
-      await expect(
-        asRestricted(product, scopeA1(), (k) => sql`update provisioning_steps set ${sql.ref(column)} = ${sql.lit(column === 'step_order' ? 99 : 'x')}`.execute(k)),
-        `${column} must not be updatable`,
-      ).rejects.toThrow();
+    // TYPE-VALID values only: `set account_id = 'x'` fails at parse analysis with 22P02 (invalid uuid), which
+    // would satisfy `.rejects` even if UPDATE were granted on the column. Using a well-typed value forces the
+    // failure to come from the column ACL, and the SQLSTATE is asserted to be exactly 42501 (insufficient
+    // privilege) so a future cast/constraint error cannot masquerade as a privilege denial.
+    const typedValues: ReadonlyArray<readonly [string, unknown]> = [
+      ['account_id', sql`${w.accountB}::uuid`],
+      ['company_id', sql`${w.companyB1}::uuid`],
+      ['step', sql`'profile'`],
+      ['step_order', sql`1`],
+    ];
+    for (const [column, value] of typedValues) {
+      const code = await asRestricted(product, scopeA1(), (k) => sql`update provisioning_steps set ${sql.ref(column)} = ${value as never}`.execute(k))
+        .then(() => 'no-error')
+        .catch((e: unknown) => String((e as { code?: string; cause?: { code?: string } }).code ?? (e as { cause?: { code?: string } }).cause?.code ?? 'unknown'));
+      expect(code, `${column} must be denied by the column ACL (42501), not by a cast or constraint error`).toBe('42501');
     }
     // The granted outcome column IS updatable in scope (so the denials above are meaningful).
     await asRestricted(product, scopeA1(), async (k) => {
@@ -320,27 +405,45 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
     const here = dirname(fileURLToPath(import.meta.url));
     const repoRoot = join(here, '..', '..', '..', '..', '..');
     const offenders: string[] = [];
-    const forbidden = [/disableRls/i, /skipTenantFilter/i, /withoutTenantPredicate/i, /bypassTenant/i, /unsafeNoScope/i, /allowCrossTenant/i, /runAsTenant/i, /setArbitraryTenant/i, /crossTenantQuery/i];
+    // Identifier seams, plus the SEMANTIC ones an identifier denylist alone would miss: disabling row
+    // security in-session, switching role, granting BYPASSRLS, and — the most dangerous — composing a
+    // database client from the environment WITHOUT `{ role: 'app' }`, which silently yields the owner
+    // connection. `parseDatabaseConfig` is legitimately defined in @acbp/config, so that file is exempt.
+    const forbidden = [/disableRls/i, /skipTenantFilter/i, /withoutTenantPredicate/i, /bypassTenant/i, /unsafeNoScope/i, /allowCrossTenant/i, /runAsTenant/i, /setArbitraryTenant/i, /crossTenantQuery/i, /row_security\s*=\s*off/i, /\bset\s+role\b/i, /bypassrls/i];
     const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return; // package not present in this checkout
+      }
+      for (const entry of entries) {
         if (['node_modules', '.next', 'dist', 'adversarial'].includes(entry.name)) continue;
         const full = join(dir, entry.name);
         if (entry.isDirectory()) {
           walk(full);
           continue;
         }
-        if (!entry.name.endsWith('.ts')) continue;
-        if (entry.name.endsWith('.test.ts')) continue;
+        // .ts AND .tsx — a seam inside a server component would otherwise be invisible.
+        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
+        if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) continue;
         const code = readFileSync(full, 'utf8')
           .replace(/\r\n?/g, '\n')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
           .split('\n')
           .map((line) => line.replace(/\/\/.*/, ''))
-          .join('\n');
+          .join('\n')
+          .replace(/\/\*[\s\S]*?\*\//g, '');
         if (forbidden.some((p) => p.test(code))) offenders.push(full);
+        // An owner-connection seam: building a client from env without the restricted role.
+        if (/parseDatabaseConfig\s*\(/.test(code) && !/role:\s*'app'/.test(code) && !full.includes(join('packages', 'config'))) {
+          offenders.push(`${full} (parseDatabaseConfig without role:'app')`);
+        }
       }
     };
-    for (const pkg of ['packages/database/src', 'packages/core/src', 'apps/web/src']) walk(join(repoRoot, ...pkg.split('/')));
-    expect(offenders, 'a production filter-disable seam was introduced').toEqual([]);
+    // Every package source tree + the migrations directory, not just three of them.
+    for (const dir of ['packages/database/src', 'packages/database/migrations', 'packages/core/src', 'packages/contracts/src', 'packages/adapters/src', 'packages/config/src', 'packages/observability/src', 'apps/web/src', 'apps/worker/src']) {
+      walk(join(repoRoot, ...dir.split('/')));
+    }
+    expect(offenders, 'a production filter-disable or owner-connection seam was introduced').toEqual([]);
   });
 });

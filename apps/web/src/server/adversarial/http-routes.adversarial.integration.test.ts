@@ -9,18 +9,20 @@
 // Proof level: HTTP → core → database, end to end.
 // Real PostgreSQL is MANDATORY.
 //
-// WHY THIS FILE LIVES AT THE REPOSITORY ROOT: it must import BOTH apps/web (route handlers) and the database
-// fixture. DEPENDENCY-BOUNDARIES forbids apps/web from importing @acbp/database and forbids packages/core
-// from importing apps/web — correctly, because neither production edge should exist. A cross-layer test
-// therefore belongs to no package; `tools/check-boundaries.mjs` scans apps/ + packages/ only, so a
-// repo-level test creates no production dependency edge while still exercising the real stack.
+// PLACEMENT: this suite drives apps/web route handlers against a real database, so it must reach both the
+// web layer and a database fixture. The fixture lives in @acbp/test-support — the package the scaffold spec
+// designates for "fixtures, fakes, adversarial harnesses (never in production bundles)" — which the
+// dependency-boundary checker allows TEST files (only) to import from any layer, while production code may
+// never depend on it. No production dependency edge is created.
 //
 // THE ONLY SEAM is the provider SDK at its edge: `@clerk/nextjs/server` is mocked so a deterministic
 // verified session exists without calling live Clerk. The production authentication boundary
 // (`resolveVerifiedIdentity`) still runs in full, and the mocked Backend User deliberately carries FORGED
 // organization / role / admin-like values, so trust-critical #20 is exercised through the whole stack.
 import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import type { DatabaseClient } from '@acbp/database';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   hasTestDatabase,
   createOwnerFixtureClient,
@@ -31,20 +33,39 @@ import {
   seedTwoTenantWorld,
   teardown,
   assertRestrictedRole,
+  runtimeConnectionRoles,
+  APP_ROLE_TEST_PASSWORD,
   type TwoTenantWorld,
-} from '../../../../../packages/core/src/tenancy/adversarial/two-tenant-harness.js';
+  type AdversarialDatabaseClient,
+} from '@acbp/test-support';
+import { provisionPersonalAccount, createCompany, pauseCompany } from '@acbp/core';
+
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 /** The provider user id the mocked session presents. Mutated per test; read by the mock. */
 let sessionProviderUserId = '';
-/** Forged, browser-controllable claim soup on the Backend User. None of it may ever authorize. */
-const FORGED_CLAIMS = {
-  publicMetadata: { role: 'owner', admin: true, isPlatformAdmin: true, org_role: 'org:admin', accountId: 'FORGED-ACCOUNT', companyId: 'FORGED-COMPANY' },
-  privateMetadata: { role: 'owner', platform_admin: true },
-  unsafeMetadata: { role: 'owner' },
-  organizationMemberships: [{ organization: { id: 'org_forged' }, role: 'org:admin' }],
-  orgId: 'org_forged',
-  orgRole: 'org:admin',
-};
+
+/**
+ * Forged, browser-controllable claims on the Backend User. MUTABLE and populated per test with the REAL
+ * fixture ids of the tenant under attack.
+ *
+ * Why that matters: with placeholder values (`accountId: 'FORGED-ACCOUNT'`) a regression that started
+ * trusting `publicMetadata.accountId` would resolve to a nonexistent account and still deny — the test
+ * would stay green while a full claim-trusting bypass shipped. Naming the real target means "claim
+ * honoured" necessarily becomes "cross-tenant data returned", which fails.
+ */
+let forgedClaims: Record<string, unknown> = {};
+function setForgedClaims(target: { accountId: string; companyId: string }): void {
+  forgedClaims = {
+    publicMetadata: { role: 'owner', admin: true, isPlatformAdmin: true, org_role: 'org:admin', accountId: target.accountId, companyId: target.companyId },
+    privateMetadata: { role: 'owner', platform_admin: true, accountId: target.accountId },
+    unsafeMetadata: { role: 'owner', companyId: target.companyId },
+    organizationMemberships: [{ organization: { id: target.accountId }, role: 'org:admin' }],
+    orgId: target.accountId,
+    orgRole: 'org:admin',
+  };
+}
 
 vi.mock('@clerk/nextjs/server', () => ({
   auth: () => Promise.resolve({ userId: sessionProviderUserId }),
@@ -58,7 +79,7 @@ vi.mock('@clerk/nextjs/server', () => ({
             emailAddresses: [{ id: 'e1', emailAddress: `${id}@example.com`, verification: { status: 'verified' } }],
             firstName: 'Test',
             lastName: 'User',
-            ...FORGED_CLAIMS,
+            ...forgedClaims,
           }),
       },
     }),
@@ -66,7 +87,7 @@ vi.mock('@clerk/nextjs/server', () => ({
 
 const UNKNOWN_UUID = '00000000-0000-4000-8000-0000000000ff';
 const MALFORMED = ['not-a-uuid', "1' or '1'='1", '../../etc/passwd'] as const;
-const APP_ROLE_TEST_PASSWORD = `adversarial_${'test'}_pw_1970`;
+
 
 function jsonRequest(url: string, body?: unknown): Request {
   return new Request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -76,8 +97,8 @@ type ParamRoute<P> = { GET: (request: Request, context: { params: Promise<P> }) 
 type ParamPostRoute<P> = { POST: (request: Request, context: { params: Promise<P> }) => Promise<Response> };
 
 describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-P1-014/CDR-020', () => {
-  let owner: DatabaseClient;
-  let product: DatabaseClient;
+  let owner: AdversarialDatabaseClient;
+  let product: AdversarialDatabaseClient;
   let w: TwoTenantWorld;
   let companiesRoute: { GET: (request: Request) => Promise<Response> };
   let companyRoute: ParamRoute<{ companyId: string }>;
@@ -102,7 +123,9 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     url.password = APP_ROLE_TEST_PASSWORD;
     process.env['APP_ENV'] = 'test';
     process.env['DATABASE_APP_URL'] = url.toString();
-    process.env['DATABASE_URL'] = testDatabaseUrl;
+    // DATABASE_URL is deliberately NOT set: the owner connection string must not even be present in the
+    // environment the routes run under, so a hypothetical fallback could not silently pick it up.
+    delete process.env['DATABASE_URL'];
     process.env['DATABASE_SSL'] = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
     process.env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = 'pk_test_adversarial_synthetic';
     process.env['CLERK_SECRET_KEY'] = 'sk_test_adversarial_synthetic';
@@ -121,7 +144,21 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
+    setForgedClaims({ accountId: w.accountA, companyId: w.companyA1 }); // claims name the REAL target
+  });
+
+  test('the route runtime itself connects as acbp_app (not the owner role)', async () => {
+    // The suite's own `product` client is guarded in beforeAll, but the ROUTES use the production
+    // composition root's client. Without this probe, a regression that let the runtime fall back to
+    // DATABASE_URL would run every assertion below as a BYPASSRLS superuser — and they would all still
+    // pass, because the denials would come from application logic with RLS silently absent.
+    await signInAs(w.aOwner);
+    const res = await companyRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(res.status, 'precondition: the runtime must be able to serve a legitimate request').toBe(200);
+    const runtimeBackends = await runtimeConnectionRoles(owner, ['acbp-adversarial-fixture', 'acbp-adversarial-app']);
+    expect(runtimeBackends.length, 'the runtime must hold at least one connection after serving a request').toBeGreaterThan(0);
+    expect(runtimeBackends.every((b) => b.role === 'acbp_app'), `route runtime connected as ${runtimeBackends.map((b) => b.role).join(',')}`).toBe(true);
   });
 
   /** Authenticate the next request as `internalUserId`, through the real identity boundary. */
@@ -149,6 +186,58 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     expect(adminAudits, 'no admin action may be recorded for a forged claim').toEqual([]);
     const a1 = await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyA1).executeTakeFirstOrThrow();
     expect(a1.status).not.toBe('paused');
+  });
+
+  test('[AUTHZ-FORGED-CLERK-ROLE] a REAL member with a forged owner role cannot perform an owner-only mutation (the sharp #20 case)', async () => {
+    // The outsider case above is the easy one — nothing could ever authorize him. This is the case that
+    // actually discriminates: aViewer holds genuine, active membership in A1, so scope resolution SUCCEEDS
+    // and the only thing standing between him and the mutation is the internal role. His Backend User claims
+    // `role: 'owner'` for this exact account and company.
+    await signInAs(w.aViewer);
+    const beforeStatus = (await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyA1).executeTakeFirstOrThrow()).status;
+
+    const paused = await pauseRoute.POST(jsonRequest(`https://app.test/api/companies/${w.companyA1}/pause`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(paused.status, 'a forged owner role must not satisfy the owner-only lifecycle gate').toBe(403);
+    const afterStatus = (await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyA1).executeTakeFirstOrThrow()).status;
+    expect(afterStatus, 'the company transitioned despite the caller being a viewer').toBe(beforeStatus);
+
+    // …while the read his real role DOES permit still works, proving the denial is about the verb.
+    const detail = await companyRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(detail.status).toBe(200);
+  });
+
+  test('[AUTHZ-FORGED-CLERK-ROLE] SOURCE GUARD: no production file reads provider metadata or organization claims', () => {
+    // The runtime proof above can only fail if some production code READS these fields. This guard makes the
+    // absence structural: browser-controlled claim surfaces must never be referenced outside tests.
+    const offenders: string[] = [];
+    const forbidden = [/publicMetadata/, /privateMetadata/, /unsafeMetadata/, /organizationMemberships/, /\borgId\b/, /\borgRole\b/, /\borg_role\b/];
+    const walk = (dir: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (['node_modules', '.next', 'dist', 'adversarial'].includes(entry.name)) continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+        const code = readFileSync(full, 'utf8')
+          .replace(/\r\n?/g, '\n')
+          .split('\n')
+          .map((line) => line.replace(/\/\/.*/, ''))
+          .join('\n')
+          .replace(/\/\*[\s\S]*?\*\//g, '');
+        if (forbidden.some((p) => p.test(code))) offenders.push(full);
+      }
+    };
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+    for (const dir of ['apps/web/src', 'packages/core/src', 'packages/adapters/src', 'packages/contracts/src']) walk(join(repoRoot, ...dir.split('/')));
+    expect(offenders, 'production code began reading browser-controlled provider claims').toEqual([]);
   });
 
   test('[AUTHZ-FORGED-CLERK-ROLE] a legitimate caller still succeeds — the denials are about authority, not a broken path', async () => {

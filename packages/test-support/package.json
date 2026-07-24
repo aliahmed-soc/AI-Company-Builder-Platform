@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@acbp/contracts": "workspace:*",
-    "@acbp/config": "workspace:*"
+    "@acbp/config": "workspace:*",
+    "@acbp/database": "workspace:*",
+    "kysely": "^0.28.17"
   }
 }

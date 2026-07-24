@@ -13,14 +13,19 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
+import { createCompany } from '../../company/company-service.js';
 import { runInAccountScope } from '../account-context-resolver.js';
 import { runInCompanyScope } from '../../company/company-context-resolver.js';
 import { getCompany, pauseCompany } from '../../company/company-lifecycle.js';
 import { getCompanyPortfolio } from '../../company/portfolio-service.js';
 import { getCompanyActivity } from '../../company/activity-service.js';
 import { getProvisioningStatus } from '../../company/provisioning-service.js';
+
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 describe.skipIf(!hasTestDatabase)('stale + revoked authority (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
@@ -39,7 +44,7 @@ describe.skipIf(!hasTestDatabase)('stale + revoked authority (real PostgreSQL, r
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   });
 
   /**

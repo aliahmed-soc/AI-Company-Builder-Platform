@@ -16,11 +16,13 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { withTransaction, withAccountTransaction, withTenantTransaction, elevateToCompanyScope, nestedTransactionError, CompanyRepository, type DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
 import { runInAccountScope } from '../account-context-resolver.js';
 import { runInCompanyScope } from '../../company/company-context-resolver.js';
 import { createCompany } from '../../company/company-service.js';
+import { pauseCompany } from '../../company/company-lifecycle.js';
 
 interface GucSnapshot {
   readonly actor: string;
@@ -51,6 +53,9 @@ function expectNoResidualContext(snapshot: GucSnapshot, scopedPid: number, threa
   expect(snapshot.company, `${threatId}: app.current_company leaked`).toBe('');
 }
 
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
+
 describe.skipIf(!hasTestDatabase)('transaction scope + pooled GUC lifecycle (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
   let product: DatabaseClient;
@@ -68,7 +73,7 @@ describe.skipIf(!hasTestDatabase)('transaction scope + pooled GUC lifecycle (rea
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   });
 
   test(threatTitle('TX-GUC-COMMIT-CLEANUP', 'account + company scope'), async () => {

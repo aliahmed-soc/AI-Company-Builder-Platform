@@ -20,26 +20,35 @@
 //     └── company A2 (active)  — members: aOwner (owner), bothCompanies (viewer), aCompanyRevoked (revoked)
 //   account B ── owner bOwner, viewer bViewer
 //     ├── company B1 (active)
-//     └── company B2 (paused)
+//     └── company B2 (PAUSED — deliberately, so an adversarial pause of a foreign company can be shown not
+//         to leak `invalid_transition` state; without a paused foreign company that oracle is untestable)
 //   outsider  — a real internal user with NO account and NO company membership
 //   platformAdmin / revokedPlatformAdmin — platform_admins rows seeded through the OWNER client only
 //     (there is no runtime write path to platform_admins — CDR-019).
 //
 // `bothCompanies` legitimately belongs to A1 AND A2 so cross-COMPANY cursor replay can be tested by a caller
 // who is authorized for both (the interesting case: authority exists, but not for THAT cursor).
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { createDatabase, closeDatabase, migrateToLatest, type DatabaseClient, type NewUser } from '@acbp/database';
 import { parseDatabaseConfig } from '@acbp/config';
-import { provisionPersonalAccount } from '../../accounts/provisioning.js';
-import { createCompany } from '../../company/company-service.js';
+
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 export const hasTestDatabase = typeof url === 'string' && url.length > 0;
-// Synthetic, throwaway local test password for the restricted role (never a real credential).
-const APP_ROLE_TEST_PASSWORD = `adversarial_${'test'}_pw_1970`;
+/**
+ * Ephemeral login for the restricted role, generated fresh per process. It is never persisted and never
+ * leaves this machine. Generating it (rather than writing a literal that the secret scanner would flag, or
+ * splitting a literal so the scanner cannot see it) keeps the security gate honest: the scanner has nothing
+ * to match, and no idiom for routing around it is introduced.
+ */
+export const APP_ROLE_TEST_PASSWORD = `adv_${randomUUID()}`;
 const ssl = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
 
 /** Every table the harness touches — drop order is FK-safe (children first). */
+/** Re-export so consumers (notably apps/web tests) never need to import @acbp/database directly. */
+export type AdversarialDatabaseClient = DatabaseClient;
+
 export const ALL_TABLES = [
   'platform_admins',
   'provisioning_steps',
@@ -117,6 +126,18 @@ export async function assertRestrictedRole(product: DatabaseClient): Promise<Res
   return proof;
 }
 
+
+/**
+ * The @acbp/core operations the fixture seeds through. INJECTED rather than imported: test-support may not
+ * depend on core, because adapters' tests already depend on test-support and the resulting
+ * core -> adapters -> test-support -> core edge would be a workspace cycle. Injection also keeps the fixture
+ * honest — accounts and companies are created through the SAME production use cases the app calls.
+ */
+export interface CoreSeedOps {
+  provisionPersonalAccount(client: DatabaseClient, userId: string): Promise<{ readonly accountId: string }>;
+  createCompany(client: DatabaseClient, params: { accountId: string; actingUserId: string; creationMode: unknown; name: unknown }): Promise<{ readonly status: string; readonly companyId?: string }>;
+  pauseCompany(client: DatabaseClient, params: { userId: string; accountId: string; companyId: string }): Promise<{ readonly status: string }>;
+}
 export interface TwoTenantWorld {
   readonly aOwner: string;
   readonly aViewer: string;
@@ -174,7 +195,7 @@ export async function truncateFixtures(owner: DatabaseClient): Promise<void> {
  * remaining membership/admin rows are written on the OWNER client, which is the only path that exists for
  * `platform_admins` (CDR-019) and the simplest deterministic path for revoked/extra memberships.
  */
-export async function seedTwoTenantWorld(owner: DatabaseClient, product: DatabaseClient): Promise<TwoTenantWorld> {
+export async function seedTwoTenantWorld(owner: DatabaseClient, product: DatabaseClient, ops: CoreSeedOps): Promise<TwoTenantWorld> {
   const aOwner = await seedUser(owner, 'aowner');
   const aViewer = await seedUser(owner, 'aviewer');
   const aRevoked = await seedUser(owner, 'arevoked');
@@ -186,8 +207,8 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
   const platformAdmin = await seedUser(owner, 'padmin');
   const revokedPlatformAdmin = await seedUser(owner, 'pradmin');
 
-  const accountA = (await provisionPersonalAccount(product, aOwner)).accountId;
-  const accountB = (await provisionPersonalAccount(product, bOwner)).accountId;
+  const accountA = (await ops.provisionPersonalAccount(product, aOwner)).accountId;
+  const accountB = (await ops.provisionPersonalAccount(product, bOwner)).accountId;
 
   // Account-level memberships (owner rows come from the bootstrap; these are the extra states we need).
   await owner.kysely
@@ -205,33 +226,46 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
   // existing_business. A wrong mode is rejected by validation BEFORE any write, so the harness would fail
   // with no company at all — hence the explicit per-company diagnosis below rather than a bare "failed".
   const created = {
-    a1: await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: 'Alpha One' }),
-    a2: await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: 'Alpha Two' }),
-    b1: await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: 'Beta One' }),
-    b2: await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'platform_suggested', name: 'Beta Two' }),
+    a1: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: 'Alpha One' }),
+    a2: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: 'Alpha Two' }),
+    b1: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: 'Beta One' }),
+    b2: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'platform_suggested', name: 'Beta Two' }),
   };
   const failures = Object.entries(created)
     .filter(([, r]) => r.status !== 'ok')
     .map(([label, r]) => `${label}:${r.status}`);
   if (failures.length > 0) throw new Error(`adversarial harness: company bootstrap failed (${failures.join(', ')})`);
-  const { a1, a2, b1, b2 } = created;
-  if (a1.status !== 'ok' || a2.status !== 'ok' || b1.status !== 'ok' || b2.status !== 'ok') throw new Error('adversarial harness: unreachable');
+  /** Narrow the injected result to a definite id — a missing one means the use case changed shape. */
+  const idOf = (label: string, r: { readonly companyId?: string }): string => {
+    if (r.companyId === undefined) throw new Error(`adversarial harness: ${label} reported ok without a companyId`);
+    return r.companyId;
+  };
+  const a1 = idOf('a1', created.a1);
+  const a2 = idOf('a2', created.a2);
+  const b1 = idOf('b1', created.b1);
+  const b2 = idOf('b2', created.b2);
 
   // Company memberships beyond the creator's owner row.
   await owner.kysely
     .insertInto('company_memberships')
     .values([
-      { account_id: accountA, company_id: a1.companyId, member_user_id: aViewer, role: 'viewer', status: 'active' },
-      { account_id: accountA, company_id: a1.companyId, member_user_id: bothCompanies, role: 'viewer', status: 'active' },
-      { account_id: accountA, company_id: a2.companyId, member_user_id: bothCompanies, role: 'viewer', status: 'active' },
-      { account_id: accountA, company_id: a2.companyId, member_user_id: aCompanyRevoked, role: 'viewer', status: 'revoked' },
-      { account_id: accountB, company_id: b1.companyId, member_user_id: bViewer, role: 'viewer', status: 'active' },
+      { account_id: accountA, company_id: a1, member_user_id: aViewer, role: 'viewer', status: 'active' },
+      { account_id: accountA, company_id: a1, member_user_id: bothCompanies, role: 'viewer', status: 'active' },
+      { account_id: accountA, company_id: a2, member_user_id: bothCompanies, role: 'viewer', status: 'active' },
+      { account_id: accountA, company_id: a2, member_user_id: aCompanyRevoked, role: 'viewer', status: 'revoked' },
+      { account_id: accountB, company_id: b1, member_user_id: bViewer, role: 'viewer', status: 'active' },
     ])
     .execute();
 
   // Platform admins — OWNER connection only (the documented operational path; no runtime writer exists).
   await sql`insert into platform_admins (user_id) values (${platformAdmin}::uuid)`.execute(owner.kysely);
   await sql`insert into platform_admins (user_id, status, revoked_at) values (${revokedPlatformAdmin}::uuid, 'revoked', now())`.execute(owner.kysely);
+
+  // B2 is PAUSED through the real lifecycle use case (not a direct UPDATE), so the fixture state is one a
+  // production transition actually produces — and so an adversarial pause of an already-paused FOREIGN
+  // company can prove it does not leak `invalid_transition` (which carries the target's current status).
+  const pausedB2 = await ops.pauseCompany(product, { userId: bOwner, accountId: accountB, companyId: b2 });
+  if (pausedB2.status !== 'ok') throw new Error(`adversarial harness: could not pause B2 (${pausedB2.status})`);
 
   return {
     aOwner,
@@ -246,10 +280,10 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
     revokedPlatformAdmin,
     accountA,
     accountB,
-    companyA1: a1.companyId,
-    companyA2: a2.companyId,
-    companyB1: b1.companyId,
-    companyB2: b2.companyId,
+    companyA1: a1,
+    companyA2: a2,
+    companyB1: b1,
+    companyB2: b2,
   };
 }
 
@@ -261,6 +295,19 @@ export async function teardown(owner: DatabaseClient | undefined, product: Datab
     for (const t of ALL_TABLES) await owner.kysely.schema.dropTable(t).ifExists().cascade().execute();
     await closeDatabase(owner);
   }
+}
+
+/**
+ * Diagnostic: which database ROLE currently backs each live `acbp*` connection, excluding this harness's own
+ * two clients. Used by the apps/web HTTP suite to prove the ROUTE RUNTIME (not the test's client) connects as
+ * `acbp_app` — without that, a regression letting the runtime fall back to the owner URL would make every
+ * HTTP isolation assertion vacuous while still passing. Lives here because `kysely` resolves in this package.
+ */
+export async function runtimeConnectionRoles(owner: DatabaseClient, excludeAppNames: readonly string[]): Promise<ReadonlyArray<{ readonly role: string; readonly application: string }>> {
+  const r = await sql<{ usename: string; application_name: string }>`
+    select usename, application_name from pg_stat_activity where application_name like 'acbp%'
+  `.execute(owner.kysely);
+  return r.rows.filter((row) => !excludeAppNames.includes(row.application_name)).map((row) => ({ role: row.usename, application: row.application_name }));
 }
 
 /** Run `fn` on the restricted client inside a transaction carrying exactly the supplied GUCs. */

@@ -17,14 +17,20 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'kysely';
 import { AccountProfileRepository, MembershipRepository, CompanyRepository, ActivityFeedRepository, ProvisioningRepository, type DatabaseClient } from '@acbp/database';
 import { createTestLogger } from '@acbp/observability';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
+import { createCompany } from '../../company/company-service.js';
+import { pauseCompany } from '../../company/company-lifecycle.js';
 import { runInAccountScope } from '../account-context-resolver.js';
 import { runInCompanyScope } from '../../company/company-context-resolver.js';
 
 /** Deterministic malformed/hostile selector corpus (CDR-020 §6 — explicit cases only, no fuzzing). */
 const MALFORMED_SELECTORS = ['', ' ', 'not-a-uuid', "1' or '1'='1", '../../etc/passwd', 'null', '00000000-0000-4000-8000-00000000000'] as const;
 const UNKNOWN_UUID = '00000000-0000-4000-8000-0000000000ff';
+
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
@@ -39,7 +45,7 @@ describe.skipIf(!hasTestDatabase)('scope establishment (real PostgreSQL, restric
     const proof = await assertRestrictedRole(product);
     expect(proof).toMatchObject({ currentUser: 'acbp_app', isSuperuser: false, bypassesRls: false, ownedProductTables: [] });
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   }, 60_000);
   afterAll(async () => {
     await teardown(owner, product);

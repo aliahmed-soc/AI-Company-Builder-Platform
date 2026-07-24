@@ -11,8 +11,10 @@
 // Real PostgreSQL is MANDATORY: every denial here is decided from real membership rows under RLS.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
+import { createCompany } from '../../company/company-service.js';
 import { getProfileForOwner, updateProfileForOwner } from '../../accounts/profile.js';
 import { listMembers, inviteMember, revokeMember } from '../../members/membership-service.js';
 import { getCompany, renameCompany, pauseCompany, resumeCompany } from '../../company/company-lifecycle.js';
@@ -22,6 +24,9 @@ import { getProvisioningStatus, resumeProvisioning } from '../../company/provisi
 import { adminReadCompanyOverview } from '../../admin/admin-service.js';
 
 const UNKNOWN_UUID = '00000000-0000-4000-8000-0000000000ff';
+
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
@@ -40,7 +45,7 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   });
 
   // ── Account + membership ───────────────────────────────────────────────────────────────────────────
@@ -146,14 +151,44 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
 
   // ── Activity ───────────────────────────────────────────────────────────────────────────────────────
   test(threatTitle('CURSOR-CROSS-COMPANY', 'an activity cursor from A1 cannot be replayed against A2 by a member of BOTH'), async () => {
+    // A company starts with exactly ONE activity row (company.created), so a limit-1 page has no next
+    // cursor and an early return would make this test silently assert nothing. Generate a second row first,
+    // then require the cursor as a HARD precondition — an adversarial suite must never skip its own case.
+    expect((await pauseCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 })).status).toBe('ok');
+    expect((await resumeCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 })).status).toBe('ok');
+
     // bothCompanies is legitimately a viewer of A1 AND A2 — authority exists, but not for THAT cursor.
     const a1 = await getCompanyActivity(product, { userId: w.bothCompanies, accountId: w.accountA, companyId: w.companyA1, limit: 1 });
     expect(a1.status).toBe('ok');
     if (a1.status !== 'ok') return;
     const cursor = a1.page.nextCursor;
-    if (cursor === null) return; // no second page → nothing to replay (fixture-dependent, still safe)
+    expect(cursor, 'fixture precondition: A1 must have enough activity to produce a cursor').not.toBeNull();
     const replay = await getCompanyActivity(product, { userId: w.bothCompanies, accountId: w.accountA, companyId: w.companyA2, cursor });
     expect(replay.status, 'CURSOR-CROSS-COMPANY: a cursor minted for A1 must not be honoured for A2').toBe('invalid_cursor');
+    // …and the same cursor still works for the company it was minted for.
+    const continued = await getCompanyActivity(product, { userId: w.bothCompanies, accountId: w.accountA, companyId: w.companyA1, cursor });
+    expect(continued.status, 'the cursor must remain valid for its OWN company').toBe('ok');
+  });
+
+  test(threatTitle('ORACLE-FOREIGN-ID', 'mutating verbs leak no state either — including invalid_transition'), async () => {
+    // rename/pause/resume have richer result taxonomies than read: `invalid_transition` carries `from`,
+    // i.e. the TARGET's current status. B2 is paused in the fixture, so pausing it is exactly the request
+    // that would surface that state if authority were checked after the transition check.
+    const foreignPaused = await pauseCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyB2 });
+    const unknown = await pauseCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: UNKNOWN_UUID });
+    expect(JSON.stringify(foreignPaused), 'pausing an already-paused FOREIGN company must be indistinguishable from an unknown one').toBe(JSON.stringify(unknown));
+    expect(JSON.stringify(foreignPaused)).not.toContain('paused'); // no `from` state leaked
+
+    const foreignResume = await resumeCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyB2 });
+    const unknownResume = await resumeCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: UNKNOWN_UUID });
+    expect(JSON.stringify(foreignResume)).toBe(JSON.stringify(unknownResume));
+
+    const foreignRename = await renameCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyB1, name: 'Probe' });
+    const unknownRename = await renameCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: UNKNOWN_UUID, name: 'Probe' });
+    expect(JSON.stringify(foreignRename)).toBe(JSON.stringify(unknownRename));
+    // Nothing moved.
+    const b2 = await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyB2).executeTakeFirstOrThrow();
+    expect(b2.status).toBe('paused');
   });
 
   test(threatTitle('SCOPE-SELECTOR-HARVESTED', 'activity feed is per-company and never cross-account'), async () => {
@@ -162,8 +197,15 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
     const own = await getCompanyActivity(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 });
     expect(own.status).toBe('ok');
     if (own.status !== 'ok') return;
-    // ACTIVITY-TAXONOMY-CLOSED: only the four lifecycle events ever appear.
+    // ACTIVITY-TAXONOMY-CLOSED — with a non-emptiness precondition and an explicit NEGATIVE: the fixture
+    // generates provisioning audit events, so "no provisioning/admin type appears" is a real claim, not one
+    // satisfied by an empty feed.
+    expect(own.page.items.length, 'the feed must be non-empty or the taxonomy assertion is vacuous').toBeGreaterThan(0);
+    expect(own.page.items.some((i) => i.type === 'company.created')).toBe(true);
     expect(own.page.items.every((i) => ['company.created', 'company.updated', 'company.paused', 'company.resumed'].includes(i.type))).toBe(true);
+    const provisioningAudits = await owner.kysely.selectFrom('audit_events').select('name').where('company_id', '=', w.companyA1).execute();
+    expect(provisioningAudits.some((a) => a.name.startsWith('provisioning.')), 'fixture precondition: provisioning events must exist to be excludable').toBe(true);
+    expect(own.page.items.some((i) => String(i.type).startsWith('provisioning.') || String(i.type).startsWith('admin.')), 'a provisioning/admin event was projected into the feed').toBe(false);
   });
 
   // ── Provisioning ───────────────────────────────────────────────────────────────────────────────────

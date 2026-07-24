@@ -14,9 +14,11 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { withAccountTransaction, withTenantTransaction, CompanyRepository, ActivityFeedRepository, type DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
-import { getCompany } from '../../company/company-lifecycle.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
+import { provisionPersonalAccount } from '../../accounts/provisioning.js';
+import { createCompany } from '../../company/company-service.js';
+import { getCompany, pauseCompany } from '../../company/company-lifecycle.js';
 import { getCompanyPortfolio } from '../../company/portfolio-service.js';
 
 /** A promise barrier: `arrive()` resolves for everyone only once `size` participants have arrived. */
@@ -35,6 +37,9 @@ function createBarrier(size: number): { arrive: () => Promise<void> } {
   };
 }
 
+/** The production use cases the fixture seeds through (injected — test-support may not import core). */
+const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
+
 describe.skipIf(!hasTestDatabase)('deterministic tenancy concurrency (real PostgreSQL, restricted role) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
   let product: DatabaseClient;
@@ -52,7 +57,7 @@ describe.skipIf(!hasTestDatabase)('deterministic tenancy concurrency (real Postg
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(owner, product);
+    w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   });
 
   test(threatTitle('TX-CONCURRENT-ACCOUNTS', 'A and B interleaved after scope setup'), async () => {

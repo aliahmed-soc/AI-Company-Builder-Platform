@@ -15,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, teardown, assertRestrictedRole, asRestricted, type RestrictedRoleProof } from './two-tenant-harness.js';
-import { threatTitle } from './threat-inventory.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, teardown, assertRestrictedRole, asRestricted, type RestrictedRoleProof } from '@acbp/test-support';
+import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
 const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins'] as const;

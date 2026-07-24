@@ -9,7 +9,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
-import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, teardown, assertRestrictedRole } from './two-tenant-harness.js';
+import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, teardown, assertRestrictedRole } from '@acbp/test-support';
 
 describe.skipIf(!hasTestDatabase)('adversarial harness guard (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
   let owner: DatabaseClient;
