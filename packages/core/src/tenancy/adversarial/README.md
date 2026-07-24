@@ -110,6 +110,29 @@ change, **A** broad architectural flaw → **stop for owner authorization**. Nev
 test pass by weakening its expected result. The defect ledger is
 [`docs/implementation/P1-014-DEFECT-LEDGER.md`](../../../../../docs/implementation/P1-014-DEFECT-LEDGER.md).
 
+## Identity uniqueness: what is global, and why that is safe
+
+`activity_events.event_id` and `audit_events.event_id` are **globally unique**, and that is deliberate
+(owner decision, 2026-07-24 — see the defect ledger entry R-A1):
+
+- They are **server-generated ULIDs**; no request field maps to them.
+- The only live writer of the feed, `projectCompanyActivity`, receives the id returned by the audit write in
+  the same transaction and resolves its source row through a **FORCE-RLS-confined** `SELECT`. A foreign id is
+  invisible there and returns zero rows — identical to an id that exists nowhere — so the projector fails with
+  a sanitized error and rolls back **before the unique constraint is reached**.
+- A raw INSERT that supplies `event_id` directly *can* collide, but that is a database-only program that
+  bypasses the sole production projector; it is outside the application threat path.
+
+The general rules this encodes:
+
+| Identifier kind | Uniqueness scope | Example |
+|---|---|---|
+| Server-generated opaque identity, never caller-influenceable | may be **global** | `event_id` (ULID) |
+| Caller-influenceable key | must be **tenant-scoped** | `audit_events (account_id, idempotency_key)` |
+
+`users` and `identity_webhook_receipts` are intentionally **global identity substrate** — they carry no RLS by
+design (CDR-008), and ADR-007's two-layer statement is scoped to tenant tables, not to them.
+
 ## Denial-audit interpretation
 
 "Denials audited without existence leaks" is proven against the **existing structured denial logs and public

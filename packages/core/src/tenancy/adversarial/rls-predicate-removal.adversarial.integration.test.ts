@@ -20,7 +20,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { sql } from 'kysely';
-import type { DatabaseClient } from '@acbp/database';
+import { withTenantTransaction, projectCompanyActivity, type DatabaseClient } from '@acbp/database';
+import { companyCreated } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { threatTitle } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../../accounts/provisioning.js';
@@ -187,8 +188,11 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
       ),
       'a foreign-stamped projection must be denied',
     ).rejects.toThrow();
-    // Re-stamping a foreign source id onto the IN-SCOPE company is also refused — the row would claim an
-    // identity the current scope did not produce (unique event_id already belongs to another company).
+    // Re-stamping a foreign source id onto the IN-SCOPE company is ALSO deterministically denied: `event_id`
+    // is the primary key, so the harvested id collides. NOTE (owner-accepted residual, CDR-020 / P1-014
+    // ledger R-A1): this raw statement is a DATABASE-ONLY program. It bypasses the sole production projector,
+    // whose source SELECT is RLS-confined and therefore never reaches the constraint — see the
+    // projectCompanyActivity regression below, which is the production-path proof.
     const reused = await asRestricted(product, scopeA1(), (k) =>
       sql`insert into activity_events (event_id, account_id, company_id, activity_type, occurred_at, actor_type)
           values (${foreignAudit!.event_id}, ${w.accountA}::uuid, ${w.companyA1}::uuid, 'company.created', now(), 'user')`
@@ -196,10 +200,50 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
         .then(() => 'inserted')
         .catch(() => 'denied'),
     );
-    expect(['denied', 'inserted']).toContain(reused);
+    expect(reused, 'a harvested foreign source id must be deterministically denied').toBe('denied');
     // Whatever happened, company B1's feed is unchanged and carries no row belonging to A1.
     const bFeed = await owner.kysely.selectFrom('activity_events').select(['company_id', 'account_id']).where('company_id', '=', w.companyB1).execute();
     expect(bFeed.every((r) => r.account_id === w.accountB)).toBe(true);
+  });
+
+  test(threatTitle('ACTIVITY-SOURCE-SWAP', 'the PRODUCTION projector treats a foreign and an unknown source id identically'), async () => {
+    // THE PRODUCTION-PATH PROOF (owner decision, Option C). projectCompanyActivity is the only live writer
+    // of activity_events. Its source SELECT reads audit_events under FORCE RLS, so a foreign source id is
+    // invisible and yields ZERO rows — exactly like an id that exists nowhere. The insert never executes, so
+    // the globally-unique event_id constraint is never reached and no 23505 can be observed. Both inputs
+    // must therefore produce the SAME error class and the SAME sanitized message, insert nothing, and roll
+    // back cleanly.
+    const foreignAudit = await owner.kysely.selectFrom('audit_events').select('event_id').where('company_id', '=', w.companyB1).executeTakeFirstOrThrow();
+    const unknownAuditId = '01ARZ3NDEKTSV4RRFFQ69G5FAV'; // well-formed ULID that exists nowhere
+    const event = companyCreated({ companyId: w.companyA1, creationMode: 'own_idea' });
+
+    const attempt = async (auditEventId: string): Promise<{ kind: string; message: string }> =>
+      withTenantTransaction(product, { accountId: w.accountA, companyId: w.companyA1, actorId: w.aOwner }, async (scope) => {
+        await projectCompanyActivity(scope, event, auditEventId);
+        return { kind: 'projected', message: '' };
+      }).catch((e: unknown) => ({ kind: (e as { code?: string }).code ?? 'unknown', message: String((e as { message?: string }).message ?? e) }));
+
+    const foreignResult = await attempt(foreignAudit.event_id);
+    const unknownResult = await attempt(unknownAuditId);
+
+    expect(foreignResult.kind, 'a foreign source id must not project').not.toBe('projected');
+    expect(foreignResult.kind, 'foreign and unknown must share an error class').toBe(unknownResult.kind);
+    expect(foreignResult.message, 'foreign and unknown must be byte-identical — no existence bit').toBe(unknownResult.message);
+
+    // The message is sanitized: no SQLSTATE, table, constraint, source tenant or event id.
+    for (const forbidden of ['23505', '42501', 'activity_events', 'audit_events', 'pkey', 'constraint', 'duplicate', w.accountB, w.companyB1, foreignAudit.event_id, unknownAuditId]) {
+      expect(foreignResult.message.toLowerCase(), `the failure must not disclose '${forbidden}'`).not.toContain(String(forbidden).toLowerCase());
+    }
+
+    // Nothing was inserted by either attempt, and both transactions rolled back cleanly.
+    const a1Rows = await owner.kysely.selectFrom('activity_events').select('event_id').where('company_id', '=', w.companyA1).execute();
+    expect(a1Rows.some((r) => r.event_id === foreignAudit.event_id), 'a foreign source id was projected into A1').toBe(false);
+    expect(a1Rows.some((r) => r.event_id === unknownAuditId)).toBe(false);
+    const b1Rows = await owner.kysely.selectFrom('activity_events').select(['event_id', 'company_id']).where('company_id', '=', w.companyB1).execute();
+    expect(b1Rows.every((r) => r.company_id === w.companyB1), 'company B1’s feed was disturbed').toBe(true);
+    // The connection is still usable — the rollbacks left no residue.
+    const healthy = await withTenantTransaction(product, { accountId: w.accountA, companyId: w.companyA1, actorId: w.aOwner }, async (scope) => (await sql<{ n: number }>`select count(*)::int as n from activity_events`.execute(scope.db)).rows[0]?.n);
+    expect(healthy).toBeGreaterThan(0);
   });
 
   test(threatTitle('ACTIVITY-TAXONOMY-CLOSED', 'activity_events rejects any non-lifecycle type'), async () => {

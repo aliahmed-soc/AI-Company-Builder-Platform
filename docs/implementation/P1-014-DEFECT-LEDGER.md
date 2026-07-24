@@ -52,6 +52,47 @@ layers). Making it coarse would change public error behavior, so it was left to 
 approved P1-014 policy explicitly permits the current shape: malformed and unauthorized inputs need not share
 one envelope, provided the protected callback never runs and nothing leaks — both of which are asserted.
 
+## Class M raised → OWNER-DECIDED (Option C accepted, 2026-07-24)
+
+### R-A1 — `activity_events.event_id` is globally unique
+
+A review asked whether a harvested foreign `event_id` could produce a distinguishable unique-constraint
+outcome, which would be an existence oracle inside P1-014's own enumeration claim. Raised as a Class M gate
+because a fix could have required migration 0012 or a changed uniqueness contract. **The owner accepted
+Option C: no schema, index, RLS, grant, API or production-behavior change.**
+
+**Why the oracle is not reachable** (analysis, then pinned by regression):
+
+- `event_id` is a **server-generated ULID** minted in `writeAuditEvent` (80 bits of CSPRNG plus a
+  millisecond prefix). No request field maps to it anywhere.
+- The **only** live writer is `projectCompanyActivity`, which receives the id **returned by the audit write in
+  the same transaction**, then reads its source row with `SELECT … FROM audit_events WHERE event_id = $id`.
+- That source SELECT runs under **FORCE RLS** with the dual-scope audit policy, so a foreign id is invisible
+  and returns **zero rows** — exactly like an id that exists nowhere. The projector then throws a sanitized
+  `validationError` and the transaction rolls back. **The unique index is never reached, so no 23505 exists
+  to observe.**
+- No table carries a foreign key to `activity_events.event_id` or `audit_events.event_id`.
+- The raw INSERT that *does* collide exists only in this suite's database-only probe. It bypasses the sole
+  production projector, so it is outside the application threat path.
+
+**Accepted principles recorded by this decision:**
+
+1. A **server-generated opaque global identity** may remain globally unique when no production or plausible
+   application-bug path can supply a foreign value to the constraint.
+2. A **caller-influenceable idempotency key** must remain tenant-scoped — as already implemented for
+   `audit_events`, whose index is `unique (account_id, idempotency_key)` precisely "so a key in one account
+   cannot collide with — or leak —" another's (migration 0007).
+3. A **raw database program that bypasses the sole production projector** is outside the application threat
+   path and is not evidence of a production-reachable oracle.
+4. **`users` and `identity_webhook_receipts`** are intentionally global identity substrate. They are not
+   claimed to be tenant-RLS tables, and ADR-007's two-layer statement is scoped accordingly.
+
+**Regressions added** (test-only): `ACTIVITY-SOURCE-SWAP` now requires the raw harvested-id insert to be
+**deterministically** denied (no multi-outcome acceptance), and a new production-path test drives
+`projectCompanyActivity` with a real foreign `auditEventId` and a well-formed unknown one, asserting the same
+error class, a byte-identical sanitized message, no SQLSTATE / table / constraint / source-tenant / event-id
+disclosure, no inserted row in either feed, clean rollback, and a still-usable connection.
+
 ## Residual observations (not defects)
 
 - **Denial timing.** Early exits (malformed selector, unmapped user, unverified email) are faster than a full
