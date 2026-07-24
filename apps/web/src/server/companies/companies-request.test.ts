@@ -21,6 +21,7 @@ import {
   listMemoryForRequest,
   editMemoryForRequest,
   getMemoryForRequest,
+  deleteMemoryForRequest,
   type CompanyRuntime,
 } from './companies-request.js';
 
@@ -58,6 +59,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     listMemoryItems: () => Promise.resolve({ status: 'ok', items: [MEMORY_DTO] }),
     editMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
     getMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
+    deleteMemoryItem: () => Promise.resolve({ status: 'ok', memoryItemId: 'mem_1' }),
     ...overrides,
   };
 }
@@ -351,9 +353,26 @@ describe('typed memory requests (ACBP-P2-006)', () => {
     expect((await getMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime({ getMemoryItem: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
   });
 
+  test('delete (soft) propagates: memory_deleted / conflict / not_found / forbidden; account+actor server-resolved', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      deleteMemoryItem: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', memoryItemId: 'mem_9' });
+      },
+    });
+    expect(await deleteMemoryForRequest('co_d', 'mem_9', { identity: identityDeps(), runtime })).toEqual({ status: 'memory_deleted', memoryItemId: 'mem_9' });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_d', memoryItemId: 'mem_9' }]);
+    expect((await deleteMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime({ deleteMemoryItem: () => Promise.resolve({ status: 'conflict' }) }) })).status).toBe('conflict');
+    expect((await deleteMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime({ deleteMemoryItem: () => Promise.resolve({ status: 'not_found' }) }) })).status).toBe('not_found');
+    expect((await deleteMemoryForRequest('c', 'm1', { identity: identityDeps(), runtime: fakeRuntime({ deleteMemoryItem: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+  });
+
   test('unauthenticated / unverified refused on the memory endpoints', async () => {
     expect((await createMemoryForRequest('c', body, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await listMemoryForRequest('c', {}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await editMemoryForRequest('c', 'm1', { type: 'x', content: 'y', confidence: null }, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
+    expect((await deleteMemoryForRequest('c', 'm1', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
   });
 });

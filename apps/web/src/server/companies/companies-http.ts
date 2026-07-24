@@ -160,6 +160,9 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       // An edit is a versioned supersede — 200 with the NEW (correcting) version. A lost version-guard race maps
       // to the existing `conflict` → 409 (below).
       return jsonResponse(200, { item: result.item });
+    case 'memory_deleted':
+      // A soft delete — bounded 200 confirmation echoing the id. No content/actor/timestamp leaked.
+      return jsonResponse(200, { memoryItemId: result.memoryItemId });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':

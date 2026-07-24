@@ -48,6 +48,7 @@ describe('toCompaniesResponse', () => {
     [{ status: 'memory_list', items: [] }, 200],
     [{ status: 'memory_item_single', item: { memoryItemId: 'm', type: 'user_fact', content: 'hi', sourceType: 'interview_answer', sourceRef: 'r', confidence: null, confirmationState: 'proposed', supersededBy: null, createdAt: '2026-01-01T00:00:00.000Z' } }, 200],
     [{ status: 'memory_edited', item: { memoryItemId: 'm2', type: 'user_fact', content: 'fixed', sourceType: 'user_edit', sourceRef: 'm', confidence: null, confirmationState: 'proposed', supersededBy: null, createdAt: '2026-01-01T00:00:00.000Z' } }, 200],
+    [{ status: 'memory_deleted', memoryItemId: 'm' }, 200],
     [{ status: 'invalid_transition', from: 'draft' }, 409],
     [{ status: 'conflict' }, 409],
     [{ status: 'invalid_cursor' }, 400],

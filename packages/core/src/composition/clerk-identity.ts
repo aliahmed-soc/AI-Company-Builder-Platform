@@ -51,7 +51,7 @@ import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, typ
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
 import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
 import { recordInterviewAnswer, getSessionQa, type InterviewQaParams, type InterviewQaOptions, type RecordAnswerResult, type GetSessionQaResult } from '../discovery/interview-qa.js';
-import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, type CreateMemoryItemParams, type ListMemoryItemsParams, type EditMemoryItemParams, type GetMemoryItemParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult, type EditMemoryItemResult, type GetMemoryItemResult } from '../memory/memory-item.js';
+import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, deleteMemoryItem, type CreateMemoryItemParams, type ListMemoryItemsParams, type EditMemoryItemParams, type GetMemoryItemParams, type DeleteMemoryItemParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult, type EditMemoryItemResult, type GetMemoryItemResult, type DeleteMemoryItemResult } from '../memory/memory-item.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -174,6 +174,7 @@ export interface ClerkIdentityRuntime {
   listMemoryItems(params: ListMemoryItemsParams, options?: MemoryOptions): Promise<ListMemoryItemsResult>;
   editMemoryItem(params: EditMemoryItemParams, options?: MemoryOptions): Promise<EditMemoryItemResult>;
   getMemoryItem(params: GetMemoryItemParams, options?: MemoryOptions): Promise<GetMemoryItemResult>;
+  deleteMemoryItem(params: DeleteMemoryItemParams, options?: MemoryOptions): Promise<DeleteMemoryItemResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -271,6 +272,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getMemoryItem(params, options) {
       return getMemoryItem(client, params, options ?? {});
+    },
+    deleteMemoryItem(params, options) {
+      return deleteMemoryItem(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});
