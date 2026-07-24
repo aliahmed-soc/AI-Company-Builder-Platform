@@ -64,6 +64,14 @@ export async function parseCreateMemoryBody(request: HttpRequest): Promise<Parse
   return { ok: true, input: { type: r.obj['type'], content: r.obj['content'], sourceType: r.obj['sourceType'], sourceRef: r.obj['sourceRef'], confidence: r.obj['confidence'] } };
 }
 
+/** Parse a memory-item edit body → { type, content, confidence } (raw; the domain validates). source_type/ref
+ *  are NOT caller-settable on an edit — the correction is always a user_edit citing the target. */
+export async function parseEditMemoryBody(request: HttpRequest): Promise<Parsed<{ type: unknown; content: unknown; confidence: unknown }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  return { ok: true, input: { type: r.obj['type'], content: r.obj['content'], confidence: r.obj['confidence'] } };
+}
+
 /**
  * Run a companies request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500
  * envelope (ACBP-P1-014 Class R restoration).
@@ -145,6 +153,16 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'memory_list':
       // The company's memory items (redacted; newest-first, bounded). No accountId/actor ids.
       return jsonResponse(200, { items: result.items });
+    case 'memory_item_single':
+      // A single redacted memory item.
+      return jsonResponse(200, { item: result.item });
+    case 'memory_edited':
+      // An edit is a versioned supersede — 200 with the NEW (correcting) version. A lost version-guard race maps
+      // to the existing `conflict` → 409 (below).
+      return jsonResponse(200, { item: result.item });
+    case 'memory_deleted':
+      // A soft delete — bounded 200 confirmation echoing the id. No content/actor/timestamp leaked.
+      return jsonResponse(200, { memoryItemId: result.memoryItemId });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':

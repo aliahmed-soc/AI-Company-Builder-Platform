@@ -9,7 +9,7 @@
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
 import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -34,7 +34,10 @@ export type CompaniesRequestResult =
   | { readonly status: 'answer'; readonly answer: AnswerDTO; readonly created: boolean }
   | { readonly status: 'qa'; readonly qa: SessionQADTO }
   | { readonly status: 'memory_item'; readonly item: MemoryItemDTO }
-  | { readonly status: 'memory_list'; readonly items: readonly MemoryItemDTO[] };
+  | { readonly status: 'memory_list'; readonly items: readonly MemoryItemDTO[] }
+  | { readonly status: 'memory_edited'; readonly item: MemoryItemDTO }
+  | { readonly status: 'memory_item_single'; readonly item: MemoryItemDTO }
+  | { readonly status: 'memory_deleted'; readonly memoryItemId: string };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -56,7 +59,10 @@ export interface CompanyRuntime {
   recordInterviewAnswer(params: { userId: string; accountId: string; companyId: string; sessionId: string; questionId: string; status: unknown; content?: unknown }, options?: { logger?: Logger }): Promise<RecordAnswerResult>;
   getSessionQa(params: { userId: string; accountId: string; companyId: string; sessionId: string }, options?: { logger?: Logger }): Promise<GetSessionQaResult>;
   createMemoryItem(params: { userId: string; accountId: string; companyId: string; type: unknown; content: unknown; sourceType: unknown; sourceRef: unknown; confidence?: unknown }, options?: { logger?: Logger }): Promise<CreateMemoryItemResult>;
-  listMemoryItems(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ListMemoryItemsResult>;
+  listMemoryItems(params: { userId: string; accountId: string; companyId: string; type?: unknown; currentOnly?: boolean }, options?: { logger?: Logger }): Promise<ListMemoryItemsResult>;
+  editMemoryItem(params: { userId: string; accountId: string; companyId: string; targetId: string; type: unknown; content: unknown; confidence?: unknown }, options?: { logger?: Logger }): Promise<EditMemoryItemResult>;
+  getMemoryItem(params: { userId: string; accountId: string; companyId: string; memoryItemId: string }, options?: { logger?: Logger }): Promise<GetMemoryItemResult>;
+  deleteMemoryItem(params: { userId: string; accountId: string; companyId: string; memoryItemId: string }, options?: { logger?: Logger }): Promise<DeleteMemoryItemResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -378,15 +384,73 @@ export async function createMemoryForRequest(companyId: string, input: { type: u
   }
 }
 
-export async function listMemoryForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+export async function listMemoryForRequest(companyId: string, filter: { type?: unknown; currentOnly?: boolean } = {}, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
   const ctx = await resolveActorWithAccount(deps, runtime);
   if ('kind' in ctx) return ctx.result;
-  const r = await runtime.listMemoryItems({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  const params: { userId: string; accountId: string; companyId: string; type?: unknown; currentOnly?: boolean } = { userId: ctx.userId, accountId: ctx.accountId, companyId };
+  if (filter.type !== undefined) params.type = filter.type;
+  if (filter.currentOnly === true) params.currentOnly = true;
+  const r = await runtime.listMemoryItems(params, { logger: companiesLogger() });
   switch (r.status) {
     case 'ok':
       return { status: 'memory_list', items: r.items };
     case 'forbidden':
       return { status: 'forbidden' };
+  }
+}
+
+export async function getMemoryForRequest(companyId: string, memoryItemId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getMemoryItem({ userId: ctx.userId, accountId: ctx.accountId, companyId, memoryItemId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'memory_item_single', item: r.item };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+  }
+}
+
+// Edit = a versioned supersede (owner-only, enforced in @acbp/core). accountId + userId server-resolved;
+// companyId + memoryItemId are membership-validated selectors; the body is the corrected {type, content, confidence?}.
+export async function editMemoryForRequest(companyId: string, memoryItemId: string, input: { type: unknown; content: unknown; confidence: unknown }, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.editMemoryItem({ userId: ctx.userId, accountId: ctx.accountId, companyId, targetId: memoryItemId, type: input.type, content: input.content, confidence: input.confidence }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'memory_edited', item: r.item };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'conflict':
+      return { status: 'conflict' };
+    case 'validation':
+      return { status: 'validation', error: r.error };
+  }
+}
+
+// Delete = a soft delete (owner-only, enforced in @acbp/core). account/actor server-resolved; companyId +
+// memoryItemId are membership-validated selectors; no request body.
+export async function deleteMemoryForRequest(companyId: string, memoryItemId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.deleteMemoryItem({ userId: ctx.userId, accountId: ctx.accountId, companyId, memoryItemId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'memory_deleted', memoryItemId: r.memoryItemId };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'conflict':
+      return { status: 'conflict' };
   }
 }

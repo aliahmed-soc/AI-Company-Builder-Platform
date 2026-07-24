@@ -155,6 +155,15 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     for (const forbidden of ['id', 'account_id', 'company_id', 'created_at']) {
       expect(interview).not.toContain(forbidden);
     }
+    // Memory items (ACBP-P2-010): column-level UPDATE is confined to EXACTLY the lifecycle-pointer columns —
+    // `superseded_by` (0015 edit=supersede) + `deleted_at`/`deleted_by_user_id` (0016 soft delete). The
+    // content/type/source/confidence/confirmation/identity/creation columns stay immutable (no destructive
+    // overwrite, no hard delete).
+    const memory = byTable.get('memory_items') ?? [];
+    expect([...memory].sort()).toEqual(['deleted_at', 'deleted_by_user_id', 'superseded_by']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'content', 'type', 'source_type', 'source_ref', 'confidence', 'confirmation_state', 'created_at', 'created_by_user_id']) {
+      expect(memory).not.toContain(forbidden);
+    }
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {

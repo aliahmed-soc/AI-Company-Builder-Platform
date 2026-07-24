@@ -3,7 +3,25 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-006 finalization.** Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
+- **ACBP-P2-010 finalization.** Status **Done**; feature head `b9441f1` (review fixes), exact-head CI
+  **30102561583 green** (local full suite 116 files / 1319 / 0 skipped). The memory browser: list/filter/get +
+  owner edit (versioned supersede) + owner **soft delete** — the CDR-025 §0 deletion semantics were an owner
+  gate, **owner-RATIFIED** (`deleted_at` + `deleted_by_user_id`; `memory.item_deleted` in-tx; propagation
+  deferred to M3/M4). Both independent reviews CLEAN with explicit CORRECT verdicts on delete-concurrency
+  determinism, audit atomicity, and grant narrowness; all findings fixed (edit-concurrency FOR-UPDATE lock;
+  CDR §7; P2-010-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI → PR #23 ready →
+  recheck main/PR#10 → squash-merge **"ACBP-P2-010: Memory browser"** (no Co-Authored-By) → exact-main CI →
+  delete branch → next Phase 2 ticket.
+- Migrations 0001–0016; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime. `memory_items` column-level UPDATE confined to `superseded_by` (0015) + `deleted_at`/`deleted_by_user_id`
+  (0016); content/type/source/identity immutable; no hard-delete grant. Lifecycle active/superseded/deleted
+  (mutually exclusive, DB-enforced). Deleted items omitted from list/get; the row survives for history/audit.
+- **P2-001/P2-002/P2-006/P2-010 — Done.** Phase 2: **4 Done / 8 Planned.** P2-003/P2-005 gated by open question
+  IOQ-13.
+- **P2-001/P2-002/P2-006 — Done.** Phase 2: 3 Done / 9 Planned. P2-003/P2-005 gated by IOQ-13.
+
+## ACBP-P2-006 detail (Done) — branch `p2-006-typed-memory-items`, PR #22, CDR-024
+- Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
   **30090738122 green** (real-PG memory suites + HTTP adversarial + reverse-fully migration cycle; local full
   suite 115 files / 1286 / 0 skipped). Both independent reviews CLEAN with explicit CORRECT verdicts on the
   migration root-cause fix and the audit atomicity/decision (not an owner gate); all findings fixed

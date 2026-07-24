@@ -56,6 +56,11 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database â
   let product: AdversarialDatabaseClient;
   let w: TwoTenantWorld;
   let route: MemoryRoute;
+  let itemRoute: {
+    GET: (r: Request, c: { params: Promise<{ companyId: string; memoryItemId: string }> }) => Promise<Response>;
+    PATCH: (r: Request, c: { params: Promise<{ companyId: string; memoryItemId: string }> }) => Promise<Response>;
+    DELETE: (r: Request, c: { params: Promise<{ companyId: string; memoryItemId: string }> }) => Promise<Response>;
+  };
 
   beforeAll(async () => {
     owner = createOwnerFixtureClient();
@@ -65,6 +70,7 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database â
     await assertRestrictedRole(product);
     configureRouteRuntimeEnv();
     route = await import('../../app/api/companies/[companyId]/memory/route.js');
+    itemRoute = await import('../../app/api/companies/[companyId]/memory/[memoryItemId]/route.js');
   }, 90_000);
   afterAll(async () => {
     await teardown(owner, product);
@@ -82,6 +88,13 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database â
   const list = (companyId: string) => route.GET(new Request(`https://app.test/api/companies/${companyId}/memory`), { params: Promise.resolve({ companyId }) });
   const create = (companyId: string, body: unknown) =>
     route.POST(new Request(`https://app.test/api/companies/${companyId}/memory`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { params: Promise.resolve({ companyId }) });
+  const del = (companyId: string, memoryItemId: string) =>
+    itemRoute.DELETE(new Request(`https://app.test/api/companies/${companyId}/memory/${memoryItemId}`, { method: 'DELETE' }), { params: Promise.resolve({ companyId, memoryItemId }) });
+  async function createOwned(): Promise<string> {
+    await signInAs(w.aOwner);
+    const res = await create(w.companyA1, { ...FACT, content: 'deletable' });
+    return ((await res.json()) as { item: { memoryItemId: string } }).item.memoryItemId;
+  }
 
   test('a company member creates a typed item and lists it on the restricted role', async () => {
     await signInAs(w.aOwner);
@@ -147,12 +160,52 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database â
       expect(Object.keys((await g.json()) as Record<string, unknown>)).toEqual(['error']);
     }
     // A query parameter is rejected before anything else.
-    const withQuery = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?type=user_fact`), { params: Promise.resolve({ companyId: w.companyA1 }) });
-    expect(withQuery.status).toBe(400);
-    // The route exposes only GET + POST â€” no PATCH/DELETE (supersede/delete are P2-010).
+    // `type`/`currentOnly` are now VALID browser filters (P2-010); an UNKNOWN query param is still a bounded 400.
+    const known = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?type=user_fact&currentOnly=true`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(known.status).toBe(200);
+    const unknown = await route.GET(new Request(`https://app.test/api/companies/${w.companyA1}/memory?bogus=1`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(unknown.status).toBe(400);
+    // The collection route exposes only GET + POST â€” DELETE/PATCH live on the item route.
     const r = route as unknown as Record<string, unknown>;
     expect(typeof r['PATCH']).toBe('undefined');
     expect(typeof r['DELETE']).toBe('undefined');
     expect(typeof r['PUT']).toBe('undefined');
+  });
+
+  test('DELETE (soft): owner deletes â†’ the item is omitted from the browser but the row survives; no restore/purge verb', async () => {
+    const id = await createOwned();
+    const res = await del(w.companyA1, id);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { memoryItemId?: string }).memoryItemId).toBe(id);
+    // Omitted from the list; the row still exists under owner (superuser) inspection.
+    const l = await list(w.companyA1);
+    expect(((await l.json()) as { items: unknown[] }).items).toHaveLength(0);
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+    expect(row.deleted_by_user_id).toBe(w.aOwner);
+    // Re-delete â†’ 409; a query param â†’ 400. No PUT/restore/purge verb on the item route.
+    expect((await del(w.companyA1, id)).status).toBe(409);
+    const withQuery = await itemRoute.DELETE(new Request(`https://app.test/api/companies/${w.companyA1}/memory/${id}?x=1`, { method: 'DELETE' }), { params: Promise.resolve({ companyId: w.companyA1, memoryItemId: id }) });
+    expect(withQuery.status).toBe(400);
+    const ir = itemRoute as unknown as Record<string, unknown>;
+    expect(typeof ir['PUT']).toBe('undefined');
+    expect(typeof ir['POST']).toBe('undefined');
+  });
+
+  test('DELETE denies a viewer and a foreign tenant (forged owner/admin claims) â€” bounded, writes nothing', async () => {
+    const id = await createOwned();
+    // A VIEWER of A1 cannot delete (owner-only).
+    await signInAs(w.aViewer);
+    expect((await del(w.companyA1, id)).status).toBe(403);
+    // The OUTSIDER with forged owner/admin claims naming the real target is denied and leaks nothing.
+    await signInAs(w.outsider);
+    setForgedClaims({ accountId: w.accountA, companyId: w.companyA1 });
+    const res = await del(w.companyA1, id);
+    expect([403, 404]).toContain(res.status);
+    const text = await res.text();
+    for (const secret of ['deletable', w.accountA, w.aOwner]) expect(text).not.toContain(secret);
+    // The item was NOT deleted by either â€” still live.
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.deleted_at).toBeNull();
   });
 });

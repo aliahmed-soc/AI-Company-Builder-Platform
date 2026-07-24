@@ -105,11 +105,38 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into memory_items (account_id, company_id, type, content, source_type, source_ref, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, 'user_fact', 'x', 'interview_answer', 'r', ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 
-  test('append-only: no UPDATE or DELETE on memory_items', async () => {
+  test('content/type/identity immutable + no DELETE; only superseded_by is updatable (0015 edit=supersede)', async () => {
     const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
+    // Content/type/source/confirmation/identity stay immutable — the column grant covers only superseded_by.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set content = 'edited' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set confirmation_state = 'accepted' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set type = 'constraint' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`delete from memory_items where id = ${id}::uuid`.execute(k))).rejects.toThrow();
+    // superseded_by IS updatable (the P2-010 edit=supersede grant + UPDATE policy). Point it at a second item.
+    const id2 = await insertItem(accountA, companyA1, 'user_fact', 'user_edit', 'correction', id);
+    await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set superseded_by = ${id2}::uuid where id = ${id}::uuid`.execute(k));
+    const row = await asApp(scope(accountA, companyA1), (k) => k.selectFrom('memory_items').select('superseded_by').where('id', '=', id).executeTakeFirstOrThrow());
+    expect(row.superseded_by).toBe(id2);
+  });
+
+  test('soft delete (0016): deleted_at/deleted_by_user_id updatable; PAIR + mutual-exclusion CHECKs; content/hard-delete still forbidden', async () => {
+    const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
+    // The two delete columns ARE updatable (0016 grant) — mark it deleted.
+    await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now(), deleted_by_user_id = ${userU}::uuid where id = ${id}::uuid`.execute(k));
+    const row = await asApp(scope(accountA, companyA1), (k) => k.selectFrom('memory_items').select(['deleted_at', 'deleted_by_user_id']).where('id', '=', id).executeTakeFirstOrThrow());
+    expect(row.deleted_at).not.toBeNull();
+    expect(row.deleted_by_user_id).toBe(userU);
+    // PAIR check: deleted_at without deleted_by_user_id (and vice versa) is rejected.
+    const id2 = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now() where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_by_user_id = ${userU}::uuid where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    // Mutual-exclusion: a row cannot be both superseded and deleted.
+    const id3 = await insertItem(accountA, companyA1, 'user_fact', 'user_edit', 'c', id2);
+    await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set superseded_by = ${id3}::uuid where id = ${id2}::uuid`.execute(k));
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now(), deleted_by_user_id = ${userU}::uuid where id = ${id2}::uuid`.execute(k))).rejects.toThrow();
+    // A hard DELETE and a content UPDATE are still forbidden even for a deleted row.
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`delete from memory_items where id = ${id}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set content = 'x' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
   });
 
   test('closed type + source CHECKs; the TYPE-BY-SOURCE-PATH CHECK (generated source can never be user_fact)', async () => {
@@ -146,8 +173,9 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
   test('catalog: FORCE RLS; select+insert policies; SELECT+INSERT grants only; 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; 0014 applied', async () => {
     const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'memory_items' and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+    // INSERT + SELECT (0014) + the dual-keyed UPDATE policy added by migration 0015 (ACBP-P2-010 edit=supersede).
     const pols = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = 'memory_items' order by cmd`.execute(su.kysely);
-    expect(pols.rows.map((p) => p.cmd)).toEqual(['INSERT', 'SELECT']);
+    expect(pols.rows.map((p) => p.cmd)).toEqual(['INSERT', 'SELECT', 'UPDATE']);
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'memory_items' order by privilege_type`.execute(su.kysely);
     expect(grants.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT']);
     const others = await sql<{ grantee: string }>`select distinct grantee from information_schema.role_table_grants where table_schema = 'public' and table_name = 'memory_items' and grantee not in ('acbp_app', (select tableowner from pg_tables where schemaname='public' and tablename='memory_items'))`.execute(su.kysely);

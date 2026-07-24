@@ -129,14 +129,21 @@ activity-projected:
 One durable, in-transaction **interview** event (ACBP-P2-001; CDR-022) — `interview.started`, emitted on
 `not_started→in_progress` in the session-start transaction.
 
-One durable, in-transaction **typed-memory** event (ACBP-P2-006; CDR-024) — AUDIT-ONLY, never activity-projected:
+Three durable, in-transaction **typed-memory** events (ACBP-P2-006; ACBP-P2-010; CDR-024/CDR-025) — AUDIT-ONLY,
+never activity-projected. Each is written in the SAME transaction as its mutation (audit-or-nothing: a write
+failure rolls the mutation back, so no memory change is ever unaudited); subject = the memory item id;
+actor/account/company stamped server-side from the CompanyScope; metadata carries ONLY bounded references —
+never the founder content or the raw `source_ref` value (data minimization):
 
-- `memory.item_created` (`{item_type, source_type}`) — a typed memory item was created (MEM-003 "all changes
-  audited"). Written in the SAME transaction as the insert (audit-or-nothing: a write failure rolls the item
-  back, so no memory is ever unaudited); subject = the memory item id; actor/account/company stamped server-side
-  from the CompanyScope. Metadata is EXACTLY `{item_type, source_type}` — never the founder content or the raw
-  `source_ref` value (data minimization). The M3 domain fan-out (`understanding.corrected` → memory) and the
-  `interview.question_answered` → memory consumer remain deferred (no outbox yet).
+- `memory.item_created` (`{item_type, source_type}`) — a typed memory item was created (P2-006; MEM-003).
+- `memory.item_superseded` (`{item_type, source_type}` of the NEW version) — an item was corrected by a
+  versioned supersede (P2-010; owner-only `memory:edit`). Subject = the superseded (old) item.
+- `memory.item_deleted` (`{item_type, source_type, transition:'active_to_deleted'}`) — an item was soft-deleted
+  (P2-010; owner-only `memory:delete`). Subject = the deleted item.
+
+The M3 domain fan-out (`understanding.corrected` → memory) and the `interview.question_answered` → memory
+consumer remain deferred (no outbox yet); the deletion-propagation to dependent understanding/plans is likewise
+M3/M4 (CDR-025 §7).
 
 Completeness is enforced the same way: `AUDITED_OPERATIONS` is partitioned into membership, company,
 provisioning, admin, interview, and memory subsets, each domain's real-PostgreSQL producer test provides a

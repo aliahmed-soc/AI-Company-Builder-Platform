@@ -19,6 +19,8 @@ import {
   companyResumed,
   interviewStarted,
   memoryItemCreated,
+  memoryItemSuperseded,
+  memoryItemDeleted,
   type AuditEventName,
 } from './index.js';
 
@@ -78,6 +80,10 @@ describe('event-name registry (deny unregistered)', () => {
       'interview.started',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
+      // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
+      'memory.item_superseded',
+      // Memory browser (ACBP-P2-010; CDR-025 §0) — a memory item soft delete is audited.
+      'memory.item_deleted',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -215,6 +221,18 @@ describe('typed factories', () => {
   test('memoryItemCreated carries only bounded {item_type, source_type} — never content or source_ref', () => {
     const ev = memoryItemCreated({ memoryItemId: 'mem_1', itemType: 'user_fact', sourceType: 'interview_answer' });
     expect(ev).toEqual({ name: 'memory.item_created', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'success', metadata: { item_type: 'user_fact', source_type: 'interview_answer' } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('memoryItemSuperseded: subject = the OLD item id; metadata = the NEW version {item_type, source_type}', () => {
+    const ev = memoryItemSuperseded({ supersededItemId: 'mem_old', newItemType: 'user_fact', newSourceType: 'user_edit' });
+    expect(ev).toEqual({ name: 'memory.item_superseded', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_old', outcome: 'success', metadata: { item_type: 'user_fact', source_type: 'user_edit' } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('memoryItemDeleted: subject = the deleted item; metadata = {item_type, source_type, transition} — no content', () => {
+    const ev = memoryItemDeleted({ memoryItemId: 'mem_1', itemType: 'user_fact', sourceType: 'interview_answer' });
+    expect(ev).toEqual({ name: 'memory.item_deleted', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'success', metadata: { item_type: 'user_fact', source_type: 'interview_answer', transition: 'active_to_deleted' } });
     expect(Object.isFrozen(ev)).toBe(true);
   });
 });

@@ -68,10 +68,36 @@ is emitted (the `interview.question_answered`→memory and `understanding.correc
 no transactional outbox exists yet). `memory.item_created` is a new event name added to EVENT-CATALOG here,
 flagged for owner visibility in CDR-024 §4 — additive/reversible.
 
+## Memory browser (ACBP-P2-010; CDR-025)
+
+The browser reads and mutates the P2-006 substrate. A memory item has a **derived lifecycle** (mutually
+exclusive): **active** (`superseded_by IS NULL AND deleted_at IS NULL`), **superseded**
+(`superseded_by` set), **deleted** (`deleted_at` set) — enforced by a DB mutual-exclusion CHECK.
+
+- **Read** (`memory:read`): `GET …/memory` (filtered by `type` / `currentOnly`; **deleted items are always
+  omitted** — no `includeDeleted` toggle) and `GET …/memory/{id}` (a deleted item reads as `not_found`). The
+  row survives for history/audit; owner inspection at the DB level still sees it.
+- **Edit** = versioned **supersede** (`memory:edit`, OWNER-only): `PATCH …/memory/{id}` inserts a new
+  `user_edit` version (citing the corrected item) and points the old row's `superseded_by` at it —
+  **never a content overwrite**. Version-guarded (only a current row can be edited; a raced/terminal state →
+  `409`). Writes `memory.item_superseded` in-tx.
+- **Delete** = **soft delete** (`memory:delete`, OWNER-only; CDR-025 §0 owner decision): `DELETE …/memory/{id}`
+  sets `deleted_at` (server clock) + `deleted_by_user_id` on a current active item, guarded so exactly one
+  transaction transitions (a concurrent/already-deleted/superseded delete → `409`). Writes `memory.item_deleted`
+  in-tx (metadata `{item_type, source_type, transition:'active_to_deleted'}`, no content). **No hard delete, no
+  restore/purge, no dependent propagation** (deferred — below). The row persists for history and later
+  staleness processing.
+
+**Grants (migration 0015 + 0016):** the app role gains column-level `UPDATE` on EXACTLY the lifecycle-pointer
+columns — `superseded_by` (0015) + `deleted_at`/`deleted_by_user_id` (0016). Content/type/source/confidence/
+confirmation/identity/creation stay immutable; there is no DELETE/TRUNCATE grant. The 0015 dual-keyed FORCE-RLS
+UPDATE policy governs all three.
+
 ## Deferred (explicit)
 
-Supersede/confirm/delete + the memory browser UI + `memory:edit`/`memory:delete` and the `superseded_by`
-column-level UPDATE grant (P2-010); context assembly, provenance ranking, MEM-004 instruction precedence
-(P2-007); understanding generation + confidence-class scoring + confirmation-state advancement (P2-008/M3); the
-domain fan-out of `memory.item_created` and the memory consumption of `interview.question_answered` /
-`understanding.corrected` (M3, no outbox yet).
+Context assembly, provenance ranking, MEM-004 instruction precedence (P2-007); understanding generation +
+confidence-class scoring + confirmation-state advancement (P2-008/M3); **deletion propagation** to dependent
+understanding/plans — P2-010 durably records the delete + its audit; the propagation of staleness to dependents
+belongs to M3/P2-009 (understanding) and M4 (plans), which do not exist yet (CDR-025 §7); the domain fan-out of
+`memory.item_created` and the memory consumption of `interview.question_answered` / `understanding.corrected`
+(M3, no outbox yet). No restore/undelete/purge/physical-delete in P2-010.

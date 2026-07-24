@@ -139,9 +139,12 @@ trusted core/use-case seam:
   per-ticket action convention). Pure additions to the deny-by-default matrix; see `INTERVIEW.md`.
 - **P2-006** adds `memory:read` and `memory:write`, both `owner|viewer` company members (any active member may
   create a typed memory item and list the company's items — API-CONTRACTS "member (read)"; create is a member
-  write). There is deliberately NO `memory:edit`/`memory:delete` action yet: the owner-only edit/delete/supersede
-  operations belong to the memory browser (P2-010), which registers those actions when it implements them. Pure
-  additions to the deny-by-default matrix; see `MEMORY.md`.
+  write). See `MEMORY.md`.
+- **P2-010** (memory browser) adds `memory:edit` and `memory:delete`, both **OWNER-only** (API-CONTRACTS "Owner
+  (edit/delete)") — DISTINCT closed actions (no overloading): `memory:edit` is the versioned correction
+  (supersede), `memory:delete` is the soft delete. Neither is granted to `viewer`, nor to an account owner
+  without company membership, nor via forged provider claims. Pure additions to the deny-by-default matrix; see
+  `MEMORY.md`.
 
 ## What P1-007 does NOT do (later tickets)
 
