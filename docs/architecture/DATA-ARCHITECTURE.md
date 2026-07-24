@@ -19,6 +19,14 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Answer | C | answer_id, question_id | 1:1 Question; source for memory items | given→revised(new row) | A (revisions append) | founder content | With session | corrections audited | MVP |
 | Fact / Preference / Constraint / Assumption / Research finding | C | memory_item_id (typed) | realized as **Memory item** rows (MEM-001); linked to sources and dependents | proposed→accepted/confirmed→superseded/invalidated/deleted | V | business content | User-deletable (MEM-002) | all changes audited (MEM-003) | MVP |
 | Strategy option | C | option_id | derives from Understanding version; feeds Decision | generating→ready_for_review→selected/rejected→superseded | I (content) | — | With company | strategy.* | MVP |
+<!-- IMPLEMENTED (ACBP-P2-008; CDR-029): the Understanding artifact is realized as `understanding_documents`
+     (versioned header — `version` unique per company, `status` complete|partial, `overall_confidence` = weakest
+     section, UNDER-005) + `understanding_items` (classified into the closed 6-set fact/preference/constraint/
+     assumption/research_finding/open_question, each with `confidence` + a `source_ref` provenance link to memory).
+     Both company-owned, dual-keyed FORCE RLS, VERSIONED + APPEND-ONLY (SELECT+INSERT only — a re-generation is a
+     new version; review/correct is P2-009). Generated via the gateway from confirmed memory; `understanding.generated`
+     audited in-tx; usage metered. -->
+
 | Decision | C | decision_id | links understanding version + options considered + selection | recorded (terminal) | **I** | — | Permanent (with company) | decision.recorded | MVP |
 | Goal | C | goal_id | belongs to Roadmap | active→achieved/dropped | V | — | With company | roadmap versions | MVP |
 | Roadmap | C | roadmap_id, version | has Goals/Milestones; from Decision | versioned | V | — | With company | ROAD-002 versions | MVP |

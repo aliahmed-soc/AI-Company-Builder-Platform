@@ -145,6 +145,12 @@ trusted core/use-case seam:
   (supersede), `memory:delete` is the soft delete. Neither is granted to `viewer`, nor to an account owner
   without company membership, nor via forged provider claims. Pure additions to the deny-by-default matrix; see
   `MEMORY.md`.
+- **P2-008** (understanding generation) adds `understanding:generate` and `understanding:read`, both
+  `owner|viewer` company members (any active member drives the discovery→understanding flow — the generation is a
+  member action, like `interview:participate`/`memory:write`). There is deliberately NO `understanding:confirm`
+  or per-item review action yet: the **owner-only** confirm / planning-unlock (UNDER-003) belongs to P2-009,
+  which registers those actions when it implements the confirmation effect (the per-ticket action convention).
+  Pure additions to the deny-by-default matrix; see `CDR-029`.
 
 ## What P1-007 does NOT do (later tickets)
 
