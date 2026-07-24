@@ -41,6 +41,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Typed memory (ACBP-P2-006; CDR-024 §3): read + write = any active company member.
   'memory:read': ['owner', 'viewer'],
   'memory:write': ['owner', 'viewer'],
+  // Memory browser (ACBP-P2-010; CDR-025): editing (versioned correction) is OWNER-only.
+  'memory:edit': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

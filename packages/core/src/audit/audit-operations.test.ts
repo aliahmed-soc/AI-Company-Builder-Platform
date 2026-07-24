@@ -17,6 +17,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'interview.start',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — deliberately approved addition.
       'memory.create',
+      // Memory browser (ACBP-P2-010; CDR-025 §4) — deliberately approved addition.
+      'memory.supersede',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -42,6 +44,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['admin.tenant_read']).toBe('admin.tenant_read');
     expect(AUDITED_OPERATIONS['interview.start']).toBe('interview.started');
     expect(AUDITED_OPERATIONS['memory.create']).toBe('memory.item_created');
+    expect(AUDITED_OPERATIONS['memory.supersede']).toBe('memory.item_superseded');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

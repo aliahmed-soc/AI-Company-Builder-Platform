@@ -75,6 +75,10 @@ export const AUTHZ_ACTIONS = [
   // memory browser (P2-010), which registers those actions when it implements them.
   'memory:read',
   'memory:write',
+  // Memory browser (ACBP-P2-010; CDR-025). `memory:edit` is the OWNER-ONLY correction (versioned supersede) —
+  // API-CONTRACTS "Owner (edit/delete)", contrast the owner|viewer create/read grant. `memory:delete` is
+  // deferred behind the CDR-025 §0 deletion-semantics owner gate and is registered when that lands.
+  'memory:edit',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -147,6 +151,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // (owner-only per API-CONTRACTS) are P2-010's separate actions, not part of this write grant.
   'memory:read': ['owner', 'viewer'],
   'memory:write': ['owner', 'viewer'],
+  // Editing (a versioned correction) is OWNER-only (ACBP-P2-010; API-CONTRACTS "Owner (edit/delete)").
+  'memory:edit': ['owner'],
 };
 
 /**

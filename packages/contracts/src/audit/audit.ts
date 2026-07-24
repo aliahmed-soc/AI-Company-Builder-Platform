@@ -61,6 +61,10 @@ export const AUDIT_EVENTS = {
   // written in the same transaction as the insert. Subject = the memory item id; metadata carries only the
   // bounded {item_type, source_type} references — never the content or the raw source_ref value.
   'memory.item_created': { schemaVersion: 1, subjectType: 'memory_item' },
+  // Memory browser (ACBP-P2-010; CDR-025 §4) — an item was superseded by a corrected version (the OLD item is
+  // the subject; the forward pointer now targets the new version). AUDITED in-tx (a lifecycle transition,
+  // ADR-015). Metadata carries only the bounded {item_type, source_type} of the new version — never content.
+  'memory.item_superseded': { schemaVersion: 1, subjectType: 'memory_item' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -249,4 +253,12 @@ export function interviewStarted(input: { readonly sessionId: string }): AuditEv
  */
 export function memoryItemCreated(input: { readonly memoryItemId: string; readonly itemType: string; readonly sourceType: string }): AuditEvent {
   return makeEvent('memory.item_created', input.memoryItemId, 'success', { item_type: input.itemType, source_type: input.sourceType });
+}
+
+/**
+ * A memory item was superseded by a corrected version (ACBP-P2-010). Subject = the SUPERSEDED (old) item id.
+ * Metadata is EXACTLY `{item_type, source_type}` of the NEW version — bounded references only, never content.
+ */
+export function memoryItemSuperseded(input: { readonly supersededItemId: string; readonly newItemType: string; readonly newSourceType: string }): AuditEvent {
+  return makeEvent('memory.item_superseded', input.supersededItemId, 'success', { item_type: input.newItemType, source_type: input.newSourceType });
 }
