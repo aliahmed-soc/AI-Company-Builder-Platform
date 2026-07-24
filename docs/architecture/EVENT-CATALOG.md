@@ -49,6 +49,8 @@ Retention default: activity-projected events with company data; audit-relevant e
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |
 | understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
 | memory.item_created | Memory (P2-006) | audit only — never activity | item_type, source_type (no content, no raw source_ref) | audited in-tx (MEM-003 "all changes audited"); CDR-024 §4; actor/account/company server-stamped | with company |
+| memory.item_superseded | Memory browser (P2-010) | audit only — never activity | item_type, source_type of the NEW version (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the superseded (old) item; CDR-025 §4 | with company |
+| memory.item_deleted | Memory browser (P2-010) | audit only — never activity | item_type, source_type, transition='active_to_deleted' (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the deleted item; owner-only soft delete; CDR-025 §0 | with company |
 | understanding.confirmed | Understanding | Strategy (unlock), activity | understanding_version, confirmed_by | audited | permanent |
 | strategy.generated | Strategy | activity | option_ids[], similarity_check_result | — | with company |
 | strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |

@@ -1,7 +1,8 @@
 # CDR-025 — Memory browser (ACBP-P2-010)
 
-**Status:** Accepted for the delete-INDEPENDENT scope (autonomous lead, standing Phase 2 authorization);
-**deletion semantics = OPEN OWNER GATE (§0)**. **Requirement:** MEM-002. **Governing ADR:** ADR-015 (audit).
+**Status:** Accepted. The deletion semantics (§0) were an owner gate, now **RATIFIED by the owner** (all three
+recommendations approved: `deleted_at` + `deleted_by_user_id`; `memory.item_deleted` in-tx; propagation
+deferred to M3/M4). **Requirement:** MEM-002. **Governing ADR:** ADR-015 (audit).
 **Architecture:** API-CONTRACTS.md (Memory), DATA-ARCHITECTURE.md §3, MEMORY.md. **Depends on:** ACBP-P2-006
 (Done).
 
@@ -11,10 +12,17 @@ records the **canon-resolved, delete-independent** design (edit + read), which p
 deletion-semantics decision as a mandatory owner gate** (§0) — the delete OPERATION, its schema representation,
 and the deletion-propagation scope are NOT implemented until the owner ratifies §0.
 
-## 0. OWNER GATE — memory deletion semantics (BLOCKING for the delete sub-feature)
+## 0. Memory deletion semantics — OWNER-RATIFIED
 
-CLAUDE.md lists **"deletion semantics"** among the mandatory owner gates. P2-010 operationalizes memory deletion
-for the first time. Canon **constrains but does not fully pin** it, and one clause conflicts with reality:
+CLAUDE.md lists **"deletion semantics"** among the mandatory owner gates. The owner **approved** all three
+recommendations below, so this is now the implemented contract: **(A)** soft delete via nullable `deleted_at
+timestamptz` + `deleted_by_user_id uuid` (FK users); **(B)** a `memory.item_deleted` audit event written in the
+same transaction as every successful deletion; **(C)** propagation of the deletion into understanding/plans is
+deferred to the M3/M4 tickets that introduce those systems (CDR-025 §8). Implemented in migration 0016 + the
+core `deleteMemoryItem` operation + the DELETE route. The original gate analysis (kept for the record):
+
+P2-010 operationalizes memory deletion for the first time. Canon **constrains but does not fully pin** it, and
+one clause conflicts with reality:
 
 - **Soft vs hard:** canon forbids a hard delete — MEM-002 acceptance is "deletions **persist** and are audited",
   DATA-ARCHITECTURE §3 gives a `deleted` **lifecycle state**, and the item is "User-deletable" (non-destructive).
