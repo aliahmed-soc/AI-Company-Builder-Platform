@@ -51,19 +51,28 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
     await owner.kysely.updateTable('account_profiles').set({ display_name: 'Account B Name' }).where('account_id', '=', w.accountB).execute();
     expect((await getProfileForOwner(product, w.aOwner))?.displayName).toBe('Account A Name');
     expect((await getProfileForOwner(product, w.bOwner))?.displayName).toBe('Account B Name');
-    // A non-owner (viewer) and a complete outsider resolve to no owned account at all.
-    expect(await getProfileForOwner(product, w.aViewer)).toBeUndefined();
-    expect(await getProfileForOwner(product, w.outsider)).toBeUndefined();
+    // Every user has their OWN personal account (P1-003), so a viewer or outsider does NOT resolve to
+    // nothing — they resolve to THEMSELVES. The isolation property is that they never reach someone else's:
+    // no account A or B profile is ever returned to a caller who does not own it.
+    for (const user of [w.aViewer, w.outsider, w.bViewer, w.bothCompanies]) {
+      const own = await getProfileForOwner(product, user);
+      expect(own?.accountId, `${user} must not reach account A`).not.toBe(w.accountA);
+      expect(own?.accountId, `${user} must not reach account B`).not.toBe(w.accountB);
+      expect(own?.displayName).not.toBe('Account A Name');
+      expect(own?.displayName).not.toBe('Account B Name');
+    }
     // An update by account B's owner can only ever touch account B.
     await updateProfileForOwner(product, w.bOwner, { displayName: 'Renamed By B' });
     const a = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountA).executeTakeFirstOrThrow();
     const b = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountB).executeTakeFirstOrThrow();
     expect(a.display_name, 'account A must be untouched by account B’s owner').toBe('Account A Name');
     expect(b.display_name).toBe('Renamed By B');
-    // A non-owner cannot mutate any profile.
+    // A viewer's update lands on their OWN personal account, never on account A.
     await updateProfileForOwner(product, w.aViewer, { displayName: 'Viewer Rename' }).catch(() => undefined);
     const stillA = await owner.kysely.selectFrom('account_profiles').select('display_name').where('account_id', '=', w.accountA).executeTakeFirstOrThrow();
-    expect(stillA.display_name).toBe('Account A Name');
+    expect(stillA.display_name, 'a viewer’s profile update must not touch account A').toBe('Account A Name');
+    const renamedElsewhere = await owner.kysely.selectFrom('account_profiles').select('account_id').where('display_name', '=', 'Viewer Rename').execute();
+    expect(renamedElsewhere.every((r) => r.account_id !== w.accountA && r.account_id !== w.accountB)).toBe(true);
   });
 
   test(threatTitle('SCOPE-SELECTOR-HARVESTED', 'member list / invite / revoke across accounts'), async () => {
@@ -192,7 +201,10 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
   // ── Platform administration — NEGATIVE ONLY (CDR-020 §4) ───────────────────────────────────────────
   test(threatTitle('AUTHZ-PLATFORM-ADMIN-NOT-TENANT', 'platform authority grants NO tenant authority'), async () => {
     // An ACTIVE platform admin with no membership anywhere: every ordinary tenant surface denies.
-    expect(await getProfileForOwner(product, w.platformAdmin), 'a platform admin owns no account').toBeUndefined();
+    // The admin has their own personal account like any user — but it is never account A or B.
+    const adminProfile = await getProfileForOwner(product, w.platformAdmin);
+    expect(adminProfile?.accountId, 'a platform admin must not reach a tenant account').not.toBe(w.accountA);
+    expect(adminProfile?.accountId).not.toBe(w.accountB);
     expect((await listMembers(product, { accountId: w.accountA, actingUserId: w.platformAdmin })).status).toBe('forbidden');
     expect((await getCompany(product, { userId: w.platformAdmin, accountId: w.accountA, companyId: w.companyA1 })).status).not.toBe('ok');
     expect((await pauseCompany(product, { userId: w.platformAdmin, accountId: w.accountA, companyId: w.companyA1 })).status).not.toBe('ok');
