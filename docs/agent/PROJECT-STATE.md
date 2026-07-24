@@ -3,9 +3,21 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-006 "Typed memory items with provenance"** (M2), branch `p2-006-typed-memory-items` from `main` @
-  `1c49c55`, governed by **CDR-024**. Deps P1-005 (Done); the only unblocked Ready P2 ticket. No owner gate —
-  the memory data model is fully pinned by canon (DATA-ARCHITECTURE §3).
+- **ACBP-P2-006 finalization.** Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
+  **30090738122 green** (real-PG memory suites + HTTP adversarial + reverse-fully migration cycle; local full
+  suite 115 files / 1286 / 0 skipped). Both independent reviews CLEAN with explicit CORRECT verdicts on the
+  migration root-cause fix and the audit atomicity/decision (not an owner gate); all findings fixed
+  (P2-006-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI → PR #22 ready → recheck
+  main/PR#10 → squash-merge **"ACBP-P2-006: Typed memory items with provenance"** (no Co-Authored-By) →
+  exact-main CI → delete branch → next Phase 2 ticket.
+- Migrations 0001–0014; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime; `memory_items` dual-keyed FORCE RLS (SELECT+INSERT only). `memory.item_created` audited in-tx.
+- **Migration-cycle blocker (prior window) — ROOT-CAUSED + FIXED (Class T):** a window-1 bulk drop-list edit had
+  inserted `memory_items` into migration `0013`'s down loop → 42P01 on multi-step migrate-down. Fixed
+  (`cb43315`): 0013.down reverted to its own tables; the two speculative changes reverted (0014 self-FK restored,
+  0014.down standard pattern). Diagnosed on a disposable PostgreSQL (Windows-native 5433, isolated DB,
+  command-local env; `.env.local` untouched).
+- **P2-001/P2-002/P2-006 — Done.** Phase 2: **3 Done / 9 Planned.** P2-003/P2-005 gated by open question IOQ-13.
 - **Design (CDR-024):** `memory_items` (migration 0014) with the **closed 8-type enum** (user_fact,
   user_preference, constraint, ai_assumption, research_finding, approved_decision, measured_outcome,
   correction; type set by source path, untyped rejected), 6-value `source_type` + resolvable `source_ref`
