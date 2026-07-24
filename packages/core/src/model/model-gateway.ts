@@ -19,6 +19,7 @@ import {
   TIMEOUT_CLASS_MS,
   isFallbackEligible,
   isRetryableModelError,
+  timeoutClassForTask,
   normalizeError,
   ErrorCodes,
   isPlatformError,
@@ -131,8 +132,11 @@ function resolveConfig(config: GatewayConfig | undefined): ResolvedConfig {
       interactive: config?.timeoutMs?.interactive ?? TIMEOUT_CLASS_MS.interactive,
       generation: config?.timeoutMs?.generation ?? TIMEOUT_CLASS_MS.generation,
     },
-    maxRetries: config?.maxRetries ?? MAX_RETRY_ATTEMPTS,
-    maxReask: config?.maxReask ?? MAX_REASK_ATTEMPTS,
+    // Bounds are CEILINGS, not just defaults: an override can only LOWER them, never exceed the owner-ratified
+    // maxima (IOQ-13: retries ≤ 2, re-ask ≤ 1; CDR-026 §1). Clamp to [0, max] so a misconfigured GatewayConfig
+    // can never widen the bound past canon.
+    maxRetries: Math.max(0, Math.min(config?.maxRetries ?? MAX_RETRY_ATTEMPTS, MAX_RETRY_ATTEMPTS)),
+    maxReask: Math.max(0, Math.min(config?.maxReask ?? MAX_REASK_ATTEMPTS, MAX_REASK_ATTEMPTS)),
     backoffBaseMs: config?.backoffBaseMs ?? RETRY_BACKOFF_BASE_MS,
   };
 }
@@ -206,7 +210,10 @@ async function singleCall(rp: ResolvedProvider, request: ModelGatewayRequest, me
  * final outcome plus that running total, so the single usage event reflects total consumption, not just the last try.
  */
 async function runProvider(rp: ResolvedProvider, request: ModelGatewayRequest, messages: readonly ModelMessage[], cfg: ResolvedConfig, deps: ModelGatewayDeps): Promise<ProviderRun> {
-  const timeoutMs = cfg.timeoutMs[request.timeoutClass];
+  // The enforced deadline follows the TASK class's policy (IOQ-13/CDR-026 §1), derived from `taskClass` — NOT a
+  // caller-supplied `timeoutClass` field, so a quality-bearing generation always gets its full 120s class even if
+  // the request's declared `timeoutClass` is inconsistent. `taskClass` is the single authority for the deadline.
+  const timeoutMs = cfg.timeoutMs[timeoutClassForTask(request.taskClass)];
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let retriesLeft = cfg.maxRetries;
   let reasksLeft = cfg.maxReask;
@@ -246,6 +253,16 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
   const started = now();
   const cfg = resolveConfig(deps.config);
   const correlationId = request.correlationId;
+
+  // FAIL-CLOSED config guard: a request that references an output schema but runs in a gateway with NO validator
+  // wired cannot have its structured output checked. Returning the raw output as `ok` would defeat schema-first
+  // validation (ADR-011 §5) and silently mislabel unchecked output as validated — so refuse. Like the caps block
+  // below, this short-circuits BEFORE any provider call, so nothing is consumed and nothing is metered.
+  if (request.outputSchemaRef !== undefined && deps.validateOutput === undefined) {
+    const latencyMs = Math.max(0, now() - started);
+    deps.logger?.error('model.validator_unwired', { metadata: redactedMeta(deps.primary.name, composeModel(deps.primary, undefined), request.taskClass, 'error', 'internal', false, latencyMs, correlationId) });
+    return errorResult('internal', deps.primary, false, latencyMs, correlationId);
+  }
 
   // Company-policy pre-check (caps/tier). A block short-circuits BEFORE any provider call — nothing is consumed,
   // so no usage event is written (usage records model CALLS; a caps block is not a call — CDR-026 §4).

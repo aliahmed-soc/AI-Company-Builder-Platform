@@ -4,7 +4,8 @@
 //
 // One company-owned, dual-keyed table `usage_events` — the APPEND-ONLY usage source record every model
 // call emits (`model.call_completed`). It is the durable, immutable metering record; fail-closed metering
-// (CDR-026 §5) writes it in the SAME transaction as the gateway work.
+// (CDR-026 §5) writes it in its OWN short tenant transaction AFTER the (external) model call — a write
+// failure throws and the output is withheld (it is the only DB write in a gateway call, so it stands alone).
 //   - Least privilege: SELECT + INSERT ONLY — NEVER an update/delete grant (invariant 9, append-only). A
 //     row, once written, is immutable; there is no correction-in-place (a correction is a new row).
 //   - Bounded, non-secret metadata only: NO prompt/response content, NO secrets (CDR-026 §6).

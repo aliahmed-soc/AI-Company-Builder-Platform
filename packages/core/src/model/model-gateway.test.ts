@@ -149,6 +149,18 @@ describe('callModel — fault injection (retry / fallback / timeout)', () => {
     expect(res.outcome).toBe('error');
     expect(res.errorCategory).toBe('timeout');
   });
+
+  test('the enforced deadline follows the TASK class, not the request timeoutClass field', async () => {
+    // Sharp regression guard: taskClass 'generation' but a MISMATCHED request timeoutClass 'interactive'. The
+    // generation class is throttled to 15ms while interactive is left huge (10s). If the gateway (wrongly) read
+    // the request's interactive field it would use 10s and the 500ms hang would resolve → 'ok'; because it derives
+    // the deadline from taskClass → generation → 15ms, the hang is aborted → 'timeout'.
+    const prov = provider('primary', { kind: 'hang', ms: 500 });
+    const { deps } = baseDeps(prov, { config: { timeoutMs: { generation: 15, interactive: 10_000 }, maxRetries: 0 } });
+    const res = await callModel(deps, request({ taskClass: 'generation', timeoutClass: 'interactive' }));
+    expect(res.outcome).toBe('error');
+    expect(res.errorCategory).toBe('timeout');
+  });
 });
 
 describe('callModel — redaction (NFR-009)', () => {
@@ -194,6 +206,19 @@ describe('callModel — fail-closed metering + policy pre-check', () => {
     expect(res.errorCategory).toBe('budget_exceeded');
     expect((prov.provider as FakeModelProvider).callCount).toBe(0);
     expect(events).toHaveLength(0); // a caps block is not a call — nothing metered
+  });
+
+  test('fail-closed: an output schema is referenced but no validator is wired → internal error, no provider call', async () => {
+    // A gateway built without `validateOutput` cannot check structured output; a request that asks for it must be
+    // REFUSED, not silently returned as validated. The refusal precedes any provider call, so nothing is metered.
+    const prov = provider('primary', { kind: 'respond', output: 'unchecked' });
+    const { deps, events } = baseDeps(prov); // no validateOutput wired
+    const res = await callModel(deps, request({ outputSchemaRef: 'schema/x@1' }));
+    expect(res.outcome).toBe('error');
+    expect(res.errorCategory).toBe('internal');
+    expect(res.validatedOutput).toBeUndefined();
+    expect((prov.provider as FakeModelProvider).callCount).toBe(0); // refused before any provider call
+    expect(events).toHaveLength(0); // a refused-before-call is not a call — nothing metered
   });
 
   test('policy pre-check allow → proceeds normally', async () => {

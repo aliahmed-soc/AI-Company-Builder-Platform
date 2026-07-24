@@ -72,9 +72,11 @@ names/dialects appear ONLY in `@acbp/adapters` and configuration — never in pr
 attempt with the class timeout → on a retryable error, bounded retry (≤2, backoff) → on a terminal invalid_output,
 bounded **re-ask** (schema-first) → on exhaustion, **fallback eligibility** (queue vs fallback per task class;
 record the `fallbackUsed` reason; NO silent fallback for material classes) → validate the structured output
-against `outputSchemaRef` → **emit `model.call_completed` + write the append-only usage event in the SAME
-transaction (fail-closed: a metering-write failure blocks the work)** → return the `ModelResponse` (normalized
-error category on failure). **Redacted logging:** raw prompt/response content is referenced, never inlined; the
+against `outputSchemaRef` → **write the append-only usage event in its OWN short tenant transaction AFTER the
+(external) model call (fail-closed: a metering-write failure throws and the output is withheld); the
+`model.call_completed` log line is emitted after that write — it is not a second transactional co-write** →
+return the `ModelResponse` (normalized error category on failure). The enforced per-call deadline is derived
+from `taskClass` (its policy timeout class), so it cannot be under-cut by an inconsistent request `timeoutClass`. **Redacted logging:** raw prompt/response content is referenced, never inlined; the
 "seeded secret" never appears in logs; provider errors are normalized before logging.
 
 ## 5. Usage metering + the audit mechanism (§ analogous to CDR-023/CDR-024)
@@ -115,7 +117,7 @@ mis-implemented pricing config can never be silently rounded.
 Additive (0001–0016 untouched; no new SECURITY DEFINER — still three; no BYPASSRLS; no owner runtime). One
 company-owned, dual-keyed FORCE-RLS **append-only** table (`SELECT + INSERT` grants only — no UPDATE/DELETE;
 invariant 9): `id`, `account_id`, `company_id`, `kind` (`model_call`), `provider`, `model` (id@version),
-`task_class`, `outcome`, `token_usage_input`/`token_usage_output` (or a bounded jsonb), `estimated_cost_micros`
+`task_class`, `outcome`, `input_tokens`/`output_tokens` (integer), `estimated_cost_micros`
 (integer micro-units; never a float — money discipline), `fallback_used`, `latency_ms`, `correlation_id`,
 `created_at`. Dual-keyed fail-closed select/insert policies (account AND company). Cross-company reads impossible.
 
@@ -132,8 +134,8 @@ invariant 9): `id`, `account_id`, `company_id`, `kind` (`model_call`), `provider
    fail-closed rolls back).
 4. **Composition** wiring (a model-gateway composition, provider-neutral core + fake adapter) + broader
    integration; no HTTP route.
-5. **Docs** (gateway README, AI-AND-WORKER, EVENT-CATALOG/DATA-ARCHITECTURE/AUDIT as needed) + reviews +
-   finalization.
+5. **Docs** (gateway README — realized as a Model-gateway section in the `@acbp/core` README with operational
+   notes — AI-AND-WORKER, EVENT-CATALOG/DATA-ARCHITECTURE/AUDIT as needed) + reviews + finalization.
 
 ## 8. Out of scope / deferred
 

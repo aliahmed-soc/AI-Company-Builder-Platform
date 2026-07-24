@@ -3,8 +3,9 @@
 //
 // Operates on the append-only `usage_events` rows — the durable model-call usage source record. Takes a
 // plain executor and relies on the caller to run it under the correct COMPANY scope (the dual-keyed
-// policies deny anything else); the gateway writes it in the SAME transaction as its work (fail-closed
-// metering). Kysely parameterized queries only; no raw SQL interpolation. There is deliberately NO
+// policies deny anything else); the composition writes it in its OWN short tenant transaction AFTER the
+// (external) model call (fail-closed metering — a write failure throws and the output is withheld). Kysely
+// parameterized queries only; no raw SQL interpolation. There is deliberately NO
 // update/delete method — the ledger is immutable (a correction is a new row).
 import type { Kysely } from 'kysely';
 import type { DatabaseSchema, UsageEventRow } from './schema.js';

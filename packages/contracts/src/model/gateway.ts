@@ -141,6 +141,11 @@ export interface ModelGatewayRequest {
   readonly contextParts: readonly ModelContextPart[];
   readonly outputSchemaRef?: string;
   readonly budget?: ModelCallBudget;
+  /**
+   * The caller's DECLARED timeout class (ADR-011 §5). It must be consistent with `taskClass` — the gateway
+   * ENFORCES the deadline from the task class's policy (`timeoutClassForTask`), so this field never lets a
+   * generation call be capped at the shorter interactive deadline.
+   */
   readonly timeoutClass: TimeoutClass;
   readonly companyId: string;
   readonly accountId: string;

@@ -73,6 +73,18 @@ describe.skipIf(!hasTestDatabase)('model gateway composition (real PostgreSQL, r
     });
   });
 
+  test('a persisted usage row carries no prompt/context content (row-level redaction)', async () => {
+    // The append-only ledger has no content column by construction; prove it directly — a canary planted in the
+    // request context must NOT appear anywhere in the serialized persisted row.
+    const canary = 'PLANTED-CONTEXT-CANARY-int-7c1f';
+    const gw = createModelGateway(product, { primary: resolved('primary', { kind: 'respond', output: 'result' }), estimateCost });
+    const res = await gw(request(w.accountA, w.companyA1, { contextParts: [{ role: 'user', content: `secret ${canary}` }] }));
+    expect(res.outcome).toBe('ok');
+    const rows = await usageRows(w.companyA1);
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows[0])).not.toContain(canary);
+  });
+
   test('an errored call is metered too (outcome=error + normalized category, zero tokens)', async () => {
     const gw = createModelGateway(product, { primary: resolved('primary', { kind: 'fail', error: 'content_refused' }), estimateCost, config: { maxRetries: 0 } });
     const res = await gw(request(w.accountA, w.companyA1));
