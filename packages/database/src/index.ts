@@ -54,6 +54,10 @@ export { InterviewQaRepository } from './interview-qa-repository.js';
 export type { InterviewQaExecutor } from './interview-qa-repository.js';
 export { MemoryItemRepository } from './memory-item-repository.js';
 export type { MemoryItemExecutor, NewMemoryItemInput, ListMemoryItemsOptions } from './memory-item-repository.js';
+// Append-only model-gateway usage ledger (ACBP-P2-003; CDR-026). SELECT + INSERT only; every method
+// requires a validated CompanyScope (dual-keyed RLS). Written in-tx with the gateway work (fail-closed).
+export { UsageEventRepository } from './usage-event-repository.js';
+export type { UsageEventExecutor, NewUsageEventInput, ListUsageEventsOptions } from './usage-event-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -131,6 +135,9 @@ export type {
   MemoryItemsTable,
   MemoryItemRow,
   NewMemoryItem,
+  UsageEventsTable,
+  UsageEventRow,
+  NewUsageEvent,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

@@ -161,8 +161,10 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('company_profiles');
     expect(names).toContain('company_memberships');
     expect(names).toContain('activity_events');
-    // Tasks/approvals/usage and other later-ticket tables must NOT exist yet.
-    for (const notYet of ['tasks', 'task_runs', 'approvals', 'usage_events', 'policies']) {
+    // `usage_events` now exists (ACBP-P2-003, migration 0017 — the model-gateway usage ledger).
+    expect(names).toContain('usage_events');
+    // Tasks/approvals and other later-ticket tables must NOT exist yet.
+    for (const notYet of ['tasks', 'task_runs', 'approvals', 'policies']) {
       expect(names).not.toContain(notYet);
     }
   });
