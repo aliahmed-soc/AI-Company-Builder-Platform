@@ -3,16 +3,18 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-001 finalization.** Status **Done**; feature head `28020b6` (review fixes), exact-head CI
-  **30070692829 green** — 108 test files, audit clean, real-PG interview suites + kill-and-resume +
-  concurrent-start all passed. Both independent reviews returned no security defect (security CLEAN); all
-  observations fixed (P2-001-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI →
-  PR #20 ready → recheck main/PR#10 → squash-merge **"ACBP-P2-001: Interview session persistence and state
-  machine"** (no Co-Authored-By) → exact-main CI → delete branch → next Phase 2 ticket.
-- Migrations 0001–0012; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
-  runtime connection; `interview_sessions` dual-keyed FORCE RLS.
-- **11 Phase 2 tickets remain Planned.** Next candidates: P2-002 (Q&A persistence, deps P2-001 now Done) or
-  P2-006 (typed memory, deps P1-005 Done). P2-003 gated by open question IOQ-13.
+- **ACBP-P2-002 "Question and answer persistence"** (M2), branch `p2-002-question-answer-persistence` from
+  `main` @ `6cf537e`, governed by **CDR-023**. Deps P2-001 (Done); no owner gate (the Q&A data model,
+  append-only revision semantics, and dual-keyed tenancy are pinned by canon).
+- **Design (CDR-023):** `interview_questions` (immutable, ordered per session) + `interview_answers`
+  (append-only — a revision is a new row, current = max revision per question) on migration 0013; operations
+  record/revise/skip/read Q&A, idempotent no-op on identical resubmit; authz reuses `interview:participate`
+  (writes) + `interview:read`. **Persistence-only** — audit-store/domain-event emission DEFERRED (canon routes
+  the audited correction to the M3 `understanding.corrected`; EVENT-CATALOG marks `interview.question_answered`
+  audit "—"; no consumer/outbox exists). Accountability lives in the append-only authored rows. Flagged in
+  CDR-023 §4 + PR for owner visibility (additive/reversible).
+- **ACBP-P2-001 — Done** (squash `6cf537e`, PR #20; exact-main CI 30071214096 green). Migrations now 0001–0012;
+  still exactly 3 SECURITY DEFINER (all 0006). Phase 2: 1 Done / 11 Planned.
 - **PR #10** still OPEN/draft/external — inspect GitHub state only; never touch.
 
 ## ACBP-P2-001 detail (Done) — branch `p2-001-interview-session-state-machine`, PR #20, CDR-022
