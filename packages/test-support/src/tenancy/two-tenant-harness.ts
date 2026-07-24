@@ -78,6 +78,30 @@ export function createRestrictedProductClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_APP_URL: u.toString(), DATABASE_SSL: ssl, DATABASE_APP_NAME: 'acbp-adversarial-app' }, { role: 'app' }));
 }
 
+/**
+ * Configure the environment the REAL route runtime composes itself from: the restricted `acbp_app` connection
+ * and synthetic provider settings. Owned here rather than restated per suite — the copies only ever differed
+ * by placeholder strings, so a new variable in the composition root would silently break some callers and,
+ * worse, leave others passing against a stale configuration.
+ *
+ * `DATABASE_URL` is REMOVED, not merely unused: the runtime must have no reachable path to the owner
+ * connection even if a fallback were ever introduced. (This is a precondition; the positive proof is
+ * `runtimeConnectionRoles` after the runtime has actually served a request.)
+ */
+export function configureRouteRuntimeEnv(): void {
+  const u = new URL(url as string);
+  u.username = 'acbp_app';
+  u.password = APP_ROLE_TEST_PASSWORD;
+  process.env['APP_ENV'] = 'test';
+  process.env['DATABASE_APP_URL'] = u.toString();
+  delete process.env['DATABASE_URL'];
+  process.env['DATABASE_SSL'] = ssl;
+  process.env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = 'pk_test_adversarial_synthetic';
+  process.env['CLERK_SECRET_KEY'] = 'sk_test_adversarial_synthetic';
+  process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = 'whsec_adversarial_synthetic';
+  process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_adversarial';
+}
+
 export async function enableAppLogin(owner: DatabaseClient): Promise<void> {
   await sql`alter role acbp_app login password ${sql.lit(APP_ROLE_TEST_PASSWORD)}`.execute(owner.kysely);
 }
@@ -155,7 +179,16 @@ export interface TwoTenantWorld {
   readonly companyA2: string;
   readonly companyB1: string;
   readonly companyB2: string;
+  /**
+   * The seeded company names, exported so leak assertions search for the string the fixture ACTUALLY wrote.
+   * Restating the literals at the call site makes a rename in this file silently vacuous: a name that is
+   * never emitted can never be found, so every "does not leak" check would pass without testing anything.
+   */
+  readonly companyNames: readonly string[];
 }
+
+/** The seeded company names, in A1, A2, B1, B2 order. */
+export const SEEDED_COMPANY_NAMES = ['Alpha One', 'Alpha Two', 'Beta One', 'Beta Two'] as const;
 
 let userSeq = 0;
 async function seedUser(owner: DatabaseClient, label: string): Promise<string> {
@@ -226,10 +259,10 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
   // existing_business. A wrong mode is rejected by validation BEFORE any write, so the harness would fail
   // with no company at all — hence the explicit per-company diagnosis below rather than a bare "failed".
   const created = {
-    a1: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: 'Alpha One' }),
-    a2: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: 'Alpha Two' }),
-    b1: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: 'Beta One' }),
-    b2: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'platform_suggested', name: 'Beta Two' }),
+    a1: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: SEEDED_COMPANY_NAMES[0] }),
+    a2: await ops.createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: SEEDED_COMPANY_NAMES[1] }),
+    b1: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: SEEDED_COMPANY_NAMES[2] }),
+    b2: await ops.createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'platform_suggested', name: SEEDED_COMPANY_NAMES[3] }),
   };
   const failures = Object.entries(created)
     .filter(([, r]) => r.status !== 'ok')
@@ -284,6 +317,7 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
     companyA2: a2,
     companyB1: b1,
     companyB2: b2,
+    companyNames: SEEDED_COMPANY_NAMES,
   };
 }
 

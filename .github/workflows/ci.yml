@@ -65,5 +65,11 @@ jobs:
         run: pnpm run ci:preflight
       - name: Aggregate gate (typecheck, lint, secret scan, boundaries + regression, contracts, unit, real-PostgreSQL integration + migrations)
         run: pnpm run check
+      # ACBP-P1-015 acceptance criterion ("Demo script passes E2E incl. live denial") and its verification
+      # procedure ("Run demo script"). The journey is shared with the CI suite, but running the SCRIPT is what
+      # proves the artifact the backlog names is actually executable — a demo that only ever ran on someone's
+      # machine is not evidence. It resets its own disposable schema, so it runs after the aggregate gate.
+      - name: Slice A demo (M1 exit journey, ending in a live cross-tenant denial)
+        run: pnpm run demo:slice-a
       - name: Dependency advisories (High and above block)
         run: pnpm audit --audit-level high

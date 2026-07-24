@@ -3,11 +3,44 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P1-014 finalization in progress** (backlog **Done**; PR #16 ready → squash-merge → exact-main CI →
-  branch cleanup) under the standing Phase 1 authorization. **ACBP-P1-015** (Slice A integration: secure
-  company creation) is next: discovery then implementation, also under that authorization.
+- **ACBP-P1-015 finalization** — status **Done**; PR #17 ready → squash-merge → exact-main CI → branch
+  cleanup, under the standing Phase 1 authorization. **This is the last Planned ticket in Phase 1: with it
+  Done, all 15 Phase 1 tickets are Done.**
+- Feature head `8b8471b`; exact-head CI **30064683125 green** — 104 files / 1159 passed / 0 failed / 0 skipped,
+  3m06s (5-minute ceiling), including the new hosted `pnpm demo:slice-a` step (11/11 steps, live denial).
+  Prior slice head `2f03a70` (CI 30063164730 green, 104f/1157/0-skip).
+
+## ACBP-P1-015 detail
+- Branch `p1-015-slice-a-secure-company-creation` from `main` @ `b559d37`, **PR #17**. Governed by **CDR-021**.
+  - **Design (CDR-021):** the M1 exit criterion made executable — sign in → internal mapping → account →
+    company → switch → cross-company access DENIED, with the audit/activity trail verified. The journey is
+    implemented ONCE in `@acbp/test-support` (`runSliceAJourney`) and consumed by BOTH the runnable demo
+    (`pnpm demo:slice-a`, wired into the CI gate) and the CI suite, so the demo cannot drift from the
+    guarantee. Everything below the provider-SDK edge is production code over the restricted `acbp_app`
+    connection under FORCE RLS; `DATABASE_URL` is deleted from the runtime's environment and the restricted
+    role is then PROVEN positively via `runtimeConnectionRoles`.
+  - **Browser-level E2E deferred to staging** (CDR-021 §1): the slice-A flows are API-only by owner decision,
+    so there are no screens to drive, and driving Clerk's hosted sign-in would need live provider credentials.
+    `TEST-AND-VERIFICATION-STRATEGY.md` amended accordingly. No live authenticated acceptance performed.
+  - **Progress:** Slice 1 `2f03a70` (journey + CI suite + demo + CDR-021 + demo doc; exact-head CI 30063164730
+    green, 104 files / 1157 / 0-skip, 3m18s). Then the two independent reviews (security; architecture/scope)
+    found the DEMO SCRIPT — the backlog row's own acceptance criterion — could not run at all: a Windows
+    `pathToFileURL(url.pathname)` drive-letter doubling, and no `@/…` alias resolution outside
+    `apps/web/tsconfig.json` + `vitest.config.ts`. Both repaired and the script then EXECUTED end to end
+    against real PostgreSQL (10/10 steps, exit 0), and wired into `ci.yml` so the criterion has hosted
+    evidence. Also repaired from the reviews: ACC-001 proven NEGATIVELY (mutable verification status +
+    unverified-email refusal), PORT-003 given a real A→B→A switch, two unfalsifiable journey steps replaced
+    with falsifiable ones (route-stamped `actor_id`; "did this caller leave a trail INSIDE the other
+    tenant?"), the runtime-role claim upgraded from precondition to positive proof, the three hand-copied
+    runtime-env blocks consolidated into `configureRouteRuntimeEnv`, and the fixture's company names exported
+    so leak assertions cannot go vacuous on a rename.
 
 ## Closed in this session
+- Ticket: **ACBP-P1-014** — Tenant-isolation adversarial suite (status: **Done**). Squash-merged **`b559d37`**
+  (PR #16). Implemented under CDR-020. Class M owner gate on `activity_events.event_id` global uniqueness
+  RESOLVED as **Option C** (accepted residual: server-generated opaque global identities may remain globally
+  unique when no production or plausible application-bug path can supply a foreign value to the constraint;
+  caller-influenceable idempotency keys stay tenant-scoped, as already implemented for `audit_events`).
 - Ticket: **ACBP-P1-013** — Administrative-access foundation (status: **Done**, owner-authorized 2026-07-24).
   Implemented 2026-07-23 under 21 explicit owner decisions → **CDR-019**.
 - Branch: `p1-013-administrative-access-foundation` (from `main` @ `795227b`).
@@ -132,7 +165,15 @@ _Read this first on resume, then continue automatically to "Next executable acti
   P1-009 only on separate authorization. Stop if profile-versioning storage semantics turn out canonically unsettled
   (owner-approved immutable-revision model per CDR-015).
 
-## Authority limits (this ticket — P1-013)
+## Authority limits (this ticket — P1-015)
+- Standing Phase 1 authorization covers implementation, slices, pushes, CI, reviews, defect fixes, marking
+  P1-015 Done, marking PR #17 ready, squash-merging it, and deleting its branch. Still forbidden: production
+  systems/credentials/deploys, live Clerk, any Clerk dashboard change, public tunnels, force-push or history
+  rewrite, direct commits to main, non-squash merges, touching PR #10 / its worktree / the stale
+  `claude/affectionate-northcutt-f33c98` branch or the inert P1-002 endpoint, weakening tests to make them
+  pass, and implementing later-phase scope. Stop only for a NEWLY discovered true mandatory owner gate.
+
+## Authority limits (historical — P1-013)
 - No production systems/credentials; no public tunnel; no Clerk dashboard; do not touch the inert P1-002 endpoint
   or PR #10 / its worktree. Do NOT: mark P1-013 Done / PR ready / merge / delete branch / begin P1-014; build
   break-glass or a JIT approval workflow; implement impersonation of any kind; add tenant-data mutations, admin
@@ -220,6 +261,16 @@ _Read this first on resume, then continue automatically to "Next executable acti
   updates) + independent reviews + final verification (owner gate).
 
 ## Next executable action
-Commit the planning change (CDR-019 + records; NO production code), open the draft PR, then implement Slice 1
-under TDD. Commit + push each green slice; verify hosted CI on the exact pushed commit (zero-skip PG). Stop only
-at a genuinely new owner decision or the complete final owner gate.
+Push the P1-015 review-repair slice, require exact-head hosted-green CI (zero-skip PG, and the new Slice A demo
+step must pass), then finalize P1-015: mark it Done, mark PR #17 ready, squash-merge as
+**"ACBP-P1-015: Slice A integration: secure company creation"** (no Co-Authored-By), verify exact-main CI,
+delete the branch, and confirm Phase 1 has no remaining Planned ticket. Then return the Phase 1 completion
+report.
+
+## Local integration environment (learned 2026-07-24)
+Local real-PostgreSQL runs ARE possible on this machine, contrary to the older "unrunnable" note below — two
+things were in the way: (1) the dedicated WSL distro terminates when no process holds it open, so hold it with
+a background `wsl -d acbp-local-dev … sleep N` for the duration of a run; (2) the local owner role lacked
+CREATEROLE, so migration 0005 failed with "permission denied to create role" — CI's owner is a superuser, so
+`alter role acbp_dev superuser createrole` on the disposable local distro matches CI. Hosted CI remains the
+authoritative zero-skip gate; local runs are for fast feedback and for executing `pnpm demo:slice-a`.
