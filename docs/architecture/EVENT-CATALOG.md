@@ -45,7 +45,7 @@ Retention default: activity-projected events with company data; audit-relevant e
 | provisioning.completed | Account&Company (P1-012) | audit only — never activity | step_count | audited atomically with onboarding→active | with company |
 | admin.tenant_read | Admin surface (P1-013) | audit only — never activity | reason (verbatim), scope='company_overview' | THE admin-action record (CDR-019); target-tenant-scoped; actor_type=admin (real admin id); written before response delivery | with company |
 | interview.started | Discovery | activity (deferred — see note) | session_id | audited | with session |
-| interview.question_answered | Discovery | Understanding (incremental), memory | question_id, answer_ref (no full text), revision_of? | — | with session |
+| interview.question_answered | Discovery | Understanding (incremental), memory (deferred — see note) | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |
 | understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
 | understanding.confirmed | Understanding | Strategy (unlock), activity | understanding_version, confirmed_by | audited | permanent |
@@ -83,3 +83,10 @@ Retention default: activity-projected events with company data; audit-relevant e
   when the discovery activity/memory surface (M3) actually consumes it. Audit-only-now → project-later is
   additive and reversible. The "activity" column above records the eventual design intent, not the current
   shipped behavior.
+- **`interview.question_answered` is NOT emitted yet (ACBP-P2-002 / CDR-023 §4).** P2-002 persists questions and
+  answers (append-only revisions) but emits **no** event: its Audit-relationship is already "—", and its
+  consumers (Understanding-incremental, memory) do not exist until M3/P2-006, nor does the transactional outbox
+  — so emitting it now would have no consumer. Accountability for a revision lives in the append-only, authored
+  (`created_by_user_id NOT NULL`), immutable answer rows; the audit-grade *correction* record is
+  `understanding.corrected` (M3, DISC-008). The "Consumers" column records the eventual design intent, not the
+  current shipped behavior. Deferral is additive and reversible.

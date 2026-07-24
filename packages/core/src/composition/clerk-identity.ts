@@ -50,6 +50,7 @@ import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, 
 import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, type GetProvisioningResult, type ResumeProvisioningResult, type ProvisioningOpOptions } from '../company/provisioning-service.js';
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
 import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
+import { recordInterviewAnswer, getSessionQa, type InterviewQaParams, type InterviewQaOptions, type RecordAnswerResult, type GetSessionQaResult } from '../discovery/interview-qa.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -156,6 +157,13 @@ export interface ClerkIdentityRuntime {
   suspendInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<InterviewTransitionResult>;
   resumeInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<InterviewTransitionResult>;
   getInterviewSession(params: InterviewSessionParams, options?: InterviewSessionOptions): Promise<GetInterviewResult>;
+  /**
+   * Interview Q&A persistence (ACBP-P2-002; CDR-023). `recordInterviewAnswer` appends an answer/skip revision
+   * (append-only; idempotent no-op on an identical resubmit); `getSessionQa` reads the session's questions +
+   * current answers + revision history. Both company-scoped; participate/read = any active company member.
+   */
+  recordInterviewAnswer(params: InterviewQaParams & { questionId: string; status: unknown; content?: unknown }, options?: InterviewQaOptions): Promise<RecordAnswerResult>;
+  getSessionQa(params: InterviewQaParams, options?: InterviewQaOptions): Promise<GetSessionQaResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -235,6 +243,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getInterviewSession(params, options) {
       return getInterviewSession(client, params, options ?? {});
+    },
+    recordInterviewAnswer(params, options) {
+      return recordInterviewAnswer(client, params, options ?? {});
+    },
+    getSessionQa(params, options) {
+      return getSessionQa(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});

@@ -16,7 +16,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `interview_${'test'}_pw_1970`;
 
-const ALL = ['interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-interview-int' }));
@@ -208,8 +208,9 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
+    // This migration is applied (not that it is the LAST or ONLY one — later tickets add migrations on top).
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
-    expect(migs.rows.at(-1)?.name).toBe('0012_interview_sessions');
-    expect(migs.rows).toHaveLength(12);
+    expect(migs.rows.map((m) => m.name)).toContain('0012_interview_sessions');
+    expect(migs.rows.length).toBeGreaterThanOrEqual(12);
   });
 });

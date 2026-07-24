@@ -96,9 +96,41 @@ Responses: `200 { session }` (redacted DTO — sessionId, companyId, state, hone
 accountId/actor); `company_not_active` → coarse `409`; `invalid_transition` → `409 { from }`; `not_found` →
 `404`; any denial → one opaque `403`.
 
+## Questions and answers (ACBP-P2-002; CDR-023)
+
+The Q&A persistence layer hangs off the session. Two company-owned, dual-keyed FORCE-RLS tables (migration
+0013):
+
+- **`interview_questions`** — DATA-ARCHITECTURE Question (`I`, immutable). Ordered per session (`unique
+  (session_id, position)`); `SELECT + INSERT` grants only, so a question row never changes and its
+  `answered/skipped` lifecycle is *derived* from the answers, never a stored column.
+- **`interview_answers`** — DATA-ARCHITECTURE Answer (`A`, append-only; "given→revised(new row)"). Composite PK
+  `(question_id, revision)`; **current answer = max(revision) per question**; `status` (`answered | skipped`)
+  with a content-shape CHECK (answered needs 1–10k content, skipped forbids it); `created_by_user_id` records
+  the author of every revision. `SELECT + INSERT` grants only — a revision is a **new row**, never an in-place
+  edit (the `company_profiles` append-only precedent).
+
+Operations (`@acbp/core`): `addInterviewQuestion` (the persistence primitive P2-005 drives),
+`recordInterviewAnswer` (append a revision; resubmitting the identical current answer is an **idempotent no-op**;
+a concurrent revision race is graceful via `ON CONFLICT (question_id, revision) DO NOTHING`), and `getSessionQa`
+(questions in order, each with current answer + full revision history + derived lifecycle). Authz reuses
+`interview:participate` (writes) and `interview:read`. HTTP: `GET …/interview/qa` and
+`POST …/interview/questions/{questionId}/answer` (body `{ status, content? }`) — the operations target the
+company's **open** session (resolved server-side; the client never supplies a session id).
+
+**Persistence-only (CDR-023 §4):** P2-002 emits **no** audit-store event and **no** domain event. Accountability
+lives in the append-only, authored, timestamped, never-mutated rows. Canon marks `interview.question_answered`
+audit "—" (EVENT-CATALOG) and routes the *audited* correction to the M3 `understanding.corrected` event; that
+event's consumers (Understanding, memory) and the transactional outbox do not exist yet, so both the domain
+fan-out and any correction audit event are **deferred to M3** — exactly as `interview.started`'s activity
+projection is deferred.
+
 ## Deferred (explicit)
 
-Activity projection of `interview.started`; questions/answers/revisions and `interview.question_answered`
-(P2-002); generation/adaptivity/batching (P2-005); gateway + usage (P2-003); memory (P2-006);
-understanding/strategy generation and the effects of the `ready_for_review`/`confirmed`/`superseded`
-transitions (M3); the `interview:confirm` authz action (P2-009); per-answer checkpoint recovery (P2-002).
+Activity projection of `interview.started`; the `interview.question_answered` domain fan-out and any answer/
+correction **audit-store event** (P2-002 is persistence-only — CDR-023 §4, deferred to M3); question
+generation/adaptivity/batching, vagueness/contradiction detection, suggested assumptions, rationale (P2-005);
+understanding re-evaluation + stale flagging and `understanding.corrected` (M3); typed memory + provenance
+consumption of `interview_answer` refs (P2-006/P2-007); gateway + usage (P2-003); understanding/strategy
+generation and the effects of the `ready_for_review`/`confirmed`/`superseded` transitions (M3); the
+`interview:confirm` authz action (P2-009); per-answer checkpoint recovery.

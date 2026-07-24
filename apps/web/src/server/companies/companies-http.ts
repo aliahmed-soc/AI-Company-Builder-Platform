@@ -50,6 +50,13 @@ export async function parseRenameCompanyBody(request: HttpRequest): Promise<Pars
   return { ok: true, input: { name: r.obj['name'], description: r.obj['description'] } };
 }
 
+/** Parse an answer-submission body → { status, content } (raw values; the domain validates). */
+export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ status: unknown; content: unknown }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  return { ok: true, input: { status: r.obj['status'], content: r.obj['content'] } };
+}
+
 /**
  * Run a companies request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500
  * envelope (ACBP-P1-014 Class R restoration).
@@ -116,6 +123,14 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'company_not_active':
       // An interview can only start on an active company (WORKFLOW §2). Coarse, non-oracle 409.
       return jsonResponse(409, { error: 'company_not_active' });
+    case 'answer':
+      // The redacted answer DTO (ACBP-P2-002): questionId, revision, status, content, createdAt. `created`
+      // distinguishes a new revision from an idempotent no-op. No accountId/actor.
+      return jsonResponse(200, { answer: result.answer, created: result.created });
+    case 'qa':
+      // The redacted session Q&A: questions in order, each with current answer + full revision history +
+      // derived lifecycle. No accountId/actor ids.
+      return jsonResponse(200, { qa: result.qa });
     case 'invalid_transition':
       return jsonResponse(409, { error: 'invalid_transition', from: result.from });
     case 'conflict':

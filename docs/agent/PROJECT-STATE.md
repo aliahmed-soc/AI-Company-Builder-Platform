@@ -3,16 +3,19 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-001 finalization.** Status **Done**; feature head `28020b6` (review fixes), exact-head CI
-  **30070692829 green** — 108 test files, audit clean, real-PG interview suites + kill-and-resume +
-  concurrent-start all passed. Both independent reviews returned no security defect (security CLEAN); all
-  observations fixed (P2-001-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI →
-  PR #20 ready → recheck main/PR#10 → squash-merge **"ACBP-P2-001: Interview session persistence and state
-  machine"** (no Co-Authored-By) → exact-main CI → delete branch → next Phase 2 ticket.
-- Migrations 0001–0012; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
-  runtime connection; `interview_sessions` dual-keyed FORCE RLS.
-- **11 Phase 2 tickets remain Planned.** Next candidates: P2-002 (Q&A persistence, deps P2-001 now Done) or
-  P2-006 (typed memory, deps P1-005 Done). P2-003 gated by open question IOQ-13.
+- **ACBP-P2-002 finalization.** Status **Done**; feature head `71657ae` (review fixes), exact-head CI
+  **30075033944 green** — real-PG Q&A suites (append-only revisions, idempotent no-op, concurrent
+  distinct-both-persist + identical-collapse, NOT-NULL author, cross-tenant isolation) + HTTP adversarial all
+  passed. Both independent reviews CLEAN with an explicit verdict that the CDR-023 §4 audit-deferral is
+  acceptable and NOT an owner gate; all observations fixed (P2-002-REVIEW-COVERAGE.md). Sequence: finalization
+  records commit → exact-commit CI → PR #21 ready → recheck main/PR#10 → squash-merge **"ACBP-P2-002: Question
+  and answer persistence"** (no Co-Authored-By) → exact-main CI → delete branch → next Phase 2 ticket.
+- Migrations 0001–0013; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime; `interview_questions` (immutable) + `interview_answers` (append-only, NOT-NULL author) dual-keyed
+  FORCE RLS. **Persistence-only** — no audit/domain event (deferred; CDR-023 §4).
+- **ACBP-P2-001 — Done** (squash `6cf537e`, PR #20). Phase 2: 2 Done / 10 Planned. Next candidates: P2-005
+  (adaptive orchestration; deps P2-003+P2-002 — P2-003 gated by IOQ-13, so P2-005 is blocked); **P2-006** typed
+  memory (deps P1-005 Done — UNBLOCKED); P2-003 gateway gated by IOQ-13.
 - **PR #10** still OPEN/draft/external — inspect GitHub state only; never touch.
 
 ## ACBP-P2-001 detail (Done) — branch `p2-001-interview-session-state-machine`, PR #20, CDR-022
