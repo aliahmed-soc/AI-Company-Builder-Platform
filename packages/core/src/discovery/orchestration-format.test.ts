@@ -11,7 +11,7 @@ function qa(items: Array<{ questionId: string; prompt: string; answer: string | 
       question: { questionId: i.questionId, position: 1, prompt: i.prompt, rationale: null, source: 'adaptive', createdAt: '2026-01-01T00:00:00.000Z' },
       currentAnswer: i.answer === null ? null : { questionId: i.questionId, revision: 1, status: i.status ?? 'answered', content: i.answer, createdAt: '2026-01-01T00:00:00.000Z' },
       revisions: [],
-      lifecycle: i.answer === null ? 'unanswered' : (i.status ?? 'answered'),
+      lifecycle: i.answer === null ? 'asked' : (i.status ?? 'answered'),
     })),
   };
 }
