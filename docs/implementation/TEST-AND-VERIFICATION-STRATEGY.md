@@ -18,7 +18,8 @@ Status: Proposed for owner review. Layers defined now; implemented incrementally
 | API tests | apps/web | CI | seeded fixtures | fake gateway/adapters | staging smoke real | M1 | alpha+ | per-domain | 006 |
 | Worker tests | apps/worker, core/workers | CI | scripted tasks | fake gateway + fake tools | staging with real models (capped) | M5 | beta | WORK-* | 012 |
 | Model-evaluation tests (the ADR-019 10-area gate) | gateway + eval harness | dedicated eval runs | curated eval dataset (P0-002) | none — real models, both configured | yes, budget-capped | M2 (areas 1–3), M3 (4), M5 (5–7), M7 (all 10) | **beta gate** | DISC/STRAT/WORK quality | 019 |
-| Browser/E2E tests | apps/web | CI headless + staging | scripted MVP-loop personas | fake gateway in CI; real in staging run | staging | M1 (slice A) growing per slice | beta | slices A–F | — |
+| Browser/E2E tests | apps/web | CI headless + staging | scripted MVP-loop personas | fake gateway in CI; real in staging run | staging | **staging, once company screens exist** (deferred from M1 by CDR-021 — the slice-A flows are API-only, so there is nothing to drive in a browser) | beta | slices A–F | — |
+| Full-stack journey tests | apps/web → real PostgreSQL | CI + `pnpm demo:slice-a` | real route handlers over the restricted role; provider SDK seamed at its edge | synthetic Clerk | CI | M1 (slice A) growing per slice | beta | slices A–F | CDR-021 |
 | Failure-injection tests | gateway, workflows, adapters | CI + staging | fault fixtures (timeout, crash, outage, invalid output) | fault-injecting fakes | controlled staging drills | M5 | beta | NFR-005/019/020 | 008, 011 |
 | Performance tests | apps/web, gateway | staging | volume fixtures | real stack | staging | M6 | beta (NFR-004 targets) | NFR-004 | 018 |
 | Migration tests | database | CI + staging rehearsal | production-shaped snapshots | none | staging rehearsal mandatory | M1 | every gate | NFR-017 | 020 |

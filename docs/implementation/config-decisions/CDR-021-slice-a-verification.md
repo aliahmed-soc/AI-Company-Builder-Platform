@@ -43,7 +43,10 @@ journey, so they cannot drift.
 
 1. **Sign in** — a verified provider identity reaches the app (ACC-001/ACC-002: email-verified enforcement
    runs in the real boundary).
-2. **Mapping** — the internal user is resolved/created through the production read-through path.
+2. **Mapping** — the provider identity is resolved to an internal user through the production path, proven by
+   the `actor_id` the route itself stamps on the audit trail. The read-through's *create-on-miss* branch is
+   NOT exercised: it calls the real `@clerk/backend` reader, which is not the seamed module and would need a
+   live Clerk instance. Creation-on-miss is covered by `packages/core/src/identity/read-through*.test.ts`.
 3. **Account** — the caller's personal account exists (bootstrap).
 4. **Company** — created through `POST /api/companies` (COMP-001; the three creation modes).
 5. **Switch** — the portfolio lists exactly the caller's companies and each company detail resolves under a

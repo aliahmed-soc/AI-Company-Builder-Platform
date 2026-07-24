@@ -13,7 +13,6 @@
 // credentials and never contacts a live Clerk instance: the provider SDK is stubbed at its edge via a Node
 // module-resolution hook, while the production authentication boundary still runs in full.
 import { register } from 'node:module';
-import { pathToFileURL } from 'node:url';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 if (!url) {
@@ -21,24 +20,18 @@ if (!url) {
   process.exit(2);
 }
 
-// Stub `@clerk/nextjs/server` before anything imports it. The stub supplies a VERIFIED primary email, so the
-// production boundary's ACC-001 email-verification rule is genuinely exercised rather than bypassed.
-register(pathToFileURL(new URL('./clerk-stub-loader.mjs', import.meta.url).pathname));
+// Install the resolution hook before anything imports a route module: it stubs `@clerk/nextjs/server` (the
+// stub supplies a VERIFIED primary email, so the production boundary's ACC-001 rule is genuinely exercised
+// rather than bypassed) and resolves the `@/…` alias the route modules import through. Pass the URL object —
+// `pathToFileURL` on a URL's `pathname` doubles the drive letter on Windows.
+register(new URL('./clerk-stub-loader.mjs', import.meta.url));
 
-const { createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, runSliceAJourney, APP_ROLE_TEST_PASSWORD } = await import('@acbp/test-support');
+const { createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, runtimeConnectionRoles, configureRouteRuntimeEnv, runSliceAJourney } = await import('@acbp/test-support');
 const { provisionPersonalAccount, createCompany, pauseCompany } = await import('@acbp/core');
 
-const appUrl = new URL(url);
-appUrl.username = 'acbp_app';
-appUrl.password = APP_ROLE_TEST_PASSWORD;
-process.env['APP_ENV'] = 'test';
-process.env['DATABASE_APP_URL'] = appUrl.toString();
-delete process.env['DATABASE_URL']; // the runtime must not be able to reach the owner connection
-process.env['DATABASE_SSL'] = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
-process.env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = 'pk_test_slice_a_synthetic';
-process.env['CLERK_SECRET_KEY'] = 'sk_test_slice_a_synthetic';
-process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = 'whsec_slice_a_synthetic';
-process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_adversarial';
+// The SAME wiring the CI suites use — including removing DATABASE_URL, so the runtime cannot reach the owner
+// connection. Owned by the harness so the demo can never drift from the suites' configuration.
+configureRouteRuntimeEnv();
 
 let owner;
 let product;
@@ -50,7 +43,7 @@ try {
   await enableAppLogin(owner);
   product = createRestrictedProductClient();
   const proof = await assertRestrictedRole(product);
-  console.log(`· product connection verified: role=${proof.currentUser} superuser=${proof.isSuperuser} bypassrls=${proof.bypassesRls}`);
+  console.log(`· fixture's restricted connection verified: role=${proof.currentUser} superuser=${proof.isSuperuser} bypassrls=${proof.bypassesRls}`);
 
   await truncateFixtures(owner);
   const world = await seedTwoTenantWorld(owner, product, { provisionPersonalAccount, createCompany, pauseCompany });
@@ -70,7 +63,7 @@ try {
     owner,
     actorUserId: world.outsider,
     foreignCompanyId: world.companyB1,
-    foreignCompanyName: 'Beta One',
+    foreignCompanyName: world.companyNames[2],
     foreignAccountId: world.accountB,
   });
 
@@ -80,6 +73,14 @@ try {
     console.log(`      ${step.detail}`);
     if (!step.ok) exitCode = 1;
   }
+  // Positive evidence about the ROUTE RUNTIME's own pool, not the fixture's: after serving the journey it
+  // must hold connections, and every one of them must be the restricted role.
+  const backends = await runtimeConnectionRoles(owner, ['acbp-adversarial-fixture', 'acbp-adversarial-app']);
+  const runtimeRestricted = backends.length > 0 && backends.every((b) => b.role === 'acbp_app');
+  console.log(`${runtimeRestricted ? 'PASS' : 'FAIL'}  [NFR-001] route runtime connected as the restricted role`);
+  console.log(`      ${String(backends.length)} runtime backend(s): ${backends.map((b) => b.role).join(', ') || 'none'}`);
+  if (!runtimeRestricted) exitCode = 1;
+
   const failures = steps.filter((s) => !s.ok).length;
   console.log(`\n${steps.length - failures}/${steps.length} steps passed; company ${companyId ?? '(not created)'}`);
   console.log(exitCode === 0 ? '\nSlice A demo PASSED, including the live cross-tenant denial.' : '\nSlice A demo FAILED — see the FAIL steps above.');

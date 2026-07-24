@@ -25,8 +25,9 @@ import {
   seedTwoTenantWorld,
   teardown,
   assertRestrictedRole,
+  runtimeConnectionRoles,
+  configureRouteRuntimeEnv,
   runSliceAJourney,
-  APP_ROLE_TEST_PASSWORD,
   type TwoTenantWorld,
   type AdversarialDatabaseClient,
 } from '@acbp/test-support';
@@ -36,6 +37,8 @@ const CORE_SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 /** The provider user id the mocked session presents (the provider-edge seam). */
 let sessionProviderUserId = '';
+/** The primary email's verification status the provider reports. Mutable so ACC-001 can be tested NEGATIVELY. */
+let sessionEmailVerification = 'verified';
 
 vi.mock('@clerk/nextjs/server', () => ({
   auth: () => Promise.resolve({ userId: sessionProviderUserId }),
@@ -47,8 +50,10 @@ vi.mock('@clerk/nextjs/server', () => ({
             id,
             primaryEmailAddressId: 'e1',
             // The production boundary REQUIRES a verified primary email (ACC-001) — supplying it here is what
-            // makes the journey's first step a real assertion rather than a bypass.
-            emailAddresses: [{ id: 'e1', emailAddress: `${id}@example.com`, verification: { status: 'verified' } }],
+            // makes the journey's first step a real assertion rather than a bypass. The status is mutable so
+            // the rule is also proven negatively; a suite that only ever presents `verified` would still pass
+            // if the check were deleted.
+            emailAddresses: [{ id: 'e1', emailAddress: `${id}@example.com`, verification: { status: sessionEmailVerification } }],
             firstName: 'Slice',
             lastName: 'A',
           }),
@@ -69,18 +74,7 @@ describe.skipIf(!hasTestDatabase)('Slice A: secure company creation, end to end 
     product = createRestrictedProductClient();
     await assertRestrictedRole(product);
 
-    const testDatabaseUrl = process.env['ACBP_TEST_DATABASE_URL'] ?? '';
-    const url = new URL(testDatabaseUrl);
-    url.username = 'acbp_app';
-    url.password = APP_ROLE_TEST_PASSWORD;
-    process.env['APP_ENV'] = 'test';
-    process.env['DATABASE_APP_URL'] = url.toString();
-    delete process.env['DATABASE_URL']; // the owner connection must not be reachable by the runtime
-    process.env['DATABASE_SSL'] = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
-    process.env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = 'pk_test_slice_a_synthetic';
-    process.env['CLERK_SECRET_KEY'] = 'sk_test_slice_a_synthetic';
-    process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = 'whsec_slice_a_synthetic';
-    process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_adversarial';
+    configureRouteRuntimeEnv();
 
     const companies = await import('../../app/api/companies/route.js');
     const company = await import('../../app/api/companies/[companyId]/route.js');
@@ -91,6 +85,7 @@ describe.skipIf(!hasTestDatabase)('Slice A: secure company creation, end to end 
     await teardown(owner, product);
   });
   beforeEach(async () => {
+    sessionEmailVerification = 'verified';
     await truncateFixtures(owner);
     w = await seedTwoTenantWorld(owner, product, CORE_SEED_OPS);
   });
@@ -110,7 +105,7 @@ describe.skipIf(!hasTestDatabase)('Slice A: secure company creation, end to end 
       owner,
       actorUserId: w.outsider,
       foreignCompanyId: w.companyB1,
-      foreignCompanyName: 'Beta One',
+      foreignCompanyName: w.companyNames[2] ?? '',
       foreignAccountId: w.accountB,
     });
 
@@ -126,6 +121,33 @@ describe.skipIf(!hasTestDatabase)('Slice A: secure company creation, end to end 
     }
   }, 60_000);
 
+  test('ACC-001 negatively: an UNVERIFIED primary email is refused, and creates nothing', async () => {
+    // The journey's positive path always presents a verified email, so on its own it would still pass if the
+    // rule were deleted. This is the step that makes the ACC-001 claim load-bearing.
+    await signInAs(w.outsider);
+    sessionEmailVerification = 'unverified';
+
+    const listed = await routes.companiesGet(new Request('https://app.test/api/companies'));
+    expect(listed.status, 'an unverified primary email must not authenticate').not.toBe(200);
+    const created = await routes.companiesPost(new Request('https://app.test/api/companies', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ creationMode: 'own_idea', name: 'Unverified Co' }) }));
+    expect(created.status, 'an unverified primary email must not create a company').not.toBe(201);
+    for (const res of [listed, created]) {
+      expect(Object.keys((await res.json()) as Record<string, unknown>), 'the refusal is a bounded envelope').toEqual(['error']);
+    }
+    const profiles = await owner.kysely.selectFrom('company_profiles').select('company_id').where('name', '=', 'Unverified Co').execute();
+    expect(profiles, 'the refused request must not have written anything').toHaveLength(0);
+  }, 60_000);
+
+  test('the route runtime serves the journey on the restricted role only (NFR-001)', async () => {
+    // Env-level denial of DATABASE_URL is a precondition, not proof. This is the positive observation: after
+    // the runtime has actually served requests, every backend it holds is `acbp_app`.
+    await signInAs(w.outsider);
+    expect((await routes.companiesGet(new Request('https://app.test/api/companies'))).status).toBe(200);
+    const backends = await runtimeConnectionRoles(owner, ['acbp-adversarial-fixture', 'acbp-adversarial-app']);
+    expect(backends.length, 'the runtime must hold at least one connection after serving a request').toBeGreaterThan(0);
+    expect(backends.every((b) => b.role === 'acbp_app'), `route runtime connected as ${backends.map((b) => b.role).join(',')}`).toBe(true);
+  }, 60_000);
+
   test('the negative set: every company-scoped route refuses the other tenant, and nothing leaks', async () => {
     await signInAs(w.outsider);
     const created = await routes.companiesPost(new Request('https://app.test/api/companies', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ creationMode: 'own_idea', name: 'Negative Set Co' }) }));
@@ -138,7 +160,7 @@ describe.skipIf(!hasTestDatabase)('Slice A: secure company creation, end to end 
         expect([403, 404], `foreign company ${foreignId} must be denied`).toContain(res.status);
         const text = await res.text();
         expect(Object.keys(JSON.parse(text) as Record<string, unknown>), 'the denial is a bounded envelope').toEqual(['error']);
-        for (const secret of ['Alpha One', 'Alpha Two', 'Beta One', 'Beta Two', w.accountA, w.accountB]) {
+        for (const secret of [...w.companyNames, w.accountA, w.accountB]) {
           expect(text).not.toContain(secret);
         }
       }

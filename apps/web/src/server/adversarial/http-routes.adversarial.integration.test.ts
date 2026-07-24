@@ -34,7 +34,7 @@ import {
   teardown,
   assertRestrictedRole,
   runtimeConnectionRoles,
-  APP_ROLE_TEST_PASSWORD,
+  configureRouteRuntimeEnv,
   type TwoTenantWorld,
   type AdversarialDatabaseClient,
 } from '@acbp/test-support';
@@ -117,20 +117,11 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     // Point the PRODUCTION composition at the CI test database using the RESTRICTED role, with synthetic
     // (never real) Clerk configuration. The runtime is a lazily-built singleton, so this must happen before
     // the route modules are imported.
-    const testDatabaseUrl = process.env['ACBP_TEST_DATABASE_URL'] ?? '';
-    const url = new URL(testDatabaseUrl);
-    url.username = 'acbp_app';
-    url.password = APP_ROLE_TEST_PASSWORD;
-    process.env['APP_ENV'] = 'test';
-    process.env['DATABASE_APP_URL'] = url.toString();
-    // DATABASE_URL is deliberately NOT set: the owner connection string must not even be present in the
-    // environment the routes run under, so a hypothetical fallback could not silently pick it up.
-    delete process.env['DATABASE_URL'];
-    process.env['DATABASE_SSL'] = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
-    process.env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] = 'pk_test_adversarial_synthetic';
-    process.env['CLERK_SECRET_KEY'] = 'sk_test_adversarial_synthetic';
-    process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = 'whsec_adversarial_synthetic';
-    process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_adversarial';
+    // Owned by the harness (`configureRouteRuntimeEnv`) so this suite, the Slice A suite and the demo script
+    // cannot drift apart: it points the composition at the CI database using the RESTRICTED role with
+    // synthetic (never real) Clerk configuration, and DELETES DATABASE_URL so the owner connection string is
+    // not even present in the environment the routes run under.
+    configureRouteRuntimeEnv();
 
     companiesRoute = await import('../../app/api/companies/route.js');
     companyRoute = await import('../../app/api/companies/[companyId]/route.js');
