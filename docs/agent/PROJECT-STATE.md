@@ -3,8 +3,16 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-003 model gateway — IMPLEMENTATION COMPLETE, AWAITING FINALIZATION OWNER GATE.** Branch
-  `p2-003-model-gateway` (from main `10b4e2e`). **IOQ-13 owner-RATIFIED** ("Adopt proposed defaults": interactive
+- **ACBP-P2-003 model gateway — DONE (owner-authorized finalization); squash-merging PR #24.** Branch
+  `p2-003-model-gateway` (from main `10b4e2e`). Feature head **`52653f2`**; exact-head hosted CI **30109799579
+  green, ZERO-SKIP** (CI preflight "fails if integration tests would silently skip" → OK; 121/121 test files;
+  real-PG append-only/RLS/CHECK/FK negative assertions all executed). A **second independent review round** ran
+  five parallel read-only reviewers (canon/scope · contract · tests · security · docs): security CLEAN, scope
+  CLEAN; all actionable findings FIXED (timeout bound to `taskClass`; fail-closed on `outputSchemaRef` with no
+  wired validator; retry/re-ask CLAMPED to owner-ratified ceilings; generation-deadline + unwired-validator +
+  row-level-canary tests; `@acbp/core` gateway README; doc precision truth-ups) — ledger in
+  `docs/implementation/P2-003-REVIEW-COVERAGE.md`. Also fixed a real hosted-CI drop-list collision
+  (`usage_events` added to all schema-reset lists + the P1-014 catalog; commit `52653f2`). **IOQ-13 owner-RATIFIED** ("Adopt proposed defaults": interactive
   30s / generation 120s / retries ≤2) → recorded in **CDR-026** + IOQ marked Resolved. Built the provider-neutral
   gateway ABSTRACTION + a deterministic FAKE provider (the only wired adapter): `callModel` (ADR-011 contract,
   per-class timeout, bounded retry ≤2 + re-ask ≤1, fallback eligibility [generation ineligible — no silent
