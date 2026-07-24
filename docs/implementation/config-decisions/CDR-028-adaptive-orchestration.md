@@ -88,8 +88,18 @@ conflict-EVENT audit is P2-007.
    assumption-on-skip, fallback-flag-on-failure).
 4. **Composition** (bound gateway + schema-dispatching validateOutput) + real-PG integration (persist with
    rationale/source under RLS; usage metered; assumption → memory item; contradiction audited).
-5. **API** (interview API: request next adaptive batch / submit answer) + web build.
-6. **Adversarial + docs** (INTERVIEW.md, EVENT-CATALOG, AI-AND-WORKER, API-CONTRACTS) + reviews + finalize.
+5. **Adversarial/negative + docs** (INTERVIEW.md, AI-AND-WORKER, template registry) + reviews + finalize.
+
+**HTTP routes — deferred with the live provider (decision).** Unlike P2-002's Q&A routes (pure persistence,
+no model), every P2-005 orchestration endpoint invokes model generation, which is the **deferred owner gate
+CDR-026 §0** (no real key / snapshot pin / eval gate). A single fake provider cannot honestly serve the three
+distinct output schemas, and an interview-generation endpoint that only ever returns the static fallback adds no
+verifiable value while the provider is deferred. So — mirroring how P2-003 shipped its gateway as an internal
+service with **no HTTP route** — P2-005 ships the complete, fully-proven orchestration ENGINE + its composition
+seam (`interviewOutputValidator`), and the thin HTTP wrapper (runtime methods + `*ForRequest` + routes) is
+sequenced with the live-provider wiring. The adaptive behaviour (≤3, seeded vague/contradiction, assumption on
+skip, static-fallback flag) is proven end-to-end by the **scripted real-PG integration suite** through the
+composed gateway — the backlog's "scripted session" verification.
 
 ## 9. Out of scope / deferred
 

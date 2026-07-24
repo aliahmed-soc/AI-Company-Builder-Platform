@@ -118,6 +118,26 @@ a concurrent revision race is graceful via `ON CONFLICT (question_id, revision) 
 `POST …/interview/questions/{questionId}/answer` (body `{ status, content? }`) — the operations target the
 company's **open** session (resolved server-side; the client never supplies a session id).
 
+**Adaptive orchestration (ACBP-P2-005; CDR-028; diagram 04).** On top of the P2-002 persistence, P2-005 adds the
+adaptive loop as `@acbp/core` use cases that call the P2-003 **gateway** (the model call runs BETWEEN scoped
+operations, never inside a held transaction):
+- `generateAdaptiveBatch` — reads prior answers → gateway (`interview.followups@1`, `generation`) → **≤3** questions
+  (DISC-001), each persisted with a truthful **rationale** ("why we ask", DISC-006) and `source='adaptive'`; a
+  generation failure persists the **static fallback bank flagged `source='static_fallback'`** (DISC-002; honest
+  degradation). Migration 0018 added `interview_questions.rationale` + `.source` (immutable, append-only).
+- `evaluateAnswer` — gateway (`interview.answer_quality@1`) → **clear** stores a `user_fact` typed memory item
+  (interview-answer source path); **vague** returns one clarifying prompt (DISC-003); **contradictory** surfaces
+  the conflict — **never a silent override** (DISC-004, MEM-004 spirit). Detection FAILS OPEN to clear so a model
+  outage never blocks the founder.
+- `suggestAssumptionForSkip` — an "I don't know" → gateway (`interview.assumption@1`) → a labeled `ai_assumption`
+  memory item (`model_generation` source; never a `user_fact`) (DISC-005).
+Every call meters usage (the gateway's fail-closed `usage_events` — P2-005's audit). The output parsers are
+deny-by-default (`parseFollowUps`/`parseAnswerQuality`/`parseAssumption`); the gateway is wired with a
+schema-dispatching `interviewOutputValidator`. **v1 uses the deterministic FAKE provider; live generation is the
+deferred owner gate CDR-026 §0** — so the HTTP orchestration routes are sequenced with the live provider (the
+engine is proven by the scripted real-PG integration suite). Full context assembly (secret blocklist + MEM-004
+precedence) is **P2-007**.
+
 **Persistence-only (CDR-023 §4):** P2-002 emits **no** audit-store event and **no** domain event. Accountability
 lives in the append-only, authored, timestamped, never-mutated rows. Canon marks `interview.question_answered`
 audit "—" (EVENT-CATALOG) and routes the *audited* correction to the M3 `understanding.corrected` event; that
