@@ -147,10 +147,15 @@ trusted core/use-case seam:
   `MEMORY.md`.
 - **P2-008** (understanding generation) adds `understanding:generate` and `understanding:read`, both
   `owner|viewer` company members (any active member drives the discovery→understanding flow — the generation is a
-  member action, like `interview:participate`/`memory:write`). There is deliberately NO `understanding:confirm`
-  or per-item review action yet: the **owner-only** confirm / planning-unlock (UNDER-003) belongs to P2-009,
-  which registers those actions when it implements the confirmation effect (the per-ticket action convention).
-  Pure additions to the deny-by-default matrix; see `CDR-029`.
+  member action, like `interview:participate`/`memory:write`). The **owner-only** confirm / per-item review actions
+  belong to P2-009 (below). Pure additions to the deny-by-default matrix; see `CDR-029`.
+- **P2-009** (understanding review + confirmation) adds `understanding:review` and `understanding:confirm`, both
+  **owner-only** (API-CONTRACTS "Owner (confirm)"; UNDER-003 "Owner-only confirm"). `understanding:review` gates the
+  five per-item controls (approve/edit/reject/request-evidence/request-research) AND the DISC-008 correction that
+  supersedes a confirmation; `understanding:confirm` gates the overall confirm that unlocks strategy. Neither is
+  granted to `viewer` (a viewer keeps only `understanding:read`), nor to an account owner without company membership,
+  nor via forged provider claims — DISTINCT closed actions (no overloading of the read/generate grant). Pure
+  additions to the deny-by-default matrix; see `CDR-030`.
 
 ## What P1-007 does NOT do (later tickets)
 

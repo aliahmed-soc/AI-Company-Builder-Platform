@@ -3,6 +3,21 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P2-009 understanding review + confirmation — IN PROGRESS (autonomous window; finalization pre-authorized).**
+  Branch `p2-009-understanding-review` (from main `9e11466`), draft PR **#28**, CDR-030. (P2-008 merged `9e11466`;
+  Phase 2 was 8/12.) Selected via canon discovery over P2-007/P2-011 (P2-009 is the M2/M3 critical spine → P2-012 +
+  P3-001; no owner gate — Usage "—" so no live model, additive migration in the existing pattern). Implements the
+  owner review + confirmation gate over an understanding VERSION (not the session — P2-008 decoupled it; session-state
+  sync deferred to P2-012): the five per-item controls (`understanding:review`), the owner-only confirm that unlocks
+  strategy (`understanding:confirm`), and the DISC-008 correction that supersedes a confirmation + flags dependents.
+  Migration 0020 (`understanding_item_reviews` + `understanding_confirmation_events`, additive dual-keyed FORCE-RLS
+  append-only; UNIQUE(document_id,kind) idempotency; both in every reset list + the P1-014 catalog — no new SECURITY
+  DEFINER/role). Three audit events (`understanding.item_reviewed`/`.confirmed`/`.corrected`, in-tx). Core
+  `recordUnderstandingReview`/`confirmUnderstanding`/`correctUnderstanding`/`isCurrentUnderstandingConfirmed` gate.
+  Commits: CDR-030 → contracts `7455e66` → migration 0020 `594b044` → core `3c349f1`. Local real-PG all green (zero
+  skips): 0020+0019 migration 14, catalog 48, database 10, core review 8, audit 12; full unit 927; gate clean. HEAD
+  `3c349f1` pushed; CI `30128716043` in flight. Remaining: docs + reviews + finalization. Evidence/research requests
+  are recorded (not executed — Research worker P5); HTTP routes + live provider deferred (CDR-026 §0). PR #10 untouched.
 - **ACBP-P2-008 understanding generation — FINALIZING (autonomous window; finalization pre-authorized).** Branch
   `p2-008-understanding-generation` (from main `c916d81`), PR **#27**, CDR-029. (P2-005 merged `c916d81`; Phase 2
   was 7/12.) Selected via canon discovery over P2-007/P2-011 (P2-008 is the M2/M3 critical spine → P2-009 → P2-012

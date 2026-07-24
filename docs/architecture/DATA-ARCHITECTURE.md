@@ -26,6 +26,20 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      Both company-owned, dual-keyed FORCE RLS, VERSIONED + APPEND-ONLY (SELECT+INSERT only — a re-generation is a
      new version; review/correct is P2-009). Generated via the gateway from confirmed memory; `understanding.generated`
      audited in-tx; usage metered. -->
+<!-- IMPLEMENTED (ACBP-P2-009; CDR-030): the owner REVIEW + CONFIRMATION gate over an understanding version is realized
+     as two additional company-owned, dual-keyed FORCE RLS, APPEND-ONLY tables (migration 0020) — because the P2-008
+     tables are immutable, review/confirm are event logs, never in-place edits: `understanding_item_reviews` (one row
+     per owner decision — the closed 5-control set approve/edit/reject/evidence_requested/research_requested; the
+     item's effective state is its latest row; edits record the corrected text in `note`, never mutating the item) +
+     `understanding_confirmation_events` (`kind` confirmed|corrected, UNIQUE(document_id,kind) → idempotent confirm +
+     one correction per version; `correction_ref` + `dependents_flagged` set only for `corrected`). The strategy-unlock
+     gate = the current version has a `confirmed` and no `corrected` event (planning blocked otherwise). This is the
+     append-only realization of the assumption-lifecycle `confirmation_state` + `superseded_by` model above (UNDER-004,
+     DISC-008): a correction never overwrites — it supersedes, re-blocking planning and flagging dependents.
+     `understanding.item_reviewed`/`.confirmed`/`.corrected` audited in-tx. Evidence/research requests are RECORDED
+     (a review row), not executed — the Research worker (P5) fulfils them. Owner-only. -->
+
+
 
 | Decision | C | decision_id | links understanding version + options considered + selection | recorded (terminal) | **I** | — | Permanent (with company) | decision.recorded | MVP |
 | Goal | C | goal_id | belongs to Roadmap | active→achieved/dropped | V | — | With company | roadmap versions | MVP |

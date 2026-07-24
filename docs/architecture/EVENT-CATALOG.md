@@ -51,9 +51,18 @@ Retention default: activity-projected events with company data; audit-relevant e
      as the versioned document + items insert (audit-or-nothing). Bounded metadata = {version, status, item_count}
      — NO generated content, NO section text. Activity fan-out is DEFERRED (P1-009's closed activity taxonomy is
      not expanded here, exactly as `interview.started`'s activity projection is deferred); the strategy consumer
-     is P3-001. `understanding.confirmed`/`understanding.corrected` remain P2-009. -->
+     is P3-001. `understanding.confirmed`/`understanding.corrected` are IMPLEMENTED by P2-009 (below). -->
 
-| understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
+<!-- IMPLEMENTED (ACBP-P2-009; CDR-030): `understanding.item_reviewed` (subject = the reviewed item; bounded metadata
+     {decision, version} — NO item content / edited text / reject reason), `understanding.confirmed` (subject = the
+     document; {version} — the confirming actor is the server-stamped audit actor), and `understanding.corrected`
+     (subject = the document; {version, correction_ref, dependents_flagged}) are durable `audit_events` rows written
+     in the SAME transaction as their review/confirmation-event insert (audit-or-nothing). Activity fan-out + the
+     strategy consumer of the unlock remain P3-001. `dependents_flagged` in the MVP schema = the count of downstream
+     strategy stages re-blocked by the supersession (1 = strategy; becomes invalidated-option count when P3-001 lands). -->
+
+| understanding.item_reviewed | Understanding (P2-009) | audit only — never activity | decision, version (no content/edited text) | audited in-tx (UNDER-003 "item decisions audited"); subject = the reviewed item; owner-only; CDR-030 §6 | with company |
+| understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | version, correction_ref, dependents_flagged | audited in-tx (DISC-008); subject = the document; supersedes the confirmation; owner-only; CDR-030 §4 | with company |
 | memory.item_created | Memory (P2-006) | audit only — never activity | item_type, source_type (no content, no raw source_ref) | audited in-tx (MEM-003 "all changes audited"); CDR-024 §4; actor/account/company server-stamped | with company |
 | memory.item_superseded | Memory browser (P2-010) | audit only — never activity | item_type, source_type of the NEW version (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the superseded (old) item; CDR-025 §4 | with company |
 | memory.item_deleted | Memory browser (P2-010) | audit only — never activity | item_type, source_type, transition='active_to_deleted' (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the deleted item; owner-only soft delete; CDR-025 §0 | with company |
