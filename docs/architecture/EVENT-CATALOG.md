@@ -47,6 +47,12 @@ Retention default: activity-projected events with company data; audit-relevant e
 | interview.started | Discovery | activity (deferred — see note) | session_id | audited | with session |
 | interview.question_answered | Discovery | Understanding (incremental), memory (deferred — see note) | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |
+<!-- IMPLEMENTED (ACBP-P2-008; CDR-029): realized as a durable `audit_events` row written in the SAME transaction
+     as the versioned document + items insert (audit-or-nothing). Bounded metadata = {version, status, item_count}
+     — NO generated content, NO section text. Activity fan-out is DEFERRED (P1-009's closed activity taxonomy is
+     not expanded here, exactly as `interview.started`'s activity projection is deferred); the strategy consumer
+     is P3-001. `understanding.confirmed`/`understanding.corrected` remain P2-009. -->
+
 | understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
 | memory.item_created | Memory (P2-006) | audit only — never activity | item_type, source_type (no content, no raw source_ref) | audited in-tx (MEM-003 "all changes audited"); CDR-024 §4; actor/account/company server-stamped | with company |
 | memory.item_superseded | Memory browser (P2-010) | audit only — never activity | item_type, source_type of the NEW version (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the superseded (old) item; CDR-025 §4 | with company |

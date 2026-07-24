@@ -15,4 +15,5 @@ export * from './admin/index.js';
 export * from './interview/index.js';
 export * from './memory/index.js';
 export * from './model/index.js';
+export * from './understanding/index.js';
 

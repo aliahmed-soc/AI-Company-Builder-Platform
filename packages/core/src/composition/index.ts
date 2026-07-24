@@ -8,3 +8,4 @@ export {
   type BoundModelGateway,
 } from './model-gateway.js';
 export { interviewOutputValidator } from './interview-gateway.js';
+export { understandingOutputValidator } from './understanding-gateway.js';

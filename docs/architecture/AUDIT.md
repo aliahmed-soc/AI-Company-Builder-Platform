@@ -136,6 +136,9 @@ actor/account/company stamped server-side from the CompanyScope; metadata carrie
 never the founder content or the raw `source_ref` value (data minimization):
 
 - `memory.item_created` (`{item_type, source_type}`) — a typed memory item was created (P2-006; MEM-003).
+- `understanding.generated` (`{version, status, item_count}`) — a classified understanding document version was
+  generated (P2-008; CDR-029). Written in the SAME transaction as the versioned document + items insert
+  (audit-or-nothing); subject = the document id; bounded metadata, NO generated content. Activity fan-out deferred.
 - `memory.item_superseded` (`{item_type, source_type}` of the NEW version) — an item was corrected by a
   versioned supersede (P2-010; owner-only `memory:edit`). Subject = the superseded (old) item.
 - `memory.item_deleted` (`{item_type, source_type, transition:'active_to_deleted'}`) — an item was soft-deleted

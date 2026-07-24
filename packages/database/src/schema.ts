@@ -429,6 +429,40 @@ export interface UsageEventsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Understanding documents (ACBP-P2-008; CDR-029; UNDER-001/005; DATA-ARCHITECTURE §3). Company-owned, dual-keyed
+ * FORCE RLS. VERSIONED + APPEND-ONLY: grants are SELECT+INSERT only — a version is immutable (a re-generation is a
+ * new version; review/correct is P2-009). `status` = complete|partial; `overall_confidence` in [0,1] (weakest
+ * section). Every column is `never` on update.
+ */
+export interface UnderstandingDocumentsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  version: ColumnType<number, number, never>;
+  status: ColumnType<string, string, never>;
+  overall_confidence: ColumnType<number, number, never>;
+  created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Understanding items (ACBP-P2-008; CDR-029). The classified items of a document version. Company-owned, dual-keyed
+ * FORCE RLS, APPEND-ONLY (SELECT+INSERT only). `item_class` = the closed 6-value set; `confidence` in [0,1];
+ * `source_ref` = provenance to the originating memory item (nullable, bounded). Every column is `never` on update.
+ */
+export interface UnderstandingItemsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  document_id: ColumnType<string, string, never>;
+  item_class: ColumnType<string, string, never>;
+  content: ColumnType<string, string, never>;
+  confidence: ColumnType<number, number, never>;
+  source_ref: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -448,6 +482,8 @@ export interface DatabaseSchema {
   interview_answers: InterviewAnswersTable;
   memory_items: MemoryItemsTable;
   usage_events: UsageEventsTable;
+  understanding_documents: UnderstandingDocumentsTable;
+  understanding_items: UnderstandingItemsTable;
 }
 
 // Repository-facing row shapes.
@@ -492,3 +528,7 @@ export type MemoryItemRow = Selectable<MemoryItemsTable>;
 export type NewMemoryItem = Insertable<MemoryItemsTable>;
 export type UsageEventRow = Selectable<UsageEventsTable>;
 export type NewUsageEvent = Insertable<UsageEventsTable>;
+export type UnderstandingDocumentRow = Selectable<UnderstandingDocumentsTable>;
+export type NewUnderstandingDocument = Insertable<UnderstandingDocumentsTable>;
+export type UnderstandingItemRow = Selectable<UnderstandingItemsTable>;
+export type NewUnderstandingItem = Insertable<UnderstandingItemsTable>;

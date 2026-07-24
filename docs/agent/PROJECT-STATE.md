@@ -3,6 +3,28 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P2-008 understanding generation — FINALIZING (autonomous window; finalization pre-authorized).** Branch
+  `p2-008-understanding-generation` (from main `c916d81`), PR **#27**, CDR-029. (P2-005 merged `c916d81`; Phase 2
+  was 7/12.) Selected via canon discovery over P2-007/P2-011 (P2-008 is the M2/M3 critical spine → P2-009 → P2-012
+  → P3-001; P2-011 hits the live-model eval gate; P2-007 lower-leverage). Generates a classified, versioned
+  business-understanding document from confirmed memory (diagram 04 `gen`; UNDER-001/005): closed 6-class taxonomy
+  (fact/preference/constraint/assumption/research_finding/open_question), `parseUnderstanding` deny-by-default,
+  per-section confidence + present/assumed/unknown status (0.5 threshold), overall = weakest covered section;
+  migration 0019 (`understanding_documents` + `understanding_items`, additive dual-keyed FORCE-RLS append-only
+  versioned; both in every reset list + the P1-014 catalog); `understanding.generated` audit; `understanding.generate`
+  template; `understanding:generate`/`understanding:read` authz. Core `generateUnderstanding` composes the scoped
+  primitives + the P2-003 gateway (model call BETWEEN scopes) → persist version+items+audit in one tx
+  (audit-or-nothing); **failure/malformed persists NOTHING**; model-flagged partial → status partial; race-safe
+  versioning (ON CONFLICT + bounded retry). Uses the FAKE provider; **live generation + HTTP routes are the deferred
+  owner gate CDR-026 §0** (engine proven by the scripted integration suite, CDR-029 §8). Built TDD; unit 906/0;
+  real-PG integration 15/15 (0 skips): 0019 catalog/lifecycle 6 + generation 9 (complete/partial/6-classes/
+  malformed→nothing/gateway-failure→nothing/audit-rollback/non-member-forbidden/version-sequencing+immutability/
+  concurrency). Independent 10-dimension review **CLEAN** (no Crit/High/Med); 3 LOW fixed (race-safe versioning +
+  concurrency test; CDR §1/§3 wording) — P2-008-REVIEW-COVERAGE.md. Web build not required (no route). CI green on
+  `448b83d` (run 30125418699); review-fix head `85808e7`. **Finalization:** records commit → exact-head CI → PR #27
+  ready → squash-merge "ACBP-P2-008: Understanding generation" (no Co-Authored-By) → exact-main CI → delete branch →
+  next Ready ticket. Phase 2 after merge: **8/12 Done**; P2-009 (understanding review, deps P2-008) + P2-007 become
+  candidates (P2-011/P3-006/P7-012 gated on the live-model eval; P2-012 needs P2-009+P2-010).
 - **ACBP-P2-005 adaptive question orchestration — FINALIZING (autonomous window; finalization pre-authorized).**
   Branch `p2-005-adaptive-orchestration` (from main `68a022b`), PR **#26**, CDR-028. Selected via canon discovery
   over P2-005 vs P2-007 (both Ready/unblocked; P2-005 is on the M2/M3 critical path, P2-007 only feeds a Phase-5
