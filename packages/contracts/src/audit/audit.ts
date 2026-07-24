@@ -51,6 +51,12 @@ export const AUDIT_EVENTS = {
   // is visible in that tenant's own audit trail (SECURITY §3 tenant visibility); actor_type='admin' with the
   // REAL administrator's internal user id. Never activity-projected.
   'admin.tenant_read': { schemaVersion: 1, subjectType: 'company' },
+  // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — exactly ONE durable, company-scoped event: the
+  // session was started (not_started→in_progress). Subject is the SESSION id (EVENT-CATALOG payload `session_id`);
+  // the writer stamps `company_id`/`account_id` from the caller's CompanyScope. AUDIT-ONLY here — the EVENT-CATALOG
+  // activity fan-out is DEFERRED (CDR-022 §4) so P1-009's closed activity taxonomy is not expanded in a
+  // persistence slice. `interview.question_answered` (EVENT-CATALOG:48) is a P2-002 concern and is NOT registered.
+  'interview.started': { schemaVersion: 1, subjectType: 'interview_session' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -217,4 +223,15 @@ export function provisioningCompleted(input: { readonly companyId: string; reado
  */
 export function adminTenantRead(input: { readonly companyId: string; readonly reason: string; readonly scope: string }): AuditEvent {
   return makeEvent('admin.tenant_read', input.companyId, 'success', { reason: input.reason, scope: input.scope });
+}
+
+// ── Interview session factory (ACBP-P2-001; CDR-022 §4). Subject = the session id. ───────────────────────────
+
+/**
+ * An interview session was started (not_started→in_progress; success). Subject is the SESSION id; the writer
+ * stamps the owning company from the CompanyScope. Metadata is empty — the payload is the subject itself
+ * (EVENT-CATALOG `session_id`), and no PII or free text is ever attached.
+ */
+export function interviewStarted(input: { readonly sessionId: string }): AuditEvent {
+  return makeEvent('interview.started', input.sessionId, 'success', {});
 }

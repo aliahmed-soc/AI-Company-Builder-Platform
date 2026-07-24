@@ -62,6 +62,13 @@ export const AUTHZ_ACTIONS = [
   // NEVER authorize it. Admin authority is a SEPARATE database-backed gate (the owner-managed platform_admins
   // self-check in @acbp/core's admin module), not a branch of this matrix.
   'admin:tenant_read',
+  // Interview sessions (ACBP-P2-001; CDR-022 §6). Checked against the caller's COMPANY-membership role: any
+  // active company member may READ the session, and any active company member may PARTICIPATE (start / suspend
+  // / resume). There is deliberately NO `interview:confirm` action yet — the owner-only ready_for_review→
+  // confirmed transition's operation belongs to P2-009, which registers that action when it implements the
+  // confirmation effect (the P1-010→P1-013 per-ticket action convention).
+  'interview:read',
+  'interview:participate',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -125,6 +132,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // perform it through this matrix. The separate platform_admins gate is the only path (and it never consults
   // this matrix for a grant; the entry exists so the action name is closed and matrix-denied by construction).
   'admin:tenant_read': [],
+  // Interview sessions (ACBP-P2-001; CDR-022 §6): read + participate = any active company member (owner|viewer).
+  // API-CONTRACTS "Discovery interviews … Company member". Account membership alone is insufficient (the company
+  // role governs). Confirmation (owner-only) is a separate future action, not part of this participate grant.
+  'interview:read': ['owner', 'viewer'],
+  'interview:participate': ['owner', 'viewer'],
 };
 
 /**

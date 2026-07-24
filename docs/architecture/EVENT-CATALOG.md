@@ -44,7 +44,7 @@ Retention default: activity-projected events with company data; audit-relevant e
 | provisioning.retry_requested | Account&Company (P1-012) | audit only — never activity | step, next_attempt | audited; USER actor; causation for the retry run | with company |
 | provisioning.completed | Account&Company (P1-012) | audit only — never activity | step_count | audited atomically with onboarding→active | with company |
 | admin.tenant_read | Admin surface (P1-013) | audit only — never activity | reason (verbatim), scope='company_overview' | THE admin-action record (CDR-019); target-tenant-scoped; actor_type=admin (real admin id); written before response delivery | with company |
-| interview.started | Discovery | activity | session_id | audited | with session |
+| interview.started | Discovery | activity (deferred — see note) | session_id | audited | with session |
 | interview.question_answered | Discovery | Understanding (incremental), memory | question_id, answer_ref (no full text), revision_of? | — | with session |
 | understanding.generated | Understanding | activity, strategy | understanding_version, section_confidences | audited | with company |
 | understanding.corrected | Understanding | memory (correction item), planning (staleness flags) | item_id, correction_ref, dependents_flagged | audited (DISC-008) | with company |
@@ -73,3 +73,13 @@ Retention default: activity-projected events with company data; audit-relevant e
 | artifact.exported | Export module | audit | export_job_id, scope, manifest_digest | **audit-grade** (ownership check logged) | permanent record |
 | integration.connected / integration.revoked | Integration module | Dispatcher (fail closed on revoked, invariant 15), activity | integration_id, provider, scopes (connected), revoked_by | audit-grade | permanent record |
 | emergency_stop.activated / emergency_stop.cleared | Emergency-stop controller | Dispatcher (immediate check), Coordinator, notification | scope, scope_id, activated_by / cleared_by, held_work_count (clear) | **audit-grade, in-tx** | permanent record |
+
+## Notes
+
+- **`interview.started` activity fan-out is DEFERRED (ACBP-P2-001 / CDR-022 §4).** As implemented in P2-001 the
+  event is **audit-only**: it is registered in `AUDIT_EVENTS` and emitted in the session-start transaction, but
+  it is NOT projected into the `activity_events` feed. Projecting it would extend P1-009's deliberately closed
+  activity taxonomy (pinned by the P1-014 adversarial suite), which belongs in an isolated, reviewed change made
+  when the discovery activity/memory surface (M3) actually consumes it. Audit-only-now → project-later is
+  additive and reversible. The "activity" column above records the eventual design intent, not the current
+  shipped behavior.

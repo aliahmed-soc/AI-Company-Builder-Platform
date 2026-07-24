@@ -48,6 +48,8 @@ export type { PortfolioExecutor, PortfolioKeyset, PortfolioCandidateRow } from '
 // append-only workspace-area registry. Every method requires a validated CompanyScope (dual-keyed RLS).
 export { ProvisioningRepository, WorkspaceAreaRepository } from './provisioning-repository.js';
 export type { ProvisioningExecutor } from './provisioning-repository.js';
+export { InterviewSessionRepository } from './interview-repository.js';
+export type { InterviewExecutor } from './interview-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -112,6 +114,10 @@ export type {
   CompanyWorkspaceAreaRow,
   NewCompanyWorkspaceArea,
   PlatformAdminsTable,
+  InterviewSessionsTable,
+  InterviewSessionRow,
+  NewInterviewSession,
+  InterviewSessionUpdate,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

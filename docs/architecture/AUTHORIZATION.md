@@ -132,6 +132,11 @@ trusted core/use-case seam:
   a SEPARATE database-backed gate: a fresh in-transaction `platform_admins` self-check (CDR-019), never a
   branch of the ordinary owner/viewer matrix. Tenant roles, account ownership, and Clerk claims never grant
   it; see `ADMINISTRATIVE-ACCESS.md`.
+- **P2-001** adds `interview:read` and `interview:participate`, both `owner|viewer` company members (any active
+  member may read the session and start/suspend/resume it — API-CONTRACTS "Company member"). There is
+  deliberately NO `interview:confirm` action yet: the owner-only `ready_for_review → confirmed` transition's
+  operation belongs to P2-009, which registers that action when it implements the confirmation effect (the
+  per-ticket action convention). Pure additions to the deny-by-default matrix; see `INTERVIEW.md`.
 
 ## What P1-007 does NOT do (later tickets)
 

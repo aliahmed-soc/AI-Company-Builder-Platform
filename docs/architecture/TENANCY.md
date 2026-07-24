@@ -150,3 +150,10 @@ Postgres forwarding is unreliable, so hosted CI (with a zero-skip preflight) is 
   (allowlist stays exactly three), and no generic cross-tenant scope primitive is exported. Tenant roles
   never grant admin; the admin actor is audited as itself (`actor_type='admin'`, no impersonation). See
   `docs/architecture/ADMINISTRATIVE-ACCESS.md`.
+- **P2-001** — **implemented** (CDR-022): the **interview session** envelope. One new company-owned, dual-keyed
+  FORCE-RLS table (`interview_sessions`) with fail-closed select/insert/update policies requiring both
+  `app.current_account` AND `app.current_company` (a validated `CompanyScope`; never account-only authority),
+  column-level UPDATE confined to `state`/`started_at`/`updated_at` (identity columns immutable), no
+  DELETE/TRUNCATE, and a partial unique index enforcing one open (non-superseded) session per company. No
+  BYPASSRLS, no owner runtime connection, no new SECURITY DEFINER (allowlist stays exactly three), migrations
+  now 0001–0012. See `docs/architecture/INTERVIEW.md`.

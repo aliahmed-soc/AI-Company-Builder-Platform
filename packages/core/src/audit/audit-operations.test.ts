@@ -5,7 +5,7 @@ import { AUDIT_EVENTS } from '@acbp/contracts';
 import { AUDITED_OPERATIONS, AUDITED_OPERATION_IDS, factoryFor, producedEventNames, registeredEventNames } from './audit-operations.js';
 
 describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
-  test('the approved operation set is the membership + company lifecycle + provisioning operations', () => {
+  test('the approved operation set is the membership + company lifecycle + provisioning + admin + interview operations', () => {
     expect([...AUDITED_OPERATION_IDS].sort()).toEqual([
       // Platform-administrative access (ACBP-P1-013; CDR-019) — deliberately approved addition.
       'admin.tenant_read',
@@ -13,6 +13,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'company.pause',
       'company.resume',
       'company.update',
+      // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — deliberately approved addition.
+      'interview.start',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -22,7 +24,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'provisioning.step_complete',
       'provisioning.step_fail',
       'provisioning.step_start',
-    ]);
+    ].sort());
     expect(AUDITED_OPERATIONS['membership.invite']).toBe('membership.invited');
     expect(AUDITED_OPERATIONS['membership.revoke']).toBe('membership.revoked');
     expect(AUDITED_OPERATIONS['company.create']).toBe('company.created');
@@ -36,6 +38,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['provisioning.retry_request']).toBe('provisioning.retry_requested');
     expect(AUDITED_OPERATIONS['provisioning.complete']).toBe('provisioning.completed');
     expect(AUDITED_OPERATIONS['admin.tenant_read']).toBe('admin.tenant_read');
+    expect(AUDITED_OPERATIONS['interview.start']).toBe('interview.started');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

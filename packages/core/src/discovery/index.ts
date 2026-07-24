@@ -1,3 +1,14 @@
-// core/discovery — module public index (ACBP-P0-011 scaffold). Cross-module imports go through this index (spec rule 10). No implementation yet.
-export {};
+// core/discovery — module public index (ACBP-P2-001; CDR-022). Cross-module imports go through this index
+// (scaffold-spec rule 10). Interview session lifecycle use cases.
+export {
+  startInterviewSession,
+  suspendInterviewSession,
+  resumeInterviewSession,
+  getInterviewSession,
+  type InterviewSessionParams,
+  type InterviewSessionOptions,
+  type StartInterviewResult,
+  type InterviewTransitionResult,
+  type GetInterviewResult,
+} from './interview-session.js';
 

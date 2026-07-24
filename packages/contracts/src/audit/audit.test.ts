@@ -17,6 +17,7 @@ import {
   companyUpdated,
   companyPaused,
   companyResumed,
+  interviewStarted,
   type AuditEventName,
 } from './index.js';
 
@@ -71,7 +72,10 @@ describe('event-name registry (deny unregistered)', () => {
       'provisioning.step_completed',
       'provisioning.step_failed',
       'provisioning.step_started',
-    ]);
+    ].concat([
+      // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — exactly one audit-only session event.
+      'interview.started',
+    ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
   test('rejects unregistered / forged names and non-strings', () => {
@@ -192,5 +196,16 @@ describe('typed factories', () => {
 
   test('company factories reject an empty subject id', () => {
     expect(() => companyCreated({ companyId: '', creationMode: 'own_idea' })).toThrow();
+  });
+
+  test('interviewStarted builds a frozen success event subjected to the SESSION id with empty metadata', () => {
+    const ev = interviewStarted({ sessionId: 'sess_1' });
+    expect(ev).toEqual({ name: 'interview.started', schemaVersion: 1, subjectType: 'interview_session', subjectId: 'sess_1', outcome: 'success', metadata: {} });
+    expect(Object.isFrozen(ev)).toBe(true);
+    expect(Object.isFrozen(ev.metadata)).toBe(true);
+  });
+
+  test('interviewStarted rejects an empty subject id (no session, no event)', () => {
+    expect(() => interviewStarted({ sessionId: '' })).toThrow();
   });
 });

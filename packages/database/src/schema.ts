@@ -321,6 +321,27 @@ export interface PlatformAdminsTable {
   revoked_at: ColumnType<Date | null, never, never>;
 }
 
+/**
+ * Interview sessions (ACBP-P2-001; CDR-022; WORKFLOW-STATE-MACHINES §2). The durable founder-discovery session
+ * envelope, company-scoped under FORCE RLS. `state` is the mutable lifecycle column (server-enforced
+ * transitions live in @acbp/core); identity columns are immutable to the app role at the privilege level
+ * (`never` on update). At most one open (non-superseded) session per company (partial unique index).
+ */
+export interface InterviewSessionsTable {
+  /** Session id (PK; server-generated uuid). Immutable. */
+  id: ColumnType<string, string | undefined, never>;
+  /** Owning account (FK accounts.id, cascade). Immutable. */
+  account_id: ColumnType<string, string, never>;
+  /** Owning company (FK companies.id, cascade). Immutable. */
+  company_id: ColumnType<string, string, never>;
+  /** WORKFLOW §2 lifecycle state: not_started|in_progress|waiting_for_user|ready_for_review|confirmed|superseded. */
+  state: ColumnType<string, string | undefined, string>;
+  /** Set when the session first entered in_progress; null while not_started. */
+  started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -335,6 +356,7 @@ export interface DatabaseSchema {
   provisioning_steps: ProvisioningStepsTable;
   company_workspace_areas: CompanyWorkspaceAreasTable;
   platform_admins: PlatformAdminsTable;
+  interview_sessions: InterviewSessionsTable;
 }
 
 // Repository-facing row shapes.
@@ -368,3 +390,6 @@ export type NewProvisioningStep = Insertable<ProvisioningStepsTable>;
 export type ProvisioningStepUpdate = Updateable<ProvisioningStepsTable>;
 export type CompanyWorkspaceAreaRow = Selectable<CompanyWorkspaceAreasTable>;
 export type NewCompanyWorkspaceArea = Insertable<CompanyWorkspaceAreasTable>;
+export type InterviewSessionRow = Selectable<InterviewSessionsTable>;
+export type NewInterviewSession = Insertable<InterviewSessionsTable>;
+export type InterviewSessionUpdate = Updateable<InterviewSessionsTable>;

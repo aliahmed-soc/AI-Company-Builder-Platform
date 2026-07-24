@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -45,6 +45,9 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   provisioning_steps: ['INSERT', 'SELECT'],
   company_workspace_areas: ['INSERT', 'SELECT'],
   platform_admins: ['SELECT'],
+  // Interview sessions (ACBP-P2-001; CDR-022): INSERT/SELECT at the table level; the state/started_at/updated_at
+  // UPDATE is COLUMN-LEVEL (identity columns immutable), so it shows in column_privileges, not here.
+  interview_sessions: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -139,6 +142,13 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect(provisioning.length).toBeGreaterThan(0);
     for (const forbidden of ['id', 'account_id', 'company_id', 'step', 'step_order']) {
       expect(provisioning).not.toContain(forbidden);
+    }
+    // Interview sessions (ACBP-P2-001): only state/started_at/updated_at are updatable; identity columns are not.
+    const interview = byTable.get('interview_sessions') ?? [];
+    expect(interview.length).toBeGreaterThan(0);
+    expect([...interview].sort()).toEqual(['started_at', 'state', 'updated_at']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'created_at']) {
+      expect(interview).not.toContain(forbidden);
     }
   });
 
