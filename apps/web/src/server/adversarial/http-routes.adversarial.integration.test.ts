@@ -189,21 +189,22 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   test('[AUTHZ-FORGED-CLERK-ROLE] a REAL member with a forged owner role cannot perform an owner-only mutation (the sharp #20 case)', async () => {
-    // The outsider case above is the easy one — nothing could ever authorize him. This is the case that
-    // actually discriminates: aViewer holds genuine, active membership in A1, so scope resolution SUCCEEDS
-    // and the only thing standing between him and the mutation is the internal role. His Backend User claims
-    // `role: 'owner'` for this exact account and company.
+    // aViewer is a GENUINE active member of account A and of company A1 — but the company routes resolve the
+    // caller's OWN personal account (ADR-022 flow), so account A is not his request scope. His Backend User
+    // claims `accountId: accountA`, `companyId: companyA1` and `role: 'owner'` — i.e. exactly the values that
+    // would redirect the request into account A if any of them were trusted. None may be.
     await signInAs(w.aViewer);
-    const beforeStatus = (await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyA1).executeTakeFirstOrThrow()).status;
+    const before = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).execute()).map((r) => [r.id, r.status]));
 
     const paused = await pauseRoute.POST(jsonRequest(`https://app.test/api/companies/${w.companyA1}/pause`), { params: Promise.resolve({ companyId: w.companyA1 }) });
-    expect(paused.status, 'a forged owner role must not satisfy the owner-only lifecycle gate').toBe(403);
-    const afterStatus = (await owner.kysely.selectFrom('companies').select('status').where('id', '=', w.companyA1).executeTakeFirstOrThrow()).status;
-    expect(afterStatus, 'the company transitioned despite the caller being a viewer').toBe(beforeStatus);
-
-    // …while the read his real role DOES permit still works, proving the denial is about the verb.
+    expect([403, 404], 'a forged accountId/role must not reach account A’s company').toContain(paused.status);
     const detail = await companyRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}`), { params: Promise.resolve({ companyId: w.companyA1 }) });
-    expect(detail.status).toBe(200);
+    expect([403, 404], 'a forged accountId must not redirect the read into account A').toContain(detail.status);
+    expect(await detail.text()).not.toContain('Alpha One');
+
+    // Nothing in the database moved — every company holds the status it had before.
+    const after = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).execute()).map((r) => [r.id, r.status]));
+    for (const [id, status] of before) expect(after.get(id), `company ${id} changed status`).toBe(status);
   });
 
   test('[AUTHZ-FORGED-CLERK-ROLE] SOURCE GUARD: no production file reads provider metadata or organization claims', () => {
@@ -266,8 +267,11 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
         expect(text).not.toContain('Beta Two');
       }
     }
-    const statuses = await owner.kysely.selectFrom('companies').select('status').where('account_id', '=', w.accountB).execute();
-    expect(statuses.every((s) => s.status !== 'paused')).toBe(true);
+    // Account B's statuses are exactly what the fixture set them to (B1 active, B2 deliberately paused) —
+    // asserting "nothing is paused" would be wrong now that B2 is paused by design.
+    const statuses = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).where('account_id', '=', w.accountB).execute()).map((r) => [r.id, r.status]));
+    expect(statuses.get(w.companyB1), 'B1 must be untouched by the IDOR attempts').toBe('active');
+    expect(statuses.get(w.companyB2), 'B2 must remain in its fixture state').toBe('paused');
   });
 
   test('[ORACLE-FOREIGN-ID][ORACLE-UNKNOWN-ID][ORACLE-MALFORMED-ID] foreign and unknown ids are byte-identical; malformed ids never succeed or leak', async () => {

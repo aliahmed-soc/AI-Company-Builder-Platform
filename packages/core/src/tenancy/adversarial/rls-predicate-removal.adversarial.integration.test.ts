@@ -434,8 +434,11 @@ describe.skipIf(!hasTestDatabase)('RLS predicate-removal (real PostgreSQL, restr
           .join('\n')
           .replace(/\/\*[\s\S]*?\*\//g, '');
         if (forbidden.some((p) => p.test(code))) offenders.push(full);
-        // An owner-connection seam: building a client from env without the restricted role.
-        if (/parseDatabaseConfig\s*\(/.test(code) && !/role:\s*'app'/.test(code) && !full.includes(join('packages', 'config'))) {
+        // An owner-connection seam in a RUNTIME layer: composing a client from the environment without the
+        // restricted role. Scoped to core + web, because the owner connection is legitimate and required in
+        // the migration CLI and the database package's own integration harness (which are not runtime paths).
+        const isRuntimeLayer = full.includes(join('packages', 'core', 'src')) || full.includes(join('apps', 'web', 'src'));
+        if (isRuntimeLayer && /parseDatabaseConfig\s*\(/.test(code) && !/role:\s*'app'/.test(code)) {
           offenders.push(`${full} (parseDatabaseConfig without role:'app')`);
         }
       }

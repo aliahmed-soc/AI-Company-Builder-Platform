@@ -106,8 +106,13 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
     // Nothing was renamed or transitioned anywhere.
     const names = await owner.kysely.selectFrom('company_profiles').select('name').execute();
     expect(names.every((n) => n.name !== 'Hijacked')).toBe(true);
-    const statuses = await owner.kysely.selectFrom('companies').select(['id', 'status']).execute();
-    expect(statuses.every((s) => s.status !== 'paused')).toBe(true);
+    // Statuses must be exactly the fixture's: A1/A2/B1 active, B2 paused by design. (Asserting "nothing is
+    // paused" would silently pass if a mutation flipped B2 back, and is simply false for B2.)
+    const statuses = new Map((await owner.kysely.selectFrom('companies').select(['id', 'status']).execute()).map((r) => [r.id, r.status]));
+    expect(statuses.get(w.companyA1)).toBe('active');
+    expect(statuses.get(w.companyA2)).toBe('active');
+    expect(statuses.get(w.companyB1)).toBe('active');
+    expect(statuses.get(w.companyB2)).toBe('paused');
   });
 
   test(`${threatTitle('ORACLE-FOREIGN-ID', 'company read')} [ORACLE-UNKNOWN-ID] a real foreign company and an unknown company are indistinguishable`, async () => {
@@ -235,7 +240,8 @@ describe.skipIf(!hasTestDatabase)('core product-path adversarial matrix (real Po
     expect(after).toHaveLength(before.length);
     // A legitimate mutation DOES audit — proving the absence above is meaningful.
     expect((await pauseCompany(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 })).status).toBe('ok');
-    const audited = await owner.kysely.selectFrom('audit_events').select(['name', 'account_id', 'company_id']).where('name', '=', 'company.paused').execute();
+    // Scoped to A1: the fixture also pauses B2 (deliberately), so an unscoped count would see two rows.
+    const audited = await owner.kysely.selectFrom('audit_events').select(['name', 'account_id', 'company_id']).where('name', '=', 'company.paused').where('company_id', '=', w.companyA1).execute();
     expect(audited).toHaveLength(1);
     expect(audited[0]).toMatchObject({ account_id: w.accountA, company_id: w.companyA1 });
   });
