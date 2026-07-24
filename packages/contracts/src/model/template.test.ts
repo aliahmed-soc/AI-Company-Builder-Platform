@@ -26,6 +26,16 @@ describe('template registry — resolution', () => {
       const round = resolveTemplateRef(templateRef(def));
       expect(round).toBe(def); // same frozen instance — resolution is exact, not a copy
     }
+    // NOTE: every v1 seed family has exactly ONE version, so `latestTemplate`'s max-version selection path is not
+    // exercised across multiple versions here; it is genuinely proven at the first version bump (a consuming
+    // ticket, e.g. P2-008). The single-version registry is the accepted v1 state.
+  });
+
+  test('the seed families span their declared task classes (the v1 spanning claim, enforced)', () => {
+    // Each seed maps to its SPECIFIC gateway task class — not merely "some" valid class.
+    expect(latestTemplate('interview.followups').taskClass).toBe('generation');
+    expect(latestTemplate('extraction.fields').taskClass).toBe('extraction');
+    expect(latestTemplate('classification.intent').taskClass).toBe('classification');
   });
 
   test('latestTemplateRef pins family@version and round-trips', () => {
@@ -78,12 +88,14 @@ describe('template registry — rendering (deny missing/unknown slots)', () => {
 
   test('a missing value for a declared slot is rejected (no silent blanks)', () => {
     const def = latestTemplate('interview.followups');
-    expect(() => renderTemplateSegments(def, { focus_area: 'pricing' })).toThrow(); // prior_answers missing
+    const err = (() => { try { renderTemplateSegments(def, { focus_area: 'pricing' }); return undefined; } catch (e) { return e; } })(); // prior_answers missing
+    expect(isPlatformError(err)).toBe(true);
   });
 
   test('an unknown slot key is rejected (no leaked extras)', () => {
     const def = latestTemplate('extraction.fields');
-    expect(() => renderTemplateSegments(def, { source_text: 'x', secret: 'y' })).toThrow();
+    const err = (() => { try { renderTemplateSegments(def, { source_text: 'x', secret: 'y' }); return undefined; } catch (e) { return e; } })();
+    expect(isPlatformError(err)).toBe(true);
   });
 });
 
@@ -98,9 +110,12 @@ describe('template registry — self-consistency + provider-neutrality', () => {
   });
 
   test('no provider name or dialect leaks into any template (ADR-011: provider-neutral)', () => {
-    const FORBIDDEN = ['openai', 'anthropic', 'gpt-', 'gpt4', 'gpt5', 'claude', 'sonnet', 'gemini', 'llama', 'api key', 'apikey', 'bearer'];
+    // Best-effort guard over the DISTINCTIVE provider/model/host tokens (deliberately excludes common English
+    // words like "palm"/"azure"/"vertex" that would false-positive on legitimate business prompts). Scans the
+    // family, slot names, AND segment text — not just the prompt body.
+    const FORBIDDEN = ['openai', 'anthropic', 'gpt', 'claude', 'sonnet', 'opus', 'haiku', 'gemini', 'llama', 'mistral', 'cohere', 'bedrock', 'deepseek', 'qwen', 'grok', 'api key', 'apikey', 'bearer'];
     for (const def of listTemplates()) {
-      const blob = def.segments.map((s) => s.text).join('\n').toLowerCase();
+      const blob = [def.family, def.slots.join(' '), def.segments.map((s) => s.text).join('\n')].join('\n').toLowerCase();
       for (const token of FORBIDDEN) expect(blob, `${def.family}@${def.version} must not contain "${token}"`).not.toContain(token);
     }
   });

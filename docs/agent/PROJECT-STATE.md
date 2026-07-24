@@ -3,8 +3,18 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-003 model gateway — DONE (owner-authorized finalization); squash-merging PR #24.** Branch
-  `p2-003-model-gateway` (from main `10b4e2e`). Feature head **`52653f2`**; exact-head hosted CI **30109799579
+- **ACBP-P2-004 prompt/template registry — DONE (autonomous window).** Branch `p2-004-prompt-template-registry`
+  (from main `d95fafb`), PR **#25**. Provider-neutral versioned template registry in `@acbp/contracts`
+  (`model/template.ts`): `TemplateDefinition {family, version, taskClass, segments, slots}`, `resolveTemplateRef`
+  (deny-unknown), `latestTemplateRef` pinning, `templateProvenance {template_ref, template_version}` (TASK-005),
+  `renderTemplateSegments` (own-slot; assembly stays P2-007). CONFIG not tenant data — **no migration, no new
+  SECURITY DEFINER (still 3), no tenant surface**. CDR-027. Three read-only reviews (canon/scope · security ·
+  tests/docs) CLEAN; all Low/Info findings fixed (neutrality-token list widened + family/slot scan; per-family
+  task-class assertions; `isPlatformError` on render-deny; CDR truth-ups). Acceptance "recorded on every derived
+  artifact" satisfied at the MECHANISM level — end-to-end stamping tracked to the first artifact-producing ticket.
+  Unblocks nothing new by itself; P2-005 still needs the D-10 (existing-business) owner decision reviewed.
+- **ACBP-P2-003 model gateway — DONE; squash-merged `d95fafb` (PR #24), exact-main CI 30112328579 green
+  zero-skip.** Branch `p2-003-model-gateway` (from main `10b4e2e`) deleted post-merge. Feature head **`52653f2`**; exact-head hosted CI **30109799579
   green, ZERO-SKIP** (CI preflight "fails if integration tests would silently skip" → OK; 121/121 test files;
   real-PG append-only/RLS/CHECK/FK negative assertions all executed). A **second independent review round** ran
   five parallel read-only reviewers (canon/scope · contract · tests · security · docs): security CLEAN, scope

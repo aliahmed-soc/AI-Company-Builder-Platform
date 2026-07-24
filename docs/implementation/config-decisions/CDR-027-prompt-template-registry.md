@@ -13,8 +13,9 @@ artifacts for attribution (TASK-005).
 ## 0. Storage decision — CONFIG, not a database table (no migration)
 
 Templates are **global platform configuration**, not tenant data (backlog §Tenant considerations = "—";
-§Rollback = "Versioned"). They follow the ADR-012 pattern — *"workers are versioned configuration + prompts over
-one shared execution runtime"*. Therefore the registry ships as a **closed, code-defined `as const`-style registry
+§Rollback = "Versioned"). This follows the ADR-012 pattern of workers/capabilities as **versioned configuration**
+over one shared runtime (ADR-012 §2), consumed by the gateway via `template_ref@version` (ADR-011; architecture
+§1) — a paraphrase, not a verbatim ADR-012 quote. Therefore the registry ships as a **closed, code-defined `as const`-style registry
 in `@acbp/contracts`** (mirroring the `AUDIT_EVENTS` closed registry), with **no migration, no RLS, no new
 SECURITY DEFINER** (the allowlist stays exactly three), and **no tenant scoping**. Versioning is by explicit
 integer version bumped in code; a change is a NEW version (never an in-place edit), so provenance stays
@@ -24,7 +25,8 @@ untouched.
 ## 1. The template contract (`@acbp/contracts/model/template.ts`)
 
 - **`TemplateDefinition`** = `{ family, version, taskClass, segments[], slots[] }`. `family` is a dot-namespaced
-  capability/task-type (e.g., `interview.followups`); `version` a positive integer; `taskClass` binds the gateway
+  capability/task-type (e.g., `interview.followups`); `version` a positive integer (1–9999, matching the resolve
+  regex); `taskClass` binds the gateway
   timeout/fallback policy (`@acbp/contracts` `TaskClass`); `segments` are role-tagged provider-neutral text with
   `{{slot}}` placeholders; `slots` are the named inputs the caller must fill.
 - **`templateRef(def)` → `family@version`** and **`resolveTemplateRef(ref)`**: parse + look up, **deny-by-default**
