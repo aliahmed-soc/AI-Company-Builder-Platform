@@ -3,26 +3,21 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-010 "Memory browser"** (M2), branch `p2-010-memory-browser` from `main` @ `942cc1d`, governed by
-  **CDR-025**. Deps P2-006 (Done); the only unblocked Ready P2 ticket. **OWNER GATE (CDR-025 §0): memory
-  deletion semantics** — CLAUDE.md names "deletion semantics" a gate; P2-010 operationalizes memory delete for
-  the first time. Canon constrains it to SOFT delete (never hard) but leaves the representation unpinned (CDR-024
-  §7 deferred the soft-delete column), and the backlog's "deletion propagates staleness flags" conflicts with
-  reality (dependents = M3/M4, don't exist). **Recommended answer:** soft delete via a nullable `deleted_at`
-  column + `memory.item_deleted` in-tx event + DEFER propagation. **Until ratified, the delete
-  operation/column/event are NOT built.**
-- **WIP (edit + read half) — Slices 1–4 hosted-green** (head `3f03492`; PR #23 draft): Slice 1 `f82f5b2`
-  (`memory:edit` owner-only + `memory.item_superseded` audit), Slice 2–3 `49e899c` (migration **0015**
-  column-level `UPDATE (superseded_by)` grant + dual-keyed UPDATE policy; core `editMemoryItem` versioned
-  supersede + `getMemoryItem` + `currentOnly` list), Slice 4 `3f03492` (GET filtered list, GET single, PATCH
-  edit routes). Real-PG proven: supersede + audit + version-guard conflict + audit atomicity + narrow column
-  grant. **Slice 5 (HTTP adversarial + docs + independent reviews) NOT done; DELETE §0-gated → P2-010 is NOT
-  Done.** Migrations now 0001–0015 (branch); still exactly 3 SECURITY DEFINER; `memory_items` gains a narrow
-  `UPDATE(superseded_by)` grant + policy (content/type/source/identity still immutable).
-- **RESUME:** await the CDR-025 §0 owner answer on deletion semantics; then build delete (soft-delete column +
-  `memory.item_deleted` + operation, migration 0016) + Slice 5 (adversarial + docs + reviews) → finalize. The
-  edit/read half is complete and green. LOCAL PG: a disposable Windows-native 5433 DB was used (torn down at
-  window end); `.env.local` untouched.
+- **ACBP-P2-010 finalization.** Status **Done**; feature head `b9441f1` (review fixes), exact-head CI
+  **30102561583 green** (local full suite 116 files / 1319 / 0 skipped). The memory browser: list/filter/get +
+  owner edit (versioned supersede) + owner **soft delete** — the CDR-025 §0 deletion semantics were an owner
+  gate, **owner-RATIFIED** (`deleted_at` + `deleted_by_user_id`; `memory.item_deleted` in-tx; propagation
+  deferred to M3/M4). Both independent reviews CLEAN with explicit CORRECT verdicts on delete-concurrency
+  determinism, audit atomicity, and grant narrowness; all findings fixed (edit-concurrency FOR-UPDATE lock;
+  CDR §7; P2-010-REVIEW-COVERAGE.md). Sequence: finalization records commit → exact-commit CI → PR #23 ready →
+  recheck main/PR#10 → squash-merge **"ACBP-P2-010: Memory browser"** (no Co-Authored-By) → exact-main CI →
+  delete branch → next Phase 2 ticket.
+- Migrations 0001–0016; exactly 3 SECURITY DEFINER (all 0006); `acbp_app` NOBYPASSRLS/non-owner; no owner
+  runtime. `memory_items` column-level UPDATE confined to `superseded_by` (0015) + `deleted_at`/`deleted_by_user_id`
+  (0016); content/type/source/identity immutable; no hard-delete grant. Lifecycle active/superseded/deleted
+  (mutually exclusive, DB-enforced). Deleted items omitted from list/get; the row survives for history/audit.
+- **P2-001/P2-002/P2-006/P2-010 — Done.** Phase 2: **4 Done / 8 Planned.** P2-003/P2-005 gated by open question
+  IOQ-13.
 - **P2-001/P2-002/P2-006 — Done.** Phase 2: 3 Done / 9 Planned. P2-003/P2-005 gated by IOQ-13.
 
 ## ACBP-P2-006 detail (Done) — branch `p2-006-typed-memory-items`, PR #22, CDR-024
