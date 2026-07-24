@@ -73,6 +73,19 @@ export const AUDIT_EVENTS = {
   // generated. AUDITED in-tx with the persist (audit-or-nothing). Subject = the document id; metadata carries only
   // the bounded {version, status, item_count} — never the generated content.
   'understanding.generated': { schemaVersion: 1, subjectType: 'understanding_document' },
+  // Understanding review (ACBP-P2-009; CDR-030 §6; UNDER-003 "Item decisions audited") — an owner recorded one of the
+  // five review controls on an item. AUDITED in-tx with the decision row. Subject = the reviewed item id; metadata is
+  // the bounded {decision, version} — never the item content, the edited text, or a reject reason.
+  'understanding.item_reviewed': { schemaVersion: 1, subjectType: 'understanding_item' },
+  // Understanding confirmation (ACBP-P2-009; CDR-030 §3; EVENT-CATALOG:60; WORKFLOW §2) — the owner confirmed a version
+  // (ready_for_review→confirmed; strategy unlocked). AUDITED in-tx (a high-risk lifecycle transition, ADR-015). Subject
+  // = the document id; metadata is the bounded {version} — the confirming actor is the server-stamped audit actor.
+  'understanding.confirmed': { schemaVersion: 1, subjectType: 'understanding_document' },
+  // Understanding correction (ACBP-P2-009; CDR-030 §4; EVENT-CATALOG:56; DISC-008) — a material correction superseded a
+  // confirmation (confirmed→superseded; dependents flagged). AUDITED in-tx (ADR-015). Subject = the document id;
+  // metadata is the bounded {version, correction_ref, dependents_flagged} — correction_ref is a reference/short code
+  // (never content), dependents_flagged is the count of downstream stages invalidated.
+  'understanding.corrected': { schemaVersion: 1, subjectType: 'understanding_document' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -270,6 +283,34 @@ export function memoryItemCreated(input: { readonly memoryItemId: string; readon
  */
 export function understandingGenerated(input: { readonly documentId: string; readonly version: number; readonly status: string; readonly itemCount: number }): AuditEvent {
   return makeEvent('understanding.generated', input.documentId, 'success', { version: input.version, status: input.status, item_count: input.itemCount });
+}
+
+/**
+ * `understanding.item_reviewed` (ACBP-P2-009; CDR-030 §6; UNDER-003 "Item decisions audited"). Subject = the reviewed
+ * understanding item id; metadata is the bounded `{decision, version}` — NEVER the item content, edited text, or reject
+ * reason. Written in the same transaction as the review-decision row (audit-or-nothing).
+ */
+export function understandingItemReviewed(input: { readonly itemId: string; readonly decision: string; readonly version: number }): AuditEvent {
+  return makeEvent('understanding.item_reviewed', input.itemId, 'success', { decision: input.decision, version: input.version });
+}
+
+/**
+ * `understanding.confirmed` (ACBP-P2-009; CDR-030 §3; EVENT-CATALOG:60). Subject = the confirmed understanding document
+ * id; metadata is the bounded `{version}`. The confirming user is the SERVER-STAMPED audit actor (not duplicated in
+ * metadata). Written in the same transaction as the confirmation-event row (a high-risk lifecycle transition, ADR-015).
+ */
+export function understandingConfirmed(input: { readonly documentId: string; readonly version: number }): AuditEvent {
+  return makeEvent('understanding.confirmed', input.documentId, 'success', { version: input.version });
+}
+
+/**
+ * `understanding.corrected` (ACBP-P2-009; CDR-030 §4; EVENT-CATALOG:56; DISC-008). Subject = the corrected
+ * understanding document id; metadata is the bounded `{version, correction_ref, dependents_flagged}` — `correction_ref`
+ * is a reference/short code (never content), `dependents_flagged` is the count of downstream stages invalidated by the
+ * supersession. Written in the same transaction as the correction-event row (ADR-015).
+ */
+export function understandingCorrected(input: { readonly documentId: string; readonly version: number; readonly correctionRef: string; readonly dependentsFlagged: number }): AuditEvent {
+  return makeEvent('understanding.corrected', input.documentId, 'success', { version: input.version, correction_ref: input.correctionRef, dependents_flagged: input.dependentsFlagged });
 }
 
 /**

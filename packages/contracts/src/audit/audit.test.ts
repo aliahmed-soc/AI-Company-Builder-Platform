@@ -21,6 +21,9 @@ import {
   memoryItemCreated,
   memoryItemSuperseded,
   memoryItemDeleted,
+  understandingItemReviewed,
+  understandingConfirmed,
+  understandingCorrected,
   type AuditEventName,
 } from './index.js';
 
@@ -86,6 +89,10 @@ describe('event-name registry (deny unregistered)', () => {
       'memory.item_deleted',
       // Understanding generation (ACBP-P2-008; CDR-029 §6) — a document version generation is audited.
       'understanding.generated',
+      // Understanding review + confirmation (ACBP-P2-009; CDR-030 §3/§4/§6) — three deliberately-registered events.
+      'understanding.item_reviewed',
+      'understanding.confirmed',
+      'understanding.corrected',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -235,6 +242,24 @@ describe('typed factories', () => {
   test('memoryItemDeleted: subject = the deleted item; metadata = {item_type, source_type, transition} — no content', () => {
     const ev = memoryItemDeleted({ memoryItemId: 'mem_1', itemType: 'user_fact', sourceType: 'interview_answer' });
     expect(ev).toEqual({ name: 'memory.item_deleted', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'success', metadata: { item_type: 'user_fact', source_type: 'interview_answer', transition: 'active_to_deleted' } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('understandingItemReviewed: subject = the item; metadata = {decision, version} — no content/edited text', () => {
+    const ev = understandingItemReviewed({ itemId: 'ui_1', decision: 'edited', version: 2 });
+    expect(ev).toEqual({ name: 'understanding.item_reviewed', schemaVersion: 1, subjectType: 'understanding_item', subjectId: 'ui_1', outcome: 'success', metadata: { decision: 'edited', version: 2 } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('understandingConfirmed: subject = the document; metadata = {version} (actor is server-stamped)', () => {
+    const ev = understandingConfirmed({ documentId: 'ud_1', version: 3 });
+    expect(ev).toEqual({ name: 'understanding.confirmed', schemaVersion: 1, subjectType: 'understanding_document', subjectId: 'ud_1', outcome: 'success', metadata: { version: 3 } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('understandingCorrected: subject = the document; metadata = {version, correction_ref, dependents_flagged}', () => {
+    const ev = understandingCorrected({ documentId: 'ud_1', version: 3, correctionRef: 'ui_9', dependentsFlagged: 1 });
+    expect(ev).toEqual({ name: 'understanding.corrected', schemaVersion: 1, subjectType: 'understanding_document', subjectId: 'ud_1', outcome: 'success', metadata: { version: 3, correction_ref: 'ui_9', dependents_flagged: 1 } });
     expect(Object.isFrozen(ev)).toBe(true);
   });
 });

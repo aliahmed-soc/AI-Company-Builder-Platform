@@ -23,6 +23,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'memory.delete',
       // Understanding generation (ACBP-P2-008; CDR-029 §6) — deliberately approved addition.
       'understanding.generate',
+      // Understanding review + confirmation (ACBP-P2-009; CDR-030 §3/§4/§6) — deliberately approved additions.
+      'understanding.review-decision',
+      'understanding.confirm',
+      'understanding.correct',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -51,6 +55,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['memory.supersede']).toBe('memory.item_superseded');
     expect(AUDITED_OPERATIONS['memory.delete']).toBe('memory.item_deleted');
     expect(AUDITED_OPERATIONS['understanding.generate']).toBe('understanding.generated');
+    expect(AUDITED_OPERATIONS['understanding.review-decision']).toBe('understanding.item_reviewed');
+    expect(AUDITED_OPERATIONS['understanding.confirm']).toBe('understanding.confirmed');
+    expect(AUDITED_OPERATIONS['understanding.correct']).toBe('understanding.corrected');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
