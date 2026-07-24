@@ -201,13 +201,21 @@ export async function seedTwoTenantWorld(owner: DatabaseClient, product: Databas
     ])
     .execute();
 
-  const a1 = await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: 'Alpha One' });
-  const a2 = await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: 'Alpha Two' });
-  const b1 = await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: 'Beta One' });
-  const b2 = await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'exploring', name: 'Beta Two' });
-  if (a1.status !== 'ok' || a2.status !== 'ok' || b1.status !== 'ok' || b2.status !== 'ok') {
-    throw new Error('adversarial harness: company bootstrap failed');
-  }
+  // The three canonical creation modes (COMPANY_CREATION_MODES): own_idea | platform_suggested |
+  // existing_business. A wrong mode is rejected by validation BEFORE any write, so the harness would fail
+  // with no company at all — hence the explicit per-company diagnosis below rather than a bare "failed".
+  const created = {
+    a1: await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'own_idea', name: 'Alpha One' }),
+    a2: await createCompany(product, { accountId: accountA, actingUserId: aOwner, creationMode: 'existing_business', name: 'Alpha Two' }),
+    b1: await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'own_idea', name: 'Beta One' }),
+    b2: await createCompany(product, { accountId: accountB, actingUserId: bOwner, creationMode: 'platform_suggested', name: 'Beta Two' }),
+  };
+  const failures = Object.entries(created)
+    .filter(([, r]) => r.status !== 'ok')
+    .map(([label, r]) => `${label}:${r.status}`);
+  if (failures.length > 0) throw new Error(`adversarial harness: company bootstrap failed (${failures.join(', ')})`);
+  const { a1, a2, b1, b2 } = created;
+  if (a1.status !== 'ok' || a2.status !== 'ok' || b1.status !== 'ok' || b2.status !== 'ok') throw new Error('adversarial harness: unreachable');
 
   // Company memberships beyond the creator's owner row.
   await owner.kysely
