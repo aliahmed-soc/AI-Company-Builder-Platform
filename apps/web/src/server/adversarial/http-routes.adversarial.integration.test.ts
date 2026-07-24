@@ -191,9 +191,14 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     const unknown = await get(UNKNOWN_UUID);
     expect(foreign.status, 'ORACLE-FOREIGN-ID vs ORACLE-UNKNOWN-ID: identical status').toBe(unknown.status);
     expect(foreign.body, 'ORACLE-FOREIGN-ID vs ORACLE-UNKNOWN-ID: identical body').toBe(unknown.body);
+    // Malformed ids: the approved P1-014 policy allows a bounded validation/internal response rather than
+    // the coarse denial — what must hold is that they never succeed, never execute the protected callback,
+    // and never leak. (The bounded envelope itself is an ACBP-P1-014 Class R restoration: previously a
+    // malformed id escaped the company routes as an uncaught PlatformError.)
     for (const bad of MALFORMED) {
       const r = await get(bad);
       expect(r.status, `malformed id '${bad}' must not succeed`).not.toBe(200);
+      expect(Object.keys(JSON.parse(r.body) as Record<string, unknown>), `malformed id '${bad}' must yield a bounded envelope`).toEqual(['error']);
       for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'uuid', 'stack', 'password', w.companyB1]) {
         expect(r.body.toLowerCase(), `malformed-id response must not leak '${forbidden}'`).not.toContain(forbidden.toLowerCase());
       }

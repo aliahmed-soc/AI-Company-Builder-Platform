@@ -51,6 +51,21 @@ export async function parseAcceptBody(request: HttpRequest): Promise<Parsed<{ to
 }
 
 /** Map a bounded members result to a safe HTTP response. */
+
+/**
+ * Run a request use case and map it, converting ANY unexpected throw into the BOUNDED generic 500 envelope
+ * (ACBP-P1-014 Class R restoration of the accepted 'all cross-boundary HTTP errors are bounded + sanitized'
+ * invariant). Success and denial semantics are untouched; only the previously-unmapped throw path changes,
+ * from a framework-generated error to a bounded internal_error envelope with status 500.
+ */
+export async function respondToMembersRequest(run: () => Promise<MembersRequestResult>): Promise<Response> {
+  try {
+    return toMembersResponse(await run());
+  } catch {
+    return jsonResponse(500, genericErrorBody(500));
+  }
+}
+
 export function toMembersResponse(result: MembersRequestResult): Response {
   switch (result.status) {
     case 'members':

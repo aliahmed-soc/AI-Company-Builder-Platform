@@ -4,7 +4,7 @@
 // invited email (enforced in @acbp/core). Scoped to the invite's account (from the single-use token),
 // not the caller's own account. Fail-closed. Other methods → 405.
 import { acceptInviteForRequest } from '@/server/members/members-request';
-import { parseAcceptBody, toMembersResponse } from '@/server/members/members-http';
+import { parseAcceptBody, respondToMembersRequest } from '@/server/members/members-http';
 import { genericErrorBody } from '@/server/webhooks/http';
 
 export const runtime = 'nodejs';
@@ -15,5 +15,5 @@ export async function POST(request: Request): Promise<Response> {
   if (!parsed.ok) {
     return new Response(JSON.stringify(genericErrorBody(parsed.status)), { status: parsed.status, headers: { 'content-type': 'application/json; charset=utf-8' } });
   }
-  return toMembersResponse(await acceptInviteForRequest(parsed.input));
+  return respondToMembersRequest(() => acceptInviteForRequest(parsed.input));
 }

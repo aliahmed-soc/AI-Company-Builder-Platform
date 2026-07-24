@@ -4,7 +4,7 @@
 // membership-validated selector; `cursor`/`limit` come from the query string (the domain validates + clamps). A
 // malformed cursor → 400; a non-member → coarse 403 (no oracle). Read-only; no mutation. Other methods → 405.
 import { getCompanyActivityForRequest } from '@/server/companies/companies-request';
-import { toCompaniesResponse } from '@/server/companies/companies-http';
+import { respondToCompaniesRequest } from '@/server/companies/companies-http';
 import { genericErrorBody } from '@/server/webhooks/http';
 
 export const runtime = 'nodejs';
@@ -23,5 +23,5 @@ export async function GET(request: Request, context: { params: Promise<{ company
   }
   const cursor = params.get('cursor') ?? undefined;
   const limit = params.get('limit') ?? undefined;
-  return toCompaniesResponse(await getCompanyActivityForRequest(companyId, { ...(cursor !== undefined ? { cursor } : {}), ...(limit !== undefined ? { limit } : {}) }));
+  return respondToCompaniesRequest(() => getCompanyActivityForRequest(companyId, { ...(cursor !== undefined ? { cursor } : {}), ...(limit !== undefined ? { limit } : {}) }));
 }
