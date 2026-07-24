@@ -3,9 +3,15 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P1-015 — Slice A integration: secure company creation** (status **Planned**; the last Planned ticket
-  in Phase 1), on `p1-015-slice-a-secure-company-creation` from `main` @ `b559d37`, draft **PR #17**, under the
-  standing Phase 1 authorization. Governed by **CDR-021**.
+- **ACBP-P1-015 finalization** — status **Done**; PR #17 ready → squash-merge → exact-main CI → branch
+  cleanup, under the standing Phase 1 authorization. **This is the last Planned ticket in Phase 1: with it
+  Done, all 15 Phase 1 tickets are Done.**
+- Feature head `8b8471b`; exact-head CI **30064683125 green** — 104 files / 1159 passed / 0 failed / 0 skipped,
+  3m06s (5-minute ceiling), including the new hosted `pnpm demo:slice-a` step (11/11 steps, live denial).
+  Prior slice head `2f03a70` (CI 30063164730 green, 104f/1157/0-skip).
+
+## ACBP-P1-015 detail
+- Branch `p1-015-slice-a-secure-company-creation` from `main` @ `b559d37`, **PR #17**. Governed by **CDR-021**.
   - **Design (CDR-021):** the M1 exit criterion made executable — sign in → internal mapping → account →
     company → switch → cross-company access DENIED, with the audit/activity trail verified. The journey is
     implemented ONCE in `@acbp/test-support` (`runSliceAJourney`) and consumed by BOTH the runnable demo
