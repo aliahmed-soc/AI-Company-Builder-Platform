@@ -99,7 +99,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
-  for (const t of ['memory_items', 'interview_answers', 'interview_questions'] as const) {
+  for (const t of ['interview_answers', 'interview_questions'] as const) {
     await sql`drop policy if exists ${sql.ref(`${t}_select`)} on public.${sql.ref(t)}`.execute(db);
     await sql`drop policy if exists ${sql.ref(`${t}_insert`)} on public.${sql.ref(t)}`.execute(db);
     await sql`revoke all on public.${sql.ref(t)} from ${APP_ROLE}`.execute(db);

@@ -16,21 +16,21 @@ _Read this first on resume, then continue automatically to "Next executable acti
   metadata `{item_type, source_type}` only — flagged in CDR-024 §4 for owner visibility (new event name;
   implements the canonical "All changes audited"; additive/reversible). Out of scope: context assembly (P2-007),
   understanding/confidence-scoring (P2-008), the browser + edit/delete/supersede (P2-010).
-- **WINDOW NOTE (P2-006 PARKED — WIP, NOT Done):** the 6-hour window closed with P2-006 at Slice 2. Slice 1
-  (contracts + authz + `memory.item_created` audit registration) is **hosted-green** (`0cc3d8f`). Slice 2
-  (migration 0014 + real-PG suite, head `97e05a1`) is **pushed but RED** on a **migration-CYCLE blocker**:
-  seven pre-existing down/up tests (admin, interview-qa, interview-sessions, provisioning, activity,
-  database "reverse fully and re-apply", user-mapping) fail with `relation "public.memory_items" does not
-  exist` (42P01, RangeVarGetRelidExtended) during a MULTI-step `migrateDown`/`migrateTo(earlier)`. NOTE: the
-  NEW `memory-items.integration.test.ts` (which rolls down ONE step to 0013) PASSES, and 0014.up is the
-  standard 0012/0013 pattern — so 0014.up is fine and single-step down is fine; only multi-step reverse breaks.
-  0014.down was already made robust (`drop table if exists … cascade`) and the self-FK removed, without effect,
-  so the cause is NOT 0014.down's SQL. **RESUME:** reproduce locally (needs PostgreSQL — this session's local
-  PG was blocked by an external process holding port 5432; use a disposable PG on another port) by running
-  `packages/database/src/integration/database.integration.test.ts` "migrations reverse fully and re-apply",
-  step through the `migrateDown` loop to see which migration's down/up actually raises the 42P01, and fix.
-  Then continue P2-006 slices 3–5 (core create/list + audited-in-tx, API, adversarial+docs), reviews, finalize.
-  Branch `p2-006-typed-memory-items`, draft PR #22, CDR-024 — all intact; **main is untouched and green**.
+- **Migration-cycle blocker — ROOT-CAUSED + FIXED (window 2).** The 42P01 `relation "public.memory_items" does
+  not exist` in the multi-step `migrateDown`/`migrateTo(earlier)` suites was **Class T**: a window-1 bulk
+  drop-list edit (adding `memory_items` to test cleanup lists) also matched and edited **migration `0013`'s down
+  loop**, so `0013.down` ran `drop policy/revoke … on public.memory_items`. During a down PAST 0013, `0014.down`
+  had already dropped `memory_items` (step 0, success), so `0013.down` raised 42P01 at step 1. The single-step
+  memory-items test passed because it never reached `0013.down`. Fix: `0013.down` reverted to its own tables
+  (`['interview_answers','interview_questions']` — matches main). Also reverted the two window-1 speculative
+  changes made for the wrong hypothesis: `0014` self-FK on `superseded_by` **restored** (integrity), and
+  `0014.down` restored to the standard policy-drop+revoke+drop-table pattern (matches 0012/0013). Verified on a
+  disposable PostgreSQL (Docker daemon unresponsive → used the Windows-native 5433 cluster, isolated
+  `acbp_p2006_test` DB, command-local env — `.env.local` untouched): full suite **114 files / 1277 tests / 0
+  failed / 0 skipped**, including reverse-fully-and-reapply + the 8 previously-failing suites.
+- **Next:** push the fix (exact-head hosted CI green, zero skips), then P2-006 slices 3–5 (core create/list +
+  audited-in-tx `memory.item_created`, API, adversarial+docs), reviews, finalize. Branch
+  `p2-006-typed-memory-items`, draft PR #22, CDR-024; **main untouched/green** at `1c49c55`.
 - **ACBP-P2-002 — Done** (squash `1c49c55`, PR #21). Phase 2: 2 Done / 10 Planned. P2-003/P2-005 gated by open
   question IOQ-13; P2-006 is the sole unblocked ticket.
 

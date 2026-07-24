@@ -40,10 +40,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addForeignKeyConstraint('memory_items_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('memory_items_account_fk', ['account_id'], 'accounts', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('memory_items_author_fk', ['created_by_user_id'], 'users', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
-    // NOTE: `superseded_by` is a plain uuid column here (no self-FK). The supersede OPERATION — which sets this
-    // forward pointer — is P2-010 (CDR-024 §7); P2-010 adds the self-FK + the column-level UPDATE grant when it
-    // implements the operation. Keeping the column FK-free in P2-006 avoids a self-referential constraint on a
-    // table that is append-only in this ticket.
+    // `superseded_by` is the forward pointer (DATA-ARCHITECTURE §3): a self-FK enforces that it references a real
+    // memory item. In P2-006 it is always NULL (the supersede OPERATION + its column-level UPDATE grant are
+    // P2-010, CDR-024 §7); the constraint stands ready for P2-010 and costs nothing while the column is null.
+    .addForeignKeyConstraint('memory_items_superseded_fk', ['superseded_by'], 'memory_items', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
     // The CLOSED 8-value type enum (MEM-001) and 6-value source_type enum (MEM-003).
     .addCheckConstraint('memory_items_type_valid', sql`type in ('user_fact', 'user_preference', 'constraint', 'ai_assumption', 'research_finding', 'approved_decision', 'measured_outcome', 'correction')`)
     .addCheckConstraint('memory_items_source_type_valid', sql`source_type in ('interview_answer', 'user_edit', 'task_result', 'model_generation', 'imported_document', 'system_measurement')`)
@@ -74,9 +74,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
-  // Dropping the table with CASCADE removes its RLS policies and the app-role grants atomically, and never
-  // errors on a missing relation — unlike a separate `drop policy if exists … on public.memory_items`, whose
-  // IF EXISTS guards only the POLICY, not the table, so it raises "relation does not exist" when a down-to-an-
-  // earlier-migration path runs this after the table is already gone.
-  await db.schema.dropTable('memory_items').ifExists().cascade().execute();
+  // Symmetric teardown (mirrors 0012/0013): drop this migration's OWN policies + app-role grants, then the
+  // table. Each `drop policy if exists … on public.memory_items` is safe here because a migration's down only
+  // runs while its own table still exists (a down never references a table another migration owns — the defect
+  // that a stray edit introduced into 0013's down and this ticket fixes).
+  await sql`drop policy if exists memory_items_select on public.memory_items`.execute(db);
+  await sql`drop policy if exists memory_items_insert on public.memory_items`.execute(db);
+  await sql`revoke all on public.memory_items from ${APP_ROLE}`.execute(db);
+  await db.schema.dropTable('memory_items').ifExists().execute();
 }
