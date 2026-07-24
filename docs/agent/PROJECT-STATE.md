@@ -3,7 +3,22 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-006 finalization.** Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
+- **ACBP-P2-010 "Memory browser"** (M2), branch `p2-010-memory-browser` from `main` @ `942cc1d`, governed by
+  **CDR-025**. Deps P2-006 (Done); the only unblocked Ready P2 ticket. **OWNER GATE (CDR-025 §0): memory
+  deletion semantics** — CLAUDE.md names "deletion semantics" a gate; P2-010 operationalizes memory delete for
+  the first time. Canon constrains it to SOFT delete (never hard) but leaves the representation unpinned (CDR-024
+  §7 deferred the soft-delete column), and the backlog's "deletion propagates staleness flags" conflicts with
+  reality (dependents = M3/M4, don't exist). **Recommended answer:** soft delete via a nullable `deleted_at`
+  column + `memory.item_deleted` in-tx event + DEFER propagation. **Until ratified, the delete
+  operation/column/event are NOT built.**
+- **Proceeding on the canon-resolved, delete-INDEPENDENT half** (CDR-025 §1–§5): edit = versioned supersede
+  (`memory:edit` owner-only; new user_edit version + old.`superseded_by`; version-guarded; `memory.item_superseded`
+  audited in-tx), read/filter/get surface, migration 0015 (column-level `UPDATE (superseded_by)` grant — the 0012
+  precedent). P2-010 will be **WIP, NOT Done** at window end (delete is gated).
+- **P2-001/P2-002/P2-006 — Done.** Phase 2: 3 Done / 9 Planned. P2-003/P2-005 gated by IOQ-13.
+
+## ACBP-P2-006 detail (Done) — branch `p2-006-typed-memory-items`, PR #22, CDR-024
+- Status **Done**; feature head `a5fe97c` (review fixes), exact-head CI
   **30090738122 green** (real-PG memory suites + HTTP adversarial + reverse-fully migration cycle; local full
   suite 115 files / 1286 / 0 skipped). Both independent reviews CLEAN with explicit CORRECT verdicts on the
   migration root-cause fix and the audit atomicity/decision (not an owner gate); all findings fixed
