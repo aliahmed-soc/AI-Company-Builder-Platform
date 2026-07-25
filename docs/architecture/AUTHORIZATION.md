@@ -156,6 +156,9 @@ trusted core/use-case seam:
   granted to `viewer` (a viewer keeps only `understanding:read`), nor to an account owner without company membership,
   nor via forged provider claims — DISTINCT closed actions (no overloading of the read/generate grant). Pure
   additions to the deny-by-default matrix; see `CDR-030`.
+- **P2-007** (context assembly) adds **NO** new authz action: `assembleContext` reads the company's typed memory under
+  the existing `memory:read` grant (owner+viewer). The MEM-004 conflict flag + `context.conflict_flagged` audit are
+  side effects of that read; there is no separate context permission. See `CDR-032`.
 
 ## What P1-007 does NOT do (later tickets)
 

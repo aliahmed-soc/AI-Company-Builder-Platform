@@ -24,6 +24,7 @@ import {
   understandingItemReviewed,
   understandingConfirmed,
   understandingCorrected,
+  contextConflictFlagged,
   type AuditEventName,
 } from './index.js';
 
@@ -93,6 +94,8 @@ describe('event-name registry (deny unregistered)', () => {
       'understanding.item_reviewed',
       'understanding.confirmed',
       'understanding.corrected',
+      // Context assembly (ACBP-P2-007; CDR-032 §3) — a MEM-004 conflict was flagged + items withheld.
+      'context.conflict_flagged',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -260,6 +263,12 @@ describe('typed factories', () => {
   test('understandingCorrected: subject = the document; metadata = {version, correction_ref, dependents_flagged}', () => {
     const ev = understandingCorrected({ documentId: 'ud_1', version: 3, correctionRef: 'ui_9', dependentsFlagged: 1 });
     expect(ev).toEqual({ name: 'understanding.corrected', schemaVersion: 1, subjectType: 'understanding_document', subjectId: 'ud_1', outcome: 'success', metadata: { version: 3, correction_ref: 'ui_9', dependents_flagged: 1 } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('contextConflictFlagged: subject = the confirmed item; metadata = {confirmed_count, assumption_count}; outcome blocked', () => {
+    const ev = contextConflictFlagged({ itemId: 'mem_1', confirmedCount: 1, assumptionCount: 2 });
+    expect(ev).toEqual({ name: 'context.conflict_flagged', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'blocked', metadata: { confirmed_count: 1, assumption_count: 2 } });
     expect(Object.isFrozen(ev)).toBe(true);
   });
 });

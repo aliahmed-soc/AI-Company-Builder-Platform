@@ -27,6 +27,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'understanding.review-decision',
       'understanding.confirm',
       'understanding.correct',
+      // Context assembly (ACBP-P2-007; CDR-032 §3) — deliberately approved addition.
+      'context.flag-conflict',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -58,6 +60,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['understanding.review-decision']).toBe('understanding.item_reviewed');
     expect(AUDITED_OPERATIONS['understanding.confirm']).toBe('understanding.confirmed');
     expect(AUDITED_OPERATIONS['understanding.correct']).toBe('understanding.corrected');
+    expect(AUDITED_OPERATIONS['context.flag-conflict']).toBe('context.conflict_flagged');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
@@ -78,9 +81,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       const event = factoryFor(op)('subject_1');
       expect(event.name).toBe(AUDITED_OPERATIONS[op]);
       expect(event.subjectId).toBe('subject_1');
-      // A recorded STEP FAILURE is honestly not a success — its outcome is 'blocked' (CDR-018 §8);
-      // every other approved operation records a success.
-      expect(event.outcome).toBe(op === 'provisioning.step_fail' ? 'blocked' : 'success');
+      // A recorded STEP FAILURE (CDR-018 §8) and a flagged CONTEXT CONFLICT (CDR-032 §3 — items withheld) are
+      // honestly not successes — their outcome is 'blocked'; every other approved operation records a success.
+      expect(event.outcome).toBe(op === 'provisioning.step_fail' || op === 'context.flag-conflict' ? 'blocked' : 'success');
     }
   });
 });

@@ -50,26 +50,45 @@ last-gate backstop, NOT the primary secret control (that is ADR-014/021 vault is
 high-entropy catch-all can over-redact a ≥40-char mixed-case+digit business identifier (rare; the failure direction is
 safe — content masked, never leaked). These are enumerated so downstream consumers do not over-trust the layer.
 
-## 3. MEM-004 instruction precedence + conflict (DATA-ARCHITECTURE §3)
+## 3. MEM-004 instruction precedence + conflict — FINAL design (owner decision; DATA-ARCHITECTURE §3)
 
-Confirmed user items rank above AI assumptions (§1). On a **conflict** — a confirmed user item and an `ai_assumption`
-that address the same subject with contradictory content — the assembler **surfaces a question** (a
-`context.conflict` signal the caller turns into a question event) rather than silently preferring memory. **Conflict
-DETECTION semantics are the follow-up core slice** (below): robust same-subject/contradiction detection is genuinely
-under-specified in canon (it needs either structured topics or a model judgement), so it is designed + implemented
-with care in the core use case, not rushed into the pure contracts. The precedence *ordering* itself is in §1.
+**Owner decision (ratified):** when context assembly finds two memory items that *genuinely contradict* (not merely
+different confidence), it must **never silently pick one by rank** — it flags the conflict and surfaces it as an open
+question for the founder (MEM-004). Provenance ranking (§1) orders only NON-conflicting items; it is not a tiebreaker
+for a real contradiction.
+
+**Reuse of P2-005 + the exact gap.** P2-005's contradiction detection (`evaluateAnswer`/`resolveAnswerQuality`) is a
+LIVE-MODEL judgement made at *answer time* (it calls the gateway to classify a new answer vs prior answers, and a
+contradictory answer is surfaced + discarded, never stored); its own comments already assign "conflict-EVENT auditing"
+to P2-007. Context assembly is **model-free** — it BUILDS the model's prompt, so calling the model here is circular and
+forbidden (the live provider is the deferred CDR-026 §0 gate). So P2-005 gives the contradiction *result semantics* +
+the "surface, never resolve" principle, but **NOT a reusable model-free, memory-item-to-memory-item detector**, and it
+persists no machine-readable conflict signal. **Missing (deferred):** full semantic contradiction of arbitrary stored
+texts needs the model — that would require persisting P2-005's verdicts at memory-write time (a P2-005/P2-006 change,
+out of P2-007 scope).
+
+**What P2-007 implements (deterministic, model-free, canon-grounded):** `detectMemoryConflicts` flags MEM-004's exact
+pairing via the memory model's **`source_ref` provenance** — a group of CURRENT items sharing one non-empty `source_ref`
+that contains BOTH a confirmed user item (tier 1) AND an `ai_assumption` (tier 2). This is precise (same `source_ref` =
+same subject; the founder's stated answer coexisting with the AI's guess for it) and needs no NLP. On a conflict,
+`assembleContext` **holds BOTH items OUT of the model context** (never silently prefers the higher tier), returns the
+conflict for the caller to raise as an open question, and writes `context.conflict_flagged` (audited, in-tx; bounded
+`{confirmed_count, assumption_count}` metadata — never content or the `source_ref` value). Withholding-then-surfacing
+is the safe direction (the founder confirms). **Documented limitation:** this catches same-subject provenance conflicts;
+cross-subject semantic contradiction remains the deferred model-based case above.
 
 ## 4. Slice plan (trust-critical — sliced so the security-critical pure logic ships first, reviewed)
 
-1. **Contracts** (this slice): the PURE, provider-neutral logic — provenance ranking (`rankMemoryForContext`) + the
-   secret blocklist (`redactSecrets` / `containsSecret` + the closed `SECRET_PATTERNS`) + the assembled-context DTO
-   shape. Unit-tested (seeded-secret corpus per pattern; benign-text no-false-positive corpus; ranking order). This
-   CDR.
-2. **Core** (follow-up): `assembleContext` — reads the company-scoped typed memory (its own `memory:read` scope) +
-   the current understanding version, ranks + redacts, detects MEM-004 conflicts → emits `context.conflict`
-   question signals, returns the bounded `contextParts[]` for the gateway. Real-PG integration (seeded secret
-   blocked end-to-end; seeded conflict surfaces a question; precedence proven; cross-company isolation). Independent
-   **security review** (trust-critical). Then finalization.
+1. **Contracts** (DONE — security-reviewed): the PURE, provider-neutral logic — provenance ranking
+   (`rankMemoryForContext`), the secret blocklist (`redactSecrets`/`containsSecret`/`SECRET_PATTERNS`), and the
+   deterministic MEM-004 conflict detector (`detectMemoryConflicts`/`conflictedItemIds`). Unit-tested (seeded-secret
+   corpus per pattern + benign-text no-false-positives + ReDoS/fail-closed regressions + ranking order + conflict
+   detection). Independent application-security review (2 HIGH redactor defects fixed). This CDR.
+2. **Core** (DONE): `assembleContext` — reads the company-scoped current typed memory (`memory:read`), ranks + redacts,
+   detects MEM-004 conflicts → withholds both + audits `context.conflict_flagged` in-tx, returns the bounded
+   `contextParts[]` + conflicts. NO model call. Real-PG integration (provenance order + secret redaction; conflict
+   flagged/withheld/audited; empty; non-member forbidden; cross-company isolation; audit-or-nothing rollback). No
+   migration, no new authz (reuses `memory:read`).
 
 ## 5. Out of scope / deferred
 

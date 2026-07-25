@@ -67,6 +67,66 @@ export function rankMemoryForContext<T extends RankableMemoryItem>(items: readon
   return withTier.map((e) => e.item);
 }
 
+// ── MEM-004 conflict detection (deterministic, model-free) ────────────────────────────────────────────────
+
+/** The minimal shape the conflict detector needs (a structural subset of `MemoryItemDTO`). */
+export interface ConflictableMemoryItem {
+  readonly id: string;
+  readonly type: MemoryType;
+  readonly confirmationState: MemoryConfirmationState;
+  /** Provenance link (P2-006): items sharing a `source_ref` are about the same subject. */
+  readonly sourceRef: string;
+}
+
+/**
+ * A detected MEM-004 conflict: a confirmed user item and an AI assumption that share the same `source_ref` (the same
+ * subject) — the founder's stated answer coexisting with the AI's guess for that subject. Surfaced as an open
+ * question; NEVER silently rank-resolved.
+ */
+export interface MemoryConflict {
+  readonly sourceRef: string;
+  readonly confirmedItemIds: readonly string[];
+  readonly assumptionItemIds: readonly string[];
+}
+
+/**
+ * Detect MEM-004 conflicts deterministically (NO model). A conflict is a group of items sharing one non-empty
+ * `source_ref` that contains BOTH a confirmed user item (tier 1) AND an `ai_assumption` (tier 2). This is the exact
+ * MEM-004 pairing ("confirmed user item vs AI assumption on the same thing") encoded via the memory model's `source_ref`
+ * provenance — precise and model-free. Invalidated items (excluded tier) never participate. NOTE (CDR-032 §3): this
+ * catches same-subject provenance conflicts; arbitrary cross-subject SEMANTIC contradiction needs the model (P2-005),
+ * which context assembly cannot call — deferred.
+ */
+export function detectMemoryConflicts(items: readonly ConflictableMemoryItem[]): readonly MemoryConflict[] {
+  const byRef = new Map<string, { confirmed: string[]; assumptions: string[] }>();
+  for (const it of items) {
+    if (it.sourceRef.length === 0) continue;
+    const tier = provenanceTier(it);
+    if (tier === null) continue; // invalidated — never participates
+    const g = byRef.get(it.sourceRef) ?? { confirmed: [], assumptions: [] };
+    if (tier === 1) g.confirmed.push(it.id);
+    else if (it.type === 'ai_assumption') g.assumptions.push(it.id);
+    byRef.set(it.sourceRef, g);
+  }
+  const conflicts: MemoryConflict[] = [];
+  for (const [sourceRef, g] of byRef) {
+    if (g.confirmed.length > 0 && g.assumptions.length > 0) {
+      conflicts.push({ sourceRef, confirmedItemIds: g.confirmed, assumptionItemIds: g.assumptions });
+    }
+  }
+  return conflicts;
+}
+
+/** The set of every item id that participates in any conflict (held OUT of the assembled context pending resolution). */
+export function conflictedItemIds(conflicts: readonly MemoryConflict[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const c of conflicts) {
+    for (const id of c.confirmedItemIds) ids.add(id);
+    for (const id of c.assumptionItemIds) ids.add(id);
+  }
+  return ids;
+}
+
 // ── Secret blocklist (invariant 12 / NFR-018) — fail-closed, defense-in-depth ─────────────────────────────
 
 /** The fixed marker a redacted secret span is replaced with (never the raw value). */

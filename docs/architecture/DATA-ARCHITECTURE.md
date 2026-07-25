@@ -107,3 +107,12 @@ Provenance fields on every memory item and generated-claim reference:
 | superseded_by | forward pointer on correction/replacement (never destructive overwrite) |
 
 Instruction precedence (MEM-004): explicit user instructions are stored as `user_fact`/`constraint` with `confirmed_by` set; the context assembler ranks confirmed user items above AI assumptions and, on conflict, emits a question event instead of silently preferring memory (invariant-adjacent runtime check, tested via seeded conflicts).
+<!-- IMPLEMENTED (ACBP-P2-007; CDR-032): `assembleContext` (@acbp/core) builds the model context from the company's
+     current typed memory — provenance-ranked (confirmed user > accepted assumption > research; `invalidated` excluded),
+     with the reviewed secret blocklist redacting any secret-shaped span (invariant 12/NFR-018). MEM-004 conflict =
+     a confirmed user item + an `ai_assumption` sharing one `source_ref` (same subject): assembly WITHHOLDS both from the
+     context and surfaces them as an open question (`context.conflict_flagged` audited, outcome `blocked`) — NEVER
+     silently rank-resolved. Model-free (assembly builds the prompt; the live provider is CDR-026 §0). Deterministic
+     same-subject detection; arbitrary cross-subject SEMANTIC contradiction needs the model (P2-005) and is deferred
+     (would require persisting P2-005's verdicts at write time). Reuses `memory:read`; no new table. -->
+

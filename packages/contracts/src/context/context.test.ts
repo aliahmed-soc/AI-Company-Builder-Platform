@@ -1,8 +1,8 @@
 // ACBP-P2-007 — unit tests for the context-assembly pure contract (CDR-032; AI-AND-WORKER §1; invariant 12; NFR-018).
 // All secret values below are SYNTHETIC (pattern-shaped, never real).
 import { describe, test, expect } from 'vitest';
-import { provenanceTier, rankMemoryForContext, containsSecret, redactSecrets, SECRET_PLACEHOLDER, type RankableMemoryItem } from './context.js';
-import type { MemoryType } from '../memory/memory.js';
+import { provenanceTier, rankMemoryForContext, containsSecret, redactSecrets, SECRET_PLACEHOLDER, detectMemoryConflicts, conflictedItemIds, type RankableMemoryItem, type ConflictableMemoryItem } from './context.js';
+import type { MemoryType, MemoryConfirmationState } from '../memory/memory.js';
 
 function item(over: Partial<RankableMemoryItem> & { type: MemoryType }): RankableMemoryItem {
   return { content: 'x', confidence: 0.5, confirmationState: 'accepted', createdAt: '2026-01-01T00:00:00.000Z', ...over };
@@ -47,6 +47,32 @@ describe('rankMemoryForContext', () => {
   test('invalidated items are dropped from the ranking', () => {
     const items = [item({ type: 'user_fact', content: 'keep' }), item({ type: 'user_fact', content: 'drop', confirmationState: 'invalidated' })];
     expect(rankMemoryForContext(items).map((i) => i.content)).toEqual(['keep']);
+  });
+});
+
+describe('detectMemoryConflicts (MEM-004, model-free)', () => {
+  const ci = (id: string, type: MemoryType, sourceRef: string, confirmationState: MemoryConfirmationState = 'accepted'): ConflictableMemoryItem => ({ id, type, sourceRef, confirmationState });
+
+  test('a confirmed user item + an AI assumption sharing a source_ref is a conflict', () => {
+    const conflicts = detectMemoryConflicts([ci('u1', 'user_fact', 'question:7'), ci('a1', 'ai_assumption', 'question:7')]);
+    expect(conflicts).toEqual([{ sourceRef: 'question:7', confirmedItemIds: ['u1'], assumptionItemIds: ['a1'] }]);
+  });
+  test('same-tier items on one source_ref are NOT a conflict (needs confirmed AND assumption)', () => {
+    expect(detectMemoryConflicts([ci('u1', 'user_fact', 'q:1'), ci('u2', 'constraint', 'q:1')])).toEqual([]);
+    expect(detectMemoryConflicts([ci('a1', 'ai_assumption', 'q:1'), ci('a2', 'ai_assumption', 'q:1')])).toEqual([]);
+  });
+  test('a confirmed item + an assumption on DIFFERENT source_refs is NOT a conflict', () => {
+    expect(detectMemoryConflicts([ci('u1', 'user_fact', 'q:1'), ci('a1', 'ai_assumption', 'q:2')])).toEqual([]);
+  });
+  test('an INVALIDATED assumption never participates in a conflict', () => {
+    expect(detectMemoryConflicts([ci('u1', 'user_fact', 'q:1'), ci('a1', 'ai_assumption', 'q:1', 'invalidated')])).toEqual([]);
+  });
+  test('items with an empty source_ref are ignored', () => {
+    expect(detectMemoryConflicts([ci('u1', 'user_fact', ''), ci('a1', 'ai_assumption', '')])).toEqual([]);
+  });
+  test('conflictedItemIds collects every participating item id', () => {
+    const conflicts = detectMemoryConflicts([ci('u1', 'user_fact', 'q:1'), ci('a1', 'ai_assumption', 'q:1'), ci('a2', 'ai_assumption', 'q:1')]);
+    expect([...conflictedItemIds(conflicts)].sort()).toEqual(['a1', 'a2', 'u1']);
   });
 });
 
