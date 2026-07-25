@@ -500,6 +500,36 @@ export interface UnderstandingConfirmationEventsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Tasks (ACBP-P4-002; CDR-033). Company-owned, dual-keyed FORCE RLS. `state` is the closed 11-value set;
+ * MUTABLE-with-audit — `state` + `updated_at` are updateable, every other column is `never` on update (immutable).
+ */
+export interface TasksTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  state: ColumnType<string, string | undefined, string>;
+  title: ColumnType<string, string, never>;
+  description: ColumnType<string | null, string | null | undefined, never>;
+  milestone_id: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/**
+ * Task dependencies (ACBP-P4-002; CDR-033). A company-owned, dual-keyed FORCE RLS, IMMUTABLE Task↔Task edge
+ * (SELECT+INSERT only). UNIQUE (task_id, depends_on_task_id); no self-dependency. Every column is `never` on update.
+ */
+export interface TaskDependenciesTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  task_id: ColumnType<string, string, never>;
+  depends_on_task_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -523,6 +553,8 @@ export interface DatabaseSchema {
   understanding_items: UnderstandingItemsTable;
   understanding_item_reviews: UnderstandingItemReviewsTable;
   understanding_confirmation_events: UnderstandingConfirmationEventsTable;
+  tasks: TasksTable;
+  task_dependencies: TaskDependenciesTable;
 }
 
 // Repository-facing row shapes.
@@ -575,3 +607,8 @@ export type UnderstandingItemReviewRow = Selectable<UnderstandingItemReviewsTabl
 export type NewUnderstandingItemReview = Insertable<UnderstandingItemReviewsTable>;
 export type UnderstandingConfirmationEventRow = Selectable<UnderstandingConfirmationEventsTable>;
 export type NewUnderstandingConfirmationEvent = Insertable<UnderstandingConfirmationEventsTable>;
+export type TaskRow = Selectable<TasksTable>;
+export type NewTask = Insertable<TasksTable>;
+export type TaskUpdate = Updateable<TasksTable>;
+export type TaskDependencyRow = Selectable<TaskDependenciesTable>;
+export type NewTaskDependency = Insertable<TaskDependenciesTable>;

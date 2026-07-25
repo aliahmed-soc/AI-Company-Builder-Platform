@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -61,6 +61,9 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // Understanding review + confirmation (ACBP-P2-009; CDR-030): append-only event logs — INSERT/SELECT only.
   understanding_item_reviews: ['INSERT', 'SELECT'],
   understanding_confirmation_events: ['INSERT', 'SELECT'],
+  // Task model (ACBP-P4-002; CDR-033): tasks = SELECT/INSERT + column-level UPDATE (state); deps = append-only.
+  tasks: ['INSERT', 'SELECT'],
+  task_dependencies: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -172,6 +175,15 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     for (const forbidden of ['id', 'account_id', 'company_id', 'content', 'type', 'source_type', 'source_ref', 'confidence', 'confirmation_state', 'created_at', 'created_by_user_id']) {
       expect(memory).not.toContain(forbidden);
     }
+    // Tasks (ACBP-P4-002; CDR-033): the server-enforced state machine mutates ONLY `state` (+ its `updated_at`
+    // stamp); title/description/milestone/identity/provenance columns are immutable to the app role.
+    const tasks = byTable.get('tasks') ?? [];
+    expect([...tasks].sort()).toEqual(['state', 'updated_at']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'title', 'description', 'milestone_id', 'created_at', 'created_by_user_id']) {
+      expect(tasks).not.toContain(forbidden);
+    }
+    // task_dependencies is append-only — no column-level UPDATE grants at all.
+    expect(byTable.get('task_dependencies') ?? []).toEqual([]);
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {
