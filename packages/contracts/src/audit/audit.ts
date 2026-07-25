@@ -108,6 +108,16 @@ export const AUDIT_EVENTS = {
   // {understanding_version, options_considered_count, mode} — NEVER option content, chosen fields, reject reasons, or
   // the rationale text. Recording a decision unlocks NO planning (that gate is P4-001).
   'decision.recorded': { schemaVersion: 1, subjectType: 'decision' },
+  // Roadmap generation (ACBP-P4-001; CDR-039 §5; ROAD-001) — goals + sequenced milestones were planned from the
+  // DECIDED strategy. AUDITED in-tx (ADR-015). Subject = the roadmap version id; bounded metadata
+  // {roadmap_version, goal_count, milestone_count, status, model_flagged_partial} — NEVER titles, descriptions, or any
+  // plan content. EVENT-CATALOG's `task_ids[]` cannot be metadata (arrays are forbidden) and P4-001 plans no tasks.
+  'roadmap.generated': { schemaVersion: 1, subjectType: 'roadmap' },
+  // Roadmap edit (ACBP-P4-001; CDR-039 §7-G2; ROAD-002 "Versions audited") — an OWNER authored a new roadmap version.
+  // AUDITED in-tx with the version row + its affected-task flags, so a version-write failure blocks the edit rather
+  // than losing history. Subject = the NEW version id; bounded metadata {roadmap_version, supersedes_version,
+  // affected_task_count, has_reason} — NEVER the reason text, titles, or descriptions.
+  'roadmap.edited': { schemaVersion: 1, subjectType: 'roadmap' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
   // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
@@ -388,6 +398,25 @@ export function strategySelected(input: { readonly selectionId: string; readonly
  */
 export function decisionRecorded(input: { readonly decisionId: string; readonly understandingVersion: number; readonly optionsConsideredCount: number; readonly mode: string }): AuditEvent {
   return makeEvent('decision.recorded', input.decisionId, 'success', { understanding_version: input.understandingVersion, options_considered_count: input.optionsConsideredCount, mode: input.mode });
+}
+
+/**
+ * A roadmap version was planned from the decided strategy (ACBP-P4-001; ROAD-001). Subject = the roadmap version id;
+ * metadata is the bounded `{roadmap_version, goal_count, milestone_count, status, model_flagged_partial}` — NEVER goal
+ * or milestone titles/descriptions. Written in the same transaction as the version + its goals/milestones.
+ */
+export function roadmapGenerated(input: { readonly roadmapId: string; readonly roadmapVersion: number; readonly goalCount: number; readonly milestoneCount: number; readonly status: string; readonly modelFlaggedPartial: boolean }): AuditEvent {
+  return makeEvent('roadmap.generated', input.roadmapId, 'success', { roadmap_version: input.roadmapVersion, goal_count: input.goalCount, milestone_count: input.milestoneCount, status: input.status, model_flagged_partial: input.modelFlaggedPartial });
+}
+
+/**
+ * An owner authored a new roadmap version (ACBP-P4-001; ROAD-002). Subject = the NEW version's id; metadata is the
+ * bounded `{roadmap_version, supersedes_version, affected_task_count, has_reason}` — NEVER the reason text or any plan
+ * content. Written in the same transaction as the version + its affected-task flags: a failure blocks the edit rather
+ * than losing history.
+ */
+export function roadmapEdited(input: { readonly roadmapId: string; readonly roadmapVersion: number; readonly supersedesVersion: number; readonly affectedTaskCount: number; readonly hasReason: boolean }): AuditEvent {
+  return makeEvent('roadmap.edited', input.roadmapId, 'success', { roadmap_version: input.roadmapVersion, supersedes_version: input.supersedesVersion, affected_task_count: input.affectedTaskCount, has_reason: input.hasReason });
 }
 
 /**

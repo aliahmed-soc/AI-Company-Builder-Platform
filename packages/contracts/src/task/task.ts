@@ -67,6 +67,13 @@ export function legalTaskSuccessors(from: TaskState): readonly TaskState[] {
 export function isTerminalTaskState(state: TaskState): boolean {
   return legalTaskSuccessors(state).length === 0;
 }
+/**
+ * The terminal states, DERIVED from the transition table rather than restated. Consumers that need the closed set as
+ * data (e.g. a SQL `not in (...)` filter) must use this — a hand-copied list silently misclassifies a task as "open"
+ * the day a terminal state is added.
+ */
+export const TERMINAL_TASK_STATES: readonly TaskState[] = TASK_STATES.filter((s) => legalTaskSuccessors(s).length === 0);
+
 export function isOpenTaskState(state: TaskState): boolean {
   return !isTerminalTaskState(state);
 }

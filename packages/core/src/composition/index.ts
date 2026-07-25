@@ -10,3 +10,4 @@ export {
 export { interviewOutputValidator } from './interview-gateway.js';
 export { understandingOutputValidator } from './understanding-gateway.js';
 export { strategyOutputValidator, strategyRecommendationValidator } from './strategy-gateway.js';
+export { roadmapOutputValidator } from './planning-gateway.js';

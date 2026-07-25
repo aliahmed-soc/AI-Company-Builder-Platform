@@ -204,4 +204,13 @@ export class StrategyRepository {
   latestDecision(generationId: string): Promise<DecisionRow | undefined> {
     return this.#db.selectFrom('decisions').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
   }
+
+  /**
+   * The COMPANY's latest decision across all generations (RLS-confined), or undefined when none exists. This is what
+   * the P4-001 planning gate reads: planning requires the latest decision to be NON-reject (CDR-039 §7-G1) — a
+   * rejection re-blocks planning exactly as a later understanding correction re-blocks strategy.
+   */
+  latestDecisionForCompany(companyId: string): Promise<DecisionRow | undefined> {
+    return this.#db.selectFrom('decisions').selectAll().where('company_id', '=', companyId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
+  }
 }

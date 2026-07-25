@@ -114,6 +114,11 @@ export const AUTHZ_ACTIONS = [
   // record of a decision (J-08 "Actor: owner"). Reads reuse strategy:read (the decision is surfaced on the strategy
   // read); a dedicated Decisions list/get surface is deferred with the strategy HTTP surface.
   'decision:record',
+  // Planning (ACBP-P4-001; CDR-039; ROAD-001/002). Generation + read are member actions (the understanding:generate /
+  // strategy:generate precedent); the versioned EDIT is owner-only (API-CONTRACTS "Owner (edit)").
+  'roadmap:generate',
+  'roadmap:read',
+  'roadmap:edit',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -211,6 +216,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:select': ['owner'],
   // The owner-only immutable decision-record write (STRAT-006; J-08 "Actor: owner") — the strategy:select precedent.
   'decision:record': ['owner'],
+  // Roadmap generation/read are member actions (like understanding:generate / strategy:generate).
+  'roadmap:generate': ['owner', 'viewer'],
+  'roadmap:read': ['owner', 'viewer'],
+  // The versioned roadmap EDIT is owner-only (API-CONTRACTS "Owner (edit)"; ROAD-002 records author + reason).
+  'roadmap:edit': ['owner'],
 };
 
 /**

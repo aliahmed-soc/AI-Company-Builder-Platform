@@ -95,7 +95,19 @@ Retention default: activity-projected events with company data; audit-relevant e
 | strategy.generated | Strategy | activity | generation_id, understanding_version, option_count, similarity_check_result (P3-001; no content) | audited in-tx | with company |
 | strategy.selected | Strategy | decision (P3-005) | selection_id (subject); mode (select/edit/combine/reject), phase_scope? — no content | audited in-tx (P3-004; owner-only) | permanent |
 | decision.recorded | Strategy&Decision | activity, memory | decision_id (subject); understanding_version, options_considered_count, mode (P3-005; scalar — no content/rationale) | **is audit-grade (immutable)**; audited in-tx (owner-only) | permanent |
-| roadmap.generated | Planning | Task module, activity | roadmap_version, milestone_count, task_ids[] | audited | with company |
+<!-- IMPLEMENTED (ACBP-P4-001; CDR-039 §5; ROAD-001/002): `roadmap.generated` is a durable `audit_events` row written in
+     the SAME transaction as the roadmap version + its goals + its milestones (audit-or-nothing, ADR-015). Subject =
+     the roadmap VERSION id; bounded metadata = {roadmap_version, goal_count, milestone_count, status,
+     model_flagged_partial} ONLY — NEVER goal/milestone titles or descriptions. The `task_ids[]` shorthand below cannot
+     be metadata (audit metadata forbids arrays — the `strategy.generated` / `decision.recorded` precedent) and P4-001
+     plans no tasks anyway (task generation is P4-003), so it is carried as a COUNT.
+     `roadmap.edited` (CDR-039 §7-G2) is a SEPARATE event for a ROAD-002 owner edit — reusing `roadmap.generated` would
+     misreport hand-authored content as a model generation. Subject = the NEW version id; bounded metadata
+     {roadmap_version, supersedes_version, affected_task_count, has_reason} — NEVER the reason text. It is written in
+     the same transaction as the new version and its affected-task flags, which is what makes ROAD-002's "version write
+     failure blocks the edit rather than losing history" true end to end. Activity fan-out is DEFERRED. -->
+| roadmap.generated | Planning | Task module (P4-003), activity | roadmap_version, goal_count, milestone_count, status, model_flagged_partial (P4-001; scalar — no plan content) | audited in-tx | with company |
+| roadmap.edited | Planning | Task module (review flags), activity | roadmap_version, supersedes_version, affected_task_count, has_reason (P4-001; owner-only; no reason text) | audited in-tx | with company |
 <!-- IMPLEMENTED (ACBP-P4-002; CDR-033 §4): `task.created` is a durable `audit_events` row written in the SAME
      transaction as the server-enforced `draft → planned` "appears on the board" transition (audit-or-nothing —
      an in-tx audit failure rolls back the transition). Subject = the task id; bounded metadata = {has_milestone}
