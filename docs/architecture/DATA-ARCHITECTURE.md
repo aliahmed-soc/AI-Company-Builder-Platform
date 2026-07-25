@@ -66,6 +66,15 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      `insufficient_distinct`; the honest fewer-than-three outcome + reason follow from the DISTINCT count. No schema
      change (the existing column + enum + the P3-001 status↔option_count CHECK hold since option_count = distinct
      count); no new migration/audit/authz. `pending` remains a legal enum value but is no longer written by this path. -->
+<!-- IMPLEMENTED (ACBP-P3-003; CDR-036): the OPTIONAL ADVISORY recommendation is realized by migration 0023 as one more
+     company-owned, dual-keyed FORCE RLS, IMMUTABLE (`I`) append-only table `strategy_recommendations` (SELECT+INSERT
+     only): FK to `strategy_generations` + the recommended `strategy_options` row; a bounded `rationale` +
+     `sensitivities`. "No recommendation" = ABSENCE of a row (STRAT-004 "absent a defensible rationale, no
+     recommendation is shown"); a re-recommendation is a new row (latest-wins on read). It is ADVISORY — it references
+     one option and NEVER selects (selection is P3-004; decision records P3-005) or changes state. A model call
+     (metered by the gateway) produces it; deny-by-default (one option in range + non-blank rationale + sensitivities,
+     else honest abstain). NO new audit event (the recommendation changes no state — CDR-036 §4); no new SECURITY
+     DEFINER / role / BYPASSRLS. -->
 
 
 

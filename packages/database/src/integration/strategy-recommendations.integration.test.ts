@@ -125,6 +125,15 @@ describe.skipIf(!hasTestDatabase)('strategy_recommendations (real PostgreSQL, re
     await expect(insertRec(accountA, companyA1, genA, optA, { rationale: 'x'.repeat(4001) })).rejects.toThrow();
   });
 
+  test('composite FK: a recommendation cannot reference an option from a DIFFERENT generation', async () => {
+    // A second generation (same company) with its own option.
+    const doc2 = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 2, 'complete', 0.6, ${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
+    const gen2 = (await sql<{ id: string }>`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${doc2}::uuid, 2, 'complete', 3, ${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
+    const opt2 = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${accountA}::uuid, ${companyA1}::uuid, ${gen2}::uuid, 0, ${JSON.stringify(fields())}::jsonb) returning id`.execute(su.kysely)).rows[0]!.id;
+    // genA + opt2 (opt2 belongs to gen2) — the composite (recommended_option_id, generation_id) FK refuses it.
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into strategy_recommendations (account_id, company_id, generation_id, recommended_option_id, rationale, sensitivities, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${opt2}::uuid, 'x', 'y', ${userU}::uuid)`.execute(k))).rejects.toThrow();
+  });
+
   test('FK cascade: deleting the generation removes its recommendations', async () => {
     const co = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     const doc2 = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountA}::uuid, ${co}::uuid, 1, 'complete', 0.6, ${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;

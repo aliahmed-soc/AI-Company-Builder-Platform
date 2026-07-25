@@ -111,7 +111,8 @@ export async function recommendStrategy(client: DatabaseClient, params: Recommen
   if (narrowed === undefined) return { status: 'recommendation_failed' };
   const resolved = resolveRecommendation(narrowed, pre.options.length);
   if (resolved === null) return { status: 'ok', recommendation: null };
-  const recommendedOption = pre.options[resolved.recommendedOrdinal];
+  // Resolve the recommended option BY ORDINAL (not array index) — robust even if ordinals were ever non-contiguous.
+  const recommendedOption = pre.options.find((o) => o.ordinal === resolved.recommendedOrdinal);
   if (recommendedOption === undefined) return { status: 'ok', recommendation: null }; // defensive: ordinal not present
 
   // 4. Persist ONE immutable advisory recommendation (append-only). NO selection, NO state change, NO audit event.
@@ -120,7 +121,11 @@ export async function recommendStrategy(client: DatabaseClient, params: Recommen
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<RecommendStrategyResult> => {
       if (checkAuthorization(role, 'strategy:recommend', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
-      const row = await new StrategyRepository(scope.db).insertRecommendation({
+      const repo = new StrategyRepository(scope.db);
+      // Re-verify the generation still exists (a company/account cascade-delete could have raced the model call) —
+      // a clean `not_found` beats an FK-violation throw at insert.
+      if ((await repo.findGeneration(params.generationId)) === undefined) return { status: 'not_found' };
+      const row = await repo.insertRecommendation({
         accountId: params.accountId,
         companyId: params.companyId,
         generationId: params.generationId,

@@ -3,6 +3,23 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P3-003 comparison + AI recommendation — CORE DONE / FINALIZING (2nd 8-hour autonomous window).**
+  Branch `p3-003-comparison-recommendation` (from main `a8ace01`, after P3-002 merged), draft PR **#35**, CDR-036.
+  Adds the OPTIONAL ADVISORY recommendation over a generation's distinct options (STRAT-004). Canon-derived design (via
+  discovery subagent): a MODEL call (FakeModelProvider; live deferred CDR-026 §0) recommends ONE option with rationale +
+  sensitivities, or honestly abstains. Two guards: NEVER auto-selects (structural — no selection/decision/state change;
+  selection is P3-004) + no defensible rationale → no recommendation (deny-by-default: one option-in-range + non-blank
+  rationale + sensitivities, else abstain → nothing persisted, `recommendation: null`). `recommendStrategy` +
+  `getLatestStrategyGeneration` surfaces the latest recommendation. Migration **0023** `strategy_recommendations`
+  (immutable/append-only, dual-keyed FORCE RLS, SELECT+INSERT, FK generation+option). `strategy:recommend` authz
+  (owner|viewer). NO new audit event (changes no state; only the gateway usage event). Ratified gaps: G-1 structural
+  "defensible" bar; G-2 model-metered; G-3 owner|viewer. Commits: CDR+contracts `35b7663` → migration 0023 `eb4274f` →
+  core `2875eb2`. Local: contracts strategy 25 unit; recommendation real-PG 7/7 + migration 6/6; strategy-generation
+  real-PG 12/12; full recursive typecheck/lint/secrets/boundaries clean; unit 1004. Independent review in progress.
+  Finalization → backlog Done → exact-head CI → squash-merge "ACBP-P3-003: Comparison and AI recommendation" →
+  exact-main CI → delete branch. Migrations end **0023**.
+- **ACBP-P3-002 distinctness check — DONE** (squash `a8ace01`, PR #34; exact-main CI green zero-skip; branch deleted).
+  Phase 3 2/7.
 - **ACBP-P3-002 distinctness check — CORE DONE / FINALIZING (2nd 8-hour autonomous window).**
   Branch `p3-002-distinctness-check` (from main `450c768`, after P3-001 merged), draft PR **#34**, CDR-035. Adds the
   STRAT-001 similarity check P3-001 deferred (it wrote `similarity_check_result = 'pending'`). Canon is explicit

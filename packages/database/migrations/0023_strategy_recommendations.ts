@@ -15,6 +15,11 @@ const CURRENT_ACCOUNT = sql`nullif(current_setting('app.current_account', true),
 const CURRENT_COMPANY = sql`nullif(current_setting('app.current_company', true), '')`;
 
 export async function up(db: Kysely<unknown>): Promise<void> {
+  // Enable a COMPOSITE FK so a recommendation's option must belong to the SAME generation (defense-in-depth beyond the
+  // single-writer guarantee): strategy_options needs a UNIQUE(id, generation_id) for the (recommended_option_id,
+  // generation_id) FK below to reference. `id` is already the PK (so the pair is trivially unique); this is additive.
+  await sql`alter table public.strategy_options add constraint strategy_options_id_generation_uq unique (id, generation_id)`.execute(db);
+
   await db.schema
     .createTable('strategy_recommendations')
     .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
@@ -29,7 +34,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addForeignKeyConstraint('strategy_recommendations_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('strategy_recommendations_account_fk', ['account_id'], 'accounts', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('strategy_recommendations_generation_fk', ['generation_id'], 'strategy_generations', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
-    .addForeignKeyConstraint('strategy_recommendations_option_fk', ['recommended_option_id'], 'strategy_options', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
+    // COMPOSITE FK: the recommended option must belong to THIS generation (recommended_option_id + generation_id must
+    // match a strategy_options (id, generation_id) pair) — a cross-generation recommendation is impossible at the DB.
+    .addForeignKeyConstraint('strategy_recommendations_option_fk', ['recommended_option_id', 'generation_id'], 'strategy_options', ['id', 'generation_id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('strategy_recommendations_actor_fk', ['created_by_user_id'], 'users', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
     .addCheckConstraint('strategy_recommendations_rationale_len', sql`char_length(rationale) between 1 and 4000`)
     .addCheckConstraint('strategy_recommendations_sensitivities_len', sql`char_length(sensitivities) between 1 and 4000`)
@@ -51,4 +58,5 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   }
   await sql`revoke all on public.strategy_recommendations from ${APP_ROLE}`.execute(db);
   await db.schema.dropTable('strategy_recommendations').ifExists().execute();
+  await sql`alter table public.strategy_options drop constraint if exists strategy_options_id_generation_uq`.execute(db);
 }
