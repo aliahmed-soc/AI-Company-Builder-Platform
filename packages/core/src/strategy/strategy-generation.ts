@@ -38,6 +38,7 @@ import {
 } from '@acbp/contracts';
 import { toRecommendationDTO } from './strategy-recommendation.js';
 import { toSelectionDTO } from './strategy-selection.js';
+import { toDecisionDTO } from './decision-record.js';
 import type { Logger } from '@acbp/observability';
 
 type AuditWriteFn = (scope: AuditScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
@@ -220,7 +221,10 @@ export async function getLatestStrategyGeneration(client: DatabaseClient, params
       // Surface the latest owner selection for this generation (P3-004), if any (latest-wins).
       const selRow = await repo.latestSelection(generation.id);
       const selDTO = selRow === undefined ? null : toSelectionDTO(selRow);
-      return { status: 'ok', generation: toGenerationDTO(generation, optionRows, recDTO, selDTO) };
+      // Surface the latest immutable decision RECORD hardening that selection (P3-005), if any (latest-wins).
+      const decRow = await repo.latestDecision(generation.id);
+      const decDTO = decRow === undefined ? null : toDecisionDTO(decRow, optionRows.length);
+      return { status: 'ok', generation: toGenerationDTO(generation, optionRows, recDTO, selDTO, decDTO) };
     },
     optsBase,
   );
