@@ -12,3 +12,4 @@ export * from './adapters/fakes.js';
 export * from './tenancy/two-tenant-harness.js';
 export * from './tenancy/threat-inventory.js';
 export * from './tenancy/slice-a-journey.js';
+export * from './tenancy/slice-b-journey.js';
