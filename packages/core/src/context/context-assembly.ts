@@ -18,6 +18,8 @@ import {
   conflictedItemIds,
   redactSecrets,
   contextConflictFlagged,
+  isMemoryType,
+  MEMORY_CONFIRMATION_STATES,
   type AuditEvent,
   type MemoryType,
   type MemoryConfirmationState,
@@ -85,7 +87,11 @@ export async function assembleContext(client: DatabaseClient, params: AssembleCo
     async (scope, role): Promise<AssembleContextResult> => {
       if (checkAuthorization(role, 'memory:read', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
 
-      const rows = await new MemoryItemRepository(scope.db).list({ currentOnly: true, limit: clampLimit(options.limit) });
+      const allRows = await new MemoryItemRepository(scope.db).list({ currentOnly: true, limit: clampLimit(options.limit) });
+      // FAIL-CLOSED (review L1): the DB CHECKs guarantee `type`/`confirmation_state` are in-set, but this is the last
+      // gate before the model — an item whose provenance enums cannot be trusted is EXCLUDED entirely (never ranked,
+      // never fed to the model), rather than blindly cast. Unreachable today; defense-in-depth for a future CHECK change.
+      const rows = allRows.filter((r) => isMemoryType(r.type) && (MEMORY_CONFIRMATION_STATES as readonly string[]).includes(r.confirmation_state));
 
       // MEM-004 conflicts: a confirmed user item + an AI assumption on the same source_ref (deterministic, model-free).
       const conflicts = detectMemoryConflicts(rows.map((r) => ({ id: r.id, type: r.type as MemoryType, confirmationState: r.confirmation_state as MemoryConfirmationState, sourceRef: r.source_ref })));

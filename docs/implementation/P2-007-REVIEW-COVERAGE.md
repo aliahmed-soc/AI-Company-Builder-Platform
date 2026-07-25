@@ -36,5 +36,41 @@ Ranker CLEAN. Redactor had **two confirmed HIGH defects** (both fixed) plus docu
 
 ## Status
 Contracts slice re-verified after the fixes: **24 unit tests** (incl. H1 ReDoS-bound, H2 fail-closed, JWT, key=value)
-pass; contracts typecheck + secret scan clean. The core `assembleContext` use case + MEM-004 conflict detection +
-real-PG integration + a second review + finalization remain the follow-up core slice (CDR-032 §4, next window).
+pass; contracts typecheck + secret scan clean.
+
+---
+
+# Core slice review (assembleContext + MEM-004 + context.conflict_flagged)
+
+Independent adversarial review of the CORE change set (commit `381c2bd`), calibrated for **the last gate before real
+model calls touch real founder memory**. **Verdict: PASS — no Blocker/Critical/High.**
+
+## Dimensions — CLEAN (confirmed)
+1. **Secret leak / redaction** — `redactSecrets` is applied at the ONLY content site (`contextParts`), across all
+   tiers; withheld conflicting items are filtered out BEFORE ranking so their content never reaches context; the
+   conflict DTO carries only `sourceRef` + ids and the audit metadata only `{confirmed_count, assumption_count}` — no
+   content, no `source_ref` value.
+2. **Tenant isolation** — the whole body runs in one `runInCompanyScope`/`withAccountTransaction` under the restricted
+   `acbp_app` role; `MemoryItemRepository.list` issues no `WHERE company_id` — confinement is RLS-driven (dual-keyed +
+   GUC), so the cross-company test is a real guarantee, not a "no rows" tautology. Authority is a freshly-loaded active
+   membership; no forged-identity path; owner connection is evidence-only.
+3. **MEM-004 conflict** — flags only confirmed-user + `ai_assumption` on the same `source_ref` (no same-tier /
+   different-ref false positives; invalidated excluded); BOTH items withheld (never silently rank-resolved); surfaced +
+   audited.
+4. **Audit / audit-or-nothing** — written in the same tx (a failure rolls back → nothing surfaced; the rollback test
+   proves it); registered + produced (no orphan) + in the exhaustive partition; outcome `blocked`; `confirmedItemIds[0]`
+   provably non-empty (a conflict requires ≥1 confirmed).
+5. **Scope / canon** — no model call; no migration; no new authz (reuses `memory:read`); the CDR-032 §3 deferral is
+   honest and matches the code.
+6. **Correctness/edge** — `?? 0` confidence, `clampLimit`, empty memory, deterministic ranking all correct.
+7. **Test integrity** — all 6 real-PG tests genuine + falsifiable; the redaction assertion is non-tautological
+   (raw token absent AND placeholder present).
+
+## Findings dispositioned
+- **L1 (fixed) — fail-open-ish enum casts.** The row→DTO `as MemoryType`/`as MemoryConfirmationState` casts trusted the
+  values (DB-CHECK-backed, unreachable today). **Fixed:** a **fail-closed** filter now EXCLUDES any row whose `type`/
+  `confirmation_state` is not a valid enum — a corrupt-provenance item is never ranked or fed to the model (defense-in-
+  depth for the last gate). Re-verified: typecheck + lint clean, integration 6/6.
+- **L2 (accepted, informational).** The returned `AssembledConflict` DTO carries `sourceRef` + item ids to the
+  in-process caller by design (to raise an open question); it is not persisted, logged, or placed into `contextParts`.
+  Documented so a downstream consumer does not render `sourceRef` into a prompt without its own handling.
