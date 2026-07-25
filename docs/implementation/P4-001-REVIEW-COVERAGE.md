@@ -88,8 +88,22 @@ accepted-by-precedent below. Every invariant the reviewer verified as upheld is 
   sibling `latest*` reader), and `roadmaps_supersedes_fk` is self-referential CASCADE (unreachable: the app role has no
   DELETE grant on `roadmaps`).
 
+## Second pass — one Blocker introduced by a fix, caught by hosted CI
+- **BLOCKER-1 (fixed) — the LOW-6 fail-closed guard broke the entire `roadmap-edit` real-PG suite.** The guard refuses
+  to plan when the decided option has no fields; the edit suite's fixture seeded `'{}'::jsonb`, so `beforeEach` aborted
+  with `setup generation failed: no_decision` and all 9 tests failed on hosted CI. The **behaviour was correct — the
+  fixture was unrealistic**. Fixed by seeding real decided content, and the branch (which previously had **zero**
+  coverage, which is how it slipped through) is now pinned by an explicit real-PG test. Found simultaneously by the
+  exact-head CI run and the re-review. *Lesson re-learned: a `describe.skipIf` suite is invisible locally while PG is
+  down — only hosted CI can confirm it.*
+- **MEDIUM-7 (fixed) — the fail-closed branch returned a misleading status.** It returned `no_decision` while its own
+  comment said "failed generation", and a decision *is* recorded — only its content is unresolvable. Reporting "no
+  decision" would tell an owner to record a decision they already recorded. Now returns `generation_failed` via a
+  distinct internal `unresolvable_decision` classification, with the test asserting the honest status.
+- **LOW (fixed)** — the `isRoadmapVersionConflict` JSDoc had drifted onto the wrong function.
+
 ## Status
 Re-verified after the fixes: recursive typecheck + lint + secrets + boundaries clean; contracts planning + task unit
-suites green; the real-PG planning (13), roadmap-generation (12) and roadmap-edit (9) suites discovered and
-structurally green (local PG unreachable → skipped). Hosted exact-head CI on the exact SHA is the authoritative
-zero-skip run.
+suites green. The real-PG planning (12), roadmap-generation (13) and roadmap-edit (9) suites are **discovered but
+skipped locally** (local PostgreSQL unreachable) — skipped is not green, so hosted exact-head CI on the exact SHA is
+the only real evidence, and it is re-run after every fix rather than trusting the local result.

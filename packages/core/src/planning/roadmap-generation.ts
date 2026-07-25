@@ -106,6 +106,11 @@ export function classifyPlanningGate(decision: DecisionRow | undefined): { reado
   return { kind: 'open', decision };
 }
 
+/** A goalOrdinal the parse guaranteed resolvable did not resolve — a broken invariant, never a silent unlink. */
+function unresolvableGoal(ordinal: number): never {
+  throw new Error(`roadmap goal ordinal ${ordinal} did not resolve to a persisted goal`);
+}
+
 /**
  * Is this error the roadmap VERSION-uniqueness violation?
  *
@@ -114,18 +119,19 @@ export function classifyPlanningGate(decision: DecisionRow | undefined): { reado
  * serializer, so the loser must surface the same honest "someone else moved the head" result the guard would have
  * produced — never a raw constraint error. Scoped to the EXACT constraint (never a blanket 23505), per CLAUDE.md.
  */
-/** A goalOrdinal the parse guaranteed resolvable did not resolve — a broken invariant, never a silent unlink. */
-function unresolvableGoal(ordinal: number): never {
-  throw new Error(`roadmap goal ordinal ${ordinal} did not resolve to a persisted goal`);
-}
-
 export function isRoadmapVersionConflict(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const e = error as { code?: unknown; constraint?: unknown };
   return e.code === '23505' && e.constraint === 'roadmaps_company_version_uq';
 }
 
-type PreRead = { readonly kind: 'ready'; readonly decision: DecisionRow; readonly prompt: string; readonly nextVersion: number; readonly supersedes: string | null } | { readonly kind: 'forbidden' } | { readonly kind: 'no_decision' } | { readonly kind: 'rejected' };
+type PreRead =
+  | { readonly kind: 'ready'; readonly decision: DecisionRow; readonly prompt: string; readonly nextVersion: number; readonly supersedes: string | null }
+  | { readonly kind: 'forbidden' }
+  | { readonly kind: 'no_decision' }
+  | { readonly kind: 'rejected' }
+  // A decision exists but its decided content cannot be resolved — nothing honest to plan from.
+  | { readonly kind: 'unresolvable_decision' };
 
 export async function generateRoadmap(client: DatabaseClient, params: GenerateRoadmapParams, deps: RoadmapGenerationDeps, options: RoadmapGenerationOptions = {}): Promise<GenerateRoadmapResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
@@ -146,8 +152,11 @@ export async function generateRoadmap(client: DatabaseClient, params: GenerateRo
       const fields = selection?.chosen_fields ?? (selection?.selected_option_id !== undefined && selection?.selected_option_id !== null ? (await strategy.findOption(selection.selected_option_id))?.fields : undefined);
       // FAIL CLOSED rather than planning from nothing: if the decided content cannot be resolved, the model would be
       // asked to plan from a bare mode + version line and its output would persist as a normal roadmap. That is a
-      // fabricated plan, not an honest partial — treat it as a failed generation instead (ADR-019).
-      if (fields === undefined || Object.keys(fields).length === 0) return { kind: 'no_decision' };
+      // fabricated plan, not an honest partial — treat it as a failed generation (ADR-019).
+      //
+      // Deliberately NOT `no_decision`: a decision IS recorded, only its content is unresolvable. Reporting "no
+      // decision" would tell the owner to record one they already recorded.
+      if (fields === undefined || Object.keys(fields).length === 0) return { kind: 'unresolvable_decision' };
       const planning = new PlanningRepository(scope.db);
       const latest = await planning.latestRoadmap(params.companyId);
       return {
@@ -165,6 +174,8 @@ export async function generateRoadmap(client: DatabaseClient, params: GenerateRo
   if (pre.kind === 'forbidden') return { status: 'forbidden' };
   if (pre.kind === 'no_decision') return { status: 'no_decision' };
   if (pre.kind === 'rejected') return { status: 'decision_rejected' };
+  // A recorded decision with unresolvable content is a generation that cannot honestly happen — not a missing decision.
+  if (pre.kind === 'unresolvable_decision') return { status: 'generation_failed' };
 
   // 2. Call the gateway (external; its own usage-metering tx). Model call BETWEEN scoped operations.
   const request = buildRoadmapRequest({ accountId: params.accountId, companyId: params.companyId, decision: pre.prompt, ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}) });

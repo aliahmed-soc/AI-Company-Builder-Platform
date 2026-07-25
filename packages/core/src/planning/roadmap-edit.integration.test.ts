@@ -42,7 +42,9 @@ describe.skipIf(!hasTestDatabase)('roadmap edit / ROAD-002 (real PostgreSQL, res
     const k = owner.kysely;
     const doc = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountId}::uuid, ${companyId}::uuid, 1, 'complete', 0.6, ${actorId}::uuid) returning id`.execute(k)).rows[0]!.id;
     const gen = (await sql<{ id: string }>`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, created_by_user_id) values (${accountId}::uuid, ${companyId}::uuid, ${doc}::uuid, 1, 'complete', 3, ${actorId}::uuid) returning id`.execute(k)).rows[0]!.id;
-    const opt = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${accountId}::uuid, ${companyId}::uuid, ${gen}::uuid, 0, '{}'::jsonb) returning id`.execute(k)).rows[0]!.id;
+    // Real decided content: generation FAILS CLOSED when the decided option has no fields (CDR-039 §7 / LOW-6 — the
+    // model must never be asked to plan from nothing), so an empty `{}` fixture would not be a usable decision.
+    const opt = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${accountId}::uuid, ${companyId}::uuid, ${gen}::uuid, 0, ${JSON.stringify({ customer: 'small clinics', offer: 'scheduling', business_model: 'subscription' })}::jsonb) returning id`.execute(k)).rows[0]!.id;
     const sel = (await sql<{ id: string }>`insert into strategy_selections (account_id, company_id, generation_id, mode, selected_option_id, created_by_user_id) values (${accountId}::uuid, ${companyId}::uuid, ${gen}::uuid, 'select', ${opt}::uuid, ${actorId}::uuid) returning id`.execute(k)).rows[0]!.id;
     await sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${accountId}::uuid, ${companyId}::uuid, ${gen}::uuid, ${sel}::uuid, 'select', 1, ${actorId}::uuid)`.execute(k);
   }

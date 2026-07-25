@@ -177,6 +177,22 @@ describe.skipIf(!hasTestDatabase)('roadmap generation (real PostgreSQL, restrict
     expect(read.status === 'ok' && read.roadmap?.goals[0]?.title).toBe('Revised goal');
   });
 
+  test('FAILS CLOSED when the decided content cannot be resolved — the model is never asked to plan from nothing', async () => {
+    // A decision whose option carries no fields leaves nothing to plan from. Planning from a bare mode + version line
+    // would produce a fabricated roadmap that persists as a normal one (ADR-019) — so the gate reports no usable
+    // decision instead. This is what the empty-`{}` fixture in a sibling suite tripped over: the behaviour is correct.
+    const doc = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA2}::uuid, 1, 'complete', 0.6, ${w.aOwner}::uuid) returning id`.execute(owner.kysely)).rows[0]!.id;
+    const gen = (await sql<{ id: string }>`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA2}::uuid, ${doc}::uuid, 1, 'complete', 3, ${w.aOwner}::uuid) returning id`.execute(owner.kysely)).rows[0]!.id;
+    const opt = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${w.accountA}::uuid, ${w.companyA2}::uuid, ${gen}::uuid, 0, '{}'::jsonb) returning id`.execute(owner.kysely)).rows[0]!.id;
+    const sel = (await sql<{ id: string }>`insert into strategy_selections (account_id, company_id, generation_id, mode, selected_option_id, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA2}::uuid, ${gen}::uuid, 'select', ${opt}::uuid, ${w.aOwner}::uuid) returning id`.execute(owner.kysely)).rows[0]!.id;
+    await seedDecision('select', w.accountA, w.companyA2, gen, sel);
+    const r = await generateRoadmap(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA2 }, { gateway: okGateway() });
+    // NOT `no_decision`: a decision IS recorded, only its content is unresolvable — telling the owner to record a
+    // decision they already recorded would be dishonest. It is a generation that cannot happen.
+    expect(r.status).toBe('generation_failed');
+    expect((await sql<{ n: number }>`select count(*)::int as n from roadmaps where company_id = ${w.companyA2}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
+  });
+
   test('P4-001 plans NO tasks (task generation is P4-003)', async () => {
     await seedDecision('select');
     await generateRoadmap(product, base(), { gateway: okGateway() });
