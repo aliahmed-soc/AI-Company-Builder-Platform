@@ -97,6 +97,11 @@ export const AUDIT_EVENTS = {
   // description. The other task.* transition events (queued/started/completed/failed/cancelled/waiting_*) are
   // registered by the P5/P6 tickets that implement their transitions.
   'task.created': { schemaVersion: 1, subjectType: 'task' },
+  // Strategy option generation (ACBP-P3-001; CDR-034 §4; STRAT-001/002) — a set of strategy options was generated
+  // from a CONFIRMED understanding version. AUDITED in-tx (ADR-015). Subject = the generation id; metadata is the
+  // bounded {understanding_version, option_count, similarity_check_result} — NEVER option content/fields/reason text.
+  // The other strategy.* events (strategy.selected, decision.recorded) are registered by the P3-004/005 tickets.
+  'strategy.generated': { schemaVersion: 1, subjectType: 'strategy_generation' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -341,6 +346,15 @@ export function contextConflictFlagged(input: { readonly itemId: string; readonl
  */
 export function taskCreated(input: { readonly taskId: string; readonly hasMilestone: boolean }): AuditEvent {
   return makeEvent('task.created', input.taskId, 'success', { has_milestone: input.hasMilestone });
+}
+
+/**
+ * A set of strategy options was generated from a confirmed understanding version (ACBP-P3-001). Subject = the
+ * generation id; metadata is the bounded `{understanding_version, option_count, similarity_check_result}` — NEVER
+ * option content, fields, or the fewer-than-three reason text. Written in the same transaction as the generation.
+ */
+export function strategyGenerated(input: { readonly generationId: string; readonly understandingVersion: number; readonly optionCount: number; readonly similarityCheckResult: string }): AuditEvent {
+  return makeEvent('strategy.generated', input.generationId, 'success', { understanding_version: input.understandingVersion, option_count: input.optionCount, similarity_check_result: input.similarityCheckResult });
 }
 
 /**

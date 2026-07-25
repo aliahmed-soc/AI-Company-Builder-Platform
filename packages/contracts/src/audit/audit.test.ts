@@ -26,6 +26,7 @@ import {
   understandingCorrected,
   contextConflictFlagged,
   taskCreated,
+  strategyGenerated,
   type AuditEventName,
 } from './index.js';
 
@@ -99,6 +100,8 @@ describe('event-name registry (deny unregistered)', () => {
       'context.conflict_flagged',
       // Task lifecycle (ACBP-P4-002; CDR-033 §4) — a task appeared on the board.
       'task.created',
+      // Strategy option generation (ACBP-P3-001; CDR-034 §4) — options generated from a confirmed understanding.
+      'strategy.generated',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -278,6 +281,12 @@ describe('typed factories', () => {
   test('taskCreated: subject = the task; metadata = {has_milestone} — no title/description', () => {
     const ev = taskCreated({ taskId: 'task_1', hasMilestone: false });
     expect(ev).toEqual({ name: 'task.created', schemaVersion: 1, subjectType: 'task', subjectId: 'task_1', outcome: 'success', metadata: { has_milestone: false } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('strategyGenerated: subject = the generation; metadata = {understanding_version, option_count, similarity_check_result} — no option content', () => {
+    const ev = strategyGenerated({ generationId: 'gen_1', understandingVersion: 2, optionCount: 3, similarityCheckResult: 'pending' });
+    expect(ev).toEqual({ name: 'strategy.generated', schemaVersion: 1, subjectType: 'strategy_generation', subjectId: 'gen_1', outcome: 'success', metadata: { understanding_version: 2, option_count: 3, similarity_check_result: 'pending' } });
     expect(Object.isFrozen(ev)).toBe(true);
   });
 });

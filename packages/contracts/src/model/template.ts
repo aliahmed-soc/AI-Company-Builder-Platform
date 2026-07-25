@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -98,6 +98,19 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'You produce a structured business-understanding document from the founder\'s confirmed information. Classify each item as one of: fact, preference, constraint, assumption, research_finding, or open_question, and give each a confidence between 0 and 1. Do not invent facts; mark genuine gaps as open_question. Return only the structured items.' },
       { role: 'user', text: 'Confirmed information:\n{{memory}}' },
+    ],
+  },
+  // Strategy option generation (ACBP-P3-001; STRAT-001/002). Produces >=3 genuinely distinct options, each carrying
+  // the full 16-field content standard; the structured output + field completeness is enforced by the gateway output
+  // schema + parseStrategyOptions, not this wording. Quality-bearing generation → prefers queueing over fallback.
+  {
+    family: 'strategy.options',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['understanding'],
+    segments: [
+      { role: 'system', text: 'You propose strategic options for a founder\'s business from their confirmed understanding. Produce at least three GENUINELY DISTINCT options (differing in customer, offer, or business model — not cosmetic variants). Each option MUST fill all sixteen fields: description, customer, offer, business_model, scope, benefits, risks, cost_range, effort, time_to_validate, time_to_launch, required_resources, key_assumptions, validation_method, success_metrics, confidence. Never invent precision: if a field cannot be determined, set it to the exact string "unknown" rather than guessing. If fewer than three genuinely distinct options exist, return the options you can honestly justify and say why fewer — do not pad. Return only the structured options.' },
+      { role: 'user', text: 'Confirmed understanding:\n{{understanding}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).
