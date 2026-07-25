@@ -50,6 +50,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Understanding review + confirmation (ACBP-P2-009; CDR-030): both OWNER-only.
   'understanding:review': ['owner'],
   'understanding:confirm': ['owner'],
+  // Task model (ACBP-P4-002; CDR-033): create/plan + read = any active company member.
+  'task:create': ['owner', 'viewer'],
+  'task:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

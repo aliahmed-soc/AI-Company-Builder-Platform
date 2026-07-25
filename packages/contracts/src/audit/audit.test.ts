@@ -25,6 +25,7 @@ import {
   understandingConfirmed,
   understandingCorrected,
   contextConflictFlagged,
+  taskCreated,
   type AuditEventName,
 } from './index.js';
 
@@ -96,6 +97,8 @@ describe('event-name registry (deny unregistered)', () => {
       'understanding.corrected',
       // Context assembly (ACBP-P2-007; CDR-032 §3) — a MEM-004 conflict was flagged + items withheld.
       'context.conflict_flagged',
+      // Task lifecycle (ACBP-P4-002; CDR-033 §4) — a task appeared on the board.
+      'task.created',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -269,6 +272,12 @@ describe('typed factories', () => {
   test('contextConflictFlagged: subject = the confirmed item; metadata = {confirmed_count, assumption_count}; outcome blocked', () => {
     const ev = contextConflictFlagged({ itemId: 'mem_1', confirmedCount: 1, assumptionCount: 2 });
     expect(ev).toEqual({ name: 'context.conflict_flagged', schemaVersion: 1, subjectType: 'memory_item', subjectId: 'mem_1', outcome: 'blocked', metadata: { confirmed_count: 1, assumption_count: 2 } });
+    expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('taskCreated: subject = the task; metadata = {has_milestone} — no title/description', () => {
+    const ev = taskCreated({ taskId: 'task_1', hasMilestone: false });
+    expect(ev).toEqual({ name: 'task.created', schemaVersion: 1, subjectType: 'task', subjectId: 'task_1', outcome: 'success', metadata: { has_milestone: false } });
     expect(Object.isFrozen(ev)).toBe(true);
   });
 });

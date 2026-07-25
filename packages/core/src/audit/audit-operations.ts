@@ -34,6 +34,7 @@ import {
   understandingConfirmed,
   understandingCorrected,
   contextConflictFlagged,
+  taskCreated,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -71,6 +72,8 @@ export const AUDITED_OPERATIONS = {
   'understanding.correct': 'understanding.corrected',
   // Context assembly (ACBP-P2-007; CDR-032 §3) — a MEM-004 conflict was flagged during assembly.
   'context.flag-conflict': 'context.conflict_flagged',
+  // Task model (ACBP-P4-002; CDR-033 §4) — a task appeared on the board (draft→planned).
+  'task.plan': 'task.created',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -85,6 +88,7 @@ export type InterviewAuditedOperation = 'interview.start';
 export type MemoryAuditedOperation = 'memory.create' | 'memory.supersede' | 'memory.delete';
 export type UnderstandingAuditedOperation = 'understanding.generate' | 'understanding.review-decision' | 'understanding.confirm' | 'understanding.correct';
 export type ContextAuditedOperation = 'context.flag-conflict';
+export type TaskAuditedOperation = 'task.plan';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -93,10 +97,11 @@ export const INTERVIEW_AUDITED_OPERATION_IDS: readonly InterviewAuditedOperation
 export const MEMORY_AUDITED_OPERATION_IDS: readonly MemoryAuditedOperation[] = ['memory.create', 'memory.supersede', 'memory.delete'];
 export const UNDERSTANDING_AUDITED_OPERATION_IDS: readonly UnderstandingAuditedOperation[] = ['understanding.generate', 'understanding.review-decision', 'understanding.confirm', 'understanding.correct'];
 export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] = ['context.flag-conflict'];
+export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -165,6 +170,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => understandingCorrected({ documentId: subjectId, version: 1, correctionRef: 'sample_ref', dependentsFlagged: 0 });
     case 'context.flag-conflict':
       return (subjectId) => contextConflictFlagged({ itemId: subjectId, confirmedCount: 1, assumptionCount: 1 });
+    case 'task.plan':
+      return (subjectId) => taskCreated({ taskId: subjectId, hasMilestone: false });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

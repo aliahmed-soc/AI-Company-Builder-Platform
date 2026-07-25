@@ -94,6 +94,11 @@ export const AUTHZ_ACTIONS = [
   // closed-registry convention P2-010 established for memory:edit/delete).
   'understanding:review',
   'understanding:confirm',
+  // Task model (ACBP-P4-002; CDR-033 §4). Any active company member may CREATE/plan a task (proposed work on the board)
+  // and READ tasks — like interview:participate/memory:write. The RUN trigger (planned→queued) is the owner/operator
+  // gate owned by a later ticket (TASK-004/P6), NOT part of this create grant. `task:depend` folds into `task:create`.
+  'task:create',
+  'task:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -178,6 +183,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // the overall confirm) — API-CONTRACTS "Owner (confirm)", UNDER-003 "Owner-only confirm".
   'understanding:review': ['owner'],
   'understanding:confirm': ['owner'],
+  // Task model (ACBP-P4-002; CDR-033): create/plan + read = any active company member (owner|viewer). The owner-only
+  // RUN trigger (planned→queued) is a later ticket's separate action.
+  'task:create': ['owner', 'viewer'],
+  'task:read': ['owner', 'viewer'],
 };
 
 /**

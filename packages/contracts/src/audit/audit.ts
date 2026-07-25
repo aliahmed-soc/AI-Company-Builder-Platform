@@ -92,6 +92,11 @@ export const AUDIT_EVENTS = {
   // Subject = the confirmed item id; metadata is the bounded {confirmed_count, assumption_count} — never content or the
   // source_ref value. Outcome `blocked` (the items were withheld from context).
   'context.conflict_flagged': { schemaVersion: 1, subjectType: 'memory_item' },
+  // Task lifecycle (ACBP-P4-002; CDR-033 §4; TASK-001; WORKFLOW §4) — a task appeared on the board (draft→planned).
+  // AUDITED in-tx (ADR-015). Subject = the task id; metadata is the bounded {has_milestone} — never the title or
+  // description. The other task.* transition events (queued/started/completed/failed/cancelled/waiting_*) are
+  // registered by the P5/P6 tickets that implement their transitions.
+  'task.created': { schemaVersion: 1, subjectType: 'task' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -327,6 +332,15 @@ export function understandingCorrected(input: { readonly documentId: string; rea
  */
 export function contextConflictFlagged(input: { readonly itemId: string; readonly confirmedCount: number; readonly assumptionCount: number }): AuditEvent {
   return makeEvent('context.conflict_flagged', input.itemId, 'blocked', { confirmed_count: input.confirmedCount, assumption_count: input.assumptionCount });
+}
+
+/**
+ * `task.created` (ACBP-P4-002; CDR-033 §4; WORKFLOW §4). A task appeared on the board (`draft → planned`). Subject =
+ * the task id; metadata is the bounded `{has_milestone}` — NEVER the title or description. Written in the same
+ * transaction as the state transition (audit-or-nothing).
+ */
+export function taskCreated(input: { readonly taskId: string; readonly hasMilestone: boolean }): AuditEvent {
+  return makeEvent('task.created', input.taskId, 'success', { has_milestone: input.hasMilestone });
 }
 
 /**
