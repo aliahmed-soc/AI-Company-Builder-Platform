@@ -33,8 +33,10 @@ import {
   type StrategyGenerationStatus,
   type SimilarityCheckResult,
   type StrategyRecommendationDTO,
+  type StrategySelectionDTO,
 } from '@acbp/contracts';
 import { toRecommendationDTO } from './strategy-recommendation.js';
+import { toSelectionDTO } from './strategy-selection.js';
 import type { Logger } from '@acbp/observability';
 
 type AuditWriteFn = (scope: AuditScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
@@ -214,7 +216,10 @@ export async function getLatestStrategyGeneration(client: DatabaseClient, params
       // Surface the latest advisory recommendation for this generation (P3-003), if any (latest-wins).
       const recRow = await repo.latestRecommendation(generation.id);
       const recDTO = recRow === undefined ? null : toRecommendationDTO(recRow, optionRows.find((o) => o.id === recRow.recommended_option_id)?.ordinal ?? -1);
-      return { status: 'ok', generation: toGenerationDTO(generation, optionRows, recDTO) };
+      // Surface the latest owner selection for this generation (P3-004), if any (latest-wins).
+      const selRow = await repo.latestSelection(generation.id);
+      const selDTO = selRow === undefined ? null : toSelectionDTO(selRow);
+      return { status: 'ok', generation: toGenerationDTO(generation, optionRows, recDTO, selDTO) };
     },
     optsBase,
   );
@@ -239,7 +244,7 @@ function honestFewerReason(modelReason: string | null, distinctCount: number, du
   return `The model produced only ${distinctCount} genuinely distinct ${optWord} for this understanding.`.slice(0, FEWER_REASON_MAX);
 }
 
-function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[], recommendation: StrategyRecommendationDTO | null = null): StrategyGenerationDTO {
+function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[], recommendation: StrategyRecommendationDTO | null = null, selection: StrategySelectionDTO | null = null): StrategyGenerationDTO {
   return {
     generationId: row.id,
     companyId: row.company_id,
@@ -251,6 +256,8 @@ function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyO
     modelFlaggedPartial: row.model_flagged_partial,
     options: options.map(toOptionDTO),
     recommendation,
+    // The owner's decision is surfaced by the P3-004 read path; a bare generation DTO carries none.
+    selection,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }

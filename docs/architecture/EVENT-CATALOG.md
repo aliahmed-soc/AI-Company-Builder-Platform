@@ -76,10 +76,16 @@ Retention default: activity-projected events with company data; audit-relevant e
      deterministic, model-free check on the customer/offer/business_model axes; `pending` is no longer written).
      ACBP-P3-003 (the OPTIONAL ADVISORY recommendation, CDR-036) registers NO new event — it changes no state (backlog
      Audit=—); its only durable trace is the automatic gateway usage event (`model.call_completed`). A future
-     `strategy.recommended` event would be a new decision (owner gate) — not added. The other strategy.*
-     events (strategy.selected, decision.recorded) are registered by P3-004/005. Activity fan-out is DEFERRED. -->
+     `strategy.recommended` event would be a new decision (owner gate) — not added. `decision.recorded` is registered by
+     P3-005. Activity fan-out is DEFERRED. -->
+<!-- IMPLEMENTED (ACBP-P3-004; CDR-037 §4): `strategy.selected` is a durable `audit_events` row written in the SAME
+     transaction as the immutable owner selection (audit-or-nothing — an in-tx audit failure rolls the selection back).
+     Subject = the SELECTION id; bounded metadata = {mode} (+ `phase_scope` when set) ONLY — NEVER the chosen fields, the
+     option content, or the reject reasons. It records a SELECTION, so it does NOT unlock planning (that is the P4
+     boundary — CDR-037 §5) and it is NOT the immutable Decision record (decision.recorded is P3-005). `phase_scope` is
+     FLAGGING only (STRAT-005). Owner-only (`strategy:select`). -->
 | strategy.generated | Strategy | activity | generation_id, understanding_version, option_count, similarity_check_result (P3-001; no content) | audited in-tx | with company |
-| strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |
+| strategy.selected | Strategy | decision (P3-005) | selection_id (subject); mode (select/edit/combine/reject), phase_scope? — no content | audited in-tx (P3-004; owner-only) | permanent |
 | decision.recorded | Strategy&Decision | activity, memory | decision_id, understanding_version, options_considered[] | **is audit-grade (immutable)** | permanent |
 | roadmap.generated | Planning | Task module, activity | roadmap_version, milestone_count, task_ids[] | audited | with company |
 <!-- IMPLEMENTED (ACBP-P4-002; CDR-033 §4): `task.created` is a durable `audit_events` row written in the SAME

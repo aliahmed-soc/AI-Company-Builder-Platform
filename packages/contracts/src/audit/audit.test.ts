@@ -27,6 +27,7 @@ import {
   contextConflictFlagged,
   taskCreated,
   strategyGenerated,
+  strategySelected,
   type AuditEventName,
 } from './index.js';
 
@@ -102,6 +103,8 @@ describe('event-name registry (deny unregistered)', () => {
       'task.created',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — options generated from a confirmed understanding.
       'strategy.generated',
+      // Owner strategy decision (ACBP-P3-004; CDR-037 §4).
+      'strategy.selected',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -288,5 +291,12 @@ describe('typed factories', () => {
     const ev = strategyGenerated({ generationId: 'gen_1', understandingVersion: 2, optionCount: 3, similarityCheckResult: 'pending' });
     expect(ev).toEqual({ name: 'strategy.generated', schemaVersion: 1, subjectType: 'strategy_generation', subjectId: 'gen_1', outcome: 'success', metadata: { understanding_version: 2, option_count: 3, similarity_check_result: 'pending' } });
     expect(Object.isFrozen(ev)).toBe(true);
+  });
+
+  test('strategySelected: subject = the selection; metadata = {mode} (+ phase_scope when set) — no content/reasons', () => {
+    const ev = strategySelected({ selectionId: 'sel_1', mode: 'select', phaseScope: 'first_phase' });
+    expect(ev).toEqual({ name: 'strategy.selected', schemaVersion: 1, subjectType: 'strategy_selection', subjectId: 'sel_1', outcome: 'success', metadata: { mode: 'select', phase_scope: 'first_phase' } });
+    // No phase scope → the key is omitted (not a sentinel).
+    expect(strategySelected({ selectionId: 'sel_2', mode: 'reject', phaseScope: null }).metadata).toEqual({ mode: 'reject' });
   });
 });

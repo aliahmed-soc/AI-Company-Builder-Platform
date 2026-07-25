@@ -293,6 +293,95 @@ export interface StrategyRecommendationDTO {
   readonly createdAt: string;
 }
 
+// ── Owner decision: select / edit / combine / reject + phase-limited approval (ACBP-P3-004; CDR-037; STRAT-003/005) ──
+/** The CLOSED set of owner decision modes (STRAT-003). `request another` reuses `strategy:generate`, not a mode here. */
+export const SELECTION_MODES = ['select', 'edit', 'combine', 'reject'] as const;
+export type StrategySelectionMode = (typeof SELECTION_MODES)[number];
+export function isStrategySelectionMode(v: unknown): v is StrategySelectionMode {
+  return typeof v === 'string' && (SELECTION_MODES as readonly string[]).includes(v);
+}
+
+/** The CLOSED phase-scope set (STRAT-005, verbatim: "approve only the FIRST PHASE … rather than the WHOLE PLAN"). */
+export const PHASE_SCOPES = ['first_phase', 'whole_plan'] as const;
+export type StrategyPhaseScope = (typeof PHASE_SCOPES)[number];
+export function isStrategyPhaseScope(v: unknown): v is StrategyPhaseScope {
+  return typeof v === 'string' && (PHASE_SCOPES as readonly string[]).includes(v);
+}
+
+/** Bounds for the reject-all captured reasons. */
+export const REASONS_MAX = 4_000;
+
+/** A caller's decision request over a generation's options (user-supplied — NOT model output). */
+export interface StrategyDecisionRequest {
+  readonly mode: string;
+  readonly selectedOrdinal?: number | null;
+  readonly chosenFields?: unknown;
+  readonly phaseScope?: string | null;
+  readonly reasons?: string | null;
+}
+
+/** A validated, normalized decision (deny-by-default per-mode shape). Phase scope is meaningful only for non-reject. */
+export type ValidatedStrategyDecision =
+  | { readonly mode: 'select'; readonly selectedOrdinal: number; readonly phaseScope: StrategyPhaseScope | null }
+  | { readonly mode: 'edit'; readonly selectedOrdinal: number | null; readonly chosenFields: StrategyOptionFields; readonly phaseScope: StrategyPhaseScope | null }
+  | { readonly mode: 'combine'; readonly chosenFields: StrategyOptionFields; readonly phaseScope: StrategyPhaseScope | null }
+  | { readonly mode: 'reject'; readonly reasons: string };
+
+export type StrategyDecisionParse = { readonly ok: true; readonly value: ValidatedStrategyDecision } | { readonly ok: false };
+
+/**
+ * Validate an owner decision request against the per-mode shape (CDR-037 §3). Deny-by-default:
+ *   - `select`   → `selectedOrdinal` in `[0, optionCount)`; no `chosenFields`/`reasons`.
+ *   - `edit`     → `chosenFields` is a valid 16-field object (`isCompleteOptionFields`); `selectedOrdinal` optional
+ *                  (the base option, in range); no `reasons`.
+ *   - `combine`  → `chosenFields` is a valid 16-field object; no `selectedOrdinal`/`reasons`.
+ *   - `reject`   → `reasons` a non-blank bounded string; no `selectedOrdinal`/`chosenFields`/`phaseScope`.
+ * `phaseScope` (select/edit/combine only) must be a valid enum when present. edit/combine options are USER-SUPPLIED and
+ * re-validated by the P3-001 contract — no model call (CDR-037 §6-G3). Any shape mismatch → `ok:false`.
+ */
+export function validateStrategyDecision(req: StrategyDecisionRequest, optionCount: number): StrategyDecisionParse {
+  if (!isStrategySelectionMode(req.mode)) return FAIL;
+  const ordinalInRange = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < optionCount;
+  const phase = req.phaseScope ?? null;
+  if (phase !== null && !isStrategyPhaseScope(phase)) return FAIL;
+
+  if (req.mode === 'select') {
+    if (!ordinalInRange(req.selectedOrdinal)) return FAIL;
+    if (req.chosenFields !== undefined && req.chosenFields !== null) return FAIL;
+    if (req.reasons !== undefined && req.reasons !== null) return FAIL;
+    return { ok: true, value: { mode: 'select', selectedOrdinal: req.selectedOrdinal, phaseScope: phase } };
+  }
+  if (req.mode === 'edit' || req.mode === 'combine') {
+    if (!isCompleteOptionFields(req.chosenFields)) return FAIL;
+    if (req.reasons !== undefined && req.reasons !== null) return FAIL;
+    const fields = normalizeFields(req.chosenFields);
+    if (req.mode === 'edit') {
+      // The base option is optional but, if given, must be in range.
+      if (req.selectedOrdinal !== undefined && req.selectedOrdinal !== null && !ordinalInRange(req.selectedOrdinal)) return FAIL;
+      return { ok: true, value: { mode: 'edit', selectedOrdinal: req.selectedOrdinal ?? null, chosenFields: fields, phaseScope: phase } };
+    }
+    if (req.selectedOrdinal !== undefined && req.selectedOrdinal !== null) return FAIL; // combine names no single base
+    return { ok: true, value: { mode: 'combine', chosenFields: fields, phaseScope: phase } };
+  }
+  // reject
+  if (typeof req.reasons !== 'string' || req.reasons.trim().length === 0 || req.reasons.length > REASONS_MAX) return FAIL;
+  if (req.selectedOrdinal !== undefined && req.selectedOrdinal !== null) return FAIL;
+  if (req.chosenFields !== undefined && req.chosenFields !== null) return FAIL;
+  if (req.phaseScope !== undefined && req.phaseScope !== null) return FAIL; // phase scope is meaningless for reject
+  return { ok: true, value: { mode: 'reject', reasons: req.reasons.trim() } };
+}
+
+/** The redacted, client-facing selection view (approved fields only). References an option/holds the chosen fields. */
+export interface StrategySelectionDTO {
+  readonly selectionId: string;
+  readonly mode: StrategySelectionMode;
+  readonly selectedOptionId: string | null;
+  readonly chosenFields: StrategyOptionFields | null;
+  readonly phaseScope: StrategyPhaseScope | null;
+  readonly reasons: string | null;
+  readonly createdAt: string;
+}
+
 /** The redacted, client-facing option view (approved fields only; the validated 16-field object + its ordinal). */
 export interface StrategyOptionDTO {
   readonly optionId: string;
@@ -313,5 +402,7 @@ export interface StrategyGenerationDTO {
   readonly options: readonly StrategyOptionDTO[];
   /** The latest advisory AI recommendation over these options, or null when none has been made / it abstained (P3-003). */
   readonly recommendation: StrategyRecommendationDTO | null;
+  /** The owner's latest decision over these options (select/edit/combine/reject), or null when none yet (P3-004). */
+  readonly selection: StrategySelectionDTO | null;
   readonly createdAt: string;
 }

@@ -18,6 +18,11 @@ import {
   resolveRecommendation,
   narrowStrategyRecommendation,
   RATIONALE_MAX,
+  SELECTION_MODES,
+  PHASE_SCOPES,
+  validateStrategyDecision,
+  isStrategySelectionMode,
+  isStrategyPhaseScope,
   type StrategyOptionField,
 } from './strategy.js';
 
@@ -224,6 +229,53 @@ describe('distinctness check — dedupeByDistinctness (ACBP-P3-002/CDR-035/STRAT
     expect(r.result).toBe('distinct');
     expect(r.distinct).toHaveLength(3);
     expect(r.duplicatesRejected).toBe(0);
+  });
+});
+
+describe('owner decision — validateStrategyDecision (ACBP-P3-004/CDR-037/STRAT-003/005)', () => {
+  test('the mode + phase-scope sets are exactly the canon values', () => {
+    expect(SELECTION_MODES).toEqual(['select', 'edit', 'combine', 'reject']);
+    expect(PHASE_SCOPES).toEqual(['first_phase', 'whole_plan']);
+  });
+
+  test('select: an in-range ordinal (+ optional phase scope); out-of-range / stray fields rejected', () => {
+    const r = validateStrategyDecision({ mode: 'select', selectedOrdinal: 1, phaseScope: 'first_phase' }, 3);
+    expect(r.ok && r.value).toEqual({ mode: 'select', selectedOrdinal: 1, phaseScope: 'first_phase' });
+    // No phase scope → null.
+    expect(validateStrategyDecision({ mode: 'select', selectedOrdinal: 0 }, 3)).toEqual({ ok: true, value: { mode: 'select', selectedOrdinal: 0, phaseScope: null } });
+    expect(validateStrategyDecision({ mode: 'select', selectedOrdinal: 5 }, 3).ok).toBe(false); // out of range
+    expect(validateStrategyDecision({ mode: 'select' }, 3).ok).toBe(false); // no ordinal
+    expect(validateStrategyDecision({ mode: 'select', selectedOrdinal: 0, chosenFields: fields() }, 3).ok).toBe(false); // stray fields
+    expect(validateStrategyDecision({ mode: 'select', selectedOrdinal: 0, phaseScope: 'later' }, 3).ok).toBe(false); // bad phase enum
+  });
+
+  test('edit: a valid 16-field object + optional in-range base ordinal; combine: 16-field object, no base', () => {
+    const e = validateStrategyDecision({ mode: 'edit', selectedOrdinal: 0, chosenFields: fields({ description: '  edited  ' }) }, 3);
+    expect(e.ok).toBe(true);
+    if (e.ok && e.value.mode === 'edit') expect(e.value.chosenFields.description).toBe('edited'); // normalized
+    const c = validateStrategyDecision({ mode: 'combine', chosenFields: fields() }, 3);
+    expect(c.ok && c.value.mode).toBe('combine');
+    // Invalid shapes.
+    const incomplete = fields();
+    delete (incomplete as Record<string, unknown>)['risks'];
+    expect(validateStrategyDecision({ mode: 'edit', chosenFields: incomplete }, 3).ok).toBe(false);
+    expect(validateStrategyDecision({ mode: 'combine', chosenFields: fields(), selectedOrdinal: 0 }, 3).ok).toBe(false); // combine names no base
+    expect(validateStrategyDecision({ mode: 'edit', chosenFields: fields(), reasons: 'x' }, 3).ok).toBe(false); // stray reasons
+  });
+
+  test('reject: non-blank bounded reasons required; no option/fields/phase scope', () => {
+    expect(validateStrategyDecision({ mode: 'reject', reasons: 'none fit our budget' }, 3)).toEqual({ ok: true, value: { mode: 'reject', reasons: 'none fit our budget' } });
+    expect(validateStrategyDecision({ mode: 'reject', reasons: '   ' }, 3).ok).toBe(false); // blank
+    expect(validateStrategyDecision({ mode: 'reject' }, 3).ok).toBe(false); // missing
+    expect(validateStrategyDecision({ mode: 'reject', reasons: 'x', selectedOrdinal: 0 }, 3).ok).toBe(false); // stray option
+    expect(validateStrategyDecision({ mode: 'reject', reasons: 'x', phaseScope: 'first_phase' }, 3).ok).toBe(false); // phase meaningless for reject
+  });
+
+  test('an unknown mode is rejected', () => {
+    expect(validateStrategyDecision({ mode: 'approve' }, 3).ok).toBe(false);
+    expect(isStrategySelectionMode('select')).toBe(true);
+    expect(isStrategyPhaseScope('whole_plan')).toBe(true);
+    expect(isStrategyPhaseScope('nope')).toBe(false);
   });
 });
 

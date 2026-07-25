@@ -178,6 +178,13 @@ trusted core/use-case seam:
   Consistent with the generate-class grants (`understanding:generate`, `strategy:generate`); the "comparison" read
   reuses `strategy:read`. DISTINCT closed action, deny-by-default; not granted to an account owner without company
   membership nor via forged provider claims. See `CDR-036`.
+- **P3-004** (selection / edit / combine / phase-limited approval) adds `strategy:select`, **`owner`-only** — the
+  STRAT-003 owner selection gate (the `understanding:confirm` precedent — a viewer may generate and recommend but only
+  the owner decides). It authorizes recording the owner's decision (select/edit/combine/reject) over a generation; the
+  edit/combine fields are owner-supplied (no model call). request-another reuses `strategy:generate` (`owner|viewer`).
+  The decision records a SELECTION only — it neither writes the immutable Decision record (P3-005) nor unlocks planning
+  (the P4 boundary). DISTINCT closed action, deny-by-default; not granted to a viewer, an account owner without company
+  membership, nor via forged provider claims. See `CDR-037`.
 
 ## What P1-007 does NOT do (later tickets)
 

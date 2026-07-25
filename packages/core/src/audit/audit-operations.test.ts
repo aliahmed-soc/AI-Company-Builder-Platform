@@ -33,6 +33,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
       'strategy.generate',
+      // Owner strategy decision (ACBP-P3-004; CDR-037 §4) — deliberately approved addition.
+      'strategy.select',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -66,6 +68,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['understanding.correct']).toBe('understanding.corrected');
     expect(AUDITED_OPERATIONS['context.flag-conflict']).toBe('context.conflict_flagged');
     expect(AUDITED_OPERATIONS['task.plan']).toBe('task.created');
+    expect(AUDITED_OPERATIONS['strategy.generate']).toBe('strategy.generated');
+    expect(AUDITED_OPERATIONS['strategy.select']).toBe('strategy.selected');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
