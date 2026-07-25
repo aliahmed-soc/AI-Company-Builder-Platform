@@ -1,0 +1,92 @@
+// @acbp/database — strategy repository (ACBP-P3-001; CDR-034 §3/§4).
+//
+// Operates on the immutable `strategy_generations` + `strategy_options` rows. Takes a plain executor and relies on the
+// caller to run it under the correct COMPANY scope (the dual-keyed policies deny anything else); the use case writes the
+// generation + its options + the `strategy.generated` audit event in ONE transaction. Kysely parameterized queries
+// only; no raw SQL interpolation. Both tables are append-only (SELECT + INSERT) — there is no update/delete path.
+import type { Kysely } from 'kysely';
+import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow } from './schema.js';
+
+export type StrategyExecutor = Kysely<DatabaseSchema>;
+
+/** The fields a caller supplies to record a strategy generation (identity/created_at are server-set). */
+export interface NewStrategyGenerationInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly understandingDocumentId: string;
+  readonly understandingVersion: number;
+  readonly status: string;
+  readonly optionCount: number;
+  readonly fewerReason: string | null;
+  readonly similarityCheckResult: string;
+  readonly modelFlaggedPartial: boolean;
+  readonly createdByUserId: string;
+}
+
+export interface NewStrategyOptionInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly generationId: string;
+  readonly ordinal: number;
+  readonly fields: Record<string, string>;
+}
+
+export interface ListStrategyGenerationsOptions {
+  readonly limit: number;
+}
+
+export class StrategyRepository {
+  readonly #db: StrategyExecutor;
+  constructor(db: StrategyExecutor) {
+    this.#db = db;
+  }
+
+  /** Insert one immutable strategy generation. RLS confines the write to the caller's company scope. */
+  insertGeneration(input: NewStrategyGenerationInput): Promise<StrategyGenerationRow> {
+    return this.#db
+      .insertInto('strategy_generations')
+      .values({
+        account_id: input.accountId,
+        company_id: input.companyId,
+        understanding_document_id: input.understandingDocumentId,
+        understanding_version: input.understandingVersion,
+        status: input.status,
+        option_count: input.optionCount,
+        fewer_reason: input.fewerReason,
+        similarity_check_result: input.similarityCheckResult,
+        model_flagged_partial: input.modelFlaggedPartial,
+        created_by_user_id: input.createdByUserId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /** Insert one immutable option row (the validated 16-field object). */
+  insertOption(input: NewStrategyOptionInput): Promise<StrategyOptionRow> {
+    return this.#db
+      .insertInto('strategy_options')
+      .values({ account_id: input.accountId, company_id: input.companyId, generation_id: input.generationId, ordinal: input.ordinal, fields: input.fields })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /** A single generation by id (RLS-confined; undefined when absent/invisible). */
+  findGeneration(id: string): Promise<StrategyGenerationRow | undefined> {
+    return this.#db.selectFrom('strategy_generations').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /** The company's most recent generation (RLS-confined), or undefined when none exists yet. */
+  latestGeneration(companyId: string): Promise<StrategyGenerationRow | undefined> {
+    return this.#db.selectFrom('strategy_generations').selectAll().where('company_id', '=', companyId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
+  }
+
+  /** The company's generations (RLS-confined), newest first, bounded. */
+  listGenerations(companyId: string, options: ListStrategyGenerationsOptions): Promise<StrategyGenerationRow[]> {
+    return this.#db.selectFrom('strategy_generations').selectAll().where('company_id', '=', companyId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+  }
+
+  /** The options of a generation (RLS-confined), in ordinal order. */
+  listOptions(generationId: string): Promise<StrategyOptionRow[]> {
+    return this.#db.selectFrom('strategy_options').selectAll().where('generation_id', '=', generationId).orderBy('ordinal', 'asc').execute();
+  }
+}
