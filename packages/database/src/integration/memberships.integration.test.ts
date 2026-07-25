@@ -1,4 +1,4 @@
-// ACBP-P1-004 — real-PostgreSQL tests for the membership foundation (migration 0004; schema; repository;
+// ACBP-P1-004 â€” real-PostgreSQL tests for the membership foundation (migration 0004; schema; repository;
 // CDR-011 invariants). Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no
 // migrate-down (reversibility is covered by the database/user-mapping suites).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -13,7 +13,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
   await sql.raw(`drop table if exists ${table} cascade`).execute(client.kysely);
 }
 async function cleanup(client: DatabaseClient): Promise<void> {
-  for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+  for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -109,9 +109,9 @@ describe.skipIf(!hasTestDatabase)('membership foundation (real PostgreSQL)', () 
 
   test('at most one outstanding invite per (account, email); token hash is unique', async () => {
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'dup@example.com', invite_token_hash: HASH('a') })).toBeUndefined();
-    // Same account+email, different token → still blocked (one outstanding invite).
+    // Same account+email, different token â†’ still blocked (one outstanding invite).
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'dup@example.com', invite_token_hash: HASH('b') })).toBe('23505');
-    // Different email, reuse the FIRST token hash → token-hash uniqueness blocks it.
+    // Different email, reuse the FIRST token hash â†’ token-hash uniqueness blocks it.
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'other@example.com', invite_token_hash: HASH('a') })).toBe('23505');
   });
 

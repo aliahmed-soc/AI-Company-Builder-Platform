@@ -1,4 +1,4 @@
-// ACBP-P1-005 / CDR-012 — real-PostgreSQL tests for the membership-backed account-context resolver.
+// ACBP-P1-005 / CDR-012 â€” real-PostgreSQL tests for the membership-backed account-context resolver.
 // Trust-critical: proves account context resolves ONLY from an ACTIVE internal membership, that invited /
 // revoked / missing / cross-account all deny, and that revocation takes effect on the next resolution.
 // Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no migrate-down.
@@ -21,7 +21,7 @@ async function seedUser(seed: DatabaseClient, email: string, verified = true): P
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, restricted role) — ACBP-P1-005/006', () => {
+describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, restricted role) â€” ACBP-P1-005/006', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let ownerId: string;
@@ -29,7 +29,7 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, re
 
   beforeAll(async () => {
     seed = createSeedClient();
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(seed);
@@ -41,7 +41,7 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, re
     if (app) await closeDatabase(app);
     if (seed) {
       await disableAppLogin(seed);
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await seed.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(seed);
     }
   });
@@ -70,7 +70,7 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, re
     expect(isResolvedAccountContext(r) && r.context.actorId).toBe(viewerId);
   });
 
-  test('an INVITED-but-not-accepted user has no active membership → denied', async () => {
+  test('an INVITED-but-not-accepted user has no active membership â†’ denied', async () => {
     await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending@example.com', role: 'viewer' });
     const pendingUserId = await seedUser(seed, 'pending@example.com'); // signed in but never accepted
     const r = await resolveAccountContext(app, { userId: pendingUserId, requestedAccountId: accountId });
@@ -83,13 +83,13 @@ describe.skipIf(!hasTestDatabase)('account-context resolver (real PostgreSQL, re
     expect(isDeniedAccountContext(r) && r.reason).toBe('membership_not_active');
   });
 
-  test('cross-account: another account’s owner cannot resolve OUR account', async () => {
+  test('cross-account: another accountâ€™s owner cannot resolve OUR account', async () => {
     const outsiderId = await seedUser(seed, 'outsider@example.com');
     const outsiderAccount = (await provisionPersonalAccount(app, outsiderId)).accountId;
     // Outsider is a valid owner of THEIR account, but requesting OURS denies (no membership here).
     const cross = await resolveAccountContext(app, { userId: outsiderId, requestedAccountId: accountId });
     expect(isDeniedAccountContext(cross) && cross.reason).toBe('membership_not_active');
-    // And their own account still resolves — proving isolation, not a blanket denial.
+    // And their own account still resolves â€” proving isolation, not a blanket denial.
     const own = await resolveAccountContext(app, { userId: outsiderId, requestedAccountId: outsiderAccount });
     expect(isResolvedAccountContext(own)).toBe(true);
   });

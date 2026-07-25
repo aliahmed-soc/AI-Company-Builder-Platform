@@ -1,4 +1,4 @@
-// ACBP-P1-009 / CDR-016 — real-PostgreSQL tests for the company activity feed READ use case (getCompanyActivity).
+// ACBP-P1-009 / CDR-016 â€” real-PostgreSQL tests for the company activity feed READ use case (getCompanyActivity).
 // Proves company-scoped keyset pagination (stable, no dup/omission), honest as_of, owner|viewer authz (non-member
 // denied), cross-company isolation, and cursor validation. Runs the READ as the restricted `acbp_app` role under
 // FORCE RLS; schema + fixtures seeded via the superuser. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked.
@@ -20,7 +20,7 @@ async function seedUser(seed: DatabaseClient, email: string): Promise<string> {
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, restricted role) — ACBP-P1-009/CDR-016', () => {
+describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, restricted role) â€” ACBP-P1-009/CDR-016', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let ownerId: string;
@@ -28,7 +28,7 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
   let outsiderId: string;
   let accountId: string;
 
-  const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   beforeAll(async () => {
     seed = createSeedClient();
@@ -58,7 +58,7 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: viewerId, role: 'viewer', status: 'active', accepted_at: new Date() }).execute();
   });
 
-  /** Create a company and generate `renames` company.updated events → (1 + renames) activity rows. */
+  /** Create a company and generate `renames` company.updated events â†’ (1 + renames) activity rows. */
   async function seedFeed(name: string, renames: number): Promise<string> {
     const created = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name });
     if (created.status !== 'ok') throw new Error('create failed');
@@ -88,7 +88,7 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     expect(Number.isFinite(Date.parse(res.page.asOf))).toBe(true);
     expect(Date.parse(res.page.asOf)).toBeGreaterThanOrEqual(Date.parse(res.page.items[0]?.occurredAt ?? ''));
     expect(res.page.sourceThrough).toEqual({ occurredAt: res.page.items[0]?.occurredAt, eventId: res.page.items[0]?.id });
-    // DTO redaction: the tightened shape — no actor internal id, no account/company ids, allowlisted summary only.
+    // DTO redaction: the tightened shape â€” no actor internal id, no account/company ids, allowlisted summary only.
     const created = res.page.items.find((i) => i.type === 'company.created');
     expect(created?.summary).toEqual({ creation_mode: 'own_idea' });
     expect(created?.actorType).toBe('user');
@@ -97,7 +97,7 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     expect(created).not.toHaveProperty('accountId');
   });
 
-  test('empty feed → no items, null cursor, null sourceThrough (asOf still a DB timestamp)', async () => {
+  test('empty feed â†’ no items, null cursor, null sourceThrough (asOf still a DB timestamp)', async () => {
     const id = await seedFeed('Empty', 0); // has exactly company.created
     await seed.kysely.deleteFrom('activity_events').where('company_id', '=', id).execute();
     const res = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id });
@@ -165,11 +165,11 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     const id = await seedFeed('Guarded', 1);
     await addCompanyViewer(id);
     expect((await getCompanyActivity(app, { userId: viewerId, accountId, companyId: id })).status).toBe('ok');
-    // outsider is not even an account member → forbidden.
+    // outsider is not even an account member â†’ forbidden.
     expect((await getCompanyActivity(app, { userId: outsiderId, accountId, companyId: id })).status).toBe('forbidden');
   });
 
-  test('isolation: a caller cannot read another company\'s feed (no membership → forbidden)', async () => {
+  test('isolation: a caller cannot read another company\'s feed (no membership â†’ forbidden)', async () => {
     const a = await seedFeed('A', 1);
     const b = await seedFeed('B', 1);
     // The owner IS a member of both here (creator). Prove cross-company via a company the owner is NOT a member of:
@@ -186,9 +186,9 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     }
   });
 
-  test('scope: the feed renders company events ONLY — an account-level membership event never appears', async () => {
+  test('scope: the feed renders company events ONLY â€” an account-level membership event never appears', async () => {
     const id = await seedFeed('ScopeCo', 1); // company.created + company.updated
-    // An account-level audit event (membership.invited, company_id NULL) — NOT a company event.
+    // An account-level audit event (membership.invited, company_id NULL) â€” NOT a company event.
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'invitee@example.com', role: 'viewer' });
     expect(invite.status).toBe('ok');
     const res = await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id });
@@ -217,7 +217,7 @@ describe.skipIf(!hasTestDatabase)('company activity feed read (real PostgreSQL, 
     if (first.status !== 'ok' || first.page.nextCursor === null) throw new Error('setup failed');
     // A valid cursor for THIS company works.
     expect((await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id, limit: 1, cursor: first.page.nextCursor })).status).toBe('ok');
-    // Malformed cursor → invalid_cursor.
+    // Malformed cursor â†’ invalid_cursor.
     expect((await getCompanyActivity(app, { userId: ownerId, accountId, companyId: id, cursor: 'garbage%%%' })).status).toBe('invalid_cursor');
     // A cursor minted for another company is rejected (company-bound).
     const other = await seedFeed('Other', 1);

@@ -1,8 +1,8 @@
-// ACBP-P1-002 Slice 3 — real-PostgreSQL read-through reconciliation tests. Proves authoritative
+// ACBP-P1-002 Slice 3 â€” real-PostgreSQL read-through reconciliation tests. Proves authoritative
 // convergence, race handling (read-through/read-through and read-through/webhook), the last_event_id=null
 // ordering interaction, no-resurrection, and that read-through writes NO webhook receipt. Skips when
 // ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning. Fake identities + an injected reader
-// (no live Clerk). Lives in @acbp/core (core → database is allowed; the reverse would be a cycle).
+// (no live Clerk). Lives in @acbp/core (core â†’ database is allowed; the reverse would be a cycle).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { parseDatabaseConfig } from '@acbp/config';
 import { createDatabase, closeDatabase, migrateToLatest, type DatabaseClient, type UserRow, type ProviderIdentityKey } from '@acbp/database';
@@ -90,13 +90,13 @@ describe.skipIf(!hasTestDatabase)('read-through reconciliation (real PostgreSQL)
     client = createTestDatabase();
     // Full drop incl. _acbp_migration_probe so a re-migrate cannot conflict when another integration
     // suite (shared CI database) created it first and this suite dropped kysely_migration.
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     const r = await migrateToLatest(client);
     expect(r.error).toBeUndefined();
   });
   afterAll(async () => {
     if (client) {
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(client);
     }
   });

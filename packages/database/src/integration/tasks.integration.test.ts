@@ -1,9 +1,9 @@
-// ACBP-P4-002 / CDR-033 — real-PostgreSQL proof of tasks + task_dependencies under the RESTRICTED role. Setup/seed on
+// ACBP-P4-002 / CDR-033 â€” real-PostgreSQL proof of tasks + task_dependencies under the RESTRICTED role. Setup/seed on
 // the superuser (owner); every assertion runs as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner). Proves: dual-keyed
 // company-scoped SELECT/INSERT (both account AND company; fail closed without the company key; cross-company read
 // impossible; cross-tenant insert refused); MUTABLE state (column-scoped UPDATE of state; UPDATE of an immutable column
 // refused; no DELETE); task_dependencies append-only (no UPDATE/DELETE) + UNIQUE edge + no-self-dep CHECK; the state +
-// title CHECKs; FK cascade (company→all, task→deps); clean down/up/reapply BY NAME; catalog invariants (FORCE RLS,
+// title CHECKs; FK cascade (companyâ†’all, taskâ†’deps); clean down/up/reapply BY NAME; catalog invariants (FORCE RLS,
 // grants, exactly 3 SECURITY DEFINER, acbp_app NOBYPASSRLS/non-owner, 0021 applied). Skips when ACBP_TEST_DATABASE_URL
 // is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -15,7 +15,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `task_${'test'}_pw_1970`;
 
-const ALL = ['strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-task-int' }));
@@ -27,7 +27,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-task-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, restricted role) — ACBP-P4-002/CDR-033', () => {
+describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, restricted role) â€” ACBP-P4-002/CDR-033', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -112,7 +112,7 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
     // A legal-shaped state update succeeds (the state-machine legality is enforced by the core; the column is writable).
     await asApp(scope(accountA, companyA1), (k) => sql`update tasks set state = 'planned', updated_at = now() where id = ${t}::uuid`.execute(k));
     expect((await sql<{ state: string }>`select state from tasks where id = ${t}::uuid`.execute(su.kysely)).rows[0]!.state).toBe('planned');
-    // Immutable columns (no column grant) — updating title/company_id is refused.
+    // Immutable columns (no column grant) â€” updating title/company_id is refused.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set title = 'hacked' where id = ${t}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set company_id = ${companyB1}::uuid where id = ${t}::uuid`.execute(k))).rejects.toThrow();
     // No DELETE grant.

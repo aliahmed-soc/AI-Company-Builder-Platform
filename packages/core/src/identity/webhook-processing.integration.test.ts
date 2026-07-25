@@ -1,8 +1,8 @@
-// ACBP-P1-002 — real-PostgreSQL convergence + idempotency tests for the transactional identity
+// ACBP-P1-002 â€” real-PostgreSQL convergence + idempotency tests for the transactional identity
 // webhook processor (processVerifiedIdentityEvent) and the internal-user resolver. Proves the CDR-007/
 // CDR-008 trust-critical invariants against actual Postgres semantics (ON CONFLICT, transactional
 // rollback, concurrent delivery), NOT fakes. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked.
-// Self-cleaning. Fake identities only. Lives in @acbp/core because it exercises core → database (the
+// Self-cleaning. Fake identities only. Lives in @acbp/core because it exercises core â†’ database (the
 // reverse edge would be a package cycle); the database package proves the raw schema/constraints.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { parseDatabaseConfig } from '@acbp/config';
@@ -82,7 +82,7 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
     client = createTestDatabase();
     // Full drop incl. _acbp_migration_probe so a re-migrate cannot conflict when another integration
     // suite (shared CI database) created it first and this suite dropped kysely_migration.
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(client);
@@ -90,7 +90,7 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
   });
   afterAll(async () => {
     if (client) {
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await client.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(client);
     }
   });
@@ -113,7 +113,7 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
     expect((await getUser())?.primary_email).toBe('u@example.com');
   });
 
-  test('redelivery (same event id + same hash) is a duplicate no-op — one receipt, user unchanged', async () => {
+  test('redelivery (same event id + same hash) is a duplicate no-op â€” one receipt, user unchanged', async () => {
     await processVerifiedIdentityEvent(client, upsert({ eventId: 'evt_1', hash: hex('a'), email: 'orig@example.com' }));
     const out = await processVerifiedIdentityEvent(client, upsert({ eventId: 'evt_1', hash: hex('a'), email: 'orig@example.com' }));
     expect(out.outcome).toBe('duplicate');
@@ -121,7 +121,7 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
     expect((await getUser())?.primary_email).toBe('orig@example.com');
   });
 
-  test('same event id + DIFFERENT hash is a security conflict — user + receipt untouched', async () => {
+  test('same event id + DIFFERENT hash is a security conflict â€” user + receipt untouched', async () => {
     await processVerifiedIdentityEvent(client, upsert({ eventId: 'evt_1', hash: hex('a'), email: 'orig@example.com' }));
     const out = await processVerifiedIdentityEvent(client, upsert({ eventId: 'evt_1', hash: hex('b'), email: 'evil@example.com' }));
     expect(out.outcome).toBe('security_conflict');
@@ -142,14 +142,14 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
 
   test('a user-mutation failure rolls back the receipt too (no orphan receipt)', async () => {
     // provider_user_id='' passes the receipt check but violates users_provider_user_id_not_empty,
-    // so the user insert throws INSIDE the transaction → receipt must roll back with it.
+    // so the user insert throws INSIDE the transaction â†’ receipt must roll back with it.
     await expect(processVerifiedIdentityEvent(client, upsert({ userId: '', eventId: 'evt_fail', hash: hex('e') }))).rejects.toBeTruthy();
     expect(await countReceipts()).toBe(0);
     const n = await client.kysely.selectFrom('users').select(client.kysely.fn.countAll<string>().as('n')).execute();
     expect(Number(n[0]?.n)).toBe(0);
   });
 
-  // §3 #19 — an unrelated CHECK-constraint violation surfaces as a sanitized failure, never as a
+  // Â§3 #19 â€” an unrelated CHECK-constraint violation surfaces as a sanitized failure, never as a
   // receipt-conflict classification, and never leaking the raw SQL/constraint text.
   test('an unrelated check-constraint violation is a sanitized internal failure, not duplicate/conflict', async () => {
     let caught: unknown;
@@ -166,7 +166,7 @@ describe.skipIf(!hasTestDatabase)('identity webhook processor (real PostgreSQL)'
     expect(await countReceipts()).toBe(0);
   });
 
-  // §3 #18 — two DIFFERENT event ids for the SAME new identity delivered concurrently. However the DB
+  // Â§3 #18 â€” two DIFFERENT event ids for the SAME new identity delivered concurrently. However the DB
   // interleaves, the outcome must NEVER be a receipt duplicate/security_conflict (those belong to the
   // receipt key), exactly one user row must exist, and any rejection is a sanitized PlatformError
   // (a raw users-uniqueness 23505 must not leak).

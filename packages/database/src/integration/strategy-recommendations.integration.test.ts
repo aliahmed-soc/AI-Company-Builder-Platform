@@ -1,8 +1,8 @@
-// ACBP-P3-003 / CDR-036 — real-PostgreSQL proof of strategy_recommendations under the RESTRICTED role. Setup/seed on
+// ACBP-P3-003 / CDR-036 â€” real-PostgreSQL proof of strategy_recommendations under the RESTRICTED role. Setup/seed on
 // the superuser (owner); every assertion runs as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner). Proves: dual-keyed
 // company-scoped SELECT/INSERT (fail-closed without the company key; cross-company read impossible; cross-tenant insert
-// refused); IMMUTABILITY (no UPDATE/no DELETE); rationale/sensitivities length CHECKs; FK cascade (generation→
-// recommendations, option→recommendations); append-only (multiple rows per generation); catalog (FORCE RLS, SELECT/
+// refused); IMMUTABILITY (no UPDATE/no DELETE); rationale/sensitivities length CHECKs; FK cascade (generationâ†’
+// recommendations, optionâ†’recommendations); append-only (multiple rows per generation); catalog (FORCE RLS, SELECT/
 // INSERT grants, no column UPDATE, exactly 3 SECURITY DEFINER, acbp_app NOBYPASSRLS/non-owner, 0023 applied). Skips when
 // ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -14,7 +14,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `rec_${'test'}_pw_1970`;
 
-const ALL = ['strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 const OPT_FIELDS = ['description', 'customer', 'offer', 'business_model', 'scope', 'benefits', 'risks', 'cost_range', 'effort', 'time_to_validate', 'time_to_launch', 'required_resources', 'key_assumptions', 'validation_method', 'success_metrics', 'confidence'];
 function fields(): Record<string, string> {
   const o: Record<string, string> = {};
@@ -32,7 +32,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-rec-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('strategy_recommendations (real PostgreSQL, restricted role) — ACBP-P3-003/CDR-036', () => {
+describe.skipIf(!hasTestDatabase)('strategy_recommendations (real PostgreSQL, restricted role) â€” ACBP-P3-003/CDR-036', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -130,7 +130,7 @@ describe.skipIf(!hasTestDatabase)('strategy_recommendations (real PostgreSQL, re
     const doc2 = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 2, 'complete', 0.6, ${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
     const gen2 = (await sql<{ id: string }>`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${doc2}::uuid, 2, 'complete', 3, ${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
     const opt2 = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${accountA}::uuid, ${companyA1}::uuid, ${gen2}::uuid, 0, ${JSON.stringify(fields())}::jsonb) returning id`.execute(su.kysely)).rows[0]!.id;
-    // genA + opt2 (opt2 belongs to gen2) — the composite (recommended_option_id, generation_id) FK refuses it.
+    // genA + opt2 (opt2 belongs to gen2) â€” the composite (recommended_option_id, generation_id) FK refuses it.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into strategy_recommendations (account_id, company_id, generation_id, recommended_option_id, rationale, sensitivities, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${opt2}::uuid, 'x', 'y', ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 

@@ -1,4 +1,4 @@
-// ACBP-P1-006 / CDR-013 — real-PostgreSQL RLS isolation proven under the RESTRICTED application role.
+// ACBP-P1-006 / CDR-013 â€” real-PostgreSQL RLS isolation proven under the RESTRICTED application role.
 // Setup/seed runs on the superuser (owner) connection (which bypasses RLS); every isolation assertion runs
 // on a SECOND pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner) so RLS actually applies.
 // This is the "RLS suite with app filter disabled" (BACKLOG ACBP-P1-006): queries carry NO app-level
@@ -34,13 +34,13 @@ async function seedAccount(su: DatabaseClient, email: string): Promise<{ userId:
   return { userId: user.id, accountId: account.id };
 }
 
-describe.skipIf(!hasTestDatabase)('RLS isolation under the restricted role (real PostgreSQL) — ACBP-P1-006/CDR-013', () => {
+describe.skipIf(!hasTestDatabase)('RLS isolation under the restricted role (real PostgreSQL) â€” ACBP-P1-006/CDR-013', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
@@ -58,7 +58,7 @@ describe.skipIf(!hasTestDatabase)('RLS isolation under the restricted role (real
       } catch {
         /* best effort */
       }
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(su);
     }
   });
@@ -113,7 +113,7 @@ describe.skipIf(!hasTestDatabase)('RLS isolation under the restricted role (real
   test('UPDATE only affects the current account; a hidden account cannot be updated', async () => {
     const a = await seedAccount(su, 'ua@example.com');
     const b = await seedAccount(su, 'ub@example.com');
-    // Update under A's context targeting B by id → 0 rows (B is hidden), so no change.
+    // Update under A's context targeting B by id â†’ 0 rows (B is hidden), so no change.
     await asApp({ 'app.current_account': a.accountId }, (db) => sql`update accounts set plan_state = 'pro' where id = ${b.accountId}`.execute(db));
     const bState = await sql<{ plan_state: string }>`select plan_state from accounts where id = ${b.accountId}`.execute(su.kysely);
     expect(bState.rows[0]?.plan_state).toBe('free');
@@ -126,11 +126,11 @@ describe.skipIf(!hasTestDatabase)('RLS isolation under the restricted role (real
   test('memberships: INSERT is confined to the current account; cross-account INSERT/move fails WITH CHECK', async () => {
     const a = await seedAccount(su, 'ma@example.com');
     const b = await seedAccount(su, 'mb@example.com');
-    // Invite (insert) under A's context for account A → allowed.
+    // Invite (insert) under A's context for account A â†’ allowed.
     await asApp({ 'app.current_account': a.accountId }, (db) => sql`insert into memberships (account_id, role, status, invited_email, invite_token_hash) values (${a.accountId}, 'viewer', 'invited', 'x@example.com', 'hash_x')`.execute(db));
-    // Insert a membership row for account B while in A's context → WITH CHECK denies.
+    // Insert a membership row for account B while in A's context â†’ WITH CHECK denies.
     await expect(asApp({ 'app.current_account': a.accountId }, (db) => sql`insert into memberships (account_id, role, status, invited_email, invite_token_hash) values (${b.accountId}, 'viewer', 'invited', 'y@example.com', 'hash_y')`.execute(db))).rejects.toBeDefined();
-    // Move A's owner membership to account B → WITH CHECK denies.
+    // Move A's owner membership to account B â†’ WITH CHECK denies.
     await expect(asApp({ 'app.current_account': a.accountId }, (db) => sql`update memberships set account_id = ${b.accountId} where account_id = ${a.accountId}`.execute(db))).rejects.toBeDefined();
   });
 

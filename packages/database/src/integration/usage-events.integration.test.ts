@@ -1,8 +1,8 @@
-// ACBP-P2-003 / CDR-026 — real-PostgreSQL proof of `usage_events` under the RESTRICTED role. Setup/seed runs on
+// ACBP-P2-003 / CDR-026 â€” real-PostgreSQL proof of `usage_events` under the RESTRICTED role. Setup/seed runs on
 // the superuser (owner) connection; every assertion runs as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner).
 // Proves: dual-keyed company-scoped SELECT/INSERT (both account AND company; fail closed without the company
-// key; cross-company read impossible — USAGE-001); APPEND-ONLY (no UPDATE/DELETE grant, no UPDATE policy — a row
-// is immutable once written, invariant 9); the outcome↔error_category pairing CHECK; the closed
+// key; cross-company read impossible â€” USAGE-001); APPEND-ONLY (no UPDATE/DELETE grant, no UPDATE policy â€” a row
+// is immutable once written, invariant 9); the outcomeâ†”error_category pairing CHECK; the closed
 // kind/task_class/outcome/error_category enums; non-negative token/cost/latency CHECKs; bounded provider/model/
 // correlation lengths; FK cascade; clean down/up/reapply BY NAME; catalog invariants (FORCE RLS, exactly
 // select+insert policies, SELECT+INSERT grants only, 3 SECURITY DEFINER, acbp_app NOBYPASSRLS/non-owner, 0017
@@ -16,7 +16,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `usage_${'test'}_pw_1970`;
 
-const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-usage-int' }));
@@ -28,7 +28,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-usage-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted role) — ACBP-P2-003/CDR-026', () => {
+describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted role) â€” ACBP-P2-003/CDR-026', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let accountA = '';
@@ -79,7 +79,7 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
     companyA1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     companyB1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountB}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
 
-    // down/up/reapply BY NAME — proves 0017 is reversible + idempotent through the migrator.
+    // down/up/reapply BY NAME â€” proves 0017 is reversible + idempotent through the migrator.
     const down = await createMigrator(su).migrateTo('0016_memory_soft_delete');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
@@ -122,12 +122,12 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
     await expect(asApp(scope(accountA, companyA1), (k) => sql`delete from usage_events where id = ${id}::uuid`.execute(k))).rejects.toThrow();
   });
 
-  test('outcome↔error_category pairing CHECK', async () => {
-    // ok WITH a category → rejected.
+  test('outcomeâ†”error_category pairing CHECK', async () => {
+    // ok WITH a category â†’ rejected.
     await expect(insertEvent(accountA, companyA1, { outcome: 'ok', error_category: 'timeout' })).rejects.toThrow();
-    // error WITHOUT a category → rejected.
+    // error WITHOUT a category â†’ rejected.
     await expect(insertEvent(accountA, companyA1, { outcome: 'error', error_category: null })).rejects.toThrow();
-    // error WITH a valid category → accepted.
+    // error WITH a valid category â†’ accepted.
     expect(await insertEvent(accountA, companyA1, { outcome: 'error', error_category: 'provider_unavailable' })).toBeTruthy();
   });
 
@@ -167,7 +167,7 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
   test('catalog: FORCE RLS; exactly select+insert policies; SELECT+INSERT grants only; 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; 0017 applied', async () => {
     const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'usage_events' and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
-    // Append-only: exactly INSERT + SELECT policies — NO update/delete policy (unlike memory_items).
+    // Append-only: exactly INSERT + SELECT policies â€” NO update/delete policy (unlike memory_items).
     const pols = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = 'usage_events' order by cmd`.execute(su.kysely);
     expect(pols.rows.map((p) => p.cmd)).toEqual(['INSERT', 'SELECT']);
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'usage_events' order by privilege_type`.execute(su.kysely);

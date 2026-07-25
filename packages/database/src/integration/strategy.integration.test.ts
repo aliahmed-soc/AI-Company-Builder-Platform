@@ -1,9 +1,9 @@
-// ACBP-P3-001 / CDR-034 — real-PostgreSQL proof of strategy_generations + strategy_options under the RESTRICTED role.
+// ACBP-P3-001 / CDR-034 â€” real-PostgreSQL proof of strategy_generations + strategy_options under the RESTRICTED role.
 // Setup/seed on the superuser (owner); every assertion runs as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner).
 // Proves: dual-keyed company-scoped SELECT/INSERT (fail-closed without the company key; cross-company read impossible;
 // cross-tenant insert refused); IMMUTABILITY (no UPDATE/no DELETE on either table); the closed status + similarity
 // enums + option_count/version/fewer_reason CHECKs; the jsonb-object CHECK; UNIQUE(generation_id, ordinal); FK cascade
-// (company→all, generation→options, understanding_document→generations); catalog (FORCE RLS, grants, exactly 3 SECURITY
+// (companyâ†’all, generationâ†’options, understanding_documentâ†’generations); catalog (FORCE RLS, grants, exactly 3 SECURITY
 // DEFINER, acbp_app NOBYPASSRLS/non-owner, 0022 applied). Skips when ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
@@ -14,7 +14,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `strat_${'test'}_pw_1970`;
 
-const ALL = ['strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 const OPT_FIELDS = ['description', 'customer', 'offer', 'business_model', 'scope', 'benefits', 'risks', 'cost_range', 'effort', 'time_to_validate', 'time_to_launch', 'required_resources', 'key_assumptions', 'validation_method', 'success_metrics', 'confidence'];
 function fields(): Record<string, string> {
@@ -33,7 +33,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-strat-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('strategy_generations + strategy_options (real PostgreSQL, restricted role) — ACBP-P3-001/CDR-034', () => {
+describe.skipIf(!hasTestDatabase)('strategy_generations + strategy_options (real PostgreSQL, restricted role) â€” ACBP-P3-001/CDR-034', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';

@@ -5,7 +5,7 @@
 // generation + its options + the `strategy.generated` audit event in ONE transaction. Kysely parameterized queries
 // only; no raw SQL interpolation. Both tables are append-only (SELECT + INSERT) — there is no update/delete path.
 import type { Kysely } from 'kysely';
-import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow, StrategyRecommendationRow } from './schema.js';
+import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow, StrategyRecommendationRow, StrategySelectionRow } from './schema.js';
 
 export type StrategyExecutor = Kysely<DatabaseSchema>;
 
@@ -43,6 +43,23 @@ export interface NewStrategyRecommendationInput {
   readonly recommendedOptionId: string;
   readonly rationale: string;
   readonly sensitivities: string;
+  readonly createdByUserId: string;
+}
+
+/**
+ * The fields a caller supplies to record an owner decision (identity/created_at are server-set). Per-mode shape is
+ * validated in the contract (`validateStrategyDecision`) and enforced again by the table CHECKs; the caller passes the
+ * already-shaped nullable columns.
+ */
+export interface NewStrategySelectionInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly generationId: string;
+  readonly mode: string;
+  readonly selectedOptionId: string | null;
+  readonly chosenFields: Record<string, string> | null;
+  readonly phaseScope: string | null;
+  readonly reasons: string | null;
   readonly createdByUserId: string;
 }
 
@@ -118,5 +135,29 @@ export class StrategyRepository {
   /** The LATEST advisory recommendation for a generation (RLS-confined), or undefined when none exists. */
   latestRecommendation(generationId: string): Promise<StrategyRecommendationRow | undefined> {
     return this.#db.selectFrom('strategy_recommendations').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
+  }
+
+  /** Insert one immutable owner selection row (append-only). The table CHECKs enforce the per-mode shape. */
+  insertSelection(input: NewStrategySelectionInput): Promise<StrategySelectionRow> {
+    return this.#db
+      .insertInto('strategy_selections')
+      .values({
+        account_id: input.accountId,
+        company_id: input.companyId,
+        generation_id: input.generationId,
+        mode: input.mode,
+        selected_option_id: input.selectedOptionId,
+        chosen_fields: input.chosenFields,
+        phase_scope: input.phaseScope,
+        reasons: input.reasons,
+        created_by_user_id: input.createdByUserId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /** The LATEST owner selection for a generation (RLS-confined), or undefined when none exists. */
+  latestSelection(generationId: string): Promise<StrategySelectionRow | undefined> {
+    return this.#db.selectFrom('strategy_selections').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
   }
 }

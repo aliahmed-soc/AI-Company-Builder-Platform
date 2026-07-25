@@ -1,4 +1,4 @@
-// ACBP-P1-002 — real-PostgreSQL integration tests for the user-mapping + webhook-receipt foundation
+// ACBP-P1-002 â€” real-PostgreSQL integration tests for the user-mapping + webhook-receipt foundation
 // (migration 0002; schema; CDR-008 invariants). Skips when ACBP_TEST_DATABASE_URL is unset; never
 // mocked. Self-cleaning. Hosted CI runs this (preflight guard forbids silent skips).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // account_profiles/accounts (0003) are dropped child-first so a re-migrate on the shared CI
   // database cannot hit a stale later-ticket table (the _acbp_migration_probe lesson).
-  for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+  for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -151,7 +151,7 @@ describe.skipIf(!hasTestDatabase)('user-mapping foundation (real PostgreSQL)', (
 
   test('migration down removes the user-mapping tables and re-apply restores them', async () => {
     // Reverse one batch at a time until the user-mapping tables are gone. This stays correct as later
-    // migrations (0003+) are added on top of 0002 — they (which may FK-reference users) reverse first.
+    // migrations (0003+) are added on top of 0002 â€” they (which may FK-reference users) reverse first.
     const usersTables = async () => {
       const r = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
       return r.rows[0]?.n ?? 0;

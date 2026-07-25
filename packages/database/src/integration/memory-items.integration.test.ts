@@ -1,7 +1,7 @@
-// ACBP-P2-006 / CDR-024 — real-PostgreSQL proof of `memory_items` under the RESTRICTED role. Setup/seed runs on
+// ACBP-P2-006 / CDR-024 â€” real-PostgreSQL proof of `memory_items` under the RESTRICTED role. Setup/seed runs on
 // the superuser (owner) connection; every assertion runs as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner).
 // Proves: dual-keyed company-scoped SELECT/INSERT (both account AND company; fail closed without the company
-// key; cross-company read impossible — MEM-003); append-only (no UPDATE/DELETE grant); the closed 8-type +
+// key; cross-company read impossible â€” MEM-003); append-only (no UPDATE/DELETE grant); the closed 8-type +
 // 6-source CHECKs; the TYPE-BY-SOURCE-PATH CHECK (a generated source can never carry a user_fact); source_ref
 // NOT NULL + confidence range + confirmation-state CHECK; FK cascade; clean down/up/reapply BY NAME; catalog
 // invariants (FORCE RLS, select+insert policies, least-privilege grants, 3 SECURITY DEFINER, acbp_app
@@ -15,7 +15,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `mem_${'test'}_pw_1970`;
 
-const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-mem-int' }));
@@ -27,7 +27,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-mem-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted role) — ACBP-P2-006/CDR-024', () => {
+describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted role) â€” ACBP-P2-006/CDR-024', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -107,7 +107,7 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
 
   test('content/type/identity immutable + no DELETE; only superseded_by is updatable (0015 edit=supersede)', async () => {
     const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
-    // Content/type/source/confirmation/identity stay immutable — the column grant covers only superseded_by.
+    // Content/type/source/confirmation/identity stay immutable â€” the column grant covers only superseded_by.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set content = 'edited' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set confirmation_state = 'accepted' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set type = 'constraint' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
@@ -121,7 +121,7 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
 
   test('soft delete (0016): deleted_at/deleted_by_user_id updatable; PAIR + mutual-exclusion CHECKs; content/hard-delete still forbidden', async () => {
     const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
-    // The two delete columns ARE updatable (0016 grant) — mark it deleted.
+    // The two delete columns ARE updatable (0016 grant) â€” mark it deleted.
     await asApp(scope(accountA, companyA1), (k) => sql`update memory_items set deleted_at = now(), deleted_by_user_id = ${userU}::uuid where id = ${id}::uuid`.execute(k));
     const row = await asApp(scope(accountA, companyA1), (k) => k.selectFrom('memory_items').select(['deleted_at', 'deleted_by_user_id']).where('id', '=', id).executeTakeFirstOrThrow());
     expect(row.deleted_at).not.toBeNull();
@@ -145,13 +145,13 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
     // The load-bearing rule: a generated source cannot carry a user_fact / user_preference.
     await expect(insertItem(accountA, companyA1, 'user_fact', 'model_generation')).rejects.toThrow();
     await expect(insertItem(accountA, companyA1, 'user_preference', 'task_result')).rejects.toThrow();
-    // …but the same source CAN carry an ai_assumption / research_finding.
+    // â€¦but the same source CAN carry an ai_assumption / research_finding.
     expect(await insertItem(accountA, companyA1, 'ai_assumption', 'model_generation')).toBeTruthy();
     expect(await insertItem(accountA, companyA1, 'research_finding', 'task_result')).toBeTruthy();
   });
 
   test('source_ref NOT NULL; confidence range; confirmation-state CHECK', async () => {
-    // NULL source_ref rejected (every item carries a resolvable link — MEM-003).
+    // NULL source_ref rejected (every item carries a resolvable link â€” MEM-003).
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into memory_items (account_id, company_id, type, content, source_type, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 'constraint', 'x', 'user_edit', ${userU}::uuid)`.execute(k))).rejects.toThrow();
     // confidence out of [0,1] rejected.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into memory_items (account_id, company_id, type, content, source_type, source_ref, confidence, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 'ai_assumption', 'x', 'model_generation', 'r', 1.5, ${userU}::uuid)`.execute(k))).rejects.toThrow();

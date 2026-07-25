@@ -1,8 +1,8 @@
-// ACBP-P2-005 / CDR-028 — real-PostgreSQL proof of the migration-0018 adaptive columns on interview_questions
+// ACBP-P2-005 / CDR-028 â€” real-PostgreSQL proof of the migration-0018 adaptive columns on interview_questions
 // (`rationale`, `source`) under the RESTRICTED role. Setup/seed on the superuser (owner) connection; every
 // assertion runs as `acbp_app`. Proves: the columns exist; `source` defaults to 'adaptive' and is CHECK-bound to
 // ('adaptive','static_fallback'); `rationale` is nullable + length-bounded; both are IMMUTABLE (the app role has
-// no UPDATE grant — an update is refused); clean down/up/reapply BY NAME (0018 reversible); catalog invariants
+// no UPDATE grant â€” an update is refused); clean down/up/reapply BY NAME (0018 reversible); catalog invariants
 // (interview_questions grants stay SELECT+INSERT, 3 SECURITY DEFINER, 0018 applied). Skips when the URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
@@ -13,7 +13,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `qadapt_${'test'}_pw_1970`;
 
-const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-qadapt-int' }));
@@ -25,7 +25,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-qadapt-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('interview_questions adaptive columns (real PostgreSQL, restricted role) — ACBP-P2-005/CDR-028', () => {
+describe.skipIf(!hasTestDatabase)('interview_questions adaptive columns (real PostgreSQL, restricted role) â€” ACBP-P2-005/CDR-028', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let accountA = '';
@@ -71,7 +71,7 @@ describe.skipIf(!hasTestDatabase)('interview_questions adaptive columns (real Po
     companyA1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     sessionA = (await sql<{ id: string }>`insert into interview_sessions (account_id, company_id, state, started_at) values (${accountA}::uuid, ${companyA1}::uuid, 'in_progress', now()) returning id`.execute(su.kysely)).rows[0]!.id;
 
-    // down/up/reapply BY NAME — proves 0018 is reversible + idempotent through the migrator.
+    // down/up/reapply BY NAME â€” proves 0018 is reversible + idempotent through the migrator.
     const down = await createMigrator(su).migrateTo('0017_usage_events');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
@@ -117,7 +117,7 @@ describe.skipIf(!hasTestDatabase)('interview_questions adaptive columns (real Po
     await expect(insertQ({ rationale: '' })).rejects.toThrow();
   });
 
-  test('the adaptive columns are IMMUTABLE — the app role cannot UPDATE them (append-only questions)', async () => {
+  test('the adaptive columns are IMMUTABLE â€” the app role cannot UPDATE them (append-only questions)', async () => {
     const row = await insertQ({ source: 'adaptive' });
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update interview_questions set source = 'static_fallback' where id = ${row.id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update interview_questions set rationale = 'changed' where id = ${row.id}::uuid`.execute(k))).rejects.toThrow();

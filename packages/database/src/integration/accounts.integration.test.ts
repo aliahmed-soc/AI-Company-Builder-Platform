@@ -1,4 +1,4 @@
-// ACBP-P1-003 — real-PostgreSQL integration tests for the account + profile foundation (migration
+// ACBP-P1-003 â€” real-PostgreSQL integration tests for the account + profile foundation (migration
 // 0003; schema; repositories; CDR-010 invariants). Skips when ACBP_TEST_DATABASE_URL is unset; never
 // mocked. Self-cleaning. Hosted CI runs this (preflight guard forbids silent skips).
 //
@@ -27,7 +27,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // Drop 0003 (child-first) + 0002 tables + probe + migration bookkeeping so a re-migrate on the
   // shared CI database cannot hit a stale table (the _acbp_migration_probe lesson from P1-002).
-  for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+  for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -100,7 +100,7 @@ describe.skipIf(!hasTestDatabase)('account + profile foundation (real PostgreSQL
   });
 
   test('created_by_user_id must reference an existing user (FK enforced)', async () => {
-    // A random uuid that is not a real user id → foreign-key violation.
+    // A random uuid that is not a real user id â†’ foreign-key violation.
     expect(await accountInsertError(client, { created_by_user_id: '00000000-0000-0000-0000-000000000000' })).toBe('23503');
   });
 
@@ -198,7 +198,7 @@ describe.skipIf(!hasTestDatabase)('account + profile foundation (real PostgreSQL
     const profileRepo = new AccountProfileRepository(client.kysely);
     const { row: account } = await accountRepo.insertIfAbsent({ created_by_user_id: userId });
     await profileRepo.insertIfAbsent({ account_id: account.id });
-    // account_id in the patch is ignored — the row stays keyed to the original account.
+    // account_id in the patch is ignored â€” the row stays keyed to the original account.
     const updated = await profileRepo.update(account.id, { account_id: '22222222-2222-2222-2222-222222222222', display_name: 'Grace' });
     expect(updated?.account_id).toBe(account.id);
   });

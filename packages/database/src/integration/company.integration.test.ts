@@ -1,4 +1,4 @@
-// ACBP-P1-010 / CDR-015 — real-PostgreSQL proof of company tenancy under the RESTRICTED role.
+// ACBP-P1-010 / CDR-015 â€” real-PostgreSQL proof of company tenancy under the RESTRICTED role.
 // Setup/seed runs on the superuser (owner) connection; every isolation/immutability assertion runs on a
 // second pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner) so RLS + grants actually apply.
 // Proves: account-keyed company INSERT; account-scoped company SELECT; dual-keyed company UPDATE + immutable
@@ -30,7 +30,7 @@ const ULID_1 = '01ARZ3NDEKTSV4RRFFQ69G5FA1';
 const ULID_2 = '01ARZ3NDEKTSV4RRFFQ69G5FA2';
 const ULID_3 = '01ARZ3NDEKTSV4RRFFQ69G5FA3';
 
-describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted role) — ACBP-P1-010/CDR-015', () => {
+describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted role) â€” ACBP-P1-010/CDR-015', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   // Seeded once; FK targets for companies/company_memberships.
@@ -59,7 +59,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
@@ -67,7 +67,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     await sql`alter role acbp_app login password ${sql.lit(APP_TEST_PASSWORD)}`.execute(su.kysely);
     app = appRoleClient();
 
-    // Seed two accounts + founding users (owner connection bypasses RLS) — FK targets only.
+    // Seed two accounts + founding users (owner connection bypasses RLS) â€” FK targets only.
     const u = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_test', 'user_u', now()) returning id`.execute(su.kysely);
     userU = u.rows[0]!.id;
     const v = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_test', 'user_v', now()) returning id`.execute(su.kysely);
@@ -86,7 +86,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
       } catch {
         /* best effort */
       }
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(su);
     }
   });
@@ -99,7 +99,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     await su.kysely.deleteFrom('companies').execute();
   });
 
-  // ── companies: account-keyed create, account-scoped read, fail-closed ────────────────────────────────
+  // â”€â”€ companies: account-keyed create, account-scoped read, fail-closed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('company INSERT is account-keyed and binds account_id to the caller scope', async () => {
     const id = await createCompany(accountA);
     expect(typeof id).toBe('string');
@@ -113,19 +113,19 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
   });
 
   test('forged/absent account is rejected on company INSERT (fail-closed WITH CHECK)', async () => {
-    // Scope A, but claim account B → WITH CHECK (account_id = current_account) fails.
+    // Scope A, but claim account B â†’ WITH CHECK (account_id = current_account) fails.
     await expect(asApp(acct(accountA), (k) => sql`insert into companies (account_id, creation_mode) values (${accountB}::uuid, 'own_idea')`.execute(k))).rejects.toThrow();
-    // No account GUC → nullif('','') = NULL → WITH CHECK false → rejected.
+    // No account GUC â†’ nullif('','') = NULL â†’ WITH CHECK false â†’ rejected.
     await expect(asApp({}, (k) => sql`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea')`.execute(k))).rejects.toThrow();
   });
 
-  // ── companies: dual-keyed UPDATE + immutable identity ────────────────────────────────────────────────
+  // â”€â”€ companies: dual-keyed UPDATE + immutable identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('company UPDATE requires BOTH account and company context (dual-keyed)', async () => {
     const id = await createCompany(accountA);
-    // Account scope only (no current_company) → USING fails → 0 rows updated (unchanged).
+    // Account scope only (no current_company) â†’ USING fails â†’ 0 rows updated (unchanged).
     const noCo = await asApp(acct(accountA), (k) => k.updateTable('companies').set({ status: 'onboarding' }).where('id', '=', id).executeTakeFirst());
     expect(Number(noCo.numUpdatedRows)).toBe(0);
-    // Both contexts → update applies.
+    // Both contexts â†’ update applies.
     const withCo = await asApp(acctCo(accountA, id), (k) => k.updateTable('companies').set({ status: 'onboarding' }).where('id', '=', id).executeTakeFirst());
     expect(Number(withCo.numUpdatedRows)).toBe(1);
     const row = await asApp(acctCo(accountA, id), (k) => k.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirst());
@@ -138,7 +138,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     await expect(asApp(acctCo(accountA, id), (k) => sql`update companies set account_id = ${accountB}::uuid where id = ${id}::uuid`.execute(k))).rejects.toThrow();
   });
 
-  // ── company_profiles: dual-keyed append-only versions ────────────────────────────────────────────────
+  // â”€â”€ company_profiles: dual-keyed append-only versions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('company_profiles are dual-keyed and append-only (no UPDATE/DELETE grant)', async () => {
     const id = await createCompany(accountA);
     // Insert v1 under company scope.
@@ -157,13 +157,13 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     await expect(asApp(acctCo(accountA, id), (k) => sql`insert into company_profiles (company_id, version, name) values (${id}::uuid, 2, 'Dup')`.execute(k))).rejects.toThrow();
   });
 
-  // ── company_memberships: dual-keyed INSERT, self-branch SELECT for resolution, active-unique ─────────
+  // â”€â”€ company_memberships: dual-keyed INSERT, self-branch SELECT for resolution, active-unique â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('company_memberships: dual-keyed insert, self-branch resolution, active uniqueness', async () => {
     const id = await createCompany(accountA);
     // Insert the creator's owner membership under company scope.
     await asApp(acctCo(accountA, id), (k) => sql`insert into company_memberships (account_id, company_id, member_user_id, role) values (${accountA}::uuid, ${id}::uuid, ${userU}::uuid, 'owner')`.execute(k));
     // Self-branch: the member can find their own company membership under ACCOUNT scope (no company yet) to
-    // resolve which company to enter — this is what the no-SECURITY-DEFINER resolver relies on.
+    // resolve which company to enter â€” this is what the no-SECURITY-DEFINER resolver relies on.
     const mine = await asApp({ 'app.current_account': accountA, 'app.current_actor': userU }, (k) => k.selectFrom('company_memberships').select(['company_id', 'role']).execute());
     expect(mine).toHaveLength(1);
     expect(mine[0]?.company_id).toBe(id);
@@ -176,12 +176,12 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     await expect(asApp(acctCo(accountA, id), (k) => sql`insert into company_memberships (account_id, company_id, member_user_id, role) values (${accountA}::uuid, ${id}::uuid, ${userU}::uuid, 'viewer')`.execute(k))).rejects.toThrow();
   });
 
-  // ── audit_events: dual-scope (account event vs company event) ────────────────────────────────────────
+  // â”€â”€ audit_events: dual-scope (account event vs company event) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('audit dual-scope: account events are account-visible; company events need BOTH contexts', async () => {
     const id = await createCompany(accountA);
     // Account-scoped audit event (company_id NULL).
     await asApp(acct(accountA), (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, actor_type, subject_type, subject_id, outcome) values (${ULID_1}, 'membership.invited', 1, ${accountA}::uuid, 'user', 'membership', 'm', 'success')`.execute(k));
-    // Company-scoped audit event (company_id set) — requires current_company on INSERT.
+    // Company-scoped audit event (company_id set) â€” requires current_company on INSERT.
     await asApp(acctCo(accountA, id), (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, company_id, actor_type, subject_type, subject_id, outcome) values (${ULID_2}, 'company.created', 1, ${accountA}::uuid, ${id}::uuid, 'user', 'company', ${id}, 'success')`.execute(k));
 
     // Under account scope only: the account event is visible; the company event is HIDDEN (no company match).
@@ -194,11 +194,11 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
 
   test('audit dual-scope: a company event cannot be inserted without a matching company context', async () => {
     const id = await createCompany(accountA);
-    // account matches but no current_company → (company_id is null OR company_id = current_company) is false.
+    // account matches but no current_company â†’ (company_id is null OR company_id = current_company) is false.
     await expect(asApp(acct(accountA), (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, company_id, actor_type, subject_type, subject_id, outcome) values (${ULID_3}, 'company.created', 1, ${accountA}::uuid, ${id}::uuid, 'user', 'company', ${id}, 'success')`.execute(k))).rejects.toThrow();
   });
 
-  // ── catalog: FORCE RLS, least-privilege grants, allowlist unchanged ──────────────────────────────────
+  // â”€â”€ catalog: FORCE RLS, least-privilege grants, allowlist unchanged â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('catalog: FORCE RLS on all three tables; least-privilege grants; allowlist still 3 SECURITY DEFINER', async () => {
     const rls = await sql<{ relname: string; relforcerowsecurity: boolean }>`select relname, relforcerowsecurity from pg_class where relname = any(array['companies','company_profiles','company_memberships']) and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows).toHaveLength(3);
@@ -217,17 +217,17 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
     expect(definers.rows[0]?.n).toBe(3);
   });
 
-  // ── Adversarial: cross-account/cross-company forgery, no-context, tamper/escalation ───────────────────
+  // â”€â”€ Adversarial: cross-account/cross-company forgery, no-context, tamper/escalation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test('a forged current_company pointing at ANOTHER account\'s company reveals/mutates nothing', async () => {
     const coA = await createCompany(accountA);
     const coB = await createCompany(accountB);
     await asApp(acctCo(accountA, coA), (k) => sql`insert into company_profiles (company_id, version, name) values (${coA}::uuid, 1, 'A-Co')`.execute(k));
     await asApp(acctCo(accountB, coB), (k) => sql`insert into company_profiles (company_id, version, name) values (${coB}::uuid, 1, 'B-Co')`.execute(k));
 
-    // Account A forging current_company = coB: companies SELECT is account-scoped → coB (account B) invisible.
+    // Account A forging current_company = coB: companies SELECT is account-scoped â†’ coB (account B) invisible.
     const coSeen = await asApp(acctCo(accountA, coB), (k) => k.selectFrom('companies').select('id').execute());
     expect(coSeen.map((r) => r.id)).toEqual([coA]);
-    // company_profiles dual-key + EXISTS(account) → coB's profile is invisible under account A even with the forged company GUC.
+    // company_profiles dual-key + EXISTS(account) â†’ coB's profile is invisible under account A even with the forged company GUC.
     const profSeen = await asApp(acctCo(accountA, coB), (k) => k.selectFrom('company_profiles').selectAll().execute());
     expect(profSeen).toHaveLength(0);
     // And inserting a profile for coB under account A is rejected (WITH CHECK: company must belong to current_account).
@@ -250,7 +250,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
   test('with NO company context, company detail tables reveal nothing (fail-closed)', async () => {
     const coA = await createCompany(accountA);
     await asApp(acctCo(accountA, coA), (k) => sql`insert into company_profiles (company_id, version, name) values (${coA}::uuid, 1, 'A')`.execute(k));
-    // Account scope only (no current_company): profiles/memberships are dual-keyed → invisible.
+    // Account scope only (no current_company): profiles/memberships are dual-keyed â†’ invisible.
     const prof = await asApp(acct(accountA), (k) => k.selectFrom('company_profiles').selectAll().execute());
     expect(prof).toHaveLength(0);
     // Empty/malformed company GUC denies with no cast error.
@@ -263,7 +263,7 @@ describe.skipIf(!hasTestDatabase)('company tenancy (real PostgreSQL, restricted 
   test('audit company-event forgery: cannot stamp a company_id other than the current company', async () => {
     const coA = await createCompany(accountA);
     const coB = await createCompany(accountB);
-    // Under (account A, company A): claim company_id = coB → dual-scope WITH CHECK (company_id = current_company) fails.
+    // Under (account A, company A): claim company_id = coB â†’ dual-scope WITH CHECK (company_id = current_company) fails.
     await expect(
       asApp(acctCo(accountA, coA), (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, company_id, actor_type, subject_type, subject_id, outcome) values (${ULID_1}, 'company.updated', 1, ${accountA}::uuid, ${coB}::uuid, 'user', 'company', ${coB}, 'success')`.execute(k)),
     ).rejects.toThrow();

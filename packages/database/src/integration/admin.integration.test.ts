@@ -1,8 +1,8 @@
-// ACBP-P1-013 / CDR-019 — real-PostgreSQL proof of the platform_admins allowlist under the RESTRICTED role.
-// Setup/seed runs on the superuser (owner) connection — exactly like the operational runbook's explicit
-// owner-connection setup — and every visibility/privilege assertion runs as `acbp_app` (NOSUPERUSER,
+// ACBP-P1-013 / CDR-019 â€” real-PostgreSQL proof of the platform_admins allowlist under the RESTRICTED role.
+// Setup/seed runs on the superuser (owner) connection â€” exactly like the operational runbook's explicit
+// owner-connection setup â€” and every visibility/privilege assertion runs as `acbp_app` (NOSUPERUSER,
 // NOBYPASSRLS, non-owner). Proves: SELF-CHECK-ONLY visibility (own active/revoked row visible; ANOTHER admin's
-// row invisible; an ordinary user sees no row; absent/forged actor GUC fails closed — no enumeration); the
+// row invisible; an ordinary user sees no row; absent/forged actor GUC fails closed â€” no enumeration); the
 // restricted role cannot INSERT/UPDATE/DELETE/TRUNCATE (no runtime admin management); status-shape CHECKs;
 // clean apply + down/up/reapply; no default admin row; FORCE RLS; exactly 3 SECURITY DEFINER; acbp_app
 // NOBYPASSRLS/non-owner. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning.
@@ -25,14 +25,14 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-admin-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, restricted role) — ACBP-P1-013/CDR-019', () => {
+describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, restricted role) â€” ACBP-P1-013/CDR-019', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let adminA = '';
   let adminRevoked = '';
   let ordinaryUser = '';
 
-  const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   async function asApp<T>(gucs: Record<string, string>, fn: (trx: DatabaseClient['kysely']) => Promise<T>): Promise<T> {
     return withTransaction(app, async (tx) => {
@@ -60,12 +60,12 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
     adminA = await seedUser('adm_a');
     adminRevoked = await seedUser('adm_r');
     ordinaryUser = await seedUser('adm_u');
-    // OPERATIONAL SETUP (owner connection — the runbook path; no application wrapper exists or is used).
+    // OPERATIONAL SETUP (owner connection â€” the runbook path; no application wrapper exists or is used).
     await sql`insert into platform_admins (user_id) values (${adminA}::uuid)`.execute(su.kysely);
     await sql`insert into platform_admins (user_id, status, revoked_at) values (${adminRevoked}::uuid, 'revoked', now())`.execute(su.kysely);
 
     // Deterministic down/up/reapply against this population: 0011 must drop and re-apply cleanly (the admin
-    // rows are recreated by the operational path afterwards — the migration itself never seeds anything).
+    // rows are recreated by the operational path afterwards â€” the migration itself never seeds anything).
     // Rolled back TO BELOW 0011 BY NAME so this keeps testing 0011 when later migrations land on top.
     const down = await createMigrator(su).migrateTo('0010_workspace_provisioning');
     expect(down.error).toBeUndefined();
@@ -94,7 +94,7 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
   });
 
   test('SELF-CHECK ONLY: an actor sees exactly their own row; another admin/ordinary/absent/forged actor sees nothing', async () => {
-    // The admin sees their own (active) row — and ONLY it (the revoked admin's row is invisible to them).
+    // The admin sees their own (active) row â€” and ONLY it (the revoked admin's row is invisible to them).
     const own = await asApp(actor(adminA), (k) => k.selectFrom('platform_admins').selectAll().execute());
     expect(own).toHaveLength(1);
     expect(own[0]).toMatchObject({ user_id: adminA, status: 'active' });
@@ -102,9 +102,9 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
     const revoked = await asApp(actor(adminRevoked), (k) => k.selectFrom('platform_admins').selectAll().execute());
     expect(revoked).toHaveLength(1);
     expect(revoked[0]?.status).toBe('revoked');
-    // An ordinary user sees NO row (they simply have none — and cannot see anyone else's).
+    // An ordinary user sees NO row (they simply have none â€” and cannot see anyone else's).
     expect(await asApp(actor(ordinaryUser), (k) => k.selectFrom('platform_admins').selectAll().execute())).toHaveLength(0);
-    // No actor GUC at all → fail closed (no enumeration possible).
+    // No actor GUC at all â†’ fail closed (no enumeration possible).
     expect(await asApp({}, (k) => k.selectFrom('platform_admins').selectAll().execute())).toHaveLength(0);
     // A forged non-uuid actor value denies safely with no cast error and no rows.
     expect(await asApp(actor('not-a-uuid'), (k) => k.selectFrom('platform_admins').selectAll().execute())).toHaveLength(0);
@@ -126,7 +126,7 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
     await expect(sql`insert into platform_admins (user_id, status) values (${ordinaryUser}::uuid, 'revoked')`.execute(su.kysely)).rejects.toThrow();
   });
 
-  test('a SOFT-DELETED user loses admin authority at the database layer (users.status join — not only the identity boundary)', async () => {
+  test('a SOFT-DELETED user loses admin authority at the database layer (users.status join â€” not only the identity boundary)', async () => {
     // The self-check the primitive runs: platform_admins joined to a LIVE users row. Soft-delete the admin...
     await sql`update users set status = 'deleted', deleted_at = now() where id = ${adminA}::uuid`.execute(su.kysely);
     try {
@@ -153,11 +153,11 @@ describe.skipIf(!hasTestDatabase)('platform_admins allowlist (real PostgreSQL, r
     expect(pols.rows.map((p) => `${p.policyname}:${p.cmd}`)).toEqual(['platform_admins_self_select:SELECT']);
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'platform_admins'`.execute(su.kysely);
     expect(grants.rows.map((g) => g.privilege_type)).toEqual(['SELECT']);
-    // NO other role (incl. PUBLIC) holds ANY grant on platform_admins — only acbp_app and the table owner.
+    // NO other role (incl. PUBLIC) holds ANY grant on platform_admins â€” only acbp_app and the table owner.
     const others = await sql<{ grantee: string }>`select distinct grantee from information_schema.role_table_grants where table_schema = 'public' and table_name = 'platform_admins' and grantee not in ('acbp_app', (select tableowner from pg_tables where schemaname='public' and tablename='platform_admins'))`.execute(su.kysely);
     expect(others.rows).toEqual([]);
-    // ALL public-namespace SECURITY DEFINER functions — no name filter (review L: an unprefixed 4th would
-    // have slipped past a proname LIKE 'acbp_%' count) — must be exactly the three 0006 bootstraps.
+    // ALL public-namespace SECURITY DEFINER functions â€” no name filter (review L: an unprefixed 4th would
+    // have slipped past a proname LIKE 'acbp_%' count) â€” must be exactly the three 0006 bootstraps.
     const definers = await sql<{ proname: string }>`select proname from pg_proc where prosecdef = true and pronamespace = 'public'::regnamespace order by proname`.execute(su.kysely);
     expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);

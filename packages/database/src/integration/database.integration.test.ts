@@ -1,4 +1,4 @@
-// ACBP-P0-018 — real-PostgreSQL integration suite (no mocks). Skips when ACBP_TEST_DATABASE_URL is
+// ACBP-P0-018 â€” real-PostgreSQL integration suite (no mocks). Skips when ACBP_TEST_DATABASE_URL is
 // unset. Covers: health, migrations (apply/re-run/history/failure-stops/concurrency), transaction
 // commit/rollback + connection release, RLS-ready tenant session settings, and the no-domain-tables
 // guarantee. Uses a disposable database and cleans up its own artifacts afterward.
@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // identity_webhook_receipts + users are the ACBP-P1-002 tables (migration 0002); dropped here so
   // this foundation suite starts from a clean slate regardless of applied domain migrations.
-  for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
+  for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -100,7 +100,7 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     const res = await migrator.migrateToLatest();
     expect(res.error).toBeDefined(); // the batch failed at 9002_bad
     // PostgreSQL has transactional DDL, so Kysely runs the batch in a transaction: a failure rolls
-    // back the ENTIRE batch — no partial apply (BACKLOG.csv: "Migration failure = no partial apply").
+    // back the ENTIRE batch â€” no partial apply (BACKLOG.csv: "Migration failure = no partial apply").
     const tables = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = tables.rows.map((r) => r.table_name);
     expect(names).not.toContain('_it_a'); // pre-failure migration rolled back with the batch
@@ -161,7 +161,7 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('company_profiles');
     expect(names).toContain('company_memberships');
     expect(names).toContain('activity_events');
-    // `usage_events` now exists (ACBP-P2-003, migration 0017 — the model-gateway usage ledger).
+    // `usage_events` now exists (ACBP-P2-003, migration 0017 â€” the model-gateway usage ledger).
     expect(names).toContain('usage_events');
     // `understanding_documents` + `understanding_items` now exist (ACBP-P2-008, migration 0019).
     expect(names).toContain('understanding_documents');
@@ -177,6 +177,8 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('strategy_options');
     // `strategy_recommendations` now exists (ACBP-P3-003, migration 0023).
     expect(names).toContain('strategy_recommendations');
+    // `strategy_selections` now exists (ACBP-P3-004, migration 0024).
+    expect(names).toContain('strategy_selections');
     // Task-run/approval/policy tables (later tickets) must NOT exist yet.
     for (const notYet of ['task_runs', 'approvals', 'policies']) {
       expect(names).not.toContain(notYet);

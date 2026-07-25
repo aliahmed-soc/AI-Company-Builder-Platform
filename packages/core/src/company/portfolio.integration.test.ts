@@ -1,4 +1,4 @@
-// ACBP-P1-011 / CDR-017 — real-PostgreSQL tests for the membership-filtered company portfolio + sequential
+// ACBP-P1-011 / CDR-017 â€” real-PostgreSQL tests for the membership-filtered company portfolio + sequential
 // name enrichment (Slices 2-3). Trust-critical: proves the portfolio contains ONLY active-membership companies
 // (account membership alone grants no row), that names are enriched per-candidate under FRESH CompanyScopes with
 // no cross-company bleed, that a membership going STALE between enumeration and enrichment DROPS the row (never a
@@ -22,7 +22,7 @@ async function seedUser(seed: DatabaseClient, email: string): Promise<string> {
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreSQL, restricted role) — ACBP-P1-011/CDR-017', () => {
+describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreSQL, restricted role) â€” ACBP-P1-011/CDR-017', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let ownerId: string;
@@ -30,7 +30,7 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
   let outsiderId: string;
   let accountId: string;
 
-  const ALL = ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+  const ALL = ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
   beforeAll(async () => {
     seed = createSeedClient();
@@ -51,26 +51,26 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
     }
   });
   beforeEach(async () => {
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'users'] as const) {
       await seed.kysely.deleteFrom(t).execute();
     }
     ownerId = await seedUser(seed, 'owner@example.com');
     viewerId = await seedUser(seed, 'viewer@example.com');
     outsiderId = await seedUser(seed, 'outsider@example.com');
     accountId = (await provisionPersonalAccount(app, ownerId)).accountId;
-    // An active ACCOUNT viewer membership — proves account membership alone yields NO portfolio rows.
+    // An active ACCOUNT viewer membership â€” proves account membership alone yields NO portfolio rows.
     await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: viewerId, role: 'viewer', status: 'active', accepted_at: sql<Date>`now()` }).execute();
   });
 
   /** Create a company (owner becomes its company owner) and pin created_at exactly for deterministic order.
-   *  provisioningRunner: null — portfolio semantics are under test, not provisioning; companies stay onboarding. */
+   *  provisioningRunner: null â€” portfolio semantics are under test, not provisioning; companies stay onboarding. */
   async function createCompanyAt(name: string, createdAtIso: string): Promise<string> {
     const r = await createCompany(app, { accountId, actingUserId: ownerId, creationMode: 'own_idea', name }, { provisioningRunner: null });
     if (r.status !== 'ok') throw new Error(`create failed: ${r.status}`);
     await seed.kysely.updateTable('companies').set({ created_at: sql<Date>`${createdAtIso}::timestamptz` }).where('id', '=', r.companyId).execute();
     return r.companyId;
   }
-  /** Build the raw enumeration candidate for a company (exact created_at_us) — the input to enrichment. */
+  /** Build the raw enumeration candidate for a company (exact created_at_us) â€” the input to enrichment. */
   async function candidateOf(companyId: string, role: string, status = 'onboarding'): Promise<PortfolioCandidateRow> {
     const row = await sql<{ us: string }>`select (extract(epoch from created_at) * 1000000)::bigint::text as us from companies where id = ${companyId}::uuid`.execute(seed.kysely);
     return { company_id: companyId, status, role, created_at_us: row.rows[0]!.us };
@@ -94,10 +94,10 @@ describe.skipIf(!hasTestDatabase)('company portfolio + enrichment (real PostgreS
 
   test('account membership alone yields NO rows; a non-account-member is forbidden', async () => {
     await createCompanyAt('Owned', '2026-01-01T00:00:00.000000Z');
-    // viewer is an active ACCOUNT member but has NO company membership → ok with an empty portfolio.
+    // viewer is an active ACCOUNT member but has NO company membership â†’ ok with an empty portfolio.
     const asViewer = await getCompanyPortfolio(app, { userId: viewerId, accountId });
     expect(asViewer).toEqual({ status: 'ok', page: { items: [], nextCursor: null } });
-    // outsider is not an account member at all → coarse forbidden (no enumeration).
+    // outsider is not an account member at all â†’ coarse forbidden (no enumeration).
     const asOutsider = await getCompanyPortfolio(app, { userId: outsiderId, accountId });
     expect(asOutsider.status).toBe('forbidden');
   });

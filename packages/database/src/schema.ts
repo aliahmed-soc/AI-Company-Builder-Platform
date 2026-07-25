@@ -582,6 +582,26 @@ export interface StrategyRecommendationsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Strategy selections (ACBP-P3-004; CDR-037). A company-owned, dual-keyed FORCE RLS, IMMUTABLE owner decision over a
+ * generation's options (SELECT+INSERT only). Append-only (latest-wins on read); every column `never` on update. `mode`
+ * is the closed {select, edit, combine, reject} set; `selected_option_id`/`chosen_fields`/`phase_scope`/`reasons` are
+ * mode-shaped by CHECK constraints. Records a selection only — NOT a decision record (P3-005), and unlocks no planning.
+ */
+export interface StrategySelectionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  generation_id: ColumnType<string, string, never>;
+  mode: ColumnType<string, string, never>;
+  selected_option_id: ColumnType<string | null, string | null, never>;
+  chosen_fields: ColumnType<Record<string, string> | null, Record<string, string> | null, never>;
+  phase_scope: ColumnType<string | null, string | null, never>;
+  reasons: ColumnType<string | null, string | null, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -610,6 +630,7 @@ export interface DatabaseSchema {
   strategy_generations: StrategyGenerationsTable;
   strategy_options: StrategyOptionsTable;
   strategy_recommendations: StrategyRecommendationsTable;
+  strategy_selections: StrategySelectionsTable;
 }
 
 // Repository-facing row shapes.
@@ -673,3 +694,5 @@ export type StrategyOptionRow = Selectable<StrategyOptionsTable>;
 export type NewStrategyOption = Insertable<StrategyOptionsTable>;
 export type StrategyRecommendationRow = Selectable<StrategyRecommendationsTable>;
 export type NewStrategyRecommendation = Insertable<StrategyRecommendationsTable>;
+export type StrategySelectionRow = Selectable<StrategySelectionsTable>;
+export type NewStrategySelection = Insertable<StrategySelectionsTable>;

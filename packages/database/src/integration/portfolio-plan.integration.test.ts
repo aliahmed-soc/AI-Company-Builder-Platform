@@ -1,13 +1,13 @@
-// ACBP-P1-011 / CDR-017 §10 — real-PostgreSQL QUERY-PLAN EVIDENCE for the portfolio enumeration (Slice 6).
+// ACBP-P1-011 / CDR-017 Â§10 â€” real-PostgreSQL QUERY-PLAN EVIDENCE for the portfolio enumeration (Slice 6).
 //
-// Seeds a REALISTIC population (10 accounts, ~2,800 companies, ~2,300 memberships — active AND revoked, plus a
+// Seeds a REALISTIC population (10 accounts, ~2,800 companies, ~2,300 memberships â€” active AND revoked, plus a
 // high-membership noise actor in the same account and an exact-microsecond created_at tie), ANALYZEs, then runs
-// EXPLAIN (FORMAT JSON) on the EXACT PRODUCTION query (`PortfolioRepository.buildListQuery` — the very builder
-// `listActiveMembershipCompanies` executes, so this evidence cannot drift from production) — as the restricted
-// `acbp_app` role under the account+actor GUCs, so the RLS policy predicates are part of the planned query — for
+// EXPLAIN (FORMAT JSON) on the EXACT PRODUCTION query (`PortfolioRepository.buildListQuery` â€” the very builder
+// `listActiveMembershipCompanies` executes, so this evidence cannot drift from production) â€” as the restricted
+// `acbp_app` role under the account+actor GUCs, so the RLS policy predicates are part of the planned query â€” for
 // both the first page and the keyset (`after`) page.
 //
-// It asserts SEMANTIC plan properties (tolerant of normal planner variation — node types/index names, never exact
+// It asserts SEMANTIC plan properties (tolerant of normal planner variation â€” node types/index names, never exact
 // plan text):
 //   - access begins from the actor's memberships via the partial index `company_memberships_member_idx`;
 //   - the `companies` join uses an indexed key (no unbounded account-wide sequential scan of either relation);
@@ -51,7 +51,7 @@ function flattenPlan(node: PlanNode): PlanNode[] {
 
 const TIE_TS = '2026-01-01T10:00:00.123456Z';
 
-describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real PostgreSQL, restricted role) — ACBP-P1-011/CDR-017 §10', () => {
+describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real PostgreSQL, restricted role) â€” ACBP-P1-011/CDR-017 Â§10', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let uMain = '';
@@ -78,13 +78,13 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
   }
 
   function assertPlanShape(nodes: PlanNode[], text: string, label: string): void {
-    // Only the two expected relations are touched — no broad profile (or any other) query.
+    // Only the two expected relations are touched â€” no broad profile (or any other) query.
     const relations = new Set(nodes.map((n) => n['Relation Name']).filter((r): r is string => typeof r === 'string'));
     expect([...relations].sort()).toEqual(['companies', 'company_memberships']);
     expect(text).not.toContain('company_profiles');
     // Access begins from the actor's active memberships via the partial index (never a memberships seq scan).
     // Pinning the INDEX NAME is a deliberate tripwire: if a different/composite membership index is ever added
-    // and the planner prefers it, this fails so the query-plan evidence gets RE-DERIVED — not a plain flake.
+    // and the planner prefers it, this fails so the query-plan evidence gets RE-DERIVED â€” not a plain flake.
     expect(nodes.some((n) => n['Index Name'] === 'company_memberships_member_idx')).toBe(true);
     // The companies join uses an indexed access path. Tolerant of legitimate planner variation: a plain
     // Index/Index Only Scan carries the relation name on the node itself, while a bitmap plan splits into a
@@ -97,11 +97,11 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
     ).toBe(true);
     for (const n of nodes) {
       if (n['Node Type'] === 'Seq Scan') {
-        throw new Error(`${label}: unexpected Seq Scan on ${String(n['Relation Name'])} — unbounded scan in the portfolio plan`);
+        throw new Error(`${label}: unexpected Seq Scan on ${String(n['Relation Name'])} â€” unbounded scan in the portfolio plan`);
       }
     }
-    // Bounded + deterministically ordered: a Limit node over a Sort on (created_at DESC, id DESC) — the exact
-    // CDR-017 §8 ordering contract, direction included.
+    // Bounded + deterministically ordered: a Limit node over a Sort on (created_at DESC, id DESC) â€” the exact
+    // CDR-017 Â§8 ordering contract, direction included.
     expect(nodes.some((n) => n['Node Type'] === 'Limit')).toBe(true);
     const sortKeys = nodes
       .filter((n) => String(n['Node Type']).includes('Sort'))
@@ -116,7 +116,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
@@ -124,7 +124,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
     await sql`alter role acbp_app login password ${sql.lit(APP_TEST_PASSWORD)}`.execute(su.kysely);
     app = appRoleClient();
 
-    // ── Realistic population (superuser bulk seed) ────────────────────────────────────────────────────
+    // â”€â”€ Realistic population (superuser bulk seed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const mkUser = async (tag: string): Promise<string> => {
       const u = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_plan', ${tag}, now()) returning id`.execute(su.kysely);
       return u.rows[0]!.id;
@@ -187,7 +187,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
       } catch {
         /* best effort */
       }
-      for (const t of ['usage_events', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(su);
     }
   });
@@ -212,7 +212,7 @@ describe.skipIf(!hasTestDatabase)('portfolio enumeration query plan (real Postgr
     // Full read: exactly uMain's 12 ACTIVE memberships (revoked + peer + cross-account rows contribute nothing).
     const all = await asApp(ctx(), (k) => new PortfolioRepository(k).listActiveMembershipCompanies(uMain, 50));
     expect(all).toHaveLength(12);
-    // Strictly descending (created_at_us, company_id) — deterministic total order.
+    // Strictly descending (created_at_us, company_id) â€” deterministic total order.
     for (let i = 1; i < all.length; i++) {
       const prev = all[i - 1]!;
       const cur = all[i]!;
