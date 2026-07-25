@@ -110,6 +110,10 @@ export const AUTHZ_ACTIONS = [
   // Owner strategy decision (ACBP-P3-004; CDR-037; STRAT-003/005) — the OWNER-ONLY select/edit/combine/reject +
   // phase-limited-approval gate (the understanding:confirm owner-only precedent). request-another reuses strategy:generate.
   'strategy:select',
+  // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006) — the OWNER-ONLY write of the durable, audit-grade
+  // record of a decision (J-08 "Actor: owner"). Reads reuse strategy:read (the decision is surfaced on the strategy
+  // read); a dedicated Decisions list/get surface is deferred with the strategy HTTP surface.
+  'decision:record',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -205,6 +209,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:recommend': ['owner', 'viewer'],
   // The owner-only strategy decision gate (STRAT-003 "owner-only selection"); the understanding:confirm precedent.
   'strategy:select': ['owner'],
+  // The owner-only immutable decision-record write (STRAT-006; J-08 "Actor: owner") — the strategy:select precedent.
+  'decision:record': ['owner'],
 };
 
 /**

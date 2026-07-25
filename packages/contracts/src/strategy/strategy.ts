@@ -382,6 +382,37 @@ export interface StrategySelectionDTO {
   readonly createdAt: string;
 }
 
+/** The maximum length of an owner-supplied decision rationale (CDR-038 §6-G2). */
+export const RATIONALE_MAX_DECISION = 4_000;
+
+/**
+ * The bounded, owner-supplied rationale on a decision record (ACBP-P3-005; STRAT-006 "…and rationale"). OPTIONAL: a
+ * missing rationale must never make a decision silently unrecorded, so this normalizes to `null` rather than failing.
+ * Returns `undefined` ONLY when the supplied value is present but unusable (non-string or over-long) — a deny-by-default
+ * signal the caller surfaces as `invalid`.
+ */
+export function normalizeDecisionRationale(v: unknown): string | null | undefined {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string' || v.length > RATIONALE_MAX_DECISION) return undefined;
+  const trimmed = v.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * The redacted, client-facing decision-record view (ACBP-P3-005; STRAT-006). Immutable and timestamped; links the
+ * understanding version + the options considered (via the generation) + the selection it hardens. Carries no accountId,
+ * actor id, or internal state.
+ */
+export interface DecisionDTO {
+  readonly decisionId: string;
+  readonly generationId: string;
+  readonly selectionId: string;
+  readonly understandingVersion: number;
+  readonly optionsConsideredCount: number;
+  readonly rationale: string | null;
+  readonly createdAt: string;
+}
+
 /** The redacted, client-facing option view (approved fields only; the validated 16-field object + its ordinal). */
 export interface StrategyOptionDTO {
   readonly optionId: string;
@@ -404,5 +435,7 @@ export interface StrategyGenerationDTO {
   readonly recommendation: StrategyRecommendationDTO | null;
   /** The owner's latest decision over these options (select/edit/combine/reject), or null when none yet (P3-004). */
   readonly selection: StrategySelectionDTO | null;
+  /** The latest immutable decision RECORD hardening that selection, or null when none has been recorded (P3-005). */
+  readonly decision: DecisionDTO | null;
   readonly createdAt: string;
 }

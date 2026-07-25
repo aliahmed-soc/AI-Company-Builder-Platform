@@ -34,6 +34,7 @@ import {
   type SimilarityCheckResult,
   type StrategyRecommendationDTO,
   type StrategySelectionDTO,
+  type DecisionDTO,
 } from '@acbp/contracts';
 import { toRecommendationDTO } from './strategy-recommendation.js';
 import { toSelectionDTO } from './strategy-selection.js';
@@ -244,7 +245,7 @@ function honestFewerReason(modelReason: string | null, distinctCount: number, du
   return `The model produced only ${distinctCount} genuinely distinct ${optWord} for this understanding.`.slice(0, FEWER_REASON_MAX);
 }
 
-function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[], recommendation: StrategyRecommendationDTO | null = null, selection: StrategySelectionDTO | null = null): StrategyGenerationDTO {
+function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[], recommendation: StrategyRecommendationDTO | null = null, selection: StrategySelectionDTO | null = null, decision: DecisionDTO | null = null): StrategyGenerationDTO {
   return {
     generationId: row.id,
     companyId: row.company_id,
@@ -258,6 +259,8 @@ function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyO
     recommendation,
     // The owner's decision is surfaced by the P3-004 read path; a bare generation DTO carries none.
     selection,
+    // The immutable decision RECORD is surfaced by the P3-005 read path; a bare generation DTO carries none.
+    decision,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }

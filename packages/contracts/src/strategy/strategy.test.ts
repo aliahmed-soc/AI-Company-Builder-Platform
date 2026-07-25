@@ -23,6 +23,8 @@ import {
   validateStrategyDecision,
   isStrategySelectionMode,
   isStrategyPhaseScope,
+  normalizeDecisionRationale,
+  RATIONALE_MAX_DECISION,
   type StrategyOptionField,
 } from './strategy.js';
 
@@ -276,6 +278,25 @@ describe('owner decision — validateStrategyDecision (ACBP-P3-004/CDR-037/STRAT
     expect(isStrategySelectionMode('select')).toBe(true);
     expect(isStrategyPhaseScope('whole_plan')).toBe(true);
     expect(isStrategyPhaseScope('nope')).toBe(false);
+  });
+});
+
+describe('decision record — normalizeDecisionRationale (ACBP-P3-005/CDR-038/STRAT-006)', () => {
+  test('absent or blank rationale normalizes to null — a decision is never blocked for lacking one', () => {
+    expect(normalizeDecisionRationale(undefined)).toBeNull();
+    expect(normalizeDecisionRationale(null)).toBeNull();
+    expect(normalizeDecisionRationale('   ')).toBeNull();
+  });
+
+  test('a usable rationale is trimmed and preserved', () => {
+    expect(normalizeDecisionRationale('  cheapest path to a first customer  ')).toBe('cheapest path to a first customer');
+    expect(normalizeDecisionRationale('x'.repeat(RATIONALE_MAX_DECISION))).toHaveLength(RATIONALE_MAX_DECISION);
+  });
+
+  test('a present-but-unusable rationale is undefined (deny-by-default: the caller surfaces `invalid`)', () => {
+    expect(normalizeDecisionRationale('x'.repeat(RATIONALE_MAX_DECISION + 1))).toBeUndefined(); // over-long
+    expect(normalizeDecisionRationale(42)).toBeUndefined(); // non-string
+    expect(normalizeDecisionRationale({ text: 'nope' })).toBeUndefined();
   });
 });
 

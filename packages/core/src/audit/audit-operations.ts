@@ -37,6 +37,7 @@ import {
   taskCreated,
   strategyGenerated,
   strategySelected,
+  decisionRecorded,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -80,6 +81,8 @@ export const AUDITED_OPERATIONS = {
   'strategy.generate': 'strategy.generated',
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4) — select/edit/combine/reject.
   'strategy.select': 'strategy.selected',
+  // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006) — the durable, audit-grade record of a decision.
+  'decision.record': 'decision.recorded',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -96,6 +99,7 @@ export type UnderstandingAuditedOperation = 'understanding.generate' | 'understa
 export type ContextAuditedOperation = 'context.flag-conflict';
 export type TaskAuditedOperation = 'task.plan';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
+export type DecisionAuditedOperation = 'decision.record';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -106,10 +110,11 @@ export const UNDERSTANDING_AUDITED_OPERATION_IDS: readonly UnderstandingAuditedO
 export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] = ['context.flag-conflict'];
 export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan'];
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
+export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -184,6 +189,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => strategyGenerated({ generationId: subjectId, understandingVersion: 1, optionCount: 3, similarityCheckResult: 'pending' });
     case 'strategy.select':
       return (subjectId) => strategySelected({ selectionId: subjectId, mode: 'select', phaseScope: null });
+    case 'decision.record':
+      return (subjectId) => decisionRecorded({ decisionId: subjectId, understandingVersion: 1, optionsConsideredCount: 3, mode: 'select' });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);
