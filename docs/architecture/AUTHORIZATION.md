@@ -172,6 +172,12 @@ trusted core/use-case seam:
   use-case layer on the owner-confirmed understanding version (UNDER-003 — strategy is blocked pre-confirm); the
   owner-only SELECTION gate (STRAT-003) is P3-004's separate action. DISTINCT closed actions, deny-by-default; not
   granted to an account owner without company membership nor via forged provider claims. See `CDR-034`.
+- **P3-003** (comparison + AI recommendation) adds `strategy:recommend`, `owner|viewer`. It triggers the OPTIONAL,
+  ADVISORY recommendation over a generation's options (a metered model call). It is advisory only — it NEVER
+  auto-selects (STRAT-004) and unlocks nothing; the owner-only SELECTION gate is STRAT-003/P3-004's separate action.
+  Consistent with the generate-class grants (`understanding:generate`, `strategy:generate`); the "comparison" read
+  reuses `strategy:read`. DISTINCT closed action, deny-by-default; not granted to an account owner without company
+  membership nor via forged provider claims. See `CDR-036`.
 
 ## What P1-007 does NOT do (later tickets)
 

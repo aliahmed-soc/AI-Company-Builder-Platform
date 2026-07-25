@@ -5,7 +5,7 @@
 // generation + its options + the `strategy.generated` audit event in ONE transaction. Kysely parameterized queries
 // only; no raw SQL interpolation. Both tables are append-only (SELECT + INSERT) — there is no update/delete path.
 import type { Kysely } from 'kysely';
-import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow } from './schema.js';
+import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow, StrategyRecommendationRow } from './schema.js';
 
 export type StrategyExecutor = Kysely<DatabaseSchema>;
 
@@ -33,6 +33,17 @@ export interface NewStrategyOptionInput {
 
 export interface ListStrategyGenerationsOptions {
   readonly limit: number;
+}
+
+/** The fields a caller supplies to record an advisory recommendation (identity/created_at are server-set). */
+export interface NewStrategyRecommendationInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly generationId: string;
+  readonly recommendedOptionId: string;
+  readonly rationale: string;
+  readonly sensitivities: string;
+  readonly createdByUserId: string;
 }
 
 export class StrategyRepository {
@@ -88,5 +99,24 @@ export class StrategyRepository {
   /** The options of a generation (RLS-confined), in ordinal order. */
   listOptions(generationId: string): Promise<StrategyOptionRow[]> {
     return this.#db.selectFrom('strategy_options').selectAll().where('generation_id', '=', generationId).orderBy('ordinal', 'asc').execute();
+  }
+
+  /** A single option by id (RLS-confined; undefined when absent/invisible). */
+  findOption(id: string): Promise<StrategyOptionRow | undefined> {
+    return this.#db.selectFrom('strategy_options').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /** Insert one immutable advisory recommendation row (append-only). */
+  insertRecommendation(input: NewStrategyRecommendationInput): Promise<StrategyRecommendationRow> {
+    return this.#db
+      .insertInto('strategy_recommendations')
+      .values({ account_id: input.accountId, company_id: input.companyId, generation_id: input.generationId, recommended_option_id: input.recommendedOptionId, rationale: input.rationale, sensitivities: input.sensitivities, created_by_user_id: input.createdByUserId })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /** The LATEST advisory recommendation for a generation (RLS-confined), or undefined when none exists. */
+  latestRecommendation(generationId: string): Promise<StrategyRecommendationRow | undefined> {
+    return this.#db.selectFrom('strategy_recommendations').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
   }
 }

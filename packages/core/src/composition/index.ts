@@ -9,4 +9,4 @@ export {
 } from './model-gateway.js';
 export { interviewOutputValidator } from './interview-gateway.js';
 export { understandingOutputValidator } from './understanding-gateway.js';
-export { strategyOutputValidator } from './strategy-gateway.js';
+export { strategyOutputValidator, strategyRecommendationValidator } from './strategy-gateway.js';

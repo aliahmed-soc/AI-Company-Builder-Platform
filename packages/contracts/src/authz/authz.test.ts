@@ -56,6 +56,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Strategy option generation (ACBP-P3-001; CDR-034): generate/request-another + read = any active company member.
   'strategy:generate': ['owner', 'viewer'],
   'strategy:read': ['owner', 'viewer'],
+  // Advisory AI recommendation (ACBP-P3-003; CDR-036): owner|viewer (advisory; owner-only selection is P3-004).
+  'strategy:recommend': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

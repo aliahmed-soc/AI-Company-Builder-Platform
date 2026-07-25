@@ -14,6 +14,10 @@ import {
   narrowStrategyOutput,
   DISTINCTNESS_AXES,
   dedupeByDistinctness,
+  parseStrategyRecommendation,
+  resolveRecommendation,
+  narrowStrategyRecommendation,
+  RATIONALE_MAX,
   type StrategyOptionField,
 } from './strategy.js';
 
@@ -220,5 +224,63 @@ describe('distinctness check — dedupeByDistinctness (ACBP-P3-002/CDR-035/STRAT
     expect(r.result).toBe('distinct');
     expect(r.distinct).toHaveLength(3);
     expect(r.duplicatesRejected).toBe(0);
+  });
+});
+
+describe('AI recommendation — parse + resolve (ACBP-P3-003/CDR-036/STRAT-004)', () => {
+  const rec = (over: Record<string, unknown> = {}) => JSON.stringify({ recommended_ordinal: 1, rationale: 'Best fit for the target customer.', sensitivities: 'Changes if the budget assumption is wrong.', ...over });
+
+  test('parseStrategyRecommendation shape-validates and passes an abstain through', () => {
+    const ok = parseStrategyRecommendation(rec());
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.value).toEqual({ recommendedOrdinal: 1, rationale: 'Best fit for the target customer.', sensitivities: 'Changes if the budget assumption is wrong.' });
+    // Honest abstain (recommended_ordinal null) is a VALID shape.
+    const abstain = parseStrategyRecommendation(JSON.stringify({ recommended_ordinal: null, rationale: null, sensitivities: null }));
+    expect(abstain.ok && abstain.value.recommendedOrdinal).toBeNull();
+  });
+
+  test('parseStrategyRecommendation rejects malformed shapes (non-JSON, non-object, wrong-typed fields)', () => {
+    expect(parseStrategyRecommendation('not json').ok).toBe(false);
+    expect(parseStrategyRecommendation('42').ok).toBe(false);
+    expect(parseStrategyRecommendation(JSON.stringify({ recommended_ordinal: '1' })).ok).toBe(false); // string ordinal
+    expect(parseStrategyRecommendation(JSON.stringify({ recommended_ordinal: 1.5 })).ok).toBe(false); // non-integer
+    expect(parseStrategyRecommendation(JSON.stringify({ recommended_ordinal: 0, rationale: 42 })).ok).toBe(false); // number rationale
+  });
+
+  test('resolveRecommendation SHOWS a recommendation only when option-in-range + non-blank rationale + sensitivities', () => {
+    const parsed = parseStrategyRecommendation(rec({ recommended_ordinal: 2 }));
+    if (!parsed.ok) throw new Error('unreachable');
+    // Valid: ordinal 2 within [0,3), both fields non-blank.
+    expect(resolveRecommendation(parsed.value, 3)).toEqual({ recommendedOrdinal: 2, rationale: 'Best fit for the target customer.', sensitivities: 'Changes if the budget assumption is wrong.' });
+    // Out of range → abstain (null).
+    expect(resolveRecommendation(parsed.value, 2)).toBeNull();
+  });
+
+  test('resolveRecommendation DENIES by default: abstain, out-of-range, blank rationale, blank sensitivities, over-long', () => {
+    const mk = (o: Record<string, unknown>) => { const p = parseStrategyRecommendation(JSON.stringify(o)); if (!p.ok) throw new Error('bad'); return p.value; };
+    expect(resolveRecommendation(mk({ recommended_ordinal: null, rationale: 'x', sensitivities: 'y' }), 3)).toBeNull(); // abstain
+    expect(resolveRecommendation(mk({ recommended_ordinal: 5, rationale: 'x', sensitivities: 'y' }), 3)).toBeNull(); // out of range
+    expect(resolveRecommendation(mk({ recommended_ordinal: -1, rationale: 'x', sensitivities: 'y' }), 3)).toBeNull(); // negative
+    expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: '   ', sensitivities: 'y' }), 3)).toBeNull(); // blank rationale
+    expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: 'x', sensitivities: '' }), 3)).toBeNull(); // blank sensitivities
+    expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: 'z'.repeat(RATIONALE_MAX + 1), sensitivities: 'y' }), 3)).toBeNull(); // over-long
+  });
+
+  test('narrowStrategyRecommendation re-narrows the gateway-validated (camelCase) value without re-parsing', () => {
+    const parsed = parseStrategyRecommendation(rec());
+    if (!parsed.ok) throw new Error('unreachable');
+    // A round-trip of the validated value (camelCase) narrows back cleanly — the core consumes THIS, not raw text.
+    expect(narrowStrategyRecommendation(parsed.value)).toEqual(parsed.value);
+    expect(narrowStrategyRecommendation({ recommendedOrdinal: null, rationale: null, sensitivities: null })).toEqual({ recommendedOrdinal: null, rationale: null, sensitivities: null });
+    // A corrupted seam value is rejected.
+    expect(narrowStrategyRecommendation({ recommendedOrdinal: 'x' })).toBeUndefined();
+    expect(narrowStrategyRecommendation(null)).toBeUndefined();
+  });
+
+  test('resolveRecommendation trims the surfaced rationale/sensitivities', () => {
+    const p = parseStrategyRecommendation(rec({ recommended_ordinal: 0, rationale: '  padded why  ', sensitivities: '  padded what  ' }));
+    if (!p.ok) throw new Error('bad');
+    const r = resolveRecommendation(p.value, 1);
+    expect(r).toEqual({ recommendedOrdinal: 0, rationale: 'padded why', sensitivities: 'padded what' });
   });
 });
