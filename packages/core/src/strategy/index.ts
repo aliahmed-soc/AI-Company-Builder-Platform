@@ -15,3 +15,10 @@ export type {
   StrategyRecommendationOptions,
   RecommendStrategyResult,
 } from './strategy-recommendation.js';
+export { recordStrategyDecision, toSelectionDTO } from './strategy-selection.js';
+export type {
+  RecordStrategyDecisionParams,
+  RecordStrategyDecisionDeps,
+  RecordStrategyDecisionOptions,
+  RecordStrategyDecisionResult,
+} from './strategy-selection.js';
