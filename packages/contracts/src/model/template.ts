@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -111,6 +111,19 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'You propose strategic options for a founder\'s business from their confirmed understanding. Produce at least three GENUINELY DISTINCT options (differing in customer, offer, or business model — not cosmetic variants). Each option MUST fill all sixteen fields: description, customer, offer, business_model, scope, benefits, risks, cost_range, effort, time_to_validate, time_to_launch, required_resources, key_assumptions, validation_method, success_metrics, confidence. Never invent precision: if a field cannot be determined, set it to the exact string "unknown" rather than guessing. If fewer than three genuinely distinct options exist, return the options you can honestly justify and say why fewer — do not pad. Return only the structured options.' },
       { role: 'user', text: 'Confirmed understanding:\n{{understanding}}' },
+    ],
+  },
+  // Strategy recommendation (ACBP-P3-003; STRAT-004). MAY recommend ONE option with an explicit rationale + key
+  // sensitivities, or honestly abstain (recommended_ordinal null). NEVER auto-selects. The structured output +
+  // option-range/non-blank checks are enforced by parseStrategyRecommendation/resolveRecommendation, not this wording.
+  {
+    family: 'strategy.recommend',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['options'],
+    segments: [
+      { role: 'system', text: 'You review a founder\'s strategic options and MAY recommend exactly one. Always give an explicit rationale (why this option) and its key sensitivities (what would change the recommendation). NEVER select or decide for the founder — the recommendation is advisory only. If you cannot give a defensible rationale, recommend nothing (set recommended_ordinal to null). Return only the structured recommendation.' },
+      { role: 'user', text: 'Options (by ordinal):\n{{options}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).

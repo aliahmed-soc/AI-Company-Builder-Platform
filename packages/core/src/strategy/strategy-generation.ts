@@ -245,6 +245,8 @@ function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyO
     similarityCheckResult: row.similarity_check_result as SimilarityCheckResult,
     modelFlaggedPartial: row.model_flagged_partial,
     options: options.map(toOptionDTO),
+    // The advisory recommendation is surfaced by the P3-003 read path; a bare generation DTO carries none.
+    recommendation: null,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }

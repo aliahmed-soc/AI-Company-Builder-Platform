@@ -59,6 +59,12 @@ export const FEWER_REASON_MAX = 1_000;
 /** The gateway output-schema ref for strategy option generation (the composition dispatches validateOutput on it). */
 export const STRATEGY_OPTIONS_SCHEMA = 'strategy.options.output@1';
 
+/** Bounds for the optional AI recommendation (ACBP-P3-003; CDR-036; STRAT-004). */
+export const RATIONALE_MAX = 4_000;
+export const SENSITIVITIES_MAX = 4_000;
+/** The gateway output-schema ref for the strategy recommendation. */
+export const STRATEGY_RECOMMENDATION_SCHEMA = 'strategy.recommend.output@1';
+
 /** The validated output of a strategy generation: the flat 16-field options + honest status/partial/reason. */
 export interface StrategyGenerationOutput {
   readonly options: readonly StrategyOptionFields[];
@@ -199,6 +205,76 @@ export function dedupeByDistinctness(options: readonly StrategyOptionFields[]): 
   return { distinct, result, duplicatesRejected: options.length - distinct.length };
 }
 
+// ── Optional AI recommendation (ACBP-P3-003; CDR-036; STRAT-004) ─────────────────────────────────────────
+/**
+ * The SHAPE-validated recommendation output (the gateway validator's result — no option-count context yet). A model
+ * that cannot give a defensible recommendation returns `recommendedOrdinal: null` (honest abstain, STRAT-004).
+ */
+export interface StrategyRecommendationOutput {
+  readonly recommendedOrdinal: number | null;
+  readonly rationale: string | null;
+  readonly sensitivities: string | null;
+}
+
+export type StrategyRecommendationParse = { readonly ok: true; readonly value: StrategyRecommendationOutput } | { readonly ok: false };
+
+/**
+ * SHAPE-parse the model's recommendation output. Accepts `{recommended_ordinal: int|null, rationale: string|null,
+ * sensitivities: string|null}`. Deny-by-default: a wrong-typed field rejects the whole output (`ok:false` → the gateway
+ * marks it `invalid_output`). A well-formed abstain (`recommended_ordinal: null`) is VALID. The option-range + non-blank
+ * checks that decide whether a recommendation is actually SHOWN are applied by `resolveRecommendation` (needs the option
+ * count), mirroring the parseStrategyOptions / narrowStrategyOutput split.
+ */
+export function parseStrategyRecommendation(raw: string): StrategyRecommendationParse {
+  let root: unknown;
+  try {
+    root = JSON.parse(raw);
+  } catch {
+    return FAIL;
+  }
+  if (typeof root !== 'object' || root === null) return FAIL;
+  const r = root as { recommended_ordinal?: unknown; rationale?: unknown; sensitivities?: unknown };
+  const ord = r.recommended_ordinal;
+  const recommendedOrdinal = ord === null || ord === undefined ? null : ord;
+  if (recommendedOrdinal !== null && (typeof recommendedOrdinal !== 'number' || !Number.isInteger(recommendedOrdinal))) return FAIL;
+  const rationale = r.rationale === null || r.rationale === undefined ? null : r.rationale;
+  if (rationale !== null && typeof rationale !== 'string') return FAIL;
+  const sensitivities = r.sensitivities === null || r.sensitivities === undefined ? null : r.sensitivities;
+  if (sensitivities !== null && typeof sensitivities !== 'string') return FAIL;
+  return { ok: true, value: { recommendedOrdinal, rationale, sensitivities } };
+}
+
+/** A resolved, SHOWABLE recommendation — one in-range option + a non-blank bounded rationale + sensitivities. */
+export interface ResolvedRecommendation {
+  readonly recommendedOrdinal: number;
+  readonly rationale: string;
+  readonly sensitivities: string;
+}
+
+/**
+ * Resolve a shape-validated output to a SHOWABLE recommendation, or `null` (STRAT-004 "absent a defensible rationale, no
+ * recommendation is shown" — DENY-BY-DEFAULT). A recommendation is shown ONLY when the model named exactly one option
+ * that EXISTS in the generation's distinct set (ordinal in `[0, optionCount)`), AND supplied a non-blank bounded
+ * rationale, AND a non-blank bounded sensitivities. Any miss (or an explicit abstain) → `null`. Pure; never fabricates.
+ */
+export function resolveRecommendation(output: StrategyRecommendationOutput, optionCount: number): ResolvedRecommendation | null {
+  const { recommendedOrdinal, rationale, sensitivities } = output;
+  if (recommendedOrdinal === null || !Number.isInteger(recommendedOrdinal) || recommendedOrdinal < 0 || recommendedOrdinal >= optionCount) return null;
+  if (typeof rationale !== 'string' || rationale.trim().length === 0 || rationale.length > RATIONALE_MAX) return null;
+  if (typeof sensitivities !== 'string' || sensitivities.trim().length === 0 || sensitivities.length > SENSITIVITIES_MAX) return null;
+  return { recommendedOrdinal, rationale: rationale.trim(), sensitivities: sensitivities.trim() };
+}
+
+/** The redacted, client-facing recommendation view (approved fields only; advisory — references one option). */
+export interface StrategyRecommendationDTO {
+  readonly recommendationId: string;
+  readonly recommendedOptionId: string;
+  readonly recommendedOrdinal: number;
+  readonly rationale: string;
+  readonly sensitivities: string;
+  readonly createdAt: string;
+}
+
 /** The redacted, client-facing option view (approved fields only; the validated 16-field object + its ordinal). */
 export interface StrategyOptionDTO {
   readonly optionId: string;
@@ -217,5 +293,7 @@ export interface StrategyGenerationDTO {
   readonly similarityCheckResult: SimilarityCheckResult;
   readonly modelFlaggedPartial: boolean;
   readonly options: readonly StrategyOptionDTO[];
+  /** The latest advisory AI recommendation over these options, or null when none has been made / it abstained (P3-003). */
+  readonly recommendation: StrategyRecommendationDTO | null;
   readonly createdAt: string;
 }
