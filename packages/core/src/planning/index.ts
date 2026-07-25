@@ -8,3 +8,5 @@ export type {
   RoadmapReadParams,
   LatestRoadmapResult,
 } from './roadmap-generation.js';
+export { editRoadmap } from './roadmap-edit.js';
+export type { EditRoadmapParams, RoadmapEditDeps, RoadmapEditOptions, EditRoadmapResult } from './roadmap-edit.js';
