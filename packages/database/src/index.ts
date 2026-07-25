@@ -64,6 +64,8 @@ export { UnderstandingRepository } from './understanding-repository.js';
 export type { UnderstandingExecutor, NewUnderstandingDocumentInput, NewUnderstandingItemInput, ListUnderstandingOptions } from './understanding-repository.js';
 export { UnderstandingReviewRepository } from './understanding-review-repository.js';
 export type { UnderstandingReviewExecutor, NewUnderstandingItemReviewInput, NewUnderstandingConfirmationEventInput } from './understanding-review-repository.js';
+export { TaskRepository } from './task-repository.js';
+export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, ListTasksOptions } from './task-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -150,6 +152,13 @@ export type {
   UnderstandingItemsTable,
   UnderstandingItemRow,
   NewUnderstandingItem,
+  TasksTable,
+  TaskRow,
+  NewTask,
+  TaskUpdate,
+  TaskDependenciesTable,
+  TaskDependencyRow,
+  NewTaskDependency,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

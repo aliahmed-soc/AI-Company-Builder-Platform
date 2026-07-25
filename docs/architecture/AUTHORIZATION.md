@@ -159,6 +159,13 @@ trusted core/use-case seam:
 - **P2-007** (context assembly) adds **NO** new authz action: `assembleContext` reads the company's typed memory under
   the existing `memory:read` grant (owner+viewer). The MEM-004 conflict flag + `context.conflict_flagged` audit are
   side effects of that read; there is no separate context permission. See `CDR-032`.
+- **P4-002** (task model + state machine) adds `task:create` and `task:read`, both `owner|viewer` company members. A
+  task is *proposed* work on the board, not yet executing, so both roles may create/plan/read it; `task:create` also
+  covers `planTask` (the `draft → planned` board-appearance transition) and `addTaskDependency` (`task:depend` folds
+  into create — CDR-033 §4). The RUN trigger (`planned → queued`, which reserves credit and starts execution) is the
+  owner/operator gate and belongs to a later ticket (TASK-004/P6), NOT to either action here. DISTINCT closed actions,
+  deny-by-default; not granted to an account owner without company membership nor via forged provider claims. See
+  `CDR-033`.
 
 ## What P1-007 does NOT do (later tickets)
 

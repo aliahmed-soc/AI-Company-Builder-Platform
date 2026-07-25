@@ -72,7 +72,14 @@ Retention default: activity-projected events with company data; audit-relevant e
 | strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |
 | decision.recorded | Strategy&Decision | activity, memory | decision_id, understanding_version, options_considered[] | **is audit-grade (immutable)** | permanent |
 | roadmap.generated | Planning | Task module, activity | roadmap_version, milestone_count, task_ids[] | audited | with company |
-| task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id, (run_id, attempt on started) | audited | with company |
+<!-- IMPLEMENTED (ACBP-P4-002; CDR-033 §4): `task.created` is a durable `audit_events` row written in the SAME
+     transaction as the server-enforced `draft → planned` "appears on the board" transition (audit-or-nothing —
+     an in-tx audit failure rolls back the transition). Subject = the task id; bounded metadata = {has_milestone}
+     ONLY — NEVER the title/description or any content. `task.created` is emitted exactly once per task (a
+     re-plan of a non-draft task is an illegal transition, rejected with no audit — TASK-001). The other task.*
+     events (queued/started/completed/failed/cancelled/waiting_*) are registered by the P5/P6 tickets that
+     implement their transitions; no generic transition audit exists yet. Activity fan-out is DEFERRED. -->
+| task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id (created: {has_milestone} only, P4-002), (run_id, attempt on started) | audited | with company |
 | task.waiting_for_input / task.waiting_for_approval | Coordinator | Decision Room, notification | task_id, blocking_ref (question/approval id) | audited | with company |
 | task.completed | Coordinator | activity, usage, documents | task_id, run_id, artifact_refs[] (**required — no artifactless completion without explicit no-artifact rationale, TASK-005**) | audited | with company |
 | task.failed | Coordinator | activity, Decision Room | task_id, run_id, failure_category, retry_state (TASK-006/010) | audited | with company |

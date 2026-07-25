@@ -51,6 +51,8 @@ export type AdversarialDatabaseClient = DatabaseClient;
 
 export const ALL_TABLES = [
   'usage_events',
+  'task_dependencies',
+  'tasks',
   'understanding_confirmation_events',
   'understanding_item_reviews',
   'understanding_items',

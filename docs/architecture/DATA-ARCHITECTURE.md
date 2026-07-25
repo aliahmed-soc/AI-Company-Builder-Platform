@@ -38,6 +38,17 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      DISC-008): a correction never overwrites — it supersedes, re-blocking planning and flagging dependents.
      `understanding.item_reviewed`/`.confirmed`/`.corrected` audited in-tx. Evidence/research requests are RECORDED
      (a review row), not executed — the Research worker (P5) fulfils them. Owner-only. -->
+<!-- IMPLEMENTED (ACBP-P4-002; CDR-033): the `Task` + `Task dependency` rows above are realized by migration 0021 as two
+     company-owned, dual-keyed FORCE RLS tables. `tasks` is mutable-with-audit (`M`): SELECT+INSERT plus a COLUMN-scoped
+     `UPDATE(state, updated_at)` grant ONLY — `id`/`account_id`/`company_id`/`title`/`description`/`milestone_id`/
+     `created_*` are immutable to the app role; `state` is constrained to the closed 11-value set (draft·planned·queued·
+     running·waiting_for_input·waiting_for_approval·blocked_by_policy·paused·completed·failed·cancelled). `task_dependencies`
+     is immutable (`I`): SELECT+INSERT only, UNIQUE(task_id, depends_on_task_id), CHECK task_id<>depends_on_task_id (no
+     self-dependency); a cross-company edge is impossible (both FKs + the dual key confine to one company). P4-002
+     implements only the effect-free pre-execution transitions create→draft and the server-enforced draft→planned (the
+     `interview.ts` precedent); the execution transitions (credit reservation on planned→queued, worker runs, holds,
+     terminals) are DEFINED-legal in the state machine but their EFFECTS belong to later P5/P6 tickets. `milestone_id` is
+     nullable — milestones are P4-001 (not yet built); ad-hoc tasks have none. No new SECURITY DEFINER / role / BYPASSRLS. -->
 
 
 

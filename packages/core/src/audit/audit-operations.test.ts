@@ -29,6 +29,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'understanding.correct',
       // Context assembly (ACBP-P2-007; CDR-032 §3) — deliberately approved addition.
       'context.flag-conflict',
+      // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
+      'task.plan',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -61,6 +63,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['understanding.confirm']).toBe('understanding.confirmed');
     expect(AUDITED_OPERATIONS['understanding.correct']).toBe('understanding.corrected');
     expect(AUDITED_OPERATIONS['context.flag-conflict']).toBe('context.conflict_flagged');
+    expect(AUDITED_OPERATIONS['task.plan']).toBe('task.created');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
