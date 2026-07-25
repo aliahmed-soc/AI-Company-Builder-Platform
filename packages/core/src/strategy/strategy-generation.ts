@@ -51,6 +51,8 @@ export interface StrategyGenerationOptions {
   readonly correlationId?: string;
   /** TEST SEAM ONLY: override the in-tx audit writer to force a failure (prove persist rolls back). */
   readonly auditWriter?: AuditWriteFn;
+  /** TEST SEAM ONLY: run between the model call and the persist transaction (to simulate a concurrent understanding change). */
+  readonly beforePersist?: () => Promise<void>;
 }
 
 export type GenerateStrategyResult =
@@ -58,6 +60,9 @@ export type GenerateStrategyResult =
   | { readonly status: 'forbidden' }
   | { readonly status: 'no_understanding' }
   | { readonly status: 'not_confirmed' }
+  // The understanding changed (corrected/superseded/regenerated) between the read and the persist — the strategy set
+  // would be based on an understanding that is no longer the current confirmed version, so nothing is persisted.
+  | { readonly status: 'stale_understanding' }
   | { readonly status: 'generation_failed' };
 
 /** Format the confirmed understanding items into the bounded `{{understanding}}` prompt text (class-labeled, no ids). */
@@ -130,12 +135,21 @@ export async function generateStrategyOptions(client: DatabaseClient, params: Ge
   if (parsed === undefined) return { status: 'generation_failed' };
   const similarity: SimilarityCheckResult = 'pending'; // the distinctness verdict is P3-002
 
-  // 4. Persist the generation + options + audit in ONE company-scoped transaction (audit-or-nothing).
+  if (options.beforePersist !== undefined) await options.beforePersist();
+
+  // 4. Persist the generation + options + audit in ONE company-scoped transaction (audit-or-nothing). The confirm gate
+  //    is RE-VERIFIED here (the understanding may have been corrected/superseded/regenerated during the model call) —
+  //    a stale generation is never written (optimistic concurrency, mirroring understanding review's version guard).
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<GenerateStrategyResult> => {
       if (checkAuthorization(role, 'strategy:generate', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
+      const docs = new UnderstandingRepository(scope.db);
+      const current = await docs.currentDocument(params.companyId);
+      if (current === undefined || current.id !== pre.documentId || current.version !== pre.version) return { status: 'stale_understanding' };
+      const events = await new UnderstandingReviewRepository(scope.db).listConfirmationEvents(current.id);
+      if (!isVersionConfirmed(events.filter((e) => isConfirmationEventKind(e.kind)).map((e) => ({ kind: e.kind as 'confirmed' | 'corrected' })))) return { status: 'stale_understanding' };
       const repo = new StrategyRepository(scope.db);
       const generation = await repo.insertGeneration({
         accountId: params.accountId,

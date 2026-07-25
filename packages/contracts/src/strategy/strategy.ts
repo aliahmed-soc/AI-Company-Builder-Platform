@@ -148,6 +148,9 @@ export function narrowStrategyOutput(value: unknown): StrategyGenerationOutput |
   // The honest status MUST be consistent with the count (no forged "complete" with < MIN options).
   const expected: StrategyGenerationStatus = options.length >= MIN_DISTINCT_OPTIONS ? 'complete' : 'fewer_than_three';
   if (v.status !== expected) return undefined;
+  // A fewer-than-three reason is meaningful ONLY on the fewer-than-three outcome (parseStrategyOptions nulls it for
+  // `complete`); reject an inconsistent already-parsed value rather than trust it.
+  if (v.status === 'complete' && v.fewerReason !== null && v.fewerReason !== undefined) return undefined;
   return { options, partial: v.partial, status: v.status, fewerReason: v.fewerReason ?? null };
 }
 

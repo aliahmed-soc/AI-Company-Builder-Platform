@@ -3,6 +3,24 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P3-001 strategy option generation — CORE DONE / FINALIZING (8-hour autonomous window).**
+  Branch `p3-001-strategy-option-generation` (from main `08e7d6a`, after P4-002 merged), draft PR **#33**, CDR-034.
+  Generates strategy options from the CONFIRMED understanding version (STRAT-001/002). Corrects an earlier mistaken
+  deferral: the 16-field option standard IS canon (PRD §11.3 line 302, locked by the backlog's "All 16 fields"
+  acceptance) — verified directly, so P3-001 is unblocked (no owner gate; deterministic FakeModelProvider, live provider
+  deferred CDR-026 §0). Implements only the `gen` node: `generateStrategyOptions` (gated on owner-confirmed understanding
+  — blocked pre-confirm; gateway → validate 16-field/ADR-019 no-fake-precision `"unknown"` labeling → honest
+  fewer-than-three → persist ONE immutable generation + options + `strategy.generated` audit in one tx, audit-or-nothing;
+  metered) + `getLatestStrategyGeneration` read. The rigorous cosmetic-variant distinctness engine is P3-002
+  (`similarity_check_result` = `pending`); comparison/selection/decision are P3-003/004/005. Migration **0022**
+  (`strategy_generations` + `strategy_options` — immutable `I`, dual-keyed FORCE RLS, SELECT+INSERT). Authz
+  `strategy:generate`/`:read` (owner|viewer). No new SECURITY DEFINER / role / BYPASSRLS. Commits: CDR+contracts
+  `f85263d` → migration 0022 `932c399` → core `2c9c22d`. Local real-PG green (zero skips): strategy migration 6, core
+  use cases 8, catalog + database existence re-verified; full recursive typecheck+lint+secrets+boundaries clean; full
+  unit 988. Independent security/scope review in progress. Finalization → backlog Done → exact-head CI → squash-merge
+  "ACBP-P3-001: Strategy option generation" → exact-main CI → delete branch. Migrations end **0022**.
+- **ACBP-P4-002 task model + state machine — DONE** (squash `08e7d6a`, PR #32; exact-main CI green zero-skip; branch
+  deleted). Established the server-enforced task state machine + tasks/task_dependencies (migration 0021). Phase 4 1/7.
 - **ACBP-P4-002 task model + state machine — CORE DONE / FINALIZING (8-hour autonomous window).**
   Branch `p4-002-task-state-machine` (from main `68f99e4`), draft PR **#32**, CDR-033. Establishes the Task entity + the
   SERVER-ENFORCED state machine (TASK-001; ADR-008; WORKFLOW §4): the full closed 11-state set + legal-transition map are

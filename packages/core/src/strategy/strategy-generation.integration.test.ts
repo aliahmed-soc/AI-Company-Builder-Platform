@@ -139,6 +139,19 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     expect(await owner.kysely.selectFrom('strategy_options').selectAll().execute()).toHaveLength(0);
   });
 
+  test('confirm gate is RE-VERIFIED at persist: an understanding corrected during the model call → stale_understanding, nothing persisted', async () => {
+    const doc = await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option(), option(), option()]) });
+    // Simulate a concurrent owner correction of the understanding between the read and the persist transaction.
+    const beforePersist = async (): Promise<void> => {
+      await sql`insert into understanding_confirmation_events (account_id, company_id, document_id, version, kind, actor_user_id, correction_ref, dependents_flagged) values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${doc}::uuid, 1, 'corrected', ${w.aOwner}::uuid, 'ref', 1)`.execute(owner.kysely);
+    };
+    const r = await generateStrategyOptions(product, base(), { gateway: gw }, { beforePersist });
+    expect(r.status).toBe('stale_understanding');
+    expect(await gensFor(w.companyA1)).toHaveLength(0);
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'strategy.generated').execute()).toHaveLength(0);
+  });
+
   test('a non-member is forbidden from generating and reading', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
     const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option(), option(), option()]) });

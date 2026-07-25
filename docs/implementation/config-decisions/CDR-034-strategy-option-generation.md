@@ -27,7 +27,9 @@ option's self-reported confidence, a bounded label). The honesty obligation is a
 
 ## 2. What P3-001 IMPLEMENTS vs. defines
 - **Executed now:** `generateStrategyOptions` — gate on `isCurrentUnderstandingConfirmed` (strategy is BLOCKED until the
-  owner confirms understanding — UNDER-003/P2-009); read the confirmed understanding + typed memory → call the injected
+  owner confirms understanding — UNDER-003/P2-009), RE-VERIFIED inside the persist transaction against a concurrent
+  understanding change (a correction/regeneration during the model call → `stale_understanding`, persist nothing;
+  optimistic concurrency mirroring understanding review's version guard); read the confirmed understanding → call the injected
   gateway (registered template `strategy.options@1` + the strategy-options output schema) → validate ≥3 options each
   16-field (else the honest `fewer_than_three` status + a bounded reason) → persist ONE immutable generation + its
   options + `strategy.generated` in a SINGLE company-scoped transaction (audit-or-nothing); usage metered by the gateway.

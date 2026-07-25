@@ -68,7 +68,13 @@ Retention default: activity-projected events with company data; audit-relevant e
 | memory.item_superseded | Memory browser (P2-010) | audit only — never activity | item_type, source_type of the NEW version (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the superseded (old) item; CDR-025 §4 | with company |
 | memory.item_deleted | Memory browser (P2-010) | audit only — never activity | item_type, source_type, transition='active_to_deleted' (no content) | audited in-tx (a lifecycle transition, ADR-015); subject = the deleted item; owner-only soft delete; CDR-025 §0 | with company |
 | understanding.confirmed | Understanding | Strategy (unlock), activity | version (confirming actor = server-stamped audit actor, not in metadata) | audited in-tx (P2-009; CDR-030 §3); subject = the document; owner-only | permanent |
-| strategy.generated | Strategy | activity | option_ids[], similarity_check_result | — | with company |
+<!-- IMPLEMENTED (ACBP-P3-001; CDR-034 §4): `strategy.generated` is a durable `audit_events` row written in the SAME
+     transaction as the immutable strategy generation (audit-or-nothing — an in-tx audit failure rolls the generation +
+     options back). Subject = the generation id; bounded metadata = {understanding_version, option_count,
+     similarity_check_result} ONLY — NEVER option content/fields or the fewer-than-three reason. `similarity_check_result`
+     is written `pending` here (the rigorous cosmetic-variant distinctness verdict is P3-002). The other strategy.*
+     events (strategy.selected, decision.recorded) are registered by P3-004/005. Activity fan-out is DEFERRED. -->
+| strategy.generated | Strategy | activity | generation_id, understanding_version, option_count, similarity_check_result (P3-001; no content) | audited in-tx | with company |
 | strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |
 | decision.recorded | Strategy&Decision | activity, memory | decision_id, understanding_version, options_considered[] | **is audit-grade (immutable)** | permanent |
 | roadmap.generated | Planning | Task module, activity | roadmap_version, milestone_count, task_ids[] | audited | with company |

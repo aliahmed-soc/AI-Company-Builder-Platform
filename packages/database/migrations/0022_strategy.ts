@@ -43,6 +43,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addCheckConstraint('strategy_generations_option_count_nonneg', sql`option_count >= 0`)
     .addCheckConstraint('strategy_generations_version_positive', sql`understanding_version >= 1`)
     .addCheckConstraint('strategy_generations_fewer_reason_len', sql`fewer_reason is null or char_length(fewer_reason) between 1 and 1000`)
+    // Immutable-table integrity: the honest status is consistent with the option count (complete ⇔ ≥3), and a
+    // fewer-than-three reason is meaningful ONLY on the fewer-than-three outcome (defends against any future writer).
+    .addCheckConstraint('strategy_generations_status_count_consistent', sql`(status = 'complete' and option_count >= 3) or (status = 'fewer_than_three' and option_count < 3)`)
+    .addCheckConstraint('strategy_generations_reason_only_when_fewer', sql`fewer_reason is null or status = 'fewer_than_three'`)
     .execute();
   await sql`create index strategy_generations_company_created_idx on public.strategy_generations (company_id, created_at desc)`.execute(db);
 

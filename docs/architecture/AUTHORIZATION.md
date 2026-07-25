@@ -166,6 +166,12 @@ trusted core/use-case seam:
   owner/operator gate and belongs to a later ticket (TASK-004/P6), NOT to either action here. DISTINCT closed actions,
   deny-by-default; not granted to an account owner without company membership nor via forged provider claims. See
   `CDR-033`.
+- **P3-001** (strategy option generation) adds `strategy:generate` and `strategy:read`, both `owner|viewer` company
+  members. Strategy generation is a member action driving the discovery→understanding→strategy flow (like
+  `understanding:generate`); `strategy:generate` also covers request-another. Generation is additionally GATED at the
+  use-case layer on the owner-confirmed understanding version (UNDER-003 — strategy is blocked pre-confirm); the
+  owner-only SELECTION gate (STRAT-003) is P3-004's separate action. DISTINCT closed actions, deny-by-default; not
+  granted to an account owner without company membership nor via forged provider claims. See `CDR-034`.
 
 ## What P1-007 does NOT do (later tickets)
 

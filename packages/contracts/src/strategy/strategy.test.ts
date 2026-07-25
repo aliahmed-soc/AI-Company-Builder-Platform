@@ -117,6 +117,8 @@ describe('parseStrategyOptions (deny-by-default)', () => {
     expect(narrowStrategyOutput(parsed.value)).toEqual(parsed.value);
     // A forged status inconsistent with the count is rejected.
     expect(narrowStrategyOutput({ ...parsed.value, status: 'fewer_than_three' })).toBeUndefined();
+    // A fewer-than-three reason on a `complete` outcome is inconsistent → rejected.
+    expect(narrowStrategyOutput({ ...parsed.value, fewerReason: 'should not be here' })).toBeUndefined();
     // An incomplete option is rejected.
     const broken = fields();
     delete (broken as Record<string, unknown>)['risks'];

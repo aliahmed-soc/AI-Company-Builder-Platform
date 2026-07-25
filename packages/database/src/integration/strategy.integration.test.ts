@@ -128,6 +128,11 @@ describe.skipIf(!hasTestDatabase)('strategy_generations + strategy_options (real
     await expect(insertGen(accountA, companyA1, docA, { optionCount: -1 })).rejects.toThrow();
     await expect(insertGen(accountA, companyA1, docA, { version: 0 })).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, similarity_check_result, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${docA}::uuid, 1, 'complete', 3, 'maybe', ${userU}::uuid)`.execute(k))).rejects.toThrow(); // similarity not in set
+    // Status/count consistency: 'complete' with < 3 options is refused; 'fewer_than_three' with >= 3 is refused.
+    await expect(insertGen(accountA, companyA1, docA, { status: 'complete', optionCount: 2 })).rejects.toThrow();
+    await expect(insertGen(accountA, companyA1, docA, { status: 'fewer_than_three', optionCount: 3 })).rejects.toThrow();
+    // A fewer_reason on a 'complete' generation is refused (reason only meaningful for fewer-than-three).
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, fewer_reason, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${docA}::uuid, 1, 'complete', 3, 'why', ${userU}::uuid)`.execute(k))).rejects.toThrow();
     const gen = await insertGen(accountA, companyA1, docA);
     // A non-object fields payload is refused (jsonb_typeof check).
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${accountA}::uuid, ${companyA1}::uuid, ${gen}::uuid, 0, ${'"not an object"'}::jsonb)`.execute(k))).rejects.toThrow();
