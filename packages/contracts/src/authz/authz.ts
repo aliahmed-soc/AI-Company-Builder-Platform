@@ -107,6 +107,9 @@ export const AUTHZ_ACTIONS = [
   // Optional AI recommendation (ACBP-P3-003; CDR-036; STRAT-004). Advisory only — never auto-selects; the owner-only
   // SELECTION gate is STRAT-003/P3-004's separate action. Owner|viewer, consistent with the generate-class grants.
   'strategy:recommend',
+  // Owner strategy decision (ACBP-P3-004; CDR-037; STRAT-003/005) — the OWNER-ONLY select/edit/combine/reject +
+  // phase-limited-approval gate (the understanding:confirm owner-only precedent). request-another reuses strategy:generate.
+  'strategy:select',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -200,6 +203,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:read': ['owner', 'viewer'],
   // Advisory recommendation is a member action (like strategy:generate); owner-only selection is P3-004's action.
   'strategy:recommend': ['owner', 'viewer'],
+  // The owner-only strategy decision gate (STRAT-003 "owner-only selection"); the understanding:confirm precedent.
+  'strategy:select': ['owner'],
 };
 
 /**

@@ -102,6 +102,11 @@ export const AUDIT_EVENTS = {
   // bounded {understanding_version, option_count, similarity_check_result} — NEVER option content/fields/reason text.
   // The other strategy.* events (strategy.selected, decision.recorded) are registered by the P3-004/005 tickets.
   'strategy.generated': { schemaVersion: 1, subjectType: 'strategy_generation' },
+  // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
+  // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
+  // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
+  // Decision record (decision.recorded, STRAT-006) is P3-005's separate event.
+  'strategy.selected': { schemaVersion: 1, subjectType: 'strategy_selection' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -355,6 +360,15 @@ export function taskCreated(input: { readonly taskId: string; readonly hasMilest
  */
 export function strategyGenerated(input: { readonly generationId: string; readonly understandingVersion: number; readonly optionCount: number; readonly similarityCheckResult: string }): AuditEvent {
   return makeEvent('strategy.generated', input.generationId, 'success', { understanding_version: input.understandingVersion, option_count: input.optionCount, similarity_check_result: input.similarityCheckResult });
+}
+
+/**
+ * The owner made a strategy decision (ACBP-P3-004). Subject = the selection id; metadata is the bounded `{mode}` (+
+ * `phase_scope` when set) — NEVER option content, chosen fields, or reject reasons. Written in the same transaction as
+ * the selection insert (audit-or-nothing).
+ */
+export function strategySelected(input: { readonly selectionId: string; readonly mode: string; readonly phaseScope: string | null }): AuditEvent {
+  return makeEvent('strategy.selected', input.selectionId, 'success', input.phaseScope !== null ? { mode: input.mode, phase_scope: input.phaseScope } : { mode: input.mode });
 }
 
 /**
