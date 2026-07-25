@@ -1,6 +1,7 @@
 // ACBP-P3-005 — immutable decision records (CDR-038 §2; STRAT-006; ADR-015; DATA-ARCHITECTURE §Decision).
 // ADDITIVE migration — migrations 0001–0024 are untouched, NO SECURITY DEFINER is added (the closed allowlist stays
-// exactly three), no new role, no existing table/policy change.
+// exactly three), no new role, no policy change. The ONE change to an existing table is additive and reversed by
+// `down()`: a `UNIQUE(id, generation_id)` on `strategy_selections` so the composite FK below can reference it.
 //
 // One company-owned, dual-keyed FORCE-RLS, IMMUTABLE (`I`) table `decisions` (the strategy_selections 0024 pattern —
 // SELECT + INSERT only; append-only, latest-wins on read; "no decision" = ABSENCE of a row). The decision record is the
@@ -29,6 +30,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('company_id', 'uuid', (col) => col.notNull())
     .addColumn('generation_id', 'uuid', (col) => col.notNull())
     .addColumn('selection_id', 'uuid', (col) => col.notNull())
+    // An IMMUTABLE snapshot of the hardened selection's mode. It is denormalized deliberately: the P4-001 planning gate
+    // must key off a NON-reject decision (CDR-038 §6-G1), and a rejection must never unlock planning. Without this
+    // column that gate would have to join through strategy_selections, and "a decisions row exists" — the obvious
+    // reading — would silently let a rejection unlock planning. The composite FK below pins the row it snapshots.
+    .addColumn('mode', 'text', (col) => col.notNull())
     .addColumn('understanding_version', 'integer', (col) => col.notNull())
     .addColumn('rationale', 'text')
     .addColumn('created_by_user_id', 'uuid', (col) => col.notNull())
@@ -41,6 +47,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addForeignKeyConstraint('decisions_selection_fk', ['selection_id', 'generation_id'], 'strategy_selections', ['id', 'generation_id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('decisions_actor_fk', ['created_by_user_id'], 'users', ['id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
     .addCheckConstraint('decisions_version_positive', sql`understanding_version >= 1`)
+    .addCheckConstraint('decisions_mode_valid', sql`mode in ('select', 'edit', 'combine', 'reject')`)
     // The rationale is OPTIONAL (CDR-038 §6-G2 — a missing rationale must never make a decision silently unrecorded),
     // but when present it is non-blank and bounded.
     .addCheckConstraint('decisions_rationale_len', sql`rationale is null or char_length(rationale) between 1 and 4000`)

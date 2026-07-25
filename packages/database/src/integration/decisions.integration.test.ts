@@ -54,7 +54,7 @@ describe.skipIf(!hasTestDatabase)('decisions (real PostgreSQL, restricted role) 
 
   async function insertDecision(a: string, c: string, gen: string, sel: string, over: { rationale?: string | null; version?: number } = {}): Promise<string> {
     return asApp(scope(a, c), async (k) => {
-      const r = await sql<{ id: string }>`insert into decisions (account_id, company_id, generation_id, selection_id, understanding_version, rationale, created_by_user_id) values (${a}::uuid, ${c}::uuid, ${gen}::uuid, ${sel}::uuid, ${over.version ?? 1}, ${over.rationale === undefined ? 'cheapest path to a first customer' : over.rationale}, ${userU}::uuid) returning id`.execute(k);
+      const r = await sql<{ id: string }>`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, rationale, created_by_user_id) values (${a}::uuid, ${c}::uuid, ${gen}::uuid, ${sel}::uuid, 'select', ${over.version ?? 1}, ${over.rationale === undefined ? 'cheapest path to a first customer' : over.rationale}, ${userU}::uuid) returning id`.execute(k);
       return r.rows[0]!.id;
     });
   }
@@ -118,7 +118,7 @@ describe.skipIf(!hasTestDatabase)('decisions (real PostgreSQL, restricted role) 
   });
 
   test('cross-tenant INSERT is refused (WITH CHECK)', async () => {
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, understanding_version, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, ${genA}::uuid, ${selA}::uuid, 1, ${userU}::uuid)`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, ${genA}::uuid, ${selA}::uuid, 'select', 1, ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 
   test('AUDIT-GRADE IMMUTABLE (STRAT-006 "mutation attempts fail"): no UPDATE, no DELETE', async () => {
@@ -153,7 +153,17 @@ describe.skipIf(!hasTestDatabase)('decisions (real PostgreSQL, restricted role) 
   test('composite FK: a decision cannot reference a selection from a DIFFERENT generation', async () => {
     const other = await seedChain(accountA, companyA1, 2); // a second generation (same company) with its own selection
     // genA + other.sel (that selection belongs to the other generation) — the composite FK refuses it.
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, understanding_version, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${other.sel}::uuid, 1, ${userU}::uuid)`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${other.sel}::uuid, 'select', 1, ${userU}::uuid)`.execute(k))).rejects.toThrow();
+  });
+
+  test('the mode snapshot is a closed set (the P4-001 planning gate keys off a NON-reject decision)', async () => {
+    // All four selection modes are legal on a decision (STRAT-006 covers selection/edit/rejection).
+    for (const mode of ['select', 'edit', 'combine', 'reject']) {
+      await asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${selA}::uuid, ${mode}, 1, ${userU}::uuid)`.execute(k));
+    }
+    expect((await sql<{ n: number }>`select count(*)::int as n from decisions where generation_id = ${genA}::uuid`.execute(su.kysely)).rows[0]!.n).toBe(4);
+    // An unknown mode is refused — a consumer can trust `mode <> 'reject'` as the positive-decision test.
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${genA}::uuid, ${selA}::uuid, 'approve', 1, ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 
   test('FK cascade: deleting the generation removes its decisions', async () => {

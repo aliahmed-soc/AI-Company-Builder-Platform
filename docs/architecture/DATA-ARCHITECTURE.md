@@ -97,8 +97,11 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      no UPDATE/DELETE grant. `decision.recorded` is written in the SAME transaction as the row — that audit-or-nothing
      pair IS the STRAT-006 "failed record writes block the transition" guarantee. Append-only, latest-wins on read
      (§6-G5 — the "terminal" state below is the product reading, not a DB uniqueness constraint). A `reject` selection
-     ALSO gets a record (STRAT-006 "selection/edit/rejection"); planning-unlock (P4-001) keys off a NON-reject decision,
-     so recording one unlocks nothing here. OWNER-ONLY (`decision:record`). No new SECURITY DEFINER / role / BYPASSRLS. -->
+     ALSO gets a record (STRAT-006 "selection/edit/rejection"); the row therefore carries an IMMUTABLE `mode` snapshot
+     of the hardened selection, and **the P4-001 planning gate must key off `mode <> 'reject'`, NOT on the mere
+     existence of a decision row** — otherwise a rejection would unlock planning, contradicting the WORKFLOW `→rejected`
+     terminal state. The snapshot is denormalized deliberately: the LATEST selection may be a different, later one than
+     the decision hardened. OWNER-ONLY (`decision:record`). No new SECURITY DEFINER / role / BYPASSRLS. -->
 
 
 

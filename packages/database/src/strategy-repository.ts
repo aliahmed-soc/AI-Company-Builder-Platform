@@ -72,6 +72,8 @@ export interface NewDecisionInput {
   readonly companyId: string;
   readonly generationId: string;
   readonly selectionId: string;
+  /** Immutable snapshot of the hardened selection's mode (the P4-001 gate keys off a NON-reject decision). */
+  readonly mode: string;
   readonly understandingVersion: number;
   readonly rationale: string | null;
   readonly createdByUserId: string;
@@ -189,6 +191,7 @@ export class StrategyRepository {
         company_id: input.companyId,
         generation_id: input.generationId,
         selection_id: input.selectionId,
+        mode: input.mode,
         understanding_version: input.understandingVersion,
         rationale: input.rationale,
         created_by_user_id: input.createdByUserId,

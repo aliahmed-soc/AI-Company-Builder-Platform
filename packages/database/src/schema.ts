@@ -614,6 +614,8 @@ export interface DecisionsTable {
   company_id: ColumnType<string, string, never>;
   generation_id: ColumnType<string, string, never>;
   selection_id: ColumnType<string, string, never>;
+  /** Immutable snapshot of the hardened selection's mode — the P4-001 planning gate keys off a NON-reject decision. */
+  mode: ColumnType<string, string, never>;
   understanding_version: ColumnType<number, number, never>;
   rationale: ColumnType<string | null, string | null, never>;
   created_by_user_id: ColumnType<string, string, never>;

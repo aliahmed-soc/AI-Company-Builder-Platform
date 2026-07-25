@@ -37,8 +37,17 @@ therefore does NOT re-model selection: it references the existing immutable sele
 There is no mutable status column to flip — every strategy table is immutable append-only and "no decision = absence of
 a row" (the P3-004 convention). The guarantee is realized as: **the `decisions` INSERT and the `decision.recorded`
 audit write happen in ONE company-scoped transaction (audit-or-nothing)**. If either fails, nothing persists, no
-decision row exists, and the downstream planning gate (P4-001, which reads for a decision) cannot pass. A decision is
-never silently unrecorded.
+decision row exists, and the downstream planning gate (P4-001, which reads for a **non-reject** decision — see §6-G1)
+cannot pass.
+
+**Precisely scoped:** what this ticket guarantees is that *a decision write never half-lands* — there is no state in
+which a decision row exists without its audit event, or vice versa. It does **not** guarantee that every selection is
+followed by a decision: selection (P3-004) and decision (P3-005) are separate owner operations in separate
+transactions, per the already-accepted CDR-037 §6-G1 split. A client that records a selection and then never calls
+`recordDecision` leaves a selection with no decision — which is exactly why **P4-001 gates on the decision, not on the
+selection**: an unpaired selection is inert and unlocks nothing, so the STRAT-006 harm ("the decision is acted on but
+not recorded") cannot occur. Composing the two writes into a single owner operation is a reasonable future
+simplification, not a correctness fix.
 
 ## 2. Storage — migration 0025 (additive; one table)
 
@@ -54,6 +63,7 @@ new role, no BYPASSRLS, no existing table/policy change.
 | `account_id`, `company_id` | the dual key (RLS) |
 | `generation_id` | FK `strategy_generations` — **"options considered" IS this generation's immutable option set** |
 | `selection_id` | FK `strategy_selections` — the owner decision this record hardens |
+| `mode` | IMMUTABLE snapshot of the hardened selection's mode, closed set `{select, edit, combine, reject}` (§6-G1) |
 | `understanding_version` | integer snapshot — STRAT-006 "linked to the understanding version" |
 | `rationale` | text NULL, bounded 1..4000 when present (§6-G2) |
 | `created_by_user_id` | FK `users` |
@@ -92,16 +102,23 @@ Deny-by-default: an absent/invisible generation or selection, or a selection bel
 ## 5. What this does NOT unlock
 
 Recording a decision writes a row and an audit event. It does **not** generate goals, a roadmap, milestones, or tasks —
-that is **P4-001** (which gates on the decision's existence). It does not enforce `phase_scope` (a P3-004 flag;
+that is **P4-001**, which must gate on a **non-reject** decision (`decisions.mode <> 'reject'`; §6-G1), not on the mere
+existence of a decision row. It does not enforce `phase_scope` (a P3-004 flag;
 enforcement is P4-003). It does not mutate the understanding, the selection, or the options — all remain immutable.
 
 ## 6. Ratified design decisions (canon-derived; documented, not guessed)
 
-- **G1 — a `reject` selection DOES get a decision record.** STRAT-006 is explicit: "Every strategy selection/**edit/
-  rejection** creates a durable decision record"; the rationale ("institutional memory of why") applies most strongly
-  to a rejection. J-08's flow lists only select/edit/combine because it describes the forward path, and it is the less
-  specific source. A decision is therefore recorded 1:1 with ANY recorded selection, carrying the selection's `mode`.
-  Planning-unlock (P4-001) keys off a **non-reject** decision, so this does not let a rejection unlock planning.
+- **G1 — a `reject` selection DOES get a decision record, and the record snapshots its `mode`.** STRAT-006 is explicit:
+  "Every strategy selection/**edit/rejection** creates a durable decision record"; the rationale ("institutional memory
+  of why") applies most strongly to a rejection. J-08's flow lists only select/edit/combine because it describes the
+  forward path, and it is the less specific source. A decision is therefore recorded 1:1 with ANY recorded selection.
+  **The safety of this reading rests on the `mode` column**, so it is not left implicit: `decisions.mode` is an
+  immutable snapshot of the hardened selection's mode, and **the P4-001 planning gate MUST key off a NON-reject
+  decision** (`mode <> 'reject'`), never merely "a decisions row exists". Without the snapshot, a P4-001 implementer
+  reading the obvious predicate would let a rejection unlock planning, contradicting WORKFLOW-STATE-MACHINES.md where
+  `→rejected` is a distinct terminal state that routes back to understanding review. The column is denormalized
+  deliberately: the latest selection may be a *different, later* one than the decision hardened, so re-reading
+  `strategy_selections` at gate time can misreport the decision's own mode.
 - **G2 — `rationale` is optional and owner-supplied.** STRAT-006 requires the record to link "rationale", but no canon
   pins a rationale-capture control at decision time (P3-004 captures reject `reasons` only; the STRAT-004 AI rationale
   is advisory). A nullable, bounded owner-supplied `rationale` satisfies the linkage without inventing a hard gate

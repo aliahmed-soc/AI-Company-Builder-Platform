@@ -3,6 +3,12 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+
+_Newest first. When a ticket merges, a one-line **DONE** entry is added ABOVE its working block; the working block is
+kept as historical detail (what was built, which commits, which gates). **The DONE line is the authoritative status** —
+a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
+ticket without a DONE line above it is genuinely in flight._
+
 - **ACBP-P3-005 immutable decision records — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**
   Branch `p3-005-decision-records` (from main `50bbaa8`, after P3-004 merged), draft PR **#38**, CDR-038.
   The STRAT-006 audit-grade record: links the CONFIRMED understanding version, the options CONSIDERED (via the

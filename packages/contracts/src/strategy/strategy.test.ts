@@ -298,6 +298,13 @@ describe('decision record — normalizeDecisionRationale (ACBP-P3-005/CDR-038/ST
     expect(normalizeDecisionRationale(42)).toBeUndefined(); // non-string
     expect(normalizeDecisionRationale({ text: 'nope' })).toBeUndefined();
   });
+
+  test('the bound applies to the NORMALIZED value — surrounding whitespace is not content', () => {
+    // At the limit plus padding: the trimmed value fits, so it is accepted (and it is the trimmed value that is stored,
+    // so the DB CHECK can never be violated by the padding).
+    const padded = `  ${'x'.repeat(RATIONALE_MAX_DECISION)}  `;
+    expect(normalizeDecisionRationale(padded)).toHaveLength(RATIONALE_MAX_DECISION);
+  });
 });
 
 describe('AI recommendation — parse + resolve (ACBP-P3-003/CDR-036/STRAT-004)', () => {

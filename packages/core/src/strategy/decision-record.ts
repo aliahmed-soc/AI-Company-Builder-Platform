@@ -57,16 +57,16 @@ export async function recordDecision(
   const audit = options.auditWriter ?? writeAuditEvent;
   const optsBase = { ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}), ...(deps.logger !== undefined ? { logger: deps.logger } : {}) };
 
-  // A present-but-unusable rationale denies BEFORE any scope/transaction work (nothing to roll back).
-  const rationale = normalizeDecisionRationale(params.rationale);
-  if (rationale === undefined) return { status: 'invalid' };
-
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<RecordDecisionResult> => {
-      // Owner-only: a viewer may generate and recommend, but only the owner decides (J-08 "Actor: owner").
+      // Owner-only: a viewer may generate and recommend, but only the owner decides (J-08 "Actor: owner"). AUTHZ FIRST,
+      // then input validation — an unauthorized caller learns `forbidden`, never whether their input would have parsed.
       if (checkAuthorization(role, 'decision:record', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
+      // A present-but-unusable rationale denies before any write (the insert below is the first mutation).
+      const rationale = normalizeDecisionRationale(params.rationale);
+      if (rationale === undefined) return { status: 'invalid' };
       const repo = new StrategyRepository(scope.db);
       const generation = await repo.findGeneration(params.generationId);
       if (generation === undefined) return { status: 'not_found' };
@@ -83,6 +83,9 @@ export async function recordDecision(
         companyId: params.companyId,
         generationId: params.generationId,
         selectionId: params.selectionId,
+        // Snapshot the hardened selection's mode so a consumer (notably the P4-001 planning gate) can distinguish a
+        // rejection from a positive decision without re-reading the selection, which may since have been superseded.
+        mode: selection.mode,
         // Snapshot the generation's understanding version — STRAT-006 "linked to the understanding version".
         understandingVersion: generation.understanding_version,
         rationale,
@@ -92,10 +95,10 @@ export async function recordDecision(
       // back, so a decision is never silently unrecorded. Metadata is scalar only — never content or rationale text.
       await audit(
         scope,
-        decisionRecorded({ decisionId: row.id, understandingVersion: row.understanding_version, optionsConsideredCount, mode: selection.mode }),
+        decisionRecorded({ decisionId: row.id, understandingVersion: row.understanding_version, optionsConsideredCount, mode: row.mode }),
         options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
       );
-      deps.logger?.info('decision.recorded', { metadata: { accountId: params.accountId, companyId: params.companyId, generationId: params.generationId, understandingVersion: row.understanding_version, mode: selection.mode } });
+      deps.logger?.info('decision.recorded', { metadata: { accountId: params.accountId, companyId: params.companyId, generationId: params.generationId, understandingVersion: row.understanding_version, mode: row.mode } });
       return { status: 'ok', decision: toDecisionDTO(row, optionsConsideredCount) };
     },
     optsBase,
@@ -109,6 +112,7 @@ export function toDecisionDTO(row: DecisionRow, optionsConsideredCount: number):
     decisionId: row.id,
     generationId: row.generation_id,
     selectionId: row.selection_id,
+    mode: row.mode as DecisionDTO['mode'],
     understandingVersion: row.understanding_version,
     optionsConsideredCount,
     rationale: row.rationale,

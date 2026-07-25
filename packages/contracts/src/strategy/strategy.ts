@@ -393,8 +393,11 @@ export const RATIONALE_MAX_DECISION = 4_000;
  */
 export function normalizeDecisionRationale(v: unknown): string | null | undefined {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string' || v.length > RATIONALE_MAX_DECISION) return undefined;
+  if (typeof v !== 'string') return undefined;
+  // Bound the NORMALIZED value (trim first): surrounding whitespace is not content, so it must not push an otherwise
+  // acceptable rationale over the limit. The stored value is always the trimmed one the DB CHECK sees.
   const trimmed = v.trim();
+  if (trimmed.length > RATIONALE_MAX_DECISION) return undefined;
   return trimmed.length === 0 ? null : trimmed;
 }
 
@@ -407,6 +410,12 @@ export interface DecisionDTO {
   readonly decisionId: string;
   readonly generationId: string;
   readonly selectionId: string;
+  /**
+   * The hardened selection's mode, snapshot at record time. Surfaced so a consumer can tell a rejection from a positive
+   * decision WITHOUT re-reading the selection (the latest selection may already be a different one). The P4-001
+   * planning gate keys off a NON-reject decision (CDR-038 §6-G1) — a rejection never unlocks planning.
+   */
+  readonly mode: StrategySelectionMode;
   readonly understandingVersion: number;
   readonly optionsConsideredCount: number;
   readonly rationale: string | null;

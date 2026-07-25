@@ -96,13 +96,28 @@ describe.skipIf(!hasTestDatabase)('decision records (real PostgreSQL, restricted
     expect(await auditCount()).toBe(0);
   });
 
-  test('a REJECT selection also gets a decision record (STRAT-006 "selection/edit/rejection")', async () => {
+  test('a REJECT selection also gets a decision record, and the record SNAPSHOTS mode=reject', async () => {
     const rejectSel = await makeSelection(genA, { mode: 'reject', reasons: 'none fit our budget' });
     const r = await recordDecision(product, { ...base(), generationId: genA, selectionId: rejectSel });
     expect(r.status === 'ok' && r.decision.selectionId).toBe(rejectSel);
+    // The mode snapshot is what makes CDR-038 G1 safe: the P4-001 planning gate keys off a NON-reject decision, so a
+    // recorded rejection can never be mistaken for a positive decision (and never unlocks planning).
+    expect(r.status === 'ok' && r.decision.mode).toBe('reject');
     // The reject REASONS live on the selection, never duplicated onto the decision (CDR-038 G3).
     expect(r.status === 'ok' && r.decision.rationale).toBeNull();
     expect(await auditCount()).toBe(1);
+  });
+
+  test('the mode snapshot survives a LATER selection: the decision still reports the mode it hardened', async () => {
+    // Record a decision over the current `select` selection, then make a NEW reject selection on the same generation.
+    const first = await recordDecision(product, { ...base(), generationId: genA, selectionId: selA });
+    expect(first.status === 'ok' && first.decision.mode).toBe('select');
+    await makeSelection(genA, { mode: 'reject', reasons: 'changed my mind' });
+    // The read now surfaces the latest (reject) SELECTION but the decision still carries its own snapshot — a consumer
+    // reading `generation.decision.mode` is never misled by a selection recorded after the decision.
+    const read = await getLatestStrategyGeneration(product, base());
+    expect(read.status === 'ok' && read.generation?.selection?.mode).toBe('reject');
+    expect(read.status === 'ok' && read.generation?.decision?.mode).toBe('select');
   });
 
   test('the rationale is OPTIONAL; a present-but-unusable rationale is invalid (nothing persisted)', async () => {
@@ -121,6 +136,16 @@ describe.skipIf(!hasTestDatabase)('decision records (real PostgreSQL, restricted
     expect((await recordDecision(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, generationId: genA, selectionId: selA })).status).toBe('forbidden');
     expect(await decsFor(genA)).toHaveLength(0);
     expect(await auditCount()).toBe(0);
+  });
+
+  test('AUTHZ BEFORE VALIDATION: an unauthorized caller with a malformed rationale gets `forbidden`, not `invalid`', async () => {
+    // Deny-by-default ordering — an unauthorized caller must never learn anything about how their input parsed.
+    const bad = { rationale: 'x'.repeat(RATIONALE_MAX_DECISION + 1) };
+    expect((await recordDecision(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, generationId: genA, selectionId: selA, ...bad })).status).toBe('forbidden');
+    expect((await recordDecision(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, generationId: genA, selectionId: selA, ...bad })).status).toBe('forbidden');
+    // The owner with the same malformed input DOES get the honest `invalid`.
+    expect((await recordDecision(product, { ...base(), generationId: genA, selectionId: selA, ...bad })).status).toBe('invalid');
+    expect(await decsFor(genA)).toHaveLength(0);
   });
 
   test('not_found: an absent generation, an absent selection, and a CROSS-GENERATION selection', async () => {
