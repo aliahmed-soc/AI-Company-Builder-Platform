@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -67,6 +67,8 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // Strategy option generation (ACBP-P3-001; CDR-034): both immutable/append-only — SELECT+INSERT only, no UPDATE/DELETE.
   strategy_generations: ['INSERT', 'SELECT'],
   strategy_options: ['INSERT', 'SELECT'],
+  // Strategy recommendation (ACBP-P3-003; CDR-036): immutable/append-only — SELECT+INSERT only.
+  strategy_recommendations: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -187,9 +189,11 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     }
     // task_dependencies is append-only — no column-level UPDATE grants at all.
     expect(byTable.get('task_dependencies') ?? []).toEqual([]);
-    // Strategy generations + options (ACBP-P3-001) are immutable/append-only — no column-level UPDATE grants at all.
+    // Strategy generations + options (ACBP-P3-001) + recommendations (ACBP-P3-003) are immutable/append-only —
+    // no column-level UPDATE grants at all.
     expect(byTable.get('strategy_generations') ?? []).toEqual([]);
     expect(byTable.get('strategy_options') ?? []).toEqual([]);
+    expect(byTable.get('strategy_recommendations') ?? []).toEqual([]);
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {

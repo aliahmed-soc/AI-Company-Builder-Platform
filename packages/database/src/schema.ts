@@ -565,6 +565,23 @@ export interface StrategyOptionsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Strategy recommendations (ACBP-P3-003; CDR-036). A company-owned, dual-keyed FORCE RLS, IMMUTABLE advisory
+ * recommendation over a generation's options (SELECT+INSERT only). Append-only (latest-wins on read); every column
+ * `never` on update. References one option + carries rationale + sensitivities; selects nothing (P3-004 owns selection).
+ */
+export interface StrategyRecommendationsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  generation_id: ColumnType<string, string, never>;
+  recommended_option_id: ColumnType<string, string, never>;
+  rationale: ColumnType<string, string, never>;
+  sensitivities: ColumnType<string, string, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -592,6 +609,7 @@ export interface DatabaseSchema {
   task_dependencies: TaskDependenciesTable;
   strategy_generations: StrategyGenerationsTable;
   strategy_options: StrategyOptionsTable;
+  strategy_recommendations: StrategyRecommendationsTable;
 }
 
 // Repository-facing row shapes.
@@ -653,3 +671,5 @@ export type StrategyGenerationRow = Selectable<StrategyGenerationsTable>;
 export type NewStrategyGeneration = Insertable<StrategyGenerationsTable>;
 export type StrategyOptionRow = Selectable<StrategyOptionsTable>;
 export type NewStrategyOption = Insertable<StrategyOptionsTable>;
+export type StrategyRecommendationRow = Selectable<StrategyRecommendationsTable>;
+export type NewStrategyRecommendation = Insertable<StrategyRecommendationsTable>;
