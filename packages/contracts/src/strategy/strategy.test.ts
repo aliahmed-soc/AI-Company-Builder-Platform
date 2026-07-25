@@ -12,6 +12,8 @@ import {
   isSimilarityCheckResult,
   parseStrategyOptions,
   narrowStrategyOutput,
+  DISTINCTNESS_AXES,
+  dedupeByDistinctness,
   type StrategyOptionField,
 } from './strategy.js';
 
@@ -131,5 +133,81 @@ describe('parseStrategyOptions (deny-by-default)', () => {
     expect(isStrategyGenerationStatus('done')).toBe(false);
     expect(isSimilarityCheckResult('pending')).toBe(true);
     expect(isSimilarityCheckResult('maybe')).toBe(false);
+  });
+});
+
+describe('distinctness check — dedupeByDistinctness (ACBP-P3-002/CDR-035/STRAT-001)', () => {
+  test('the distinctness axes are exactly customer/offer/business_model', () => {
+    expect(DISTINCTNESS_AXES).toEqual(['customer', 'offer', 'business_model']);
+  });
+
+  test('a genuinely distinct set passes unchanged → distinct', () => {
+    const opts = [
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription' }),
+      fields({ customer: 'Enterprises', offer: 'managed service', business_model: 'contract' }),
+      fields({ customer: 'Consumers', offer: 'mobile app', business_model: 'freemium' }),
+    ];
+    const r = dedupeByDistinctness(opts);
+    expect(r.result).toBe('distinct');
+    expect(r.distinct).toHaveLength(3);
+    expect(r.duplicatesRejected).toBe(0);
+  });
+
+  test('cosmetic variants (same axes, different title/prose) are rejected as near-duplicates', () => {
+    // Three options identical on customer/offer/business_model — only description/benefits differ ("same plan,
+    // different titles"). They collapse to ONE distinct option → insufficient_distinct.
+    const opts = [
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription', description: 'Option A' }),
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription', description: 'Option B (reworded)' }),
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription', description: 'Option C (also reworded)' }),
+    ];
+    const r = dedupeByDistinctness(opts);
+    expect(r.result).toBe('insufficient_distinct');
+    expect(r.distinct).toHaveLength(1);
+    expect(r.distinct[0]!.description).toBe('Option A'); // first representative kept
+    expect(r.duplicatesRejected).toBe(2);
+  });
+
+  test('normalization: case/whitespace differences on axis values do NOT make options distinct', () => {
+    const opts = [
+      fields({ customer: 'Small Businesses', offer: 'DIY tool', business_model: 'subscription' }),
+      fields({ customer: '  small   businesses ', offer: 'diy tool', business_model: 'SUBSCRIPTION' }),
+      fields({ customer: 'Enterprises', offer: 'managed service', business_model: 'contract' }),
+    ];
+    const r = dedupeByDistinctness(opts);
+    // Only two genuinely-distinct options (the first two normalize to the same key) → insufficient.
+    expect(r.result).toBe('insufficient_distinct');
+    expect(r.distinct).toHaveLength(2);
+  });
+
+  test('differing on ANY single axis is enough to be distinct', () => {
+    const base = { customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription' };
+    const opts = [
+      fields(base),
+      fields({ ...base, offer: 'managed service' }), // differs on offer only
+      fields({ ...base, business_model: 'one-time' }), // differs on business_model only
+    ];
+    const r = dedupeByDistinctness(opts);
+    expect(r.result).toBe('distinct');
+    expect(r.distinct).toHaveLength(3);
+  });
+
+  test('a mixed set keeps the distinct representatives and rejects the duplicates', () => {
+    const opts = [
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription', description: 'keep-1' }),
+      fields({ customer: 'SMBs', offer: 'DIY tool', business_model: 'subscription', description: 'dup-of-1' }),
+      fields({ customer: 'Enterprises', offer: 'managed', business_model: 'contract', description: 'keep-2' }),
+      fields({ customer: 'Consumers', offer: 'app', business_model: 'freemium', description: 'keep-3' }),
+    ];
+    const r = dedupeByDistinctness(opts);
+    expect(r.result).toBe('distinct');
+    expect(r.distinct.map((o) => o.description)).toEqual(['keep-1', 'keep-2', 'keep-3']);
+    expect(r.duplicatesRejected).toBe(1);
+  });
+
+  test('an empty set is insufficient_distinct', () => {
+    const r = dedupeByDistinctness([]);
+    expect(r.result).toBe('insufficient_distinct');
+    expect(r.distinct).toHaveLength(0);
   });
 });

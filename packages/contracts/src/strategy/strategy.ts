@@ -154,6 +154,51 @@ export function narrowStrategyOutput(value: unknown): StrategyGenerationOutput |
   return { options, partial: v.partial, status: v.status, fewerReason: v.fewerReason ?? null };
 }
 
+// ── Distinctness check (ACBP-P3-002; CDR-035; STRAT-001) ─────────────────────────────────────────────────
+/**
+ * The three axes that make two options GENUINELY DISTINCT (PRD J-07 "options differ on customer/offer/model"). Two
+ * options are near-duplicates (cosmetic variants — "the same plan with different titles") IFF they match on ALL three.
+ */
+export const DISTINCTNESS_AXES = ['customer', 'offer', 'business_model'] as const satisfies readonly StrategyOptionField[];
+
+/** Normalize an axis value for distinctness comparison: case-fold, trim, collapse internal whitespace. */
+function normalizeAxisValue(v: string): string {
+  return v.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** The normalized 3-axis distinctness key of an option (equal keys ⇒ near-duplicates). */
+export function distinctnessKey(fields: StrategyOptionFields): string {
+  // A NUL join avoids axis-boundary collisions (e.g. "a"/"bc" vs "ab"/"c").
+  return DISTINCTNESS_AXES.map((axis) => normalizeAxisValue(fields[axis])).join(' ');
+}
+
+export interface DistinctnessResult {
+  /** The genuinely-distinct option set — the first representative of each distinctness group, in model order. */
+  readonly distinct: readonly StrategyOptionFields[];
+  /** `distinct` when ≥ MIN_DISTINCT_OPTIONS genuinely-distinct options exist, else `insufficient_distinct`. */
+  readonly result: SimilarityCheckResult;
+  /** How many options were rejected as near-duplicates (cosmetic variants). */
+  readonly duplicatesRejected: number;
+}
+
+/**
+ * The STRAT-001 similarity check: reject near-duplicates (cosmetic variants). Groups options by their normalized
+ * 3-axis distinctness key, KEEPS the first representative of each group (model ordering preserved), and reports
+ * `distinct` (≥3 genuinely-distinct groups) or `insufficient_distinct`. Deterministic, model-free (no metering).
+ */
+export function dedupeByDistinctness(options: readonly StrategyOptionFields[]): DistinctnessResult {
+  const seen = new Set<string>();
+  const distinct: StrategyOptionFields[] = [];
+  for (const opt of options) {
+    const key = distinctnessKey(opt);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(opt);
+  }
+  const result: SimilarityCheckResult = distinct.length >= MIN_DISTINCT_OPTIONS ? 'distinct' : 'insufficient_distinct';
+  return { distinct, result, duplicatesRejected: options.length - distinct.length };
+}
+
 /** The redacted, client-facing option view (approved fields only; the validated 16-field object + its ordinal). */
 export interface StrategyOptionDTO {
   readonly optionId: string;
