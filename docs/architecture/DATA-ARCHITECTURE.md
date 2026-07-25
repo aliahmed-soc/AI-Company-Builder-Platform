@@ -105,6 +105,24 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 
 
 
+<!-- IMPLEMENTED (ACBP-P4-001; CDR-039): the Goal / Roadmap / Milestone rows below are realized by migration 0026 as
+     `roadmaps` + `goals` + `milestones`, plus a fourth table `task_review_flags` for ROAD-002's affected-task
+     flagging. All company-owned, dual-keyed FORCE RLS, SELECT+INSERT only.
+     `roadmaps` is VERSIONED append-only: UNIQUE(company_id, version), an unbroken supersedes chain, and an
+     `edit_reason` shape CHECK (an EDITED version must carry a bounded reason — ROAD-002 "record rationale" — a
+     GENERATED one must carry none). A revision is a NEW ROW, never an in-place edit, which is what makes ROAD-002's
+     "version write failure blocks the edit rather than losing history" STRUCTURAL. It pins `decision_id` (J-08
+     "decision recorded before any planning"); the gate is the company's LATEST decision being NON-reject
+     (CDR-039 §7-G1) — a rejection is also recorded (STRAT-006), so mere existence must never unlock planning.
+     `goals`/`milestones` are immutable, ordinal-sequenced per version (ROAD-001 "target sequencing" = ORDER only,
+     never invented dates — ADR-019); a milestone MAY name its goal, pinned to the same version by a composite FK.
+     The `status` columns below exist with closed CHECK sets but have NO transition path yet and NO UPDATE grant
+     (CDR-039 §7-G4) — progress belongs in a later append-only event table, not in-place mutation.
+     Migration 0026 also adds the `tasks.milestone_id → milestones` FK (ON DELETE SET NULL) that makes
+     "Tasks trace to it" enforceable — the P4-002 review flagged its absence for this ticket. Roadmap CONTENT stays in
+     Postgres: ADR-016 object storage is blocked on the provider selection (ACBP-P0-005). Task GENERATION is P4-003
+     (CDR-039 §7-G3). No new SECURITY DEFINER / role / BYPASSRLS. -->
+
 | Decision | C | decision_id | links understanding version + options considered + selection | recorded (terminal) | **I** | — | Permanent (with company) | decision.recorded | MVP |
 | Goal | C | goal_id | belongs to Roadmap | active→achieved/dropped | V | — | With company | roadmap versions | MVP |
 | Roadmap | C | roadmap_id, version | has Goals/Milestones; from Decision | versioned | V | — | With company | ROAD-002 versions | MVP |

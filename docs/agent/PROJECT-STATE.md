@@ -9,6 +9,24 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-001 goals, roadmap and milestones — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**
+  Branch `p4-001-goals-roadmap-milestones` (from main `766b674`, after P3-005 merged), draft PR **#39**, CDR-039.
+  Turns the DECIDED strategy into a plan (ROAD-001) that is versioned and editable (ROAD-002). The planning GATE is the
+  company's LATEST decision being NON-reject (`decisions.mode <> 'reject'`; CDR-039 §7-G1) — STRAT-006 records
+  rejections too, so "a decision exists" would have unlocked planning off a rejection; re-verified inside the persist
+  tx → `stale_decision`. Migration **0026**: `roadmaps` (versioned append-only, UNIQUE(company_id, version), supersedes
+  chain, edit_reason shape CHECK), `goals` + `milestones` (immutable, ordinal-sequenced, composite same-version goal
+  FK), `task_review_flags`; plus the additive `tasks.milestone_id → milestones` FK that closes the P4-002 review NOTE
+  and makes ROAD-001's "tasks trace to milestones" enforceable. `generateRoadmap` (metered by the gateway; partial
+  honesty — failure/malformed/empty persists NOTHING, only a model-flagged output is `partial`) and `editRoadmap`
+  (OWNER-ONLY, version-guarded, new version + affected-OPEN-task flags + `roadmap.edited` in ONE tx, so a failure
+  cannot lose history). NO task generation (P4-003 owns PLAN-001), no dates (ADR-019). Ratified: CDR-039 §7 G1–G8.
+  Commits: contracts `0cf8a15` → migration 0026 `b517dee` → ROAD-001 core `593051a` → ROAD-002 core `7c2cbad`.
+  Local: full unit 1036 passed / 0 failed; planning real-PG 11 + roadmap-generation 12 + roadmap-edit 7 discovered
+  (local PG down → skipped; hosted CI is the evidence); recursive typecheck/lint/secrets/boundaries clean; 0 mojibake.
+  Independent review next, then exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete branch.
+  Migrations end **0026**.
+- **ACBP-P3-005 immutable decision records — DONE** (squash `766b674`, PR #38; exact-main CI green zero-skip 1695/1695; branch deleted). Phase 3 5/7.
 - **ACBP-P3-005 immutable decision records — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**
   Branch `p3-005-decision-records` (from main `50bbaa8`, after P3-004 merged), draft PR **#38**, CDR-038.
   The STRAT-006 audit-grade record: links the CONFIRMED understanding version, the options CONSIDERED (via the

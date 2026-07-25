@@ -194,6 +194,15 @@ trusted core/use-case seam:
   does NOT unlock planning — P4-001 gates separately, and on a **non-reject** decision (`decisions.mode <> 'reject'`),
   since a rejection is also recorded (CDR-038 §6-G1). DISTINCT closed action, deny-by-default; not granted to a
   viewer, an account owner without company membership, nor via forged provider claims. See `CDR-038`.
+- **P4-001** (goals, roadmap, milestones) adds `roadmap:generate` and `roadmap:read`, both `owner|viewer` (the
+  generation-class precedent), and **`roadmap:edit`, `owner`-only** — API-CONTRACTS specifies "Owner (edit)" for the
+  versioned roadmap edit, and ROAD-002 records the editing author. Generation is additionally GATED at the use-case
+  layer on the company's **latest decision being NON-reject** (`decisions.mode <> 'reject'`; CDR-039 §7-G1) — a
+  rejection is also recorded (STRAT-006), so the mere existence of a decision must never unlock planning, and a later
+  rejection re-blocks new planning. The edit is version-guarded (editing a superseded version is refused) and runs
+  its authorization check BEFORE input validation, so an unauthorized caller learns only `forbidden`. DISTINCT closed
+  actions, deny-by-default; not granted to an account owner without company membership nor via forged provider claims.
+  See `CDR-039`.
 
 ## What P1-007 does NOT do (later tickets)
 
