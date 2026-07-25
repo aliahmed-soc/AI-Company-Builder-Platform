@@ -3,6 +3,24 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P3-004 selection / edit / combine / phase-limited approval — CORE DONE / FINALIZING (3rd 8-hour autonomous window).**
+  Branch `p3-004-selection-and-approval` (from main `c645e8e`, after the `.gitattributes` chore), draft PR **#36**, CDR-037.
+  Records the OWNER's decision over a generation in a closed `mode` {select, edit, combine, reject} + FLAGGING-only
+  `phase_scope` {first_phase, whole_plan} (STRAT-003/005). `validateStrategyDecision` is deny-by-default per-mode (select →
+  in-range ordinal; edit/combine → an owner-supplied 16-field object reusing `isCompleteOptionFields`, NO model call;
+  reject → non-blank bounded reasons). `recordStrategyDecision` (OWNER-ONLY `strategy:select`) persists ONE immutable
+  selection + the `strategy.selected` audit (metadata {mode} + phase_scope when set — never content) in ONE tx
+  (audit-or-nothing); `getLatestStrategyGeneration` surfaces the latest selection. Records a SELECTION only — NO decision
+  record (P3-005), NO planning unlock (the P4 boundary; phase-limited approval is an owner-accepted Phase-3 deferral).
+  Migration **0024** `strategy_selections` (immutable/append-only, dual-keyed FORCE RLS, SELECT+INSERT; composite FK
+  same-generation; mode/phase_scope/shape CHECKs) + every reset list/catalog surface. Ratified (CDR-037 §6): G1
+  selection-only; G2 phase_scope value set; G3 edit/combine owner-supplied; G4 reject single reasons field. Commits:
+  contracts `c4d57c7` → migration+repo `806606b` → core `5ec73b5`. Local: contracts strategy unit + core strategy/audit
+  33 unit; strategy-selection real-PG 11 + strategy_selections migration 10 discovered (local PG down → skipped, hosted CI
+  is the evidence); full recursive typecheck/lint/secrets/boundaries clean. Independent review next.
+  Finalization → backlog Done → exact-head CI zero-skip → squash-merge "ACBP-P3-004: Selection, edit, combine,
+  phase-limited approval" → exact-main CI zero-skip → delete branch. Migrations end **0024**.
+- **ACBP-P3-003 comparison + AI recommendation — DONE** (squash `55438de`, PR #35; exact-main CI green zero-skip; branch deleted). Phase 3 3/7.
 - **ACBP-P3-003 comparison + AI recommendation — CORE DONE / FINALIZING (2nd 8-hour autonomous window).**
   Branch `p3-003-comparison-recommendation` (from main `a8ace01`, after P3-002 merged), draft PR **#35**, CDR-036.
   Adds the OPTIONAL ADVISORY recommendation over a generation's distinct options (STRAT-004). Canon-derived design (via

@@ -75,6 +75,17 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      (metered by the gateway) produces it; deny-by-default (one option in range + non-blank rationale + sensitivities,
      else honest abstain). NO new audit event (the recommendation changes no state — CDR-036 §4); no new SECURITY
      DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P3-004; CDR-037): the OWNER's decision over a generation is realized by migration 0024 as one more
+     company-owned, dual-keyed FORCE RLS, IMMUTABLE (`I`) append-only table `strategy_selections` (SELECT+INSERT only).
+     One row per decision in a closed `mode` {select, edit, combine, reject}; mode-shaped nullable columns
+     (`selected_option_id`, a `chosen_fields` jsonb object, `phase_scope` {first_phase, whole_plan}, `reasons`) enforced
+     by CHECK constraints; a composite FK (selected_option_id, generation_id) → strategy_options(id, generation_id) keeps
+     a named option in THIS generation. "No decision" = ABSENCE of a row; a re-decision is a new row (latest-wins on
+     read). OWNER-ONLY (`strategy:select`; edit/combine fields are owner-supplied, NO model call). It records a SELECTION
+     ONLY — it is NOT the immutable Decision record (decision.recorded is P3-005) and unlocks NO planning (the P4
+     boundary). `phase_scope` is FLAGGING only (STRAT-005; enforcement is the P4 planning boundary — an owner-accepted
+     Phase-3 deferral). `strategy.selected` audited in-tx (metadata {mode} + phase_scope when set — never content). No
+     new SECURITY DEFINER / role / BYPASSRLS. -->
 
 
 
