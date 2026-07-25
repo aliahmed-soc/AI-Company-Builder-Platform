@@ -1,19 +1,20 @@
-// @acbp/core — strategy option generation use case (ACBP-P3-001; CDR-034; STRAT-001/002; ADR-011/019).
+// @acbp/core — strategy option generation use case (ACBP-P3-001/P3-002; CDR-034/CDR-035; STRAT-001/002; ADR-011/019).
 //
 // Generate a set of strategy options from the company's CONFIRMED understanding version. Gated: strategy generation is
 // BLOCKED until the owner confirms the understanding (UNDER-003/P2-009 — planning/strategy locked pre-confirm). The
 // model call runs BETWEEN scoped operations (never in a held tx): read the confirmed understanding (its own scope) →
 // call the P2-003 GATEWAY (injected, provider-neutral; fake in P3-001 — live is the deferred owner gate CDR-026 §0) →
-// validate the 16-field standard (ADR-019 no fake precision; honest fewer-than-three) → persist ONE immutable
-// generation + its options + the `strategy.generated` audit in a SINGLE company-scoped transaction (audit-or-nothing).
-// A gateway failure or malformed output persists NOTHING. The rigorous cosmetic-variant distinctness engine is P3-002
-// (this ticket records `similarity_check_result: 'pending'`).
+// validate the 16-field standard (ADR-019 no fake precision) → run the STRAT-001 similarity check (P3-002/CDR-035:
+// reject near-duplicates; persist ONLY the genuinely-distinct set; real distinct/insufficient_distinct verdict; honest
+// fewer-than-three) → persist ONE immutable generation + its distinct options + the `strategy.generated` audit in a
+// SINGLE company-scoped transaction (audit-or-nothing). A gateway failure or malformed output persists NOTHING.
 import { StrategyRepository, UnderstandingRepository, UnderstandingReviewRepository, writeAuditEvent, type DatabaseClient, type AuditScope, type AuditWriteContext, type StrategyGenerationRow, type StrategyOptionRow } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import {
   strategyGenerated,
   narrowStrategyOutput,
+  dedupeByDistinctness,
   isVersionConfirmed,
   isConfirmationEventKind,
   resolveTemplateRef,
@@ -21,6 +22,7 @@ import {
   templateRef,
   timeoutClassForTask,
   STRATEGY_OPTIONS_SCHEMA,
+  FEWER_REASON_MAX,
   type AuditEvent,
   type ModelContextPart,
   type ModelGatewayRequest,
@@ -133,7 +135,15 @@ export async function generateStrategyOptions(client: DatabaseClient, params: Ge
   if (result.outcome !== 'ok') return { status: 'generation_failed' };
   const parsed = validOptions(result.validatedOutput);
   if (parsed === undefined) return { status: 'generation_failed' };
-  const similarity: SimilarityCheckResult = 'pending'; // the distinctness verdict is P3-002
+
+  // The STRAT-001 similarity check (ACBP-P3-002; CDR-035): reject near-duplicates (cosmetic variants) — only the
+  // genuinely-distinct set (differing on customer/offer/business_model) is persisted. The honest outcome + verdict
+  // follow from the DISTINCT count, not the raw model count.
+  const distinctness = dedupeByDistinctness(parsed.options);
+  const distinctOptions = distinctness.distinct;
+  const similarity: SimilarityCheckResult = distinctness.result;
+  const status: StrategyGenerationStatus = similarity === 'distinct' ? 'complete' : 'fewer_than_three';
+  const fewerReason = status === 'fewer_than_three' ? honestFewerReason(parsed.fewerReason, distinctOptions.length, distinctness.duplicatesRejected) : null;
 
   if (options.beforePersist !== undefined) await options.beforePersist();
 
@@ -156,20 +166,21 @@ export async function generateStrategyOptions(client: DatabaseClient, params: Ge
         companyId: params.companyId,
         understandingDocumentId: pre.documentId,
         understandingVersion: pre.version,
-        status: parsed.status,
-        optionCount: parsed.options.length,
-        fewerReason: parsed.fewerReason,
+        status,
+        optionCount: distinctOptions.length,
+        fewerReason,
         similarityCheckResult: similarity,
         modelFlaggedPartial: parsed.partial,
         createdByUserId: params.userId,
       });
+      // Persist ONLY the distinct set, re-ordinaled 0..n-1 (near-duplicates are rejected, not stored — STRAT-001).
       const optionRows: StrategyOptionRow[] = [];
-      for (let i = 0; i < parsed.options.length; i += 1) {
-        optionRows.push(await repo.insertOption({ accountId: params.accountId, companyId: params.companyId, generationId: generation.id, ordinal: i, fields: parsed.options[i]! }));
+      for (let i = 0; i < distinctOptions.length; i += 1) {
+        optionRows.push(await repo.insertOption({ accountId: params.accountId, companyId: params.companyId, generationId: generation.id, ordinal: i, fields: distinctOptions[i]! }));
       }
       // strategy.generated in the SAME transaction — an audit failure rolls the whole generation+options back.
-      await audit(scope, strategyGenerated({ generationId: generation.id, understandingVersion: pre.version, optionCount: parsed.options.length, similarityCheckResult: similarity }), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
-      deps.logger?.info('strategy.generated', { metadata: { accountId: params.accountId, companyId: params.companyId, understandingVersion: pre.version, optionCount: parsed.options.length, status: parsed.status } });
+      await audit(scope, strategyGenerated({ generationId: generation.id, understandingVersion: pre.version, optionCount: distinctOptions.length, similarityCheckResult: similarity }), options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
+      deps.logger?.info('strategy.generated', { metadata: { accountId: params.accountId, companyId: params.companyId, understandingVersion: pre.version, optionCount: distinctOptions.length, similarityCheckResult: similarity, status } });
       return { status: 'ok', generation: toGenerationDTO(generation, optionRows) };
     },
     optsBase,
@@ -206,6 +217,23 @@ export async function getLatestStrategyGeneration(client: DatabaseClient, params
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────
+/**
+ * The honest fewer-than-three reason (STRAT-001 "stated honestly with reasons rather than padded"). ALWAYS returns a
+ * factual, non-fabricated reason (ADR-019) — never null — so a `fewer_than_three` generation is never unexplained.
+ * Prefers the model's own reason; else, when near-duplicates collapsed the set, states how many genuinely-distinct
+ * options remain + how many cosmetic variants were rejected; else (the model simply produced fewer than three) states
+ * that plainly. Only fixed axis names + counts are used — no option content.
+ */
+function honestFewerReason(modelReason: string | null, distinctCount: number, duplicatesRejected: number): string {
+  if (modelReason !== null) return modelReason;
+  const optWord = distinctCount === 1 ? 'option' : 'options';
+  if (duplicatesRejected > 0) {
+    const dupWord = duplicatesRejected === 1 ? 'near-duplicate' : 'near-duplicates';
+    return `${distinctCount} genuinely distinct ${optWord}; ${duplicatesRejected} ${dupWord} on customer/offer/business_model were rejected.`.slice(0, FEWER_REASON_MAX);
+  }
+  return `The model produced only ${distinctCount} genuinely distinct ${optWord} for this understanding.`.slice(0, FEWER_REASON_MAX);
+}
+
 function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[]): StrategyGenerationDTO {
   return {
     generationId: row.id,

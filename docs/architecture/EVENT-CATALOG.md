@@ -72,7 +72,8 @@ Retention default: activity-projected events with company data; audit-relevant e
      transaction as the immutable strategy generation (audit-or-nothing — an in-tx audit failure rolls the generation +
      options back). Subject = the generation id; bounded metadata = {understanding_version, option_count,
      similarity_check_result} ONLY — NEVER option content/fields or the fewer-than-three reason. `similarity_check_result`
-     is written `pending` here (the rigorous cosmetic-variant distinctness verdict is P3-002). The other strategy.*
+     is the STRAT-001 distinctness verdict (`distinct`/`insufficient_distinct`, set by the P3-002 similarity check — a
+     deterministic, model-free check on the customer/offer/business_model axes; `pending` is no longer written). The other strategy.*
      events (strategy.selected, decision.recorded) are registered by P3-004/005. Activity fan-out is DEFERRED. -->
 | strategy.generated | Strategy | activity | generation_id, understanding_version, option_count, similarity_check_result (P3-001; no content) | audited in-tx | with company |
 | strategy.selected | Strategy | Planning (unlock), decision | option_id, mode (select/edit/combine), phase_scope? | audited | permanent |

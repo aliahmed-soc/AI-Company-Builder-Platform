@@ -30,6 +30,11 @@ function option(over: Record<string, string> = {}): Record<string, string> {
   for (const f of STRATEGY_OPTION_FIELDS) o[f] = `${f} value`;
   return { ...o, ...over };
 }
+// n GENUINELY-DISTINCT options — each differs on the distinctness axes (customer/offer/business_model), so the
+// P3-002 similarity check keeps all of them. (Bare option() calls are near-duplicates that collapse to one.)
+function distinctOptions(n: number, over: (i: number) => Record<string, string> = () => ({})): Record<string, string>[] {
+  return Array.from({ length: n }, (_, i) => option({ customer: `customer-${i}`, offer: `offer-${i}`, business_model: `model-${i}`, ...over(i) }));
+}
 const optionsOutput = (opts: Record<string, string>[], extra: Record<string, unknown> = {}) => JSON.stringify({ options: opts, ...extra });
 
 describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, restricted role) — ACBP-P3-001/CDR-034', () => {
@@ -78,13 +83,13 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
 
   test('complete generation from a CONFIRMED understanding: one immutable generation + 16-field options + audit + metered usage', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
-    const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option({ description: 'Sell wholesale' }), option({ description: 'Sell retail' }), option({ description: 'Subscription' })]) });
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3, (i) => ({ description: ['Sell wholesale', 'Sell retail', 'Subscription'][i]! }))) });
     const r = await generateStrategyOptions(product, base(), { gateway: gw });
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
     expect(r.generation.status).toBe('complete');
     expect(r.generation.optionCount).toBe(3);
-    expect(r.generation.similarityCheckResult).toBe('pending'); // distinctness verdict is P3-002
+    expect(r.generation.similarityCheckResult).toBe('distinct'); // 3 genuinely-distinct options pass (P3-002)
     expect(r.generation.options).toHaveLength(3);
     // Every option carries all 16 fields.
     for (const opt of r.generation.options) expect(Object.keys(opt.fields).sort()).toEqual([...STRATEGY_OPTION_FIELDS].sort());
@@ -95,17 +100,32 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     const audit = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'strategy.generated').execute();
     expect(audit).toHaveLength(1);
     expect(audit[0]!.subject_id).toBe(gens[0]!.id);
-    expect(audit[0]!.payload).toEqual({ understanding_version: 1, option_count: 3, similarity_check_result: 'pending' });
+    expect(audit[0]!.payload).toEqual({ understanding_version: 1, option_count: 3, similarity_check_result: 'distinct' });
     expect(JSON.stringify(audit[0]!.payload)).not.toContain('wholesale'); // no option content in audit
     expect((await sql<{ n: number }>`select count(*)::int as n from usage_events where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(1);
   });
 
   test('honest fewer-than-three: two options → status fewer_than_three, with the model reason retained', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
-    const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option(), option()], { fewer_reason: 'Only two distinct customers are viable for this idea.' }) });
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(2), { fewer_reason: 'Only two distinct customers are viable for this idea.' }) });
     const r = await generateStrategyOptions(product, base(), { gateway: gw });
     expect(r.status === 'ok' && r.generation.status).toBe('fewer_than_three');
-    if (r.status === 'ok') expect(r.generation.fewerReason).toBe('Only two distinct customers are viable for this idea.');
+    if (r.status === 'ok') {
+      expect(r.generation.fewerReason).toBe('Only two distinct customers are viable for this idea.');
+      expect(r.generation.similarityCheckResult).toBe('insufficient_distinct');
+      expect(r.generation.optionCount).toBe(2);
+    }
+  });
+
+  test('fewer-than-three with NO model reason and NO duplicates → a factual reason is still recorded (never unexplained)', async () => {
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    // Two genuinely-distinct options, no fewer_reason from the model, nothing to dedupe.
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(2)) });
+    const r = await generateStrategyOptions(product, base(), { gateway: gw });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.generation.status).toBe('fewer_than_three');
+    expect(r.generation.fewerReason).toBe('The model produced only 2 genuinely distinct options for this understanding.');
   });
 
   test('ADR-019 no-fabrication: an option missing a field persists NOTHING; the labeled "unknown" sentinel is accepted', async () => {
@@ -117,7 +137,7 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     expect((await generateStrategyOptions(product, base(), { gateway: gwBad })).status).toBe('generation_failed');
     expect(await gensFor(w.companyA1)).toHaveLength(0);
     // A field labeled "unknown" (ADR-019) is a LEGAL value → accepted.
-    const gwOk = gatewayWith({ kind: 'respond', output: optionsOutput([option({ cost_range: 'unknown' }), option(), option()]) });
+    const gwOk = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3, (i) => (i === 0 ? { cost_range: 'unknown' } : {}))) });
     const r = await generateStrategyOptions(product, base(), { gateway: gwOk });
     expect(r.status).toBe('ok');
     if (r.status === 'ok') expect(r.generation.options[0]!.fields.cost_range).toBe('unknown');
@@ -163,7 +183,7 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
 
   test('reads (owner+viewer): getLatestStrategyGeneration returns the latest generation + options; cross-company isolation', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
-    const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option(), option(), option()]) });
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3)) });
     await generateStrategyOptions(product, base(), { gateway: gw });
     // Viewer MAY read.
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
@@ -176,5 +196,47 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     // Company A2 (same account, different company) sees NO strategy — cross-company isolation.
     const a2 = { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA2 };
     expect(await getLatestStrategyGeneration(product, a2)).toEqual({ status: 'ok', generation: null });
+  });
+
+  // ── ACBP-P3-002: distinctness check (STRAT-001 — near-duplicates rejected honestly) ──────────────────────
+  test('P3-002 near-duplicates rejected: cosmetic variants (same axes, different titles) collapse to one → insufficient_distinct + fewer_than_three + honest reason', async () => {
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    // Three options identical on customer/offer/business_model — only description differs ("same plan, different titles").
+    const nearDupes = [option({ description: 'Plan A' }), option({ description: 'Plan B reworded' }), option({ description: 'Plan C reworded' })];
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(nearDupes) });
+    const r = await generateStrategyOptions(product, base(), { gateway: gw });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.generation.status).toBe('fewer_than_three');
+    expect(r.generation.similarityCheckResult).toBe('insufficient_distinct');
+    expect(r.generation.optionCount).toBe(1); // only the first distinct representative is persisted
+    // Honest reason (STRAT-001 "rejected honestly"), synthesized from the check — factual, not fabricated.
+    expect(r.generation.fewerReason).toContain('near-duplicate');
+    // Only the distinct set is stored; the near-duplicates were rejected, not persisted.
+    const gens = await gensFor(w.companyA1);
+    expect(await optsFor(gens[0]!.id)).toHaveLength(1);
+    // The audit carries the real verdict (never 'pending').
+    const audit = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'strategy.generated').execute();
+    expect((audit[0]!.payload as { similarity_check_result: string }).similarity_check_result).toBe('insufficient_distinct');
+    expect((audit[0]!.payload as { option_count: number }).option_count).toBe(1);
+  });
+
+  test('P3-002 mixed set: near-duplicates rejected, distinct representatives kept → distinct + complete', async () => {
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    // 4 options: #0 and #1 are near-duplicates (same axes); #2, #3 are genuinely distinct → 3 distinct total.
+    const mixed = [
+      option({ customer: 'SMBs', offer: 'tool', business_model: 'subscription', description: 'keep-1' }),
+      option({ customer: 'SMBs', offer: 'tool', business_model: 'subscription', description: 'dup-of-1' }),
+      option({ customer: 'Enterprises', offer: 'service', business_model: 'contract', description: 'keep-2' }),
+      option({ customer: 'Consumers', offer: 'app', business_model: 'freemium', description: 'keep-3' }),
+    ];
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(mixed) });
+    const r = await generateStrategyOptions(product, base(), { gateway: gw });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.generation.status).toBe('complete');
+    expect(r.generation.similarityCheckResult).toBe('distinct');
+    expect(r.generation.optionCount).toBe(3);
+    expect(r.generation.options.map((o) => o.fields.description)).toEqual(['keep-1', 'keep-2', 'keep-3']); // dup rejected
   });
 });
