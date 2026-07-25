@@ -38,6 +38,8 @@ import {
   strategyGenerated,
   strategySelected,
   decisionRecorded,
+  roadmapGenerated,
+  roadmapEdited,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -83,6 +85,9 @@ export const AUDITED_OPERATIONS = {
   'strategy.select': 'strategy.selected',
   // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006) — the durable, audit-grade record of a decision.
   'decision.record': 'decision.recorded',
+  // Planning (ACBP-P4-001; CDR-039 §5; ROAD-001/002) - a roadmap version was planned, or authored by an owner edit.
+  'roadmap.generate': 'roadmap.generated',
+  'roadmap.edit': 'roadmap.edited',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -100,6 +105,7 @@ export type ContextAuditedOperation = 'context.flag-conflict';
 export type TaskAuditedOperation = 'task.plan';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
+export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -111,10 +117,11 @@ export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] =
 export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan'];
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
+export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -191,6 +198,10 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => strategySelected({ selectionId: subjectId, mode: 'select', phaseScope: null });
     case 'decision.record':
       return (subjectId) => decisionRecorded({ decisionId: subjectId, understandingVersion: 1, optionsConsideredCount: 3, mode: 'select' });
+    case 'roadmap.generate':
+      return (subjectId) => roadmapGenerated({ roadmapId: subjectId, roadmapVersion: 1, goalCount: 1, milestoneCount: 1, status: 'complete', modelFlaggedPartial: false });
+    case 'roadmap.edit':
+      return (subjectId) => roadmapEdited({ roadmapId: subjectId, roadmapVersion: 2, supersedesVersion: 1, affectedTaskCount: 0, hasReason: true });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

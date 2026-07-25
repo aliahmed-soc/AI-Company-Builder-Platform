@@ -37,6 +37,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'strategy.select',
       // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006) — deliberately approved addition.
       'decision.record',
+      // Planning (ACBP-P4-001; CDR-039 §5; ROAD-001/002) — deliberately approved additions.
+      'roadmap.generate',
+      'roadmap.edit',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -73,6 +76,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['strategy.generate']).toBe('strategy.generated');
     expect(AUDITED_OPERATIONS['strategy.select']).toBe('strategy.selected');
     expect(AUDITED_OPERATIONS['decision.record']).toBe('decision.recorded');
+    expect(AUDITED_OPERATIONS['roadmap.generate']).toBe('roadmap.generated');
+    expect(AUDITED_OPERATIONS['roadmap.edit']).toBe('roadmap.edited');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

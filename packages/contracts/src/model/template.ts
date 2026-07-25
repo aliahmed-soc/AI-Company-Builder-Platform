@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'planning.roadmap', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -124,6 +124,20 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'You review a founder\'s strategic options and MAY recommend exactly one. Always give an explicit rationale (why this option) and its key sensitivities (what would change the recommendation). NEVER select or decide for the founder — the recommendation is advisory only. If you cannot give a defensible rationale, recommend nothing (set recommended_ordinal to null). Return only the structured recommendation.' },
       { role: 'user', text: 'Options (by ordinal):\n{{options}}' },
+    ],
+  },
+  // Roadmap planning (ACBP-P4-001; ROAD-001). Produces goals + sequenced milestones from the DECIDED strategy. The
+  // structured output, ordinal sequencing and the honest `partial` flag are enforced by parseRoadmapOutput, not this
+  // wording. Quality-bearing generation → prefers queueing over fallback. It proposes NO dates (ADR-019: a invented
+  // date is fake precision) and NO tasks (task generation is P4-003).
+  {
+    family: 'planning.roadmap',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['decision'],
+    segments: [
+      { role: 'system', text: 'You turn a founder\'s DECIDED strategy into a plan: a set of goals, and milestones sequenced in the order they should be reached. Each goal and milestone needs a short title and a description. Sequence milestones by ORDER ONLY — never invent target dates, durations, or numeric estimates. Do NOT produce tasks. If you can only plan part of the way honestly, return what you can justify and set partial to true rather than padding the plan. Return only the structured plan.' },
+      { role: 'user', text: 'Decided strategy:\n{{decision}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).

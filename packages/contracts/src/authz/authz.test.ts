@@ -62,6 +62,10 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:select': ['owner'],
   // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006): owner-only.
   'decision:record': ['owner'],
+  // Planning (ACBP-P4-001; CDR-039; ROAD-001/002): generate/read are member actions; the versioned EDIT is owner-only.
+  'roadmap:generate': ['owner', 'viewer'],
+  'roadmap:read': ['owner', 'viewer'],
+  'roadmap:edit': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

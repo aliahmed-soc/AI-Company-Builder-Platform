@@ -29,6 +29,8 @@ import {
   strategyGenerated,
   strategySelected,
   decisionRecorded,
+  roadmapGenerated,
+  roadmapEdited,
   type AuditEventName,
 } from './index.js';
 
@@ -108,6 +110,9 @@ describe('event-name registry (deny unregistered)', () => {
       'strategy.selected',
       // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006).
       'decision.recorded',
+      // Planning (ACBP-P4-001; CDR-039 §5; ROAD-001/002).
+      'roadmap.generated',
+      'roadmap.edited',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -308,5 +313,19 @@ describe('typed factories', () => {
     expect(ev).toEqual({ name: 'decision.recorded', schemaVersion: 1, subjectType: 'decision', subjectId: 'dec_1', outcome: 'success', metadata: { understanding_version: 2, options_considered_count: 3, mode: 'edit' } });
     // A rejection is recorded too (STRAT-006 "selection/edit/rejection"); still no reasons/rationale in metadata.
     expect(decisionRecorded({ decisionId: 'dec_2', understandingVersion: 1, optionsConsideredCount: 0, mode: 'reject' }).metadata).toEqual({ understanding_version: 1, options_considered_count: 0, mode: 'reject' });
+  });
+
+  test('roadmapGenerated: subject = the roadmap version; scalar counts only — no goal/milestone content', () => {
+    const ev = roadmapGenerated({ roadmapId: 'rm_1', roadmapVersion: 1, goalCount: 3, milestoneCount: 5, status: 'complete', modelFlaggedPartial: false });
+    expect(ev).toEqual({ name: 'roadmap.generated', schemaVersion: 1, subjectType: 'roadmap', subjectId: 'rm_1', outcome: 'success', metadata: { roadmap_version: 1, goal_count: 3, milestone_count: 5, status: 'complete', model_flagged_partial: false } });
+    // An honestly-partial plan is labeled, not hidden.
+    expect(roadmapGenerated({ roadmapId: 'rm_2', roadmapVersion: 2, goalCount: 1, milestoneCount: 1, status: 'partial', modelFlaggedPartial: true }).metadata).toEqual({ roadmap_version: 2, goal_count: 1, milestone_count: 1, status: 'partial', model_flagged_partial: true });
+  });
+
+  test('roadmapEdited: subject = the NEW version; metadata carries counts + has_reason — never the reason text', () => {
+    const ev = roadmapEdited({ roadmapId: 'rm_3', roadmapVersion: 2, supersedesVersion: 1, affectedTaskCount: 4, hasReason: true });
+    expect(ev).toEqual({ name: 'roadmap.edited', schemaVersion: 1, subjectType: 'roadmap', subjectId: 'rm_3', outcome: 'success', metadata: { roadmap_version: 2, supersedes_version: 1, affected_task_count: 4, has_reason: true } });
+    // No key anywhere carries free text.
+    expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'number' || typeof v === 'boolean')).toBe(true);
   });
 });
