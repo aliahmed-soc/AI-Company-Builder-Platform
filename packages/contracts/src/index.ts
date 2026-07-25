@@ -16,4 +16,5 @@ export * from './interview/index.js';
 export * from './memory/index.js';
 export * from './model/index.js';
 export * from './understanding/index.js';
+export * from './context/index.js';
 

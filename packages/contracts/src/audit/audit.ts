@@ -86,6 +86,12 @@ export const AUDIT_EVENTS = {
   // metadata is the bounded {version, correction_ref, dependents_flagged} — correction_ref is a reference/short code
   // (never content), dependents_flagged is the count of downstream stages invalidated.
   'understanding.corrected': { schemaVersion: 1, subjectType: 'understanding_document' },
+  // Context assembly (ACBP-P2-007; CDR-032 §3; MEM-004) — a same-subject conflict (a confirmed user item and an AI
+  // assumption on one source_ref) was flagged during context assembly; both items were HELD OUT of the model context
+  // and surfaced as an open question (never silently rank-resolved). AUDITED (BACKLOG P2-007 "Conflict events audited").
+  // Subject = the confirmed item id; metadata is the bounded {confirmed_count, assumption_count} — never content or the
+  // source_ref value. Outcome `blocked` (the items were withheld from context).
+  'context.conflict_flagged': { schemaVersion: 1, subjectType: 'memory_item' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -311,6 +317,16 @@ export function understandingConfirmed(input: { readonly documentId: string; rea
  */
 export function understandingCorrected(input: { readonly documentId: string; readonly version: number; readonly correctionRef: string; readonly dependentsFlagged: number }): AuditEvent {
   return makeEvent('understanding.corrected', input.documentId, 'success', { version: input.version, correction_ref: input.correctionRef, dependents_flagged: input.dependentsFlagged });
+}
+
+/**
+ * `context.conflict_flagged` (ACBP-P2-007; CDR-032 §3; MEM-004). A same-subject conflict (confirmed user item + AI
+ * assumption on one `source_ref`) was flagged during context assembly and both items withheld from the model context.
+ * Subject = the confirmed item id; metadata is the bounded `{confirmed_count, assumption_count}` — never content or the
+ * raw source_ref. Outcome `blocked`.
+ */
+export function contextConflictFlagged(input: { readonly itemId: string; readonly confirmedCount: number; readonly assumptionCount: number }): AuditEvent {
+  return makeEvent('context.conflict_flagged', input.itemId, 'blocked', { confirmed_count: input.confirmedCount, assumption_count: input.assumptionCount });
 }
 
 /**

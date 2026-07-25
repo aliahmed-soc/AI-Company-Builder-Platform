@@ -3,8 +3,29 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
-- **ACBP-P2-012 Slice B integration: confirmed understanding — DONE / FINALIZING (autonomous window; finalization pre-authorized).**
-  Backlog **Done**. Independent 8-dimension adversarial review **CLEAN** (no Blocker/Critical/High; 6 Low — 4 fixed:
+- **ACBP-P2-007 context assembly — CORE DONE / FINALIZING (autonomous window; trust-critical).**
+  Branch `p2-007-context-assembly` (from main `a6dff28`), draft PR **#31**, CDR-032. Owner ratified the MEM-004 conflict
+  semantics (genuine contradiction → open question, never silent rank-resolve; reuse P2-005). Core `assembleContext`
+  (commit `381c2bd`): read current memory (`memory:read`) → provenance-rank → detect MEM-004 conflicts (confirmed-user +
+  ai_assumption on same `source_ref`, deterministic/model-free) → WITHHOLD both + audit `context.conflict_flagged`
+  in-tx → redact secrets → return `contextParts` + conflicts. NO model call; no migration; no new authz. Real-PG
+  integration 6/6; full unit 958; all gates clean. P2-005 gap documented (model-based/answer-time; semantic detection
+  deferred). Backlog **Done**. Independent core review **PASS** (no Blocker/Crit/High; last-gate-before-model bar met;
+  L1 fail-closed enum guard fixed; L2 informational) — P2-007-REVIEW-COVERAGE.md. Finalization records next → exact-head
+  CI → squash-merge "ACBP-P2-007: Context assembly" → exact-main CI → delete branch → Phase 2 11/12. The last non-gated Phase-2 ticket
+  (P2-011 is OWNER-GATED on the live-model eval). **Deliberately sliced (trust-critical):** this window shipped only
+  the PURE, security-critical logic — `rankMemoryForContext`/`provenanceTier` (confirmed user > accepted assumptions >
+  research; invalidated excluded; MEM-004 ordering) + the `SECRET_PATTERNS`/`redactSecrets`/`containsSecret` blocklist
+  (fail-closed, defense-in-depth; a seeded secret never reaches the prompt — invariant 12/NFR-018). Commit `8b01212`;
+  20 unit tests (11 synthetic secret shapes redacted + benign-text no-false-positives + ranking order); synthetic
+  fixtures allowlisted for the secret scanner (reviewed FPs, no real creds); recursive typecheck/lint/secrets/encoding/
+  boundaries all clean. **NOT finalized** — the follow-up **core slice** (next window) owns: `assembleContext` (scoped
+  memory read + MEM-004 conflict DETECTION→question emission — under-specified, designed with care in core), real-PG
+  integration (seeded-secret-blocked E2E, seeded-conflict-surfaces-question, cross-company isolation), an independent
+  **security review** (trust-critical), and finalization. No migration, no new authz (reuses `memory:read`), no live
+  provider. CDR-032 §4 has the slice plan. PR #10 untouched.
+- **ACBP-P2-012 Slice B integration: confirmed understanding — DONE (merged squash `a6dff28`, PR #30; exact-main CI green 136/136 zero-skip).**
+  Independent 8-dimension adversarial review **CLEAN** (no Blocker/Critical/High; 6 Low — 4 fixed:
   step-3 falsifiability, step-12 seed-audit decoupling, demo truncation guard, CDR wording; 2 accepted with rationale —
   P2-012-REVIEW-COVERAGE.md). Finalization records committed; sequence = exact-head CI (zero-skip) → PR #30 ready →
   verify MERGEABLE + recheck main/PR#10 → squash-merge "ACBP-P2-012: Slice B integration: confirmed understanding"
