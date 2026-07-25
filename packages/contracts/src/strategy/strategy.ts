@@ -59,14 +59,15 @@ export const FEWER_REASON_MAX = 1_000;
 /** The gateway output-schema ref for strategy option generation (the composition dispatches validateOutput on it). */
 export const STRATEGY_OPTIONS_SCHEMA = 'strategy.options.output@1';
 
-/** One generated option (the model's output unit) — the validated 16-field content object. */
-export interface StrategyOptionInput {
-  readonly fields: StrategyOptionFields;
+/** The validated output of a strategy generation: the flat 16-field options + honest status/partial/reason. */
+export interface StrategyGenerationOutput {
+  readonly options: readonly StrategyOptionFields[];
+  readonly partial: boolean;
+  readonly status: StrategyGenerationStatus;
+  readonly fewerReason: string | null;
 }
 
-export type StrategyParse =
-  | { readonly ok: true; readonly value: { readonly options: readonly StrategyOptionInput[]; readonly partial: boolean; readonly status: StrategyGenerationStatus; readonly fewerReason: string | null } }
-  | { readonly ok: false };
+export type StrategyParse = { readonly ok: true; readonly value: StrategyGenerationOutput } | { readonly ok: false };
 
 const FAIL = { ok: false } as const;
 
@@ -115,15 +116,39 @@ export function parseStrategyOptions(raw: string): StrategyParse {
   const rawReason = (root as { fewer_reason?: unknown }).fewer_reason;
   if (rawReason !== undefined && (typeof rawReason !== 'string' || rawReason.trim().length === 0 || rawReason.length > FEWER_REASON_MAX)) return FAIL;
 
-  const options: StrategyOptionInput[] = [];
+  const options: StrategyOptionFields[] = [];
   for (const raw of list) {
     if (!isCompleteOptionFields(raw)) return FAIL;
-    options.push({ fields: normalizeFields(raw) });
+    options.push(normalizeFields(raw));
   }
   const status: StrategyGenerationStatus = options.length >= MIN_DISTINCT_OPTIONS ? 'complete' : 'fewer_than_three';
   // A reason is meaningful only when the outcome is honestly fewer-than-three.
   const fewerReason = status === 'fewer_than_three' && typeof rawReason === 'string' ? rawReason.trim() : null;
   return { ok: true, value: { options, partial, status, fewerReason } };
+}
+
+/**
+ * Defensively narrow an ALREADY-VALIDATED strategy output (the gateway's `validatedOutput`, produced by
+ * `parseStrategyOptions`) back to `StrategyGenerationOutput` — WITHOUT re-parsing raw text. Re-checks the load-bearing
+ * invariants (every option is a complete 16-field object; the status/count are consistent), so a corrupted seam value
+ * is rejected (`undefined`) rather than trusted. This is the single, safe re-entry the core use case consumes.
+ */
+export function narrowStrategyOutput(value: unknown): StrategyGenerationOutput | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const v = value as { options?: unknown; partial?: unknown; status?: unknown; fewerReason?: unknown };
+  if (!Array.isArray(v.options) || v.options.length > MAX_STRATEGY_OPTIONS) return undefined;
+  if (typeof v.partial !== 'boolean') return undefined;
+  if (!isStrategyGenerationStatus(v.status)) return undefined;
+  if (v.fewerReason !== null && (typeof v.fewerReason !== 'string' || v.fewerReason.length > FEWER_REASON_MAX)) return undefined;
+  const options: StrategyOptionFields[] = [];
+  for (const opt of v.options) {
+    if (!isCompleteOptionFields(opt)) return undefined;
+    options.push(opt);
+  }
+  // The honest status MUST be consistent with the count (no forged "complete" with < MIN options).
+  const expected: StrategyGenerationStatus = options.length >= MIN_DISTINCT_OPTIONS ? 'complete' : 'fewer_than_three';
+  if (v.status !== expected) return undefined;
+  return { options, partial: v.partial, status: v.status, fewerReason: v.fewerReason ?? null };
 }
 
 /** The redacted, client-facing option view (approved fields only; the validated 16-field object + its ordinal). */

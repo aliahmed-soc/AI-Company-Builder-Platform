@@ -11,6 +11,7 @@ import {
   isStrategyGenerationStatus,
   isSimilarityCheckResult,
   parseStrategyOptions,
+  narrowStrategyOutput,
   type StrategyOptionField,
 } from './strategy.js';
 
@@ -105,7 +106,22 @@ describe('parseStrategyOptions (deny-by-default)', () => {
   test('field values are trimmed on the way out', () => {
     const r = parseStrategyOptions(JSON.stringify({ options: [fields({ description: '  padded  ' }), fields(), fields()] }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.value.options[0]!.fields.description).toBe('padded');
+    if (r.ok) expect(r.value.options[0]!.description).toBe('padded');
+  });
+
+  test('narrowStrategyOutput re-validates an already-parsed value and rejects a forged status/incomplete option', () => {
+    const parsed = parseStrategyOptions(JSON.stringify({ options: opts(3) }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // A round-trip of the validated value narrows back cleanly (no raw re-parse needed).
+    expect(narrowStrategyOutput(parsed.value)).toEqual(parsed.value);
+    // A forged status inconsistent with the count is rejected.
+    expect(narrowStrategyOutput({ ...parsed.value, status: 'fewer_than_three' })).toBeUndefined();
+    // An incomplete option is rejected.
+    const broken = fields();
+    delete (broken as Record<string, unknown>)['risks'];
+    expect(narrowStrategyOutput({ options: [broken], partial: false, status: 'fewer_than_three', fewerReason: null })).toBeUndefined();
+    expect(narrowStrategyOutput(null)).toBeUndefined();
   });
 
   test('enum guards', () => {
