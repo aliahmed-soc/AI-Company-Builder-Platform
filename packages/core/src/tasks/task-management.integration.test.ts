@@ -126,6 +126,15 @@ describe.skipIf(!hasTestDatabase)('task use cases (real PostgreSQL, restricted r
     expect((await addTaskDependency(product, { ...base(), taskId: a, dependsOnTaskId: foreign })).status).toBe('not_found');
   });
 
+  test('addTaskDependency is race-safe: two concurrent identical edges yield one ok + one duplicate, never a throw', async () => {
+    const a = await newDraft({ title: 'A' });
+    const b = await newDraft({ title: 'B' });
+    const [r1, r2] = await Promise.all([addTaskDependency(product, { ...base(), taskId: a, dependsOnTaskId: b }), addTaskDependency(product, { ...base(), taskId: a, dependsOnTaskId: b })]);
+    expect([r1.status, r2.status].sort()).toEqual(['duplicate', 'ok']);
+    // Exactly one edge persisted (the UNIQUE constraint held; the loser was a graceful no-op, not an error).
+    expect((await sql<{ n: number }>`select count(*)::int as n from task_dependencies where task_id = ${a}::uuid and depends_on_task_id = ${b}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(1);
+  });
+
   test('authz: a viewer MAY create/plan/read a task; a non-member is forbidden from every task action', async () => {
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };

@@ -3,6 +3,22 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P4-002 task model + state machine — CORE DONE / FINALIZING (8-hour autonomous window).**
+  Branch `p4-002-task-state-machine` (from main `68f99e4`), draft PR **#32**, CDR-033. Establishes the Task entity + the
+  SERVER-ENFORCED state machine (TASK-001; ADR-008; WORKFLOW §4): the full closed 11-state set + legal-transition map are
+  defined day-one (every illegal transition rejected + 100% table conformance test), but only the effect-free
+  pre-execution transitions are EXECUTED — `createTask` (mints `draft`, no audit), `planTask` (server-enforced
+  `draft→planned`, `task.created` audited in-tx, audit-or-nothing; illegal transitions rejected with no audit),
+  `addTaskDependency` (immutable same-company edge; self/duplicate/unknown refused), `getTask`/`listTasks` (redacted
+  reads). Execution transitions (credit reservation on planned→queued, worker runs, holds, terminals) are DEFINED-legal
+  but their EFFECTS DEFERRED to P5/P6 — the `interview.ts` precedent. Migration **0021** (`tasks` mutable-with-audit
+  `M`: SELECT+INSERT + column-scoped UPDATE(state,updated_at); `task_dependencies` append-only `I`, UNIQUE + no-self-dep;
+  both dual-keyed FORCE RLS). Authz `task:create`/`task:read` (owner|viewer). No new SECURITY DEFINER / role / BYPASSRLS.
+  Commits: CDR+contracts+authz+audit `780ce94` → migration 0021 `9916ffd` → core `eeddf65`. Local real-PG green (zero
+  skips): tasks migration 7, core use cases 10, catalog + database existence re-verified; full recursive typecheck +
+  lint + secrets + boundaries clean. Independent security/scope review in progress. Finalization → backlog Done →
+  exact-head CI → squash-merge "ACBP-P4-002: Task model and state machine" → exact-main CI → delete branch. Migrations
+  end **0021**.
 - **ACBP-P2-007 context assembly — CORE DONE / FINALIZING (autonomous window; trust-critical).**
   Branch `p2-007-context-assembly` (from main `a6dff28`), draft PR **#31**, CDR-032. Owner ratified the MEM-004 conflict
   semantics (genuine contradiction → open question, never silent rank-resolve; reuse P2-005). Core `assembleContext`

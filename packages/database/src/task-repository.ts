@@ -67,13 +67,18 @@ export class TaskRepository {
     return this.#db.selectFrom('tasks').selectAll().orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
   }
 
-  /** Insert an immutable Task↔Task dependency edge. */
-  insertDependency(input: NewTaskDependencyInput): Promise<TaskDependencyRow> {
+  /**
+   * Insert an immutable Task↔Task dependency edge, RACE-SAFE: `ON CONFLICT (task_id, depends_on_task_id) DO NOTHING`
+   * makes a concurrent duplicate a graceful no-op (returns `undefined`) instead of a UNIQUE-violation throw, so the
+   * caller can map it to a clean `duplicate` result without a separate check-then-insert TOCTOU window.
+   */
+  insertDependency(input: NewTaskDependencyInput): Promise<TaskDependencyRow | undefined> {
     return this.#db
       .insertInto('task_dependencies')
       .values({ account_id: input.accountId, company_id: input.companyId, task_id: input.taskId, depends_on_task_id: input.dependsOnTaskId })
+      .onConflict((oc) => oc.columns(['task_id', 'depends_on_task_id']).doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
   }
 
   /** The dependency edges of a task (RLS-confined), in insertion order. */

@@ -65,8 +65,9 @@ export async function createTask(client: DatabaseClient, params: CreateTaskParam
       if (checkAuthorization(role, 'task:create', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const title = params.title.trim();
       if (title.length === 0 || title.length > TASK_TITLE_MAX) return { status: 'invalid' };
-      const rawDesc = params.description ?? null;
-      const description = rawDesc !== null && rawDesc.trim().length === 0 ? null : rawDesc;
+      // Trim the description consistently with the title; a blank description collapses to null.
+      const trimmedDesc = params.description?.trim() ?? '';
+      const description = trimmedDesc.length === 0 ? null : trimmedDesc;
       if (description !== null && description.length > TASK_DESCRIPTION_MAX) return { status: 'invalid' };
 
       const row = await new TaskRepository(scope.db).insert({
@@ -162,10 +163,11 @@ export async function addTaskDependency(client: DatabaseClient, params: AddDepen
       // Both endpoints must be visible in THIS company scope (RLS-confined findById).
       if ((await tasks.findById(params.taskId)) === undefined) return { status: 'not_found' };
       if ((await tasks.findById(params.dependsOnTaskId)) === undefined) return { status: 'not_found' };
-      const existing = await tasks.listDependencies(params.taskId);
-      if (existing.some((d) => d.depends_on_task_id === params.dependsOnTaskId)) return { status: 'duplicate' };
 
+      // Race-safe: the DB's ON CONFLICT DO NOTHING (not a check-then-insert) is the single source of duplicate truth —
+      // a concurrent identical edge returns undefined here rather than throwing a UNIQUE violation.
       const edge = await tasks.insertDependency({ accountId: params.accountId, companyId: params.companyId, taskId: params.taskId, dependsOnTaskId: params.dependsOnTaskId });
+      if (edge === undefined) return { status: 'duplicate' };
       options.logger?.info('task.dependency_added', { metadata: { accountId: params.accountId, companyId: params.companyId } });
       return { status: 'ok', dependencyId: edge.id };
     },
