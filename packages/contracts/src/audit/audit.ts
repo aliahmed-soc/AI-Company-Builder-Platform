@@ -102,6 +102,12 @@ export const AUDIT_EVENTS = {
   // bounded {understanding_version, option_count, similarity_check_result} — NEVER option content/fields/reason text.
   // The other strategy.* events (strategy.selected, decision.recorded) are registered by the P3-004/005 tickets.
   'strategy.generated': { schemaVersion: 1, subjectType: 'strategy_generation' },
+  // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006) — a durable, audit-grade record of the owner's
+  // decision, linking the understanding version + the options considered + the selection. AUDITED in-tx (ADR-015 —
+  // "failed record writes block the transition"). Subject = the decision id; bounded metadata
+  // {understanding_version, options_considered_count, mode} — NEVER option content, chosen fields, reject reasons, or
+  // the rationale text. Recording a decision unlocks NO planning (that gate is P4-001).
+  'decision.recorded': { schemaVersion: 1, subjectType: 'decision' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
   // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
@@ -369,6 +375,19 @@ export function strategyGenerated(input: { readonly generationId: string; readon
  */
 export function strategySelected(input: { readonly selectionId: string; readonly mode: string; readonly phaseScope: string | null }): AuditEvent {
   return makeEvent('strategy.selected', input.selectionId, 'success', input.phaseScope !== null ? { mode: input.mode, phase_scope: input.phaseScope } : { mode: input.mode });
+}
+
+/**
+ * An immutable decision record was written (ACBP-P3-005; STRAT-006). Subject = the DECISION id; metadata is the bounded
+ * `{understanding_version, options_considered_count, mode}` — NEVER option content, chosen fields, reject reasons, or
+ * the rationale text. Written in the same transaction as the decision insert: a failed write blocks the transition, so
+ * a decision is never silently unrecorded (STRAT-006 failure mode; ADR-015).
+ *
+ * `options_considered_count` is a SCALAR count of the generation's options (audit metadata forbids arrays); the exact
+ * set considered is recoverable from the decision's immutable `generation_id`.
+ */
+export function decisionRecorded(input: { readonly decisionId: string; readonly understandingVersion: number; readonly optionsConsideredCount: number; readonly mode: string }): AuditEvent {
+  return makeEvent('decision.recorded', input.decisionId, 'success', { understanding_version: input.understandingVersion, options_considered_count: input.optionsConsideredCount, mode: input.mode });
 }
 
 /**

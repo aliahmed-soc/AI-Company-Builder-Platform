@@ -5,7 +5,7 @@
 // generation + its options + the `strategy.generated` audit event in ONE transaction. Kysely parameterized queries
 // only; no raw SQL interpolation. Both tables are append-only (SELECT + INSERT) — there is no update/delete path.
 import type { Kysely } from 'kysely';
-import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow, StrategyRecommendationRow, StrategySelectionRow } from './schema.js';
+import type { DatabaseSchema, StrategyGenerationRow, StrategyOptionRow, StrategyRecommendationRow, StrategySelectionRow, DecisionRow } from './schema.js';
 
 export type StrategyExecutor = Kysely<DatabaseSchema>;
 
@@ -60,6 +60,22 @@ export interface NewStrategySelectionInput {
   readonly chosenFields: Record<string, string> | null;
   readonly phaseScope: string | null;
   readonly reasons: string | null;
+  readonly createdByUserId: string;
+}
+
+/**
+ * The fields a caller supplies to record an immutable decision (identity/created_at are server-set). `rationale` is
+ * OPTIONAL (CDR-038 §6-G2) — a missing rationale must never make a decision silently unrecorded.
+ */
+export interface NewDecisionInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly generationId: string;
+  readonly selectionId: string;
+  /** Immutable snapshot of the hardened selection's mode (the P4-001 gate keys off a NON-reject decision). */
+  readonly mode: string;
+  readonly understandingVersion: number;
+  readonly rationale: string | null;
   readonly createdByUserId: string;
 }
 
@@ -159,5 +175,33 @@ export class StrategyRepository {
   /** The LATEST owner selection for a generation (RLS-confined), or undefined when none exists. */
   latestSelection(generationId: string): Promise<StrategySelectionRow | undefined> {
     return this.#db.selectFrom('strategy_selections').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
+  }
+
+  /** A single selection by id (RLS-confined; undefined when absent/invisible). */
+  findSelection(id: string): Promise<StrategySelectionRow | undefined> {
+    return this.#db.selectFrom('strategy_selections').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /** Insert one immutable, audit-grade decision record (append-only). */
+  insertDecision(input: NewDecisionInput): Promise<DecisionRow> {
+    return this.#db
+      .insertInto('decisions')
+      .values({
+        account_id: input.accountId,
+        company_id: input.companyId,
+        generation_id: input.generationId,
+        selection_id: input.selectionId,
+        mode: input.mode,
+        understanding_version: input.understandingVersion,
+        rationale: input.rationale,
+        created_by_user_id: input.createdByUserId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /** The LATEST decision record for a generation (RLS-confined), or undefined when none exists. */
+  latestDecision(generationId: string): Promise<DecisionRow | undefined> {
+    return this.#db.selectFrom('decisions').selectAll().where('generation_id', '=', generationId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(1).executeTakeFirst();
   }
 }

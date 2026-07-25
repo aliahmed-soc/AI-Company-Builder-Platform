@@ -602,6 +602,26 @@ export interface StrategySelectionsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Decision records (ACBP-P3-005; CDR-038; STRAT-006). A company-owned, dual-keyed FORCE RLS, IMMUTABLE, audit-grade
+ * record of an owner decision (SELECT+INSERT only). Append-only (latest-wins on read); every column `never` on update —
+ * "mutation attempts fail" is the STRAT-006 acceptance criterion. Links the understanding version, the options
+ * considered (via `generation_id`), the selection it hardens, and an optional owner-supplied rationale.
+ */
+export interface DecisionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  generation_id: ColumnType<string, string, never>;
+  selection_id: ColumnType<string, string, never>;
+  /** Immutable snapshot of the hardened selection's mode — the P4-001 planning gate keys off a NON-reject decision. */
+  mode: ColumnType<string, string, never>;
+  understanding_version: ColumnType<number, number, never>;
+  rationale: ColumnType<string | null, string | null, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -631,6 +651,7 @@ export interface DatabaseSchema {
   strategy_options: StrategyOptionsTable;
   strategy_recommendations: StrategyRecommendationsTable;
   strategy_selections: StrategySelectionsTable;
+  decisions: DecisionsTable;
 }
 
 // Repository-facing row shapes.
@@ -696,3 +717,5 @@ export type StrategyRecommendationRow = Selectable<StrategyRecommendationsTable>
 export type NewStrategyRecommendation = Insertable<StrategyRecommendationsTable>;
 export type StrategySelectionRow = Selectable<StrategySelectionsTable>;
 export type NewStrategySelection = Insertable<StrategySelectionsTable>;
+export type DecisionRow = Selectable<DecisionsTable>;
+export type NewDecision = Insertable<DecisionsTable>;

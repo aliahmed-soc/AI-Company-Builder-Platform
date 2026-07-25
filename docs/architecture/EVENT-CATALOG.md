@@ -76,8 +76,16 @@ Retention default: activity-projected events with company data; audit-relevant e
      deterministic, model-free check on the customer/offer/business_model axes; `pending` is no longer written).
      ACBP-P3-003 (the OPTIONAL ADVISORY recommendation, CDR-036) registers NO new event — it changes no state (backlog
      Audit=—); its only durable trace is the automatic gateway usage event (`model.call_completed`). A future
-     `strategy.recommended` event would be a new decision (owner gate) — not added. `decision.recorded` is registered by
-     P3-005. Activity fan-out is DEFERRED. -->
+     `strategy.recommended` event would be a new decision (owner gate) — not added. Activity fan-out is DEFERRED. -->
+<!-- IMPLEMENTED (ACBP-P3-005; CDR-038 §4; STRAT-006): `decision.recorded` is a durable `audit_events` row written in the
+     SAME transaction as the immutable decision record. That audit-or-nothing pair IS the STRAT-006 failure mode —
+     "failed record writes block the transition (decision is not silently unrecorded)": if either write fails, no
+     decision exists and the downstream P4-001 planning gate cannot pass. Subject = the DECISION id; bounded metadata =
+     {understanding_version, options_considered_count, mode} ONLY — NEVER option content, chosen fields, reject reasons,
+     or the rationale text. `options_considered_count` is a SCALAR (audit metadata forbids arrays — the shorthand
+     `options_considered[]` in the row below is the conceptual link, recoverable from the decision's immutable
+     `generation_id`). Owner-only (`decision:record`). A `reject` selection also gets a record; recording unlocks NO
+     planning. Activity/memory fan-out is DEFERRED. -->
 <!-- IMPLEMENTED (ACBP-P3-004; CDR-037 §4): `strategy.selected` is a durable `audit_events` row written in the SAME
      transaction as the immutable owner selection (audit-or-nothing — an in-tx audit failure rolls the selection back).
      Subject = the SELECTION id; bounded metadata = {mode} (+ `phase_scope` when set) ONLY — NEVER the chosen fields, the
@@ -86,7 +94,7 @@ Retention default: activity-projected events with company data; audit-relevant e
      FLAGGING only (STRAT-005). Owner-only (`strategy:select`). -->
 | strategy.generated | Strategy | activity | generation_id, understanding_version, option_count, similarity_check_result (P3-001; no content) | audited in-tx | with company |
 | strategy.selected | Strategy | decision (P3-005) | selection_id (subject); mode (select/edit/combine/reject), phase_scope? — no content | audited in-tx (P3-004; owner-only) | permanent |
-| decision.recorded | Strategy&Decision | activity, memory | decision_id, understanding_version, options_considered[] | **is audit-grade (immutable)** | permanent |
+| decision.recorded | Strategy&Decision | activity, memory | decision_id (subject); understanding_version, options_considered_count, mode (P3-005; scalar — no content/rationale) | **is audit-grade (immutable)**; audited in-tx (owner-only) | permanent |
 | roadmap.generated | Planning | Task module, activity | roadmap_version, milestone_count, task_ids[] | audited | with company |
 <!-- IMPLEMENTED (ACBP-P4-002; CDR-033 §4): `task.created` is a durable `audit_events` row written in the SAME
      transaction as the server-enforced `draft → planned` "appears on the board" transition (audit-or-nothing —

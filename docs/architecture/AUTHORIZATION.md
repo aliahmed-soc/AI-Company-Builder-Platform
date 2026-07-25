@@ -185,6 +185,15 @@ trusted core/use-case seam:
   The decision records a SELECTION only — it neither writes the immutable Decision record (P3-005) nor unlocks planning
   (the P4 boundary). DISTINCT closed action, deny-by-default; not granted to a viewer, an account owner without company
   membership, nor via forged provider claims. See `CDR-037`.
+- **P3-005** (immutable decision records) adds `decision:record`, **`owner`-only** — the STRAT-006 / J-08 "Actor: owner"
+  gate on writing the durable, audit-grade decision record (the `strategy:select` precedent). It authorizes writing the
+  record that links the understanding version + the options considered + the selection + an optional rationale; the
+  record and its `decision.recorded` audit are one transaction, so a failed write blocks the transition rather than
+  leaving a decision silently unrecorded. Reads reuse `strategy:read` (the decision is surfaced on the strategy read);
+  a dedicated Decisions list/get surface is deferred with the strategy HTTP surface (CDR-026 §0). Recording a decision
+  does NOT unlock planning — P4-001 gates separately, and on a **non-reject** decision (`decisions.mode <> 'reject'`),
+  since a rejection is also recorded (CDR-038 §6-G1). DISTINCT closed action, deny-by-default; not granted to a
+  viewer, an account owner without company membership, nor via forged provider claims. See `CDR-038`.
 
 ## What P1-007 does NOT do (later tickets)
 

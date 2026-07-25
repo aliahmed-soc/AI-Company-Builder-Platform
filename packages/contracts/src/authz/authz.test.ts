@@ -60,6 +60,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:recommend': ['owner', 'viewer'],
   // Owner strategy decision (ACBP-P3-004; CDR-037): owner-only.
   'strategy:select': ['owner'],
+  // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006): owner-only.
+  'decision:record': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

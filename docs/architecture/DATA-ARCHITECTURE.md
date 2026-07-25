@@ -86,6 +86,22 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      boundary). `phase_scope` is FLAGGING only (STRAT-005; enforcement is the P4 planning boundary — an owner-accepted
      Phase-3 deferral). `strategy.selected` audited in-tx (metadata {mode} + phase_scope when set — never content). No
      new SECURITY DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P3-005; CDR-038): the Decision row below is realized by migration 0025 as the company-owned,
+     dual-keyed FORCE RLS, IMMUTABLE (`I`) table `decisions` (SELECT+INSERT only) — the STRAT-006 audit-grade
+     "institutional memory of why". It links the CONFIRMED understanding version (snapshot column), the options
+     CONSIDERED (via `generation_id` — the generation's option set is itself immutable, so the link fixes exactly what
+     was considered; the audit event carries the scalar count), the SELECTION it hardens (composite FK
+     (selection_id, generation_id) → strategy_selections(id, generation_id), so a cross-generation decision is
+     impossible at the DB), and an OPTIONAL bounded owner-supplied `rationale` (a missing rationale must never make a
+     decision silently unrecorded — CDR-038 §6-G2). Immutability IS the acceptance criterion ("mutation attempts fail"):
+     no UPDATE/DELETE grant. `decision.recorded` is written in the SAME transaction as the row — that audit-or-nothing
+     pair IS the STRAT-006 "failed record writes block the transition" guarantee. Append-only, latest-wins on read
+     (§6-G5 — the "terminal" state below is the product reading, not a DB uniqueness constraint). A `reject` selection
+     ALSO gets a record (STRAT-006 "selection/edit/rejection"); the row therefore carries an IMMUTABLE `mode` snapshot
+     of the hardened selection, and **the P4-001 planning gate must key off `mode <> 'reject'`, NOT on the mere
+     existence of a decision row** — otherwise a rejection would unlock planning, contradicting the WORKFLOW `→rejected`
+     terminal state. The snapshot is denormalized deliberately: the LATEST selection may be a different, later one than
+     the decision hardened. OWNER-ONLY (`decision:record`). No new SECURITY DEFINER / role / BYPASSRLS. -->
 
 
 

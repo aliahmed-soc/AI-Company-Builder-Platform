@@ -3,6 +3,30 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+
+_Newest first. When a ticket merges, a one-line **DONE** entry is added ABOVE its working block; the working block is
+kept as historical detail (what was built, which commits, which gates). **The DONE line is the authoritative status** —
+a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
+ticket without a DONE line above it is genuinely in flight._
+
+- **ACBP-P3-005 immutable decision records — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**
+  Branch `p3-005-decision-records` (from main `50bbaa8`, after P3-004 merged), draft PR **#38**, CDR-038.
+  The STRAT-006 audit-grade record: links the CONFIRMED understanding version, the options CONSIDERED (via the
+  generation), the SELECTION it hardens (P3-004), and an OPTIONAL bounded owner-supplied rationale. `recordDecision` is
+  OWNER-ONLY (`decision:record`) and writes ONE immutable `decisions` row + `decision.recorded` in ONE transaction —
+  that audit-or-nothing pair IS the STRAT-006 failure mode ("failed record writes block the transition; a decision is
+  not silently unrecorded"). Migration **0025** `decisions` (immutable/append-only, dual-keyed FORCE RLS, SELECT+INSERT,
+  composite FK (selection_id, generation_id) so a cross-generation decision is impossible, optional bounded rationale
+  CHECK) + an additive `UNIQUE(id, generation_id)` on `strategy_selections`. `getLatestStrategyGeneration` surfaces the
+  latest decision. Records only — NO planning unlock (P4-001 gates on the decision separately). Ratified (CDR-038 §6):
+  G1 a REJECT selection also gets a record (STRAT-006 says "selection/edit/rejection" explicitly; planning-unlock keys
+  off a non-reject decision); G2 rationale optional; G3 references (not re-captures) the selection; G4 options-considered
+  = the generation link + a scalar audit count; G5 append-only latest-wins. Commits: CDR+contracts `4896de0` →
+  migration 0025 `bb65087` → core `e1c4a6d`. Local: full unit 1018 passed / 0 failed; decisions real-PG 9 + decision-record
+  real-PG 9 discovered (local PG down → skipped; hosted CI is the evidence); recursive typecheck/lint/secrets/boundaries
+  clean. Independent review next, then exact-head CI zero-skip → squash-merge → exact-main CI → delete branch.
+  Migrations end **0025**.
+- **ACBP-P3-004 selection / edit / combine / phase-limited approval — DONE** (squash `50bbaa8`, PR #36; exact-main CI green zero-skip 1665/1665; branch deleted). Phase 3 4/7.
 - **ACBP-P3-004 selection / edit / combine / phase-limited approval — CORE DONE / FINALIZING (3rd 8-hour autonomous window).**
   Branch `p3-004-selection-and-approval` (from main `c645e8e`, after the `.gitattributes` chore), draft PR **#36**, CDR-037.
   Records the OWNER's decision over a generation in a closed `mode` {select, edit, combine, reject} + FLAGGING-only

@@ -28,6 +28,7 @@ import {
   taskCreated,
   strategyGenerated,
   strategySelected,
+  decisionRecorded,
   type AuditEventName,
 } from './index.js';
 
@@ -105,6 +106,8 @@ describe('event-name registry (deny unregistered)', () => {
       'strategy.generated',
       // Owner strategy decision (ACBP-P3-004; CDR-037 §4).
       'strategy.selected',
+      // Immutable decision record (ACBP-P3-005; CDR-038 §4; STRAT-006).
+      'decision.recorded',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -298,5 +301,12 @@ describe('typed factories', () => {
     expect(ev).toEqual({ name: 'strategy.selected', schemaVersion: 1, subjectType: 'strategy_selection', subjectId: 'sel_1', outcome: 'success', metadata: { mode: 'select', phase_scope: 'first_phase' } });
     // No phase scope → the key is omitted (not a sentinel).
     expect(strategySelected({ selectionId: 'sel_2', mode: 'reject', phaseScope: null }).metadata).toEqual({ mode: 'reject' });
+  });
+
+  test('decisionRecorded: subject = the DECISION; metadata = scalar {understanding_version, options_considered_count, mode} — no content/rationale', () => {
+    const ev = decisionRecorded({ decisionId: 'dec_1', understandingVersion: 2, optionsConsideredCount: 3, mode: 'edit' });
+    expect(ev).toEqual({ name: 'decision.recorded', schemaVersion: 1, subjectType: 'decision', subjectId: 'dec_1', outcome: 'success', metadata: { understanding_version: 2, options_considered_count: 3, mode: 'edit' } });
+    // A rejection is recorded too (STRAT-006 "selection/edit/rejection"); still no reasons/rationale in metadata.
+    expect(decisionRecorded({ decisionId: 'dec_2', understandingVersion: 1, optionsConsideredCount: 0, mode: 'reject' }).metadata).toEqual({ understanding_version: 1, options_considered_count: 0, mode: 'reject' });
   });
 });
