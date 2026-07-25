@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -71,6 +71,8 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   strategy_recommendations: ['INSERT', 'SELECT'],
   // Owner strategy selection (ACBP-P3-004; CDR-037): immutable/append-only — SELECT+INSERT only, no UPDATE/DELETE.
   strategy_selections: ['INSERT', 'SELECT'],
+  // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006 "mutation attempts fail"): SELECT+INSERT only.
+  decisions: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -197,6 +199,8 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect(byTable.get('strategy_options') ?? []).toEqual([]);
     expect(byTable.get('strategy_recommendations') ?? []).toEqual([]);
     expect(byTable.get('strategy_selections') ?? []).toEqual([]);
+    // Decision records (ACBP-P3-005) are audit-grade immutable — no column-level UPDATE grant at all.
+    expect(byTable.get('decisions') ?? []).toEqual([]);
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {

@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // identity_webhook_receipts + users are the ACBP-P1-002 tables (migration 0002); dropped here so
   // this foundation suite starts from a clean slate regardless of applied domain migrations.
-  for (const t of ['usage_events', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
+  for (const t of ['usage_events', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'task_dependencies', 'tasks', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -179,6 +179,8 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('strategy_recommendations');
     // `strategy_selections` now exists (ACBP-P3-004, migration 0024).
     expect(names).toContain('strategy_selections');
+    // `decisions` now exists (ACBP-P3-005, migration 0025).
+    expect(names).toContain('decisions');
     // Task-run/approval/policy tables (later tickets) must NOT exist yet.
     for (const notYet of ['task_runs', 'approvals', 'policies']) {
       expect(names).not.toContain(notYet);
