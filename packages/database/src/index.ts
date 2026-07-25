@@ -152,6 +152,13 @@ export type {
   UnderstandingItemsTable,
   UnderstandingItemRow,
   NewUnderstandingItem,
+  TasksTable,
+  TaskRow,
+  NewTask,
+  TaskUpdate,
+  TaskDependenciesTable,
+  TaskDependencyRow,
+  NewTaskDependency,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
