@@ -79,9 +79,19 @@ export const SECRET_PLACEHOLDER = '[REDACTED_SECRET]';
  * redacting ordinary business prose.
  */
 export const SECRET_PATTERNS: readonly RegExp[] = [
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+  // PEM private keys — well-formed BEGIN…END block. The body is BOUNDED (`{0,16384}?`, not `*?`) so a BEGIN with no
+  // END fails in O(bound) per start instead of scanning to EOF — no quadratic ReDoS (security review H1).
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]{0,16384}?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+  // PEM private keys — fail-CLOSED fallback: a BEGIN header + its base64 body even with NO END sentinel (a truncated
+  // or reformatted key). A single bounded quantifier over the base64 charset → linear; the raw key body is never
+  // emitted even when the END line is missing (security review H2).
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[A-Za-z0-9+/=\r\n ]{0,16384}/g,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s:@/]+@[^\s/]+/gi, // scheme://user:password@host connection strings
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // JWT (three base64url segments; entropy-independent)
+  // `key = value` / `key: value` credential assignments — password/secret/token/api_key/… (a common leak shape the
+  // token-prefix patterns miss; security review M1). Requires the keyword + assignment, so false positives are low.
+  /\b(?:pass(?:word|wd)?|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)\s*[:=]\s*['"]?[^\s'"]{6,}/gi,
   /\bsk-ant-[A-Za-z0-9_-]{16,}\b/g,
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/g,
   /\b[rs]k_live_[A-Za-z0-9]{16,}\b/g,
@@ -89,6 +99,8 @@ export const SECRET_PATTERNS: readonly RegExp[] = [
   /\bgh[posru]_[A-Za-z0-9]{20,}\b/g,
   /\bAIza[0-9A-Za-z_-]{20,}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, // SendGrid
+  /\bnpm_[A-Za-z0-9]{20,}\b/g, // npm token
   /\b(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{40,}\b/g, // high-entropy catch-all
 ];
 

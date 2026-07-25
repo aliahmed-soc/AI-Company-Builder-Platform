@@ -40,6 +40,16 @@ secret value is NEVER emitted. The closed pattern set (extensible; conservative,
 The matcher is a PURE function; it redacts spans, never drops silently without a marker, and is unit-tested against a
 seeded-secret corpus (each pattern) AND a benign-business-text corpus (no false positives on ordinary content).
 
+**Independent security review (hardened):** the PEM pattern was made **ReDoS-safe** (the body is bounded, not `*?`, so
+a `BEGIN` with no `END` fails in O(bound) instead of scanning to EOF) and **fail-closed on a truncated key** (a
+BEGIN-anchored fallback redacts the base64 body even when the `END` line is missing/mangled). JWT, `key=value`
+credential-assignment, SendGrid, and npm shapes were added. **Documented residual gaps (defense-in-depth only — a
+secret should never be in business memory):** a raw AWS *secret* access key (a plain 40-char base64 with `+`/`/`),
+sub-40-char or all-lowercase generic tokens, and line-wrapped/whitespace-split tokens can still bypass; the layer is a
+last-gate backstop, NOT the primary secret control (that is ADR-014/021 vault isolation + NFR-018 scanning). The
+high-entropy catch-all can over-redact a ≥40-char mixed-case+digit business identifier (rare; the failure direction is
+safe — content masked, never leaked). These are enumerated so downstream consumers do not over-trust the layer.
+
 ## 3. MEM-004 instruction precedence + conflict (DATA-ARCHITECTURE §3)
 
 Confirmed user items rank above AI assumptions (§1). On a **conflict** — a confirmed user item and an `ai_assumption`

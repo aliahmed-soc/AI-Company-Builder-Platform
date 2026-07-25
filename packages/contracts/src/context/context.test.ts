@@ -93,4 +93,36 @@ describe('secret blocklist (invariant 12 / NFR-018)', () => {
     expect(red).not.toContain('sk_live_ABCdef1234567890ghijkl');
     expect(red.match(/\[REDACTED_SECRET\]/g)).toHaveLength(2);
   });
+
+  // ── security-review regressions (H1, H2, M1) ────────────────────────────────────────────────────────
+  test('H2 (fail-closed): a truncated PEM key with NO END line still has its raw body redacted', () => {
+    const body = 'MIIBAAAAbbbbCCCCddddEEEEffffGGGGhhhh0000';
+    const text = `key pasted:\n-----BEGIN RSA PRIVATE KEY-----\n${body}\nStUvWxYz1234abcd\n\nrest of note`;
+    const red = redactSecrets(text);
+    expect(red).not.toContain(body);
+    expect(red).not.toContain('StUvWxYz1234abcd');
+    expect(red).toContain(SECRET_PLACEHOLDER);
+  });
+
+  test('H1 (no ReDoS): many BEGIN markers with no END terminator redact in well under a second', () => {
+    const adversarial = '-----BEGIN A PRIVATE KEY-----x'.repeat(20_000); // ~600 KB, quadratic under the old pattern
+    const start = Date.now();
+    redactSecrets(adversarial);
+    expect(Date.now() - start).toBeLessThan(1_000);
+  });
+
+  test('M1: a JWT is redacted', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dGVzdFNpZ25hdHVyZUFiQzEyMw';
+    const red = redactSecrets(`token ${jwt} end`);
+    expect(red).not.toContain(jwt);
+    expect(red).toContain(SECRET_PLACEHOLDER);
+  });
+
+  test('M1: password/api_key assignments are redacted (value never survives)', () => {
+    for (const s of ['password=hunter2secret', 'api_key: Abc123Def456', 'client_secret="s3cr3tValueHere"']) {
+      const red = redactSecrets(`config ${s} more`);
+      expect(red).not.toMatch(/hunter2secret|Abc123Def456|s3cr3tValueHere/);
+      expect(red).toContain(SECRET_PLACEHOLDER);
+    }
+  });
 });
