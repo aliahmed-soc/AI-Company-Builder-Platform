@@ -622,6 +622,67 @@ export interface DecisionsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Roadmaps (ACBP-P4-001; CDR-039; ROAD-001/002). Company-owned, dual-keyed FORCE RLS, VERSIONED append-only
+ * (SELECT+INSERT only): a new version is a NEW ROW, never an in-place edit — which is what makes ROAD-002's "version
+ * write failure blocks the edit rather than losing history" structural. Every column `never` on update.
+ */
+export interface RoadmapsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  version: ColumnType<number, number, never>;
+  decision_id: ColumnType<string, string, never>;
+  status: ColumnType<string, string, never>;
+  origin: ColumnType<string, string, never>;
+  supersedes_roadmap_id: ColumnType<string | null, string | null, never>;
+  edit_reason: ColumnType<string | null, string | null, never>;
+  model_flagged_partial: ColumnType<boolean, boolean | undefined, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/** Goals (ACBP-P4-001). Immutable; ordinal-sequenced within one roadmap version. */
+export interface GoalsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  roadmap_id: ColumnType<string, string, never>;
+  ordinal: ColumnType<number, number, never>;
+  title: ColumnType<string, string, never>;
+  description: ColumnType<string | null, string | null, never>;
+  status: ColumnType<string, string | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Milestones (ACBP-P4-001; ROAD-001 "target sequencing"). Immutable; sequenced by ORDINAL only — never by an invented
+ * date (ADR-019 no fake precision). `goal_id` is pinned to the same roadmap version by a composite FK.
+ */
+export interface MilestonesTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  roadmap_id: ColumnType<string, string, never>;
+  goal_id: ColumnType<string | null, string | null, never>;
+  ordinal: ColumnType<number, number, never>;
+  title: ColumnType<string, string, never>;
+  description: ColumnType<string | null, string | null, never>;
+  status: ColumnType<string, string | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/** Task review flags (ACBP-P4-001; ROAD-002 "changes flag affected tasks"). Immutable append-only. */
+export interface TaskReviewFlagsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  task_id: ColumnType<string, string, never>;
+  roadmap_id: ColumnType<string, string, never>;
+  reason: ColumnType<string | null, string | null, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -652,6 +713,10 @@ export interface DatabaseSchema {
   strategy_recommendations: StrategyRecommendationsTable;
   strategy_selections: StrategySelectionsTable;
   decisions: DecisionsTable;
+  roadmaps: RoadmapsTable;
+  goals: GoalsTable;
+  milestones: MilestonesTable;
+  task_review_flags: TaskReviewFlagsTable;
 }
 
 // Repository-facing row shapes.
@@ -719,3 +784,11 @@ export type StrategySelectionRow = Selectable<StrategySelectionsTable>;
 export type NewStrategySelection = Insertable<StrategySelectionsTable>;
 export type DecisionRow = Selectable<DecisionsTable>;
 export type NewDecision = Insertable<DecisionsTable>;
+export type RoadmapRow = Selectable<RoadmapsTable>;
+export type NewRoadmap = Insertable<RoadmapsTable>;
+export type GoalRow = Selectable<GoalsTable>;
+export type NewGoal = Insertable<GoalsTable>;
+export type MilestoneRow = Selectable<MilestonesTable>;
+export type NewMilestone = Insertable<MilestonesTable>;
+export type TaskReviewFlagRow = Selectable<TaskReviewFlagsTable>;
+export type NewTaskReviewFlag = Insertable<TaskReviewFlagsTable>;

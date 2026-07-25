@@ -77,8 +77,27 @@ describe.skipIf(!hasTestDatabase)('task use cases (real PostgreSQL, restricted r
     expect(JSON.stringify(audits[0]!.payload)).not.toContain('codename');
   });
 
+  /**
+   * Seed a REAL milestone (ACBP-P4-001 migration 0026 added `tasks_milestone_fk`, so a synthetic UUID no longer
+   * satisfies the column — which is the point of the FK: ROAD-001's "tasks trace to milestones" is now enforced).
+   * The whole provenance chain is required because a roadmap must name the decision it was planned from.
+   */
+  async function seedMilestone(): Promise<string> {
+    const k = owner.kysely; // fixture/owner client bypasses RLS
+    const a = w.accountA;
+    const c = w.companyA1;
+    const u = w.aOwner;
+    const doc = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${a}::uuid, ${c}::uuid, 1, 'complete', 0.6, ${u}::uuid) returning id`.execute(k)).rows[0]!.id;
+    const gen = (await sql<{ id: string }>`insert into strategy_generations (account_id, company_id, understanding_document_id, understanding_version, status, option_count, created_by_user_id) values (${a}::uuid, ${c}::uuid, ${doc}::uuid, 1, 'complete', 3, ${u}::uuid) returning id`.execute(k)).rows[0]!.id;
+    const opt = (await sql<{ id: string }>`insert into strategy_options (account_id, company_id, generation_id, ordinal, fields) values (${a}::uuid, ${c}::uuid, ${gen}::uuid, 0, '{}'::jsonb) returning id`.execute(k)).rows[0]!.id;
+    const sel = (await sql<{ id: string }>`insert into strategy_selections (account_id, company_id, generation_id, mode, selected_option_id, created_by_user_id) values (${a}::uuid, ${c}::uuid, ${gen}::uuid, 'select', ${opt}::uuid, ${u}::uuid) returning id`.execute(k)).rows[0]!.id;
+    const dec = (await sql<{ id: string }>`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) values (${a}::uuid, ${c}::uuid, ${gen}::uuid, ${sel}::uuid, 'select', 1, ${u}::uuid) returning id`.execute(k)).rows[0]!.id;
+    const rm = (await sql<{ id: string }>`insert into roadmaps (account_id, company_id, version, decision_id, status, origin, created_by_user_id) values (${a}::uuid, ${c}::uuid, 1, ${dec}::uuid, 'complete', 'generated', ${u}::uuid) returning id`.execute(k)).rows[0]!.id;
+    return (await sql<{ id: string }>`insert into milestones (account_id, company_id, roadmap_id, ordinal, title) values (${a}::uuid, ${c}::uuid, ${rm}::uuid, 0, 'First release') returning id`.execute(k)).rows[0]!.id;
+  }
+
   test('planTask metadata: has_milestone reflects whether the task was created against a milestone', async () => {
-    const milestone = (await sql<{ id: string }>`select gen_random_uuid() as id`.execute(owner.kysely)).rows[0]!.id;
+    const milestone = await seedMilestone();
     const id = await newDraft({ milestoneId: milestone });
     await planTask(product, { ...base(), taskId: id });
     const audits = await auditFor('task.created');
