@@ -1,4 +1,4 @@
-// ACBP-P1-004 â€” real-PostgreSQL tests for the membership foundation (migration 0004; schema; repository;
+// ACBP-P1-004 — real-PostgreSQL tests for the membership foundation (migration 0004; schema; repository;
 // CDR-011 invariants). Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no
 // migrate-down (reversibility is covered by the database/user-mapping suites).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -109,9 +109,9 @@ describe.skipIf(!hasTestDatabase)('membership foundation (real PostgreSQL)', () 
 
   test('at most one outstanding invite per (account, email); token hash is unique', async () => {
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'dup@example.com', invite_token_hash: HASH('a') })).toBeUndefined();
-    // Same account+email, different token â†’ still blocked (one outstanding invite).
+    // Same account+email, different token → still blocked (one outstanding invite).
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'dup@example.com', invite_token_hash: HASH('b') })).toBe('23505');
-    // Different email, reuse the FIRST token hash â†’ token-hash uniqueness blocks it.
+    // Different email, reuse the FIRST token hash → token-hash uniqueness blocks it.
     expect(await membershipInsertError(client, { account_id: accountId, role: 'viewer', status: 'invited', invited_email: 'other@example.com', invite_token_hash: HASH('a') })).toBe('23505');
   });
 

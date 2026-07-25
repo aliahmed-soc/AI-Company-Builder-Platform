@@ -1,12 +1,12 @@
-// ACBP-P2-001 / CDR-022 â€” real-PostgreSQL proof of `interview_sessions` under the RESTRICTED role.
+// ACBP-P2-001 / CDR-022 — real-PostgreSQL proof of `interview_sessions` under the RESTRICTED role.
 // Setup/seed runs on the superuser (owner) connection; every isolation/immutability assertion runs on a second
 // pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner) so RLS + grants actually apply. Proves:
-// dual-keyed company-scoped INSERT/SELECT/UPDATE (both account AND company must match â€” fail closed without the
+// dual-keyed company-scoped INSERT/SELECT/UPDATE (both account AND company must match — fail closed without the
 // company key); IMMUTABLE identity columns at the PRIVILEGE level (no UPDATE grant on id/account/company/
 // created_at); no DELETE/TRUNCATE; the CLOSED state CHECK; the started_at shape CHECK; the ONE-open-session-
 // per-company partial unique index (a superseded session frees the slot); FK cascade; clean apply + down/up/
 // reapply BY NAME; FORCE RLS + grant catalog; allowlist still exactly 3 SECURITY DEFINER; acbp_app
-// NOBYPASSRLS/non-owner; migrations 0001â€“0012 present. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked.
+// NOBYPASSRLS/non-owner; migrations 0001–0012 present. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
@@ -28,7 +28,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-interview-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, restricted role) â€” ACBP-P2-001/CDR-022', () => {
+describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, restricted role) — ACBP-P2-001/CDR-022', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -71,7 +71,7 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     await sql`alter role acbp_app login password ${sql.lit(APP_TEST_PASSWORD)}`.execute(su.kysely);
     app = appRoleClient();
 
-    // FK targets: two accounts (distinct owner users â€” accounts_owner_unique = one personal account per user)
+    // FK targets: two accounts (distinct owner users — accounts_owner_unique = one personal account per user)
     // + three companies (A1, A2 under account A; B1 under account B). Owner connection.
     const u = await sql<{ id: string }>`insert into users (provider, provider_instance_id, provider_user_id, provider_updated_at) values ('clerk', 'inst_iv', 'user_iv_u', now()) returning id`.execute(su.kysely);
     userU = u.rows[0]!.id;
@@ -117,7 +117,7 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     // Same company scope sees it.
     const own = await asApp(scope(accountA, companyA1), (k) => k.selectFrom('interview_sessions').selectAll().execute());
     expect(own.map((r) => r.id)).toEqual([s1]);
-    // A DIFFERENT company of the SAME account does not (company key must match too â€” not account-only authority).
+    // A DIFFERENT company of the SAME account does not (company key must match too — not account-only authority).
     expect(await asApp(scope(accountA, companyA2), (k) => k.selectFrom('interview_sessions').selectAll().execute())).toHaveLength(0);
     // A different account+company (foreign tenant) does not.
     expect(await asApp(scope(accountB, companyB1), (k) => k.selectFrom('interview_sessions').selectAll().execute())).toHaveLength(0);
@@ -125,14 +125,14 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
 
   test('fail closed WITHOUT the company key: account scope alone sees nothing and cannot insert', async () => {
     await insertSession(accountA, companyA1);
-    // SELECT with only the account GUC set (no company) â†’ RLS denies (company_id::text = '' is false).
+    // SELECT with only the account GUC set (no company) → RLS denies (company_id::text = '' is false).
     expect(await asApp({ 'app.current_account': accountA }, (k) => k.selectFrom('interview_sessions').selectAll().execute())).toHaveLength(0);
-    // INSERT with only the account GUC â†’ the WITH CHECK fails.
+    // INSERT with only the account GUC → the WITH CHECK fails.
     await expect(asApp({ 'app.current_account': accountA }, (k) => sql`insert into interview_sessions (account_id, company_id) values (${accountA}::uuid, ${companyA1}::uuid)`.execute(k))).rejects.toThrow();
   });
 
   test('cross-tenant INSERT is refused: rows for a foreign company cannot be written under the caller scope', async () => {
-    // Under account A / company A1 scope, try to write a row stamped for company B1 â†’ WITH CHECK denies.
+    // Under account A / company A1 scope, try to write a row stamped for company B1 → WITH CHECK denies.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_sessions (account_id, company_id) values (${accountB}::uuid, ${companyB1}::uuid)`.execute(k))).rejects.toThrow();
   });
 
@@ -160,9 +160,9 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
   });
 
   test('started_at shape CHECK: not_started forbids started_at; any other state requires it', async () => {
-    // not_started with a started_at â†’ rejected.
+    // not_started with a started_at → rejected.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_sessions (account_id, company_id, state, started_at) values (${accountA}::uuid, ${companyA1}::uuid, 'not_started', now())`.execute(k))).rejects.toThrow();
-    // in_progress with a NULL started_at â†’ rejected.
+    // in_progress with a NULL started_at → rejected.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_sessions (account_id, company_id, state, started_at) values (${accountA}::uuid, ${companyA1}::uuid, 'in_progress', null)`.execute(k))).rejects.toThrow();
     // The valid shapes are accepted.
     const notStarted = await insertSession(accountA, companyA1, 'not_started');
@@ -190,13 +190,13 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     expect(remaining.rows[0]?.n).toBe(0);
   });
 
-  test('catalog: ENABLE+FORCE RLS; exactly three dual-keyed policies; least-privilege grants; 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; migrations 0001â€“0012', async () => {
+  test('catalog: ENABLE+FORCE RLS; exactly three dual-keyed policies; least-privilege grants; 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; migrations 0001–0012', async () => {
     const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'interview_sessions' and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
     const pols = await sql<{ policyname: string; cmd: string }>`select policyname, cmd from pg_policies where tablename = 'interview_sessions' order by policyname`.execute(su.kysely);
     expect(pols.rows.map((p) => `${p.policyname}:${p.cmd}`)).toEqual(['interview_sessions_insert:INSERT', 'interview_sessions_select:SELECT', 'interview_sessions_update:UPDATE']);
     // TABLE-LEVEL grants: INSERT + SELECT only (no DELETE). The UPDATE is COLUMN-LEVEL, so it does NOT appear in
-    // role_table_grants (the provisioning_steps precedent) â€” it is asserted separately against column_privileges.
+    // role_table_grants (the provisioning_steps precedent) — it is asserted separately against column_privileges.
     const grants = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'interview_sessions' order by privilege_type`.execute(su.kysely);
     expect(grants.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT']);
     const updatableCols = await sql<{ column_name: string }>`select column_name from information_schema.column_privileges where grantee = 'acbp_app' and table_name = 'interview_sessions' and privilege_type = 'UPDATE' order by column_name`.execute(su.kysely);
@@ -208,7 +208,7 @@ describe.skipIf(!hasTestDatabase)('interview_sessions tenancy (real PostgreSQL, 
     expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
-    // This migration is applied (not that it is the LAST or ONLY one â€” later tickets add migrations on top).
+    // This migration is applied (not that it is the LAST or ONLY one — later tickets add migrations on top).
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
     expect(migs.rows.map((m) => m.name)).toContain('0012_interview_sessions');
     expect(migs.rows.length).toBeGreaterThanOrEqual(12);

@@ -1,4 +1,4 @@
-// ACBP-P1-003 â€” real-PostgreSQL tests for account provisioning + profile use cases (CDR-010). Proves
+// ACBP-P1-003 — real-PostgreSQL tests for account provisioning + profile use cases (CDR-010). Proves
 // first-sign-in provisioning is idempotent, the profile view exposes the Clerk-authoritative email
 // read-only, profile edits persist, and the interim audit events are emitted. Skips when
 // ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no migrate-down.
@@ -18,7 +18,7 @@ async function seedUser(seed: DatabaseClient, overrides: Partial<NewUser> = {}):
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreSQL, restricted role) â€” ACBP-P1-003/006', () => {
+describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreSQL, restricted role) — ACBP-P1-003/006', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
 
@@ -115,7 +115,7 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
     expect(cleared?.displayName).toBeNull();
   });
 
-  test('profile:read and profile:update DENY for a non-owner active member, opaquely + audited (authz seam) â€” ACBP-P1-007', async () => {
+  test('profile:read and profile:update DENY for a non-owner active member, opaquely + audited (authz seam) — ACBP-P1-007', async () => {
     const userId = await seedUser(seed);
     const { accountId } = await provisionPersonalAccount(app, userId);
     // Force the caller to be an ACTIVE but NON-owner (viewer) member of their own account, so the P1-005
@@ -126,11 +126,11 @@ describe.skipIf(!hasTestDatabase)('account provisioning + profile (real PostgreS
     await seed.kysely.updateTable('memberships').set({ role: 'viewer' }).where('account_id', '=', accountId).where('member_user_id', '=', userId).execute();
 
     const { logger, records } = createTestLogger({ component: 'accounts' });
-    // Both denials are OPAQUE (undefined â€” the request layer maps this to not_found/forbidden, never a role oracle).
+    // Both denials are OPAQUE (undefined — the request layer maps this to not_found/forbidden, never a role oracle).
     expect(await getProfileForOwner(app, userId, { logger })).toBeUndefined();
     expect(await updateProfileForOwner(app, userId, { displayName: 'Should Not Persist' }, { logger })).toBeUndefined();
 
-    // The update denied BEFORE any write â€” the profile row is untouched.
+    // The update denied BEFORE any write — the profile row is untouched.
     const row = await seed.kysely.selectFrom('account_profiles').select(['display_name']).where('account_id', '=', accountId).executeTakeFirst();
     expect(row?.display_name ?? null).toBeNull();
 

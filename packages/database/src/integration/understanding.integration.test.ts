@@ -1,9 +1,9 @@
-// ACBP-P2-008 / CDR-029 â€” real-PostgreSQL proof of understanding_documents + understanding_items under the
+// ACBP-P2-008 / CDR-029 — real-PostgreSQL proof of understanding_documents + understanding_items under the
 // RESTRICTED role. Setup/seed on the superuser (owner) connection; every assertion runs as `acbp_app`
 // (NOSUPERUSER, NOBYPASSRLS, non-owner). Proves: dual-keyed company-scoped SELECT/INSERT (both account AND company;
 // fail closed without the company key; cross-company read impossible; cross-tenant insert refused); APPEND-ONLY /
 // versioned (no UPDATE/DELETE grant); the status/class/confidence/content/source_ref CHECKs; unique (company_id,
-// version); FK cascade (documentâ†’items, companyâ†’all); clean down/up/reapply BY NAME; catalog invariants (FORCE
+// version); FK cascade (document→items, company→all); clean down/up/reapply BY NAME; catalog invariants (FORCE
 // RLS, exactly select+insert policies, SELECT+INSERT grants only, 3 SECURITY DEFINER, acbp_app NOBYPASSRLS/non-
 // owner, 0019 applied). Skips when ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -27,7 +27,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-und-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('understanding_documents + understanding_items (real PostgreSQL, restricted role) â€” ACBP-P2-008/CDR-029', () => {
+describe.skipIf(!hasTestDatabase)('understanding_documents + understanding_items (real PostgreSQL, restricted role) — ACBP-P2-008/CDR-029', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -84,7 +84,7 @@ describe.skipIf(!hasTestDatabase)('understanding_documents + understanding_items
     companyA1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     companyB1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountB}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
 
-    // down/up/reapply BY NAME â€” proves 0019 is reversible + idempotent through the migrator.
+    // down/up/reapply BY NAME — proves 0019 is reversible + idempotent through the migrator.
     const down = await createMigrator(su).migrateTo('0018_interview_question_adaptive');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
@@ -126,7 +126,7 @@ describe.skipIf(!hasTestDatabase)('understanding_documents + understanding_items
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into understanding_items (account_id, company_id, document_id, item_class, content, confidence) values (${accountB}::uuid, ${companyB1}::uuid, ${doc}::uuid, 'fact', 'x', 0.5)`.execute(k))).rejects.toThrow();
   });
 
-  test('APPEND-ONLY: no UPDATE and no DELETE grant on either table (a version is immutable â€” review is P2-009)', async () => {
+  test('APPEND-ONLY: no UPDATE and no DELETE grant on either table (a version is immutable — review is P2-009)', async () => {
     const doc = await insertDoc(accountA, companyA1);
     const item = await insertItem(accountA, companyA1, doc);
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update understanding_documents set status = 'partial' where id = ${doc}::uuid`.execute(k))).rejects.toThrow();

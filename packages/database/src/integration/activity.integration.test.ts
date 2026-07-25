@@ -1,4 +1,4 @@
-// ACBP-P1-009 / CDR-016 â€” real-PostgreSQL proof of the append-only, dual-keyed activity_events projection under
+// ACBP-P1-009 / CDR-016 — real-PostgreSQL proof of the append-only, dual-keyed activity_events projection under
 // the RESTRICTED role. Setup on the superuser (owner) connection; every isolation/immutability assertion runs on
 // a second pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner). Proves: dual-keyed (account +
 // company) INSERT/SELECT; fail-closed on missing/forged context; append-only (no UPDATE/DELETE/TRUNCATE grant or
@@ -33,7 +33,7 @@ const U1 = '01ARZ3NDEKTSV4RRFFQ69G5FA1';
 const U2 = '01ARZ3NDEKTSV4RRFFQ69G5FA2';
 const U3 = '01ARZ3NDEKTSV4RRFFQ69G5FA3';
 
-describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, restricted role) â€” ACBP-P1-009/CDR-016', () => {
+describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, restricted role) — ACBP-P1-009/CDR-016', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
 
@@ -83,9 +83,9 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => insertActivity(k, U1, ACCOUNT_A, COMPANY_X, '2026-07-22T10:00:00Z'));
     const seen = await asApp(scope(ACCOUNT_A, COMPANY_X), (k) => k.selectFrom('activity_events').select('event_id').execute());
     expect(seen.map((r) => r.event_id)).toEqual([U1]);
-    // Same account, different company â†’ hidden.
+    // Same account, different company → hidden.
     expect(await asApp(scope(ACCOUNT_A, COMPANY_Y), (k) => k.selectFrom('activity_events').selectAll().execute())).toHaveLength(0);
-    // Different account, same company id â†’ hidden.
+    // Different account, same company id → hidden.
     expect(await asApp(scope(ACCOUNT_B, COMPANY_X), (k) => k.selectFrom('activity_events').selectAll().execute())).toHaveLength(0);
   });
 
@@ -93,7 +93,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     // account/company mismatch vs the claimed row.
     await expect(asApp(scope(ACCOUNT_A, COMPANY_X), (k) => insertActivity(k, U2, ACCOUNT_B, COMPANY_X, '2026-07-22T10:00:00Z'))).rejects.toThrow();
     await expect(asApp(scope(ACCOUNT_A, COMPANY_X), (k) => insertActivity(k, U2, ACCOUNT_A, COMPANY_Y, '2026-07-22T10:00:00Z'))).rejects.toThrow();
-    // No company context â†’ rejected; no context at all â†’ rejected.
+    // No company context → rejected; no context at all → rejected.
     await expect(asApp({ 'app.current_account': ACCOUNT_A }, (k) => insertActivity(k, U2, ACCOUNT_A, COMPANY_X, '2026-07-22T10:00:00Z'))).rejects.toThrow();
     await expect(asApp({}, (k) => insertActivity(k, U2, ACCOUNT_A, COMPANY_X, '2026-07-22T10:00:00Z'))).rejects.toThrow();
   });
@@ -148,15 +148,15 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     const page = (after?: { occurredAt: string; eventId: string }) =>
       asApp(scope(ACCOUNT_A, COMPANY_X), (k) => new ActivityFeedRepository(k).listByCompany(COMPANY_X, 1, after !== undefined ? { after } : {}));
     const p1 = await page();
-    expect(p1.map((r) => r.event_id)).toEqual([U2]); // equal ts â†’ higher event_id first (DESC tie-break)
+    expect(p1.map((r) => r.event_id)).toEqual([U2]); // equal ts → higher event_id first (DESC tie-break)
     const p2 = await page({ occurredAt: T, eventId: U2 });
-    expect(p2.map((r) => r.event_id)).toEqual([U1]); // same ts, strictly lower id â€” not skipped, not duplicated
+    expect(p2.map((r) => r.event_id)).toEqual([U1]); // same ts, strictly lower id — not skipped, not duplicated
     const p3 = await page({ occurredAt: T, eventId: U1 });
     expect(p3.map((r) => r.event_id)).toEqual([U3]); // then the older row
   });
 
   test('sub-millisecond temporal identity: microsecond timestamps are stored exactly and keyset-ordered exactly', async () => {
-    // Two rows in the SAME millisecond, different microseconds â€” plus the exact-epoch projection the reader uses.
+    // Two rows in the SAME millisecond, different microseconds — plus the exact-epoch projection the reader uses.
     const A = '2026-07-22T10:00:00.123456Z';
     const B = '2026-07-22T10:00:00.123999Z';
     await asApp(scope(ACCOUNT_A, COMPANY_X), async (k) => {
@@ -182,7 +182,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
   });
 
   test('migration 0009 BYPASSRLS precondition: the guard raises for a non-bypassing role', async () => {
-    // Execute the guard's exact DO-block as the restricted acbp_app role (NOBYPASSRLS, non-superuser) â€” it must
+    // Execute the guard's exact DO-block as the restricted acbp_app role (NOBYPASSRLS, non-superuser) — it must
     // raise; the same block passes for the CI superuser (proven implicitly by 0009 having applied in beforeAll).
     await expect(
       asApp({}, (k) => sql`
@@ -198,7 +198,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
   });
 
   test('query plan: the keyset feed query can use activity_events_feed_idx (no seq scan) on seeded volume', async () => {
-    // Seed 300 rows for company X via the superuser (BYPASSRLS) â€” realistic enough for the planner.
+    // Seed 300 rows for company X via the superuser (BYPASSRLS) — realistic enough for the planner.
     await sql`
       insert into activity_events (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
       select
@@ -254,7 +254,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     const created = rows.find((r) => r.event_id === U1);
     expect(created).toMatchObject({ account_id: ACCOUNT_A, company_id: COMPANY_X, activity_type: 'company.created', actor_type: 'user', actor_id: ACTOR_U, subject_id: COMPANY_X, schema_version: 1 });
     expect(created?.payload).toEqual({ creation_mode: 'own_idea' }); // junk + correlation NEVER copied
-    // EXACT temporal identity: the sub-millisecond source timestamp is preserved bit-for-bit (no truncation) â€”
+    // EXACT temporal identity: the sub-millisecond source timestamp is preserved bit-for-bit (no truncation) —
     // asserted in SQL because a JS Date read would silently drop the microseconds.
     const exact = await sql<{ same: boolean; txt: string }>`
       select (act.occurred_at = au.occurred_at) as same, act.occurred_at::text as txt
@@ -264,9 +264,9 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     expect(exact.rows[0]?.same).toBe(true);
     expect(exact.rows[0]?.txt).toContain('.123456');
     const paused = rows.find((r) => r.event_id === U2);
-    expect(paused?.payload).toEqual({}); // paused summary is empty â€” 'reason' never copied
+    expect(paused?.payload).toEqual({}); // paused summary is empty — 'reason' never copied
 
-    // Rerunning the SAME backfill statement is idempotent (ON CONFLICT DO NOTHING â†’ no duplicates).
+    // Rerunning the SAME backfill statement is idempotent (ON CONFLICT DO NOTHING → no duplicates).
     await sql`
       insert into public.activity_events
         (event_id, account_id, company_id, activity_type, schema_version, occurred_at, actor_type, actor_id, subject_type, subject_id, payload)
@@ -283,7 +283,7 @@ describe.skipIf(!hasTestDatabase)('activity_events projection (real PostgreSQL, 
     expect((await su.kysely.selectFrom('activity_events').selectAll().execute())).toHaveLength(2);
 
     // Down/up reapply of 0009 is deterministic: same two rows, same redaction. Rolled back TO BELOW 0009 BY
-    // NAME (a bare one-step migrateDown pops whatever the head is â€” it silently stopped testing 0009's
+    // NAME (a bare one-step migrateDown pops whatever the head is — it silently stopped testing 0009's
     // backfill once 0010 landed on top).
     const down = await createMigrator(su).migrateTo('0008_companies');
     expect(down.error).toBeUndefined();

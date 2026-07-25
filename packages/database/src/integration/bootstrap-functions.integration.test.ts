@@ -1,4 +1,4 @@
-// ACBP-P1-006 / CDR-013 â€” real-PostgreSQL trust-critical tests for the three SECURITY DEFINER bootstrap
+// ACBP-P1-006 / CDR-013 — real-PostgreSQL trust-critical tests for the three SECURITY DEFINER bootstrap
 // functions, exercised through the RESTRICTED `acbp_app` role. Proves the legitimate paths, the abuse
 // cases fail closed, invite acceptance binds email from the users table (not caller input), and the
 // catalog properties (owner, prosecdef, search_path, EXECUTE ACL) are exactly as intended. Setup/seed runs
@@ -41,7 +41,7 @@ async function seedInvite(su: DatabaseClient, accountId: string, invitedEmail: s
   return tokenHash;
 }
 
-describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real PostgreSQL) â€” ACBP-P1-006/CDR-013', () => {
+describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real PostgreSQL) — ACBP-P1-006/CDR-013', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
 
@@ -69,7 +69,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     }
   });
 
-  // â”€â”€ Provisioning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Provisioning ────────────────────────────────────────────────────────────────────────────────
   test('provisioning creates the user\'s own account + profile + owner membership, idempotently', async () => {
     const userId = await seedUser(su, 'prov@example.com');
     const first = await provisionAccountBootstrap(app.kysely, userId);
@@ -86,7 +86,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(mem.rows[0]).toMatchObject({ role: 'owner', status: 'active' });
   });
 
-  // â”€â”€ Own-membership resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Own-membership resolution ───────────────────────────────────────────────────────────────────
   test('resolution returns only the caller\'s own active membership; wrong account / other user / revoked deny', async () => {
     const owner = await seedUser(su, 'ro@example.com');
     const { accountId } = await provisionAccountBootstrap(app.kysely, owner);
@@ -103,7 +103,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(await resolveOwnMembershipBootstrap(app.kysely, owner, accountId)).toBeNull();
   });
 
-  // â”€â”€ Invite acceptance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Invite acceptance ───────────────────────────────────────────────────────────────────────────
   test('acceptance activates when the authoritative user email matches the invite (email is NOT a param)', async () => {
     const owner = await seedUser(su, 'ai-owner@example.com');
     const { accountId } = await provisionAccountBootstrap(app.kysely, owner);
@@ -127,7 +127,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     const u1 = await seedUser(su, 'a1@example.com');
     expect(await acceptInviteBootstrap(app.kysely, 'no_such_hash', u1)).toBeNull();
 
-    // Email mismatch (authoritative user email != invited_email) â€” a caller cannot supply an email.
+    // Email mismatch (authoritative user email != invited_email) — a caller cannot supply an email.
     const hMismatch = await seedInvite(su, accountId, 'intended@example.com');
     const attacker = await seedUser(su, 'attacker@example.com');
     expect(await acceptInviteBootstrap(app.kysely, hMismatch, attacker)).toBeNull();
@@ -137,7 +137,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     const unv = await seedUser(su, 'unv@example.com', { verified: false });
     expect(await acceptInviteBootstrap(app.kysely, hUnverified, unv)).toBeNull();
 
-    // Deleted/tombstoned user â€” a real deleted user has its email redacted to NULL (CDR-008), so the
+    // Deleted/tombstoned user — a real deleted user has its email redacted to NULL (CDR-008), so the
     // function's active+verified-email requirement denies it.
     const hDeleted = await seedInvite(su, accountId, 'del@example.com');
     const del = await seedUser(su, null, { verified: false, status: 'deleted' });
@@ -160,7 +160,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(await acceptInviteBootstrap(app.kysely, h, user)).toBeNull();
   });
 
-  // â”€â”€ Abuse: the restricted role cannot bypass the functions by touching hidden rows directly â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Abuse: the restricted role cannot bypass the functions by touching hidden rows directly ────────
   test('the restricted role cannot self-activate a pending invite by direct UPDATE (RLS hides the row)', async () => {
     const owner = await seedUser(su, 'abuse-owner@example.com');
     const { accountId } = await provisionAccountBootstrap(app.kysely, owner);
@@ -175,7 +175,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(still.rows[0]).toMatchObject({ status: 'invited', member_user_id: null });
   });
 
-  // â”€â”€ Catalog: the three functions have exactly the intended security properties â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Catalog: the three functions have exactly the intended security properties ─────────────────────
   test('catalog: exactly three acbp_ functions, all SECURITY DEFINER with a fixed search_path, not owned by acbp_app', async () => {
     const fns = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null; owner: string }>`
       select p.proname, p.prosecdef, p.proconfig, (select rolname from pg_roles where oid = p.proowner) as owner

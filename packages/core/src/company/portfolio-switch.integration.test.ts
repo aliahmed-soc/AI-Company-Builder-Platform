@@ -1,4 +1,4 @@
-// ACBP-P1-011 / CDR-017 Â§Switch isolation â€” real-PostgreSQL proof that "switching" (stateless URL-only
+// ACBP-P1-011 / CDR-017 §Switch isolation — real-PostgreSQL proof that "switching" (stateless URL-only
 // re-resolution) leaks NO context between companies. Trust-critical: A->B->A sequential AND concurrent request
 // sequences share no row/name/role/context; the same company yields DIFFERENT roles to different callers;
 // transaction-local company/account GUCs clear after BOTH commit and rollback (SET LOCAL semantics) so a pooled
@@ -22,7 +22,7 @@ async function seedUser(seed: DatabaseClient, email: string): Promise<string> {
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, restricted role) â€” ACBP-P1-011/CDR-017', () => {
+describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, restricted role) — ACBP-P1-011/CDR-017', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let userO: string; // account owner
@@ -76,7 +76,7 @@ describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, 
     accountId = (await provisionPersonalAccount(app, userO)).accountId;
     // userP is an active ACCOUNT member (so portfolio:read + account resolution pass for them).
     await seed.kysely.insertInto('memberships').values({ account_id: accountId, member_user_id: userP, role: 'viewer', status: 'active', accepted_at: sql<Date>`now()` }).execute();
-    // A separate account with its own company â€” the cross-account forgery target.
+    // A separate account with its own company — the cross-account forgery target.
     outsiderAccount = (await provisionPersonalAccount(app, outsider)).accountId;
 
     // userO: owner of Alpha, VIEWER of Beta. userP: OWNER of Beta, owner of Gamma. (Same company Beta, two roles.)
@@ -126,12 +126,12 @@ describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, 
   });
 
   test('a revoked selection forces reload: the SAME request that just succeeded is now coarsely denied, and the next portfolio read excludes the company (CDR-017 required behavior)', async () => {
-    // Active membership â†’ the protected company request succeeds.
+    // Active membership → the protected company request succeeds.
     const before = await getCompany(app, { userId: userO, accountId, companyId: alpha });
     expect(before.status === 'ok' && before.company.name).toBe('Alpha');
     // The membership is revoked (e.g. by an admin) while the client still "has" alpha selected in its URL.
     await seed.kysely.updateTable('company_memberships').set({ status: 'revoked' }).where('company_id', '=', alpha).where('member_user_id', '=', userO).execute();
-    // The IDENTICAL request now denies coarsely â€” fresh resolution, no cached scope, no fallback company.
+    // The IDENTICAL request now denies coarsely — fresh resolution, no cached scope, no fallback company.
     const after = await getCompany(app, { userId: userO, accountId, companyId: alpha });
     expect(after.status).toBe('forbidden');
     // And the next portfolio read excludes the revoked company (only Beta remains for userO).
@@ -141,9 +141,9 @@ describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, 
   });
 
   test('a forged route companyId denies: a non-member company and a cross-account company both 403', async () => {
-    // userO is NOT a member of Gamma (only userP is) â†’ coarse denial (selection is non-authoritative).
+    // userO is NOT a member of Gamma (only userP is) → coarse denial (selection is non-authoritative).
     expect((await getCompany(app, { userId: userO, accountId, companyId: gamma })).status).toBe('forbidden');
-    // A company in ANOTHER account, addressed under this account â†’ denied.
+    // A company in ANOTHER account, addressed under this account → denied.
     expect((await getCompany(app, { userId: userO, accountId, companyId: foreign })).status).toBe('forbidden');
   });
 
@@ -158,7 +158,7 @@ describe.skipIf(!hasTestDatabase)('portfolio switch isolation (real PostgreSQL, 
     expect(afterCommit.c === '' || afterCommit.c === null).toBe(true);
     expect(afterCommit.a === '' || afterCommit.a === null).toBe(true);
 
-    // A transaction that SET LOCAL a company GUC then throws â†’ rolled back; the GUC must not survive.
+    // A transaction that SET LOCAL a company GUC then throws → rolled back; the GUC must not survive.
     await expect(
       withTransaction(app, async (tx) => {
         await sql`select set_config('app.current_company', ${alpha}, true)`.execute(tx.kysely);

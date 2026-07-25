@@ -1,4 +1,4 @@
-// ACBP-P1-002 â€” real-PostgreSQL integration tests for the user-mapping + webhook-receipt foundation
+// ACBP-P1-002 — real-PostgreSQL integration tests for the user-mapping + webhook-receipt foundation
 // (migration 0002; schema; CDR-008 invariants). Skips when ACBP_TEST_DATABASE_URL is unset; never
 // mocked. Self-cleaning. Hosted CI runs this (preflight guard forbids silent skips).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -151,7 +151,7 @@ describe.skipIf(!hasTestDatabase)('user-mapping foundation (real PostgreSQL)', (
 
   test('migration down removes the user-mapping tables and re-apply restores them', async () => {
     // Reverse one batch at a time until the user-mapping tables are gone. This stays correct as later
-    // migrations (0003+) are added on top of 0002 â€” they (which may FK-reference users) reverse first.
+    // migrations (0003+) are added on top of 0002 — they (which may FK-reference users) reverse first.
     const usersTables = async () => {
       const r = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
       return r.rows[0]?.n ?? 0;

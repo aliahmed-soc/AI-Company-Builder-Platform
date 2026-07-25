@@ -1,9 +1,9 @@
-// ACBP-P1-012 / CDR-018 â€” real-PostgreSQL proof of the workspace-provisioning data model (migration 0010) under
+// ACBP-P1-012 / CDR-018 — real-PostgreSQL proof of the workspace-provisioning data model (migration 0010) under
 // the RESTRICTED role. Setup/seed runs on the superuser (owner) connection; every isolation/privilege assertion
 // runs on a second pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner) so RLS + grants actually
 // apply. Proves: backfill (draft/onboarding seeded with six PENDING rows; active/paused NOT; idempotent rerun;
 // deterministic down/up); FORCE RLS + dual-key policies on both new tables (account-only context reveals nothing;
-// cross-tenant forgery denied); column-level UPDATE privileges (outcome columns only â€” identity columns immutable
+// cross-tenant forgery denied); column-level UPDATE privileges (outcome columns only — identity columns immutable
 // to the app role); append-only company_workspace_areas; CHECK constraints (closed steps/orders/statuses/areas/
 // failure codes; attempt bounds; per-status shape); no DELETE/TRUNCATE; allowlist still exactly 3 SECURITY
 // DEFINER; acbp_app NOBYPASSRLS/non-owner. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning.
@@ -28,7 +28,7 @@ function appRoleClient(): DatabaseClient {
 
 const STEPS = ['profile', 'mission_draft', 'research', 'roadmap', 'documents', 'activity'] as const;
 
-describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real PostgreSQL, restricted role) â€” ACBP-P1-012/CDR-018', () => {
+describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real PostgreSQL, restricted role) — ACBP-P1-012/CDR-018', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -51,7 +51,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   const acctCo = (a: string, c: string) => ({ 'app.current_account': a, 'app.current_company': c });
   const acct = (a: string) => ({ 'app.current_account': a });
 
-  /** Seed a company with an explicit status directly (superuser; FK targets only â€” no bootstrap semantics). */
+  /** Seed a company with an explicit status directly (superuser; FK targets only — no bootstrap semantics). */
   async function seedCompany(accountId: string, status: string): Promise<string> {
     const r = await sql<{ id: string }>`insert into companies (account_id, creation_mode, status) values (${accountId}::uuid, 'own_idea', ${status}) returning id`.execute(su.kysely);
     return r.rows[0]!.id;
@@ -84,7 +84,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     coPaused = await seedCompany(accountA, 'paused');
     coB = await seedCompany(accountB, 'draft');
 
-    // Roll back TO BELOW 0010 BY NAME (a bare one-step migrateDown would pop whatever the head migration is â€”
+    // Roll back TO BELOW 0010 BY NAME (a bare one-step migrateDown would pop whatever the head migration is —
     // it broke when 0011 landed on top) and re-apply, so the 0010 backfill runs against this realistic
     // population (down/up determinism).
     const down = await createMigrator(su).migrateTo('0009_activity_events');
@@ -106,7 +106,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     }
   });
 
-  // â”€â”€ Backfill (CDR-018 Â§9) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Backfill (CDR-018 §9) ────────────────────────────────────────────────────────────────────────────────
   test('backfill seeds six PENDING checkpoints for draft AND onboarding companies only; statuses untouched; no areas', async () => {
     const rows = await su.kysely.selectFrom('provisioning_steps').selectAll().execute();
     const byCompany = new Map<string, typeof rows>();
@@ -136,7 +136,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     expect(await su.kysely.selectFrom('company_workspace_areas').selectAll().execute()).toHaveLength(0);
   });
 
-  test('backfill rerun is idempotent (ON CONFLICT DO NOTHING â€” no duplicates, existing rows preserved)', async () => {
+  test('backfill rerun is idempotent (ON CONFLICT DO NOTHING — no duplicates, existing rows preserved)', async () => {
     // Mutate one row so a rerun provably does not clobber it.
     await su.kysely.updateTable('provisioning_steps').set({ status: 'completed', attempt: 1, started_at: sql<Date>`now()`, completed_at: sql<Date>`now()` }).where('company_id', '=', coDraft).where('step', '=', 'profile').execute();
     await sql`
@@ -154,16 +154,16 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     await su.kysely.updateTable('provisioning_steps').set({ status: 'pending', attempt: 0, started_at: null, completed_at: null }).where('company_id', '=', coDraft).where('step', '=', 'profile').execute();
   });
 
-  // â”€â”€ RLS (dual-key, fail-closed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── RLS (dual-key, fail-closed) ──────────────────────────────────────────────────────────────────────────
   test('dual-key visibility: rows appear ONLY under the matching account+company scope', async () => {
     const seen = await asApp(acctCo(accountA, coDraft), (k) => k.selectFrom('provisioning_steps').select('step').execute());
     expect(seen).toHaveLength(6);
-    // Account scope alone (no company GUC) â†’ nothing (no account-only product authority).
+    // Account scope alone (no company GUC) → nothing (no account-only product authority).
     expect(await asApp(acct(accountA), (k) => k.selectFrom('provisioning_steps').selectAll().execute())).toHaveLength(0);
-    // Another company of the SAME account â†’ only that company's rows (not coDraft's).
+    // Another company of the SAME account → only that company's rows (not coDraft's).
     const other = await asApp(acctCo(accountA, coOnboarding), (k) => k.selectFrom('provisioning_steps').select('company_id').execute());
     expect(new Set(other.map((r) => r.company_id))).toEqual(new Set([coOnboarding]));
-    // Cross-account forgery: account A claiming account B's company â†’ nothing.
+    // Cross-account forgery: account A claiming account B's company → nothing.
     expect(await asApp(acctCo(accountA, coB), (k) => k.selectFrom('provisioning_steps').selectAll().execute())).toHaveLength(0);
     // Same for the areas table (empty but the policy shape is proven by the INSERT tests below).
     expect(await asApp(acct(accountA), (k) => k.selectFrom('company_workspace_areas').selectAll().execute())).toHaveLength(0);
@@ -174,11 +174,11 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     await asApp(acctCo(accountA, coDraft), (k) => sql`insert into company_workspace_areas (account_id, company_id, area) values (${accountA}::uuid, ${coDraft}::uuid, 'research')`.execute(k));
     const rows = await asApp(acctCo(accountA, coDraft), (k) => k.selectFrom('company_workspace_areas').select('area').execute());
     expect(rows.map((r) => r.area)).toEqual(['research']);
-    // Claiming ANOTHER company id in the row than the scope â†’ WITH CHECK fails.
+    // Claiming ANOTHER company id in the row than the scope → WITH CHECK fails.
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`insert into company_workspace_areas (account_id, company_id, area) values (${accountA}::uuid, ${coOnboarding}::uuid, 'roadmap')`.execute(k))).rejects.toThrow();
-    // Cross-account: under (A, coB) the scope itself mismatches the row â†’ rejected.
+    // Cross-account: under (A, coB) the scope itself mismatches the row → rejected.
     await expect(asApp(acctCo(accountA, coB), (k) => sql`insert into company_workspace_areas (account_id, company_id, area) values (${accountB}::uuid, ${coB}::uuid, 'documents')`.execute(k))).rejects.toThrow();
-    // No context at all â†’ fail-closed.
+    // No context at all → fail-closed.
     await expect(asApp({}, (k) => sql`insert into company_workspace_areas (account_id, company_id, area) values (${accountA}::uuid, ${coDraft}::uuid, 'documents')`.execute(k))).rejects.toThrow();
     // provisioning_steps INSERT is likewise dual-key bound (checkpoints for a foreign company can't be forged).
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`insert into provisioning_steps (account_id, company_id, step, step_order) values (${accountB}::uuid, ${coB}::uuid, 'profile', 1)`.execute(k))).rejects.toThrow();
@@ -186,15 +186,15 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
   });
 
   test('UPDATE is dual-key + column-limited: outcome columns mutable in scope; identity columns and foreign rows are not', async () => {
-    // In-scope outcome update succeeds (pending â†’ failed with a closed code).
+    // In-scope outcome update succeeds (pending → failed with a closed code).
     const upd = await asApp(acctCo(accountA, coDraft), (k) =>
       k.updateTable('provisioning_steps').set({ status: 'failed', attempt: 1, started_at: sql<Date>`now()`, failed_at: sql<Date>`now()`, failure_code: 'internal_error', updated_at: sql<Date>`now()` }).where('company_id', '=', coDraft).where('step', '=', 'documents').executeTakeFirst(),
     );
     expect(Number(upd.numUpdatedRows)).toBe(1);
-    // Under a DIFFERENT company scope the row is invisible â†’ 0 rows updated (no cross-company mutation).
+    // Under a DIFFERENT company scope the row is invisible → 0 rows updated (no cross-company mutation).
     const foreign = await asApp(acctCo(accountA, coOnboarding), (k) => k.updateTable('provisioning_steps').set({ status: 'completed', attempt: 1, started_at: sql<Date>`now()`, completed_at: sql<Date>`now()`, updated_at: sql<Date>`now()` }).where('company_id', '=', coDraft).where('step', '=', 'documents').executeTakeFirst());
     expect(Number(foreign.numUpdatedRows)).toBe(0);
-    // Identity columns carry NO update privilege for acbp_app (42501 â€” immutable regardless of RLS).
+    // Identity columns carry NO update privilege for acbp_app (42501 — immutable regardless of RLS).
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`update provisioning_steps set step_order = 5 where company_id = ${coDraft}::uuid and step = 'documents'`.execute(k))).rejects.toThrow();
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`update provisioning_steps set requested_at = now() where company_id = ${coDraft}::uuid and step = 'documents'`.execute(k))).rejects.toThrow();
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`update provisioning_steps set company_id = ${coOnboarding}::uuid where company_id = ${coDraft}::uuid and step = 'documents'`.execute(k))).rejects.toThrow();
@@ -210,7 +210,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     await expect(asApp(acctCo(accountA, coDraft), (k) => sql`update company_workspace_areas set area = 'roadmap'`.execute(k))).rejects.toThrow();
   });
 
-  // â”€â”€ CHECK constraints (closed sets + shape) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── CHECK constraints (closed sets + shape) ──────────────────────────────────────────────────────────────
   test('CHECKs: closed step/order/status/area/failure-code sets; attempt bounds; per-status shape', async () => {
     // Unknown step; canonical-order mismatch; unknown status; attempt out of bounds; pending with attempt>0.
     await expect(sql`insert into provisioning_steps (account_id, company_id, step, step_order) values (${accountA}::uuid, ${coActive}::uuid, 'hosting', 7)`.execute(su.kysely)).rejects.toThrow();
@@ -228,7 +228,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning data model (real Postg
     await su.kysely.deleteFrom('company_workspace_areas').execute();
   });
 
-  // â”€â”€ Catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Catalog ──────────────────────────────────────────────────────────────────────────────────────────────
   test('catalog: FORCE RLS on both tables; exact policy set; exact grants; still exactly 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner', async () => {
     const rls = await sql<{ relname: string; relforcerowsecurity: boolean }>`select relname, relforcerowsecurity from pg_class where relname = any(array['provisioning_steps','company_workspace_areas']) and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows).toHaveLength(2);

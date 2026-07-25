@@ -1,11 +1,11 @@
-// ACBP-P2-002 / CDR-023 â€” real-PostgreSQL proof of interview_questions + interview_answers under the RESTRICTED
+// ACBP-P2-002 / CDR-023 — real-PostgreSQL proof of interview_questions + interview_answers under the RESTRICTED
 // role. Setup/seed runs on the superuser (owner) connection; every assertion runs as `acbp_app` (NOSUPERUSER,
 // NOBYPASSRLS, non-owner). Proves: dual-keyed company-scoped SELECT/INSERT (both account AND company must match
-// â€” fail closed without the company key; cross-tenant insert refused); APPEND-ONLY / IMMUTABLE (no UPDATE, no
+// — fail closed without the company key; cross-tenant insert refused); APPEND-ONLY / IMMUTABLE (no UPDATE, no
 // DELETE grant on either table); the (question_id, revision) PK serializes revisions; the status/content CHECK
 // (answered needs content, skipped forbids it); unique (session_id, position); FK cascade; clean down/up/reapply
 // BY NAME; catalog invariants (FORCE RLS, select+insert policies, least-privilege grants, 3 SECURITY DEFINER,
-// acbp_app NOBYPASSRLS/non-owner, migrations 0001â€“0013). Skips when ACBP_TEST_DATABASE_URL is unset.
+// acbp_app NOBYPASSRLS/non-owner, migrations 0001–0013). Skips when ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
@@ -27,7 +27,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-qa-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, restricted role) â€” ACBP-P2-002/CDR-023', () => {
+describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, restricted role) — ACBP-P2-002/CDR-023', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -149,7 +149,7 @@ describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, r
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'answered', null)).rejects.toThrow();
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'skipped', 'nope')).rejects.toThrow();
     await expect(insertAnswer(accountA, companyA1, sessionA, q, 1, 'bogus', 'x')).rejects.toThrow();
-    // The author is REQUIRED (created_by_user_id NOT NULL â€” accountability is structural).
+    // The author is REQUIRED (created_by_user_id NOT NULL — accountability is structural).
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into interview_answers (question_id, revision, session_id, account_id, company_id, status, content) values (${q}::uuid, 5, ${sessionA}::uuid, ${accountA}::uuid, ${companyA1}::uuid, 'answered', 'x')`.execute(k))).rejects.toThrow();
     // The valid shapes are accepted.
     await insertAnswer(accountA, companyA1, sessionA, q, 1, 'skipped', null);
@@ -172,7 +172,7 @@ describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, r
     expect((await sql<{ n: number }>`select count(*)::int as n from interview_questions where session_id = ${throwSession}::uuid`.execute(su.kysely)).rows[0]?.n).toBe(0);
   });
 
-  test('catalog: FORCE RLS; select+insert policies only; SELECT+INSERT grants only (no UPDATE/DELETE); 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; migrations 0001â€“0013', async () => {
+  test('catalog: FORCE RLS; select+insert policies only; SELECT+INSERT grants only (no UPDATE/DELETE); 3 SECURITY DEFINER; acbp_app NOBYPASSRLS/non-owner; migrations 0001–0013', async () => {
     for (const t of ['interview_questions', 'interview_answers'] as const) {
       const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = ${t} and relkind = 'r'`.execute(su.kysely);
       expect(rls.rows[0], t).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
@@ -187,7 +187,7 @@ describe.skipIf(!hasTestDatabase)('interview Q&A persistence (real PostgreSQL, r
     expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     const role = await sql<{ rolbypassrls: boolean; rolsuper: boolean }>`select rolbypassrls, rolsuper from pg_roles where rolname = 'acbp_app'`.execute(su.kysely);
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
-    // This migration is applied (not that it is the LAST or ONLY one â€” later tickets add migrations on top).
+    // This migration is applied (not that it is the LAST or ONLY one — later tickets add migrations on top).
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
     expect(migs.rows.map((m) => m.name)).toContain('0013_interview_qa');
     expect(migs.rows.length).toBeGreaterThanOrEqual(13);

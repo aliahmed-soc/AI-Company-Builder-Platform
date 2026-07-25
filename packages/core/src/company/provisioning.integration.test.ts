@@ -1,4 +1,4 @@
-// ACBP-P1-012 / CDR-018 â€” real-PostgreSQL proof of the workspace-provisioning executor, resume orchestration,
+// ACBP-P1-012 / CDR-018 — real-PostgreSQL proof of the workspace-provisioning executor, resume orchestration,
 // and completion transition. Trust-critical: default post-create auto-provisioning drives a company to `active`
 // with truthful material effects; kill-and-resume works after every committed checkpoint (an interrupted step
 // leaves NO committed trace; completed steps never repeat); controlled failures halt the sequence with closed
@@ -29,7 +29,7 @@ async function seedUser(seed: DatabaseClient, email: string): Promise<string> {
 const failEffect = (code: 'profile_missing' | 'activity_projection_missing' | 'internal_error'): StepEffectFn => () => Promise.resolve({ ok: false, failureCode: code });
 const crashEffect: StepEffectFn = () => Promise.reject(new Error('simulated interruption'));
 
-describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real PostgreSQL, restricted role) â€” ACBP-P1-012/CDR-018', () => {
+describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real PostgreSQL, restricted role) — ACBP-P1-012/CDR-018', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let ownerId: string;
@@ -124,7 +124,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
       const crashStep = PROVISIONING_STEPS[k]!;
       const co = await createOnboarding(`Kill at ${crashStep}`);
       // Run until the crash step: the unexpected error aborts THAT step's transaction (its checkpoint stays
-      // exactly as it was) and the whole resume call rejects â€” like a process kill between checkpoints.
+      // exactly as it was) and the whole resume call rejects — like a process kill between checkpoints.
       await expect(resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, { stepEffects: { [crashStep]: crashEffect } })).rejects.toBeDefined();
       const afterCrash = await stepRows(co);
       for (let i = 0; i < PROVISIONING_STEPS.length; i++) {
@@ -144,7 +144,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
       const finalSteps = await stepRows(co);
       for (const s of finalSteps) {
         expect(s.status).toBe('completed');
-        expect(s.attempt).toBe(1); // exactly one committed attempt each â€” completed steps never repeated
+        expect(s.attempt).toBe(1); // exactly one committed attempt each — completed steps never repeated
       }
       const names = await auditNames(co);
       expect(names.filter((n) => n === 'provisioning.step_started')).toHaveLength(6); // one per step TOTAL
@@ -169,7 +169,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     expect(rows.find((s) => s.step === 'roadmap')?.status).toBe('pending');
     expect(rows.find((s) => s.step === 'documents')?.status).toBe('pending');
 
-    // Attempts 2 and 3 â€” each an explicit owner retry, audited as a USER retry_requested with next_attempt.
+    // Attempts 2 and 3 — each an explicit owner retry, audited as a USER retry_requested with next_attempt.
     const r2 = await resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch);
     expect(r2.status).toBe('ok');
     const r3 = await resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch);
@@ -190,7 +190,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     expect(causedSteps[1]?.causation_id).toBe(retries[0]?.event_id);
     expect(causedSteps[2]?.causation_id).toBe(retries[1]?.event_id);
 
-    // EXHAUSTED: a fourth resume â€” even with the effect fixed â€” is a safe conflict and performs NO mutation.
+    // EXHAUSTED: a fourth resume — even with the effect fixed — is a safe conflict and performs NO mutation.
     const before = { steps: await stepRows(co), audits: (await auditNames(co)).length };
     const r4 = await resumeProvisioning(app, { userId: ownerId, accountId, companyId: co });
     expect(r4.status).toBe('conflict');
@@ -235,7 +235,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     const names = await auditNames(co);
     expect(names.filter((n) => n === 'provisioning.step_started')).toHaveLength(6);
     expect(names.filter((n) => n === 'provisioning.step_completed')).toHaveLength(6);
-    expect(names.filter((n) => n === 'provisioning.completed')).toHaveLength(1); // no double onboardingâ†’active
+    expect(names.filter((n) => n === 'provisioning.completed')).toHaveLength(1); // no double onboarding→active
     const areas = await seed.kysely.selectFrom('company_workspace_areas').select('area').where('company_id', '=', co).execute();
     expect(areas).toHaveLength(4); // no duplicate area rows
   });
@@ -245,7 +245,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     const failResearch = { stepEffects: { research: failEffect('internal_error') } };
     // Wave 1: two concurrent resumes on a FRESH sequence with research failing. Whichever run reaches research
     // first commits its controlled failure (attempt 1); the OTHER run holds no retry authorization for that
-    // just-failed attempt â†’ it HALTS. Exactly ONE committed attempt, ZERO retry events.
+    // just-failed attempt → it HALTS. Exactly ONE committed attempt, ZERO retry events.
     const [w1a, w1b] = await Promise.all([
       resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
       resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
@@ -258,7 +258,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
 
     // Wave 2: two concurrent resumes RETRYING the failed step. Both Phase A's authorize (research, attempt 1);
     // only the run that actually executes consumes it (retry_requested written IN that step transaction); the
-    // other's authorization no longer matches attempt 2 â†’ halts. Exactly ONE executed retry, ONE retry event.
+    // other's authorization no longer matches attempt 2 → halts. Exactly ONE executed retry, ONE retry event.
     const [w2a, w2b] = await Promise.all([
       resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
       resumeProvisioning(app, { userId: ownerId, accountId, companyId: co }, failResearch),
@@ -269,11 +269,11 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     const retries = await seed.kysely.selectFrom('audit_events').selectAll().where('company_id', '=', co).where('name', '=', 'provisioning.retry_requested').execute();
     expect(retries).toHaveLength(1);
     expect(retries[0]?.actor_type).toBe('user');
-    expect(retries[0]?.payload).toEqual({ step: 'research', next_attempt: 2 }); // exact â€” audited at execution time
+    expect(retries[0]?.payload).toEqual({ step: 'research', next_attempt: 2 }); // exact — audited at execution time
     expect((await auditNames(co)).filter((n) => n === 'provisioning.step_failed')).toHaveLength(2);
   });
 
-  test('recovery: crash between the sixth step and activation (all completed + onboarding) â€” resume activates exactly once', async () => {
+  test('recovery: crash between the sixth step and activation (all completed + onboarding) — resume activates exactly once', async () => {
     const co = await createOnboarding('Almost Done Co');
     // Simulate the crash window: all six checkpoints durably completed, activation transaction never ran.
     await seed.kysely
@@ -305,7 +305,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     expect((await auditNames(co)).length).toBe(before.audits);
   });
 
-  test('BACKFILLED draft company: resume transitions draftâ†’onboarding once, emits provisioning.started once, provisions to active', async () => {
+  test('BACKFILLED draft company: resume transitions draft→onboarding once, emits provisioning.started once, provisions to active', async () => {
     // Simulate a pre-P1-012 company exactly as migration 0010 leaves it: draft + six pending checkpoints +
     // P1-010 artifacts (profile v1, owner membership, company.created audit + activity projection).
     const co = await createOnboarding('Legacy Co');
@@ -345,7 +345,7 @@ describe.skipIf(!hasTestDatabase)('workspace provisioning execution (real Postgr
     // Revoked company membership: denied.
     await seed.kysely.updateTable('company_memberships').set({ status: 'revoked' }).where('company_id', '=', co).where('member_user_id', '=', viewerId).execute();
     expect((await getProvisioningStatus(app, { userId: viewerId, accountId, companyId: co })).status).toBe('forbidden');
-    // Cross-account forgery: another account's owner addressing this company under THEIR account â†’ denied.
+    // Cross-account forgery: another account's owner addressing this company under THEIR account → denied.
     const otherOwner = await seedUser(seed, 'other@example.com');
     const otherAccount = (await provisionPersonalAccount(app, otherOwner)).accountId;
     expect((await getProvisioningStatus(app, { userId: otherOwner, accountId: otherAccount, companyId: co })).status).toBe('forbidden');

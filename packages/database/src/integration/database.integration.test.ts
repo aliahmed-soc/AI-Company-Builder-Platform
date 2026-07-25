@@ -1,4 +1,4 @@
-// ACBP-P0-018 â€” real-PostgreSQL integration suite (no mocks). Skips when ACBP_TEST_DATABASE_URL is
+// ACBP-P0-018 — real-PostgreSQL integration suite (no mocks). Skips when ACBP_TEST_DATABASE_URL is
 // unset. Covers: health, migrations (apply/re-run/history/failure-stops/concurrency), transaction
 // commit/rollback + connection release, RLS-ready tenant session settings, and the no-domain-tables
 // guarantee. Uses a disposable database and cleans up its own artifacts afterward.
@@ -100,7 +100,7 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     const res = await migrator.migrateToLatest();
     expect(res.error).toBeDefined(); // the batch failed at 9002_bad
     // PostgreSQL has transactional DDL, so Kysely runs the batch in a transaction: a failure rolls
-    // back the ENTIRE batch â€” no partial apply (BACKLOG.csv: "Migration failure = no partial apply").
+    // back the ENTIRE batch — no partial apply (BACKLOG.csv: "Migration failure = no partial apply").
     const tables = await sql<{ table_name: string }>`select table_name from information_schema.tables where table_schema = 'public'`.execute(client.kysely);
     const names = tables.rows.map((r) => r.table_name);
     expect(names).not.toContain('_it_a'); // pre-failure migration rolled back with the batch
@@ -161,7 +161,7 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('company_profiles');
     expect(names).toContain('company_memberships');
     expect(names).toContain('activity_events');
-    // `usage_events` now exists (ACBP-P2-003, migration 0017 â€” the model-gateway usage ledger).
+    // `usage_events` now exists (ACBP-P2-003, migration 0017 — the model-gateway usage ledger).
     expect(names).toContain('usage_events');
     // `understanding_documents` + `understanding_items` now exist (ACBP-P2-008, migration 0019).
     expect(names).toContain('understanding_documents');

@@ -1,4 +1,4 @@
-// ACBP-P1-008 / CDR-014 â€” real-PostgreSQL proof of the append-only audit store under the RESTRICTED role.
+// ACBP-P1-008 / CDR-014 — real-PostgreSQL proof of the append-only audit store under the RESTRICTED role.
 // Setup/seed runs on the superuser (owner) connection; every isolation/immutability assertion runs on a
 // second pool connected as `acbp_app` (NOSUPERUSER, NOBYPASSRLS, non-owner) so RLS + grants actually apply.
 // Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no migrate-down.
@@ -27,7 +27,7 @@ const ACCOUNT_A = '11111111-1111-1111-1111-111111111111';
 const ACCOUNT_B = '22222222-2222-2222-2222-222222222222';
 const ACTOR_U = '33333333-3333-3333-3333-333333333333';
 
-describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreSQL, restricted role) â€” ACBP-P1-008/CDR-014', () => {
+describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreSQL, restricted role) — ACBP-P1-008/CDR-014', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
 
@@ -78,7 +78,7 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
     expect(rowsA[0]?.payload).toEqual({ role: 'viewer' });
     expect(rowsA[0]?.occurred_at).toBeInstanceOf(Date);
 
-    // Account B sees NOTHING (RLS isolation) â€” no cross-account audit visibility, no existence oracle.
+    // Account B sees NOTHING (RLS isolation) — no cross-account audit visibility, no existence oracle.
     const rowsB = await withAccountTransaction(app, { accountId: ACCOUNT_B, actorId: ACTOR_U }, (s) => s.db.selectFrom('audit_events').selectAll().execute());
     expect(rowsB).toHaveLength(0);
   });
@@ -97,7 +97,7 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
   });
 
   test('fail-closed: with no account GUC, an INSERT WITH CHECK fails and a SELECT returns nothing', async () => {
-    // No app.current_account set â†’ account_id::text = nullif('', '') = NULL â†’ WITH CHECK false â†’ rejected.
+    // No app.current_account set → account_id::text = nullif('', '') = NULL → WITH CHECK false → rejected.
     await expect(
       asApp({}, (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, actor_type, subject_type, subject_id, outcome) values ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 'membership.invited', 1, ${ACCOUNT_A}::uuid, 'user', 'membership', 'm', 'success')`.execute(k)),
     ).rejects.toThrow();
@@ -108,7 +108,7 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
   });
 
   test('forged account: inserting a row for another account fails the WITH CHECK bind', async () => {
-    // Scope is account A, but the row claims account B â†’ WITH CHECK (account_id = current_account) fails.
+    // Scope is account A, but the row claims account B → WITH CHECK (account_id = current_account) fails.
     await expect(
       asApp({ 'app.current_account': ACCOUNT_A }, (k) => sql`insert into audit_events (event_id, name, schema_version, account_id, actor_type, subject_type, subject_id, outcome) values ('01ARZ3NDEKTSV4RRFFQ69G5FB0', 'membership.invited', 1, ${ACCOUNT_B}::uuid, 'user', 'membership', 'm', 'success')`.execute(k)),
     ).rejects.toThrow();
@@ -138,7 +138,7 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
     ).rejects.toThrow();
   });
 
-  // â”€â”€ ACBP-P1-008 Slice 4: adversarial DDL/tamper + pooled-context isolation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── ACBP-P1-008 Slice 4: adversarial DDL/tamper + pooled-context isolation ────────────────────────────
   test('tampering: the restricted role cannot ALTER, DROP, or DISABLE/UN-FORCE RLS on audit_events', async () => {
     await expect(asApp({}, (k) => sql`alter table audit_events add column injected text`.execute(k))).rejects.toThrow();
     await expect(asApp({}, (k) => sql`drop table audit_events`.execute(k))).rejects.toThrow();
@@ -153,10 +153,10 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
   });
 
   test('escalation: a self-GRANT is a no-op (UPDATE stays denied); CREATE ROLE is denied', async () => {
-    // A non-owner GRANT without grant option is a NO-OP WARNING in PostgreSQL (not an error) â€” it grants
+    // A non-owner GRANT without grant option is a NO-OP WARNING in PostgreSQL (not an error) — it grants
     // nothing. So the security property is not "GRANT throws" but "the privilege is never actually acquired".
     await asApp({}, (k) => sql`grant update on audit_events to acbp_app`.execute(k)); // no-op, resolves
-    // NOCREATEROLE â†’ creating a role is denied (a real permission error).
+    // NOCREATEROLE → creating a role is denied (a real permission error).
     await expect(asApp({}, (k) => sql`create role acbp_evil`.execute(k))).rejects.toThrow();
     // Despite the no-op grant attempt, UPDATE on audit_events remains denied to the restricted role.
     await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_esc', role: 'viewer' })));
@@ -164,7 +164,7 @@ describe.skipIf(!hasTestDatabase)('audit_events append-only store (real PostgreS
   });
 
   test('pooled-context isolation: sequential accounts on the same pool do not leak audit visibility', async () => {
-    // Write as account A, then read as account B on the SAME app pool â€” B sees nothing (no GUC leak across txns).
+    // Write as account A, then read as account B on the SAME app pool — B sees nothing (no GUC leak across txns).
     await withAccountTransaction(app, { accountId: ACCOUNT_A, actorId: ACTOR_U }, (s) => writeAuditEvent(s, membershipInvited({ membershipId: 'm_seq', role: 'viewer' })));
     const bSees = await withAccountTransaction(app, { accountId: ACCOUNT_B, actorId: ACTOR_U }, (s) => s.db.selectFrom('audit_events').selectAll().execute());
     expect(bSees).toHaveLength(0);

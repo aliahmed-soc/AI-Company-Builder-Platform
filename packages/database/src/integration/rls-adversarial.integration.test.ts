@@ -1,4 +1,4 @@
-// ACBP-P1-006 / CDR-013 â€” catalog audit + adversarial restricted-role suite. Proves, from the PostgreSQL
+// ACBP-P1-006 / CDR-013 — catalog audit + adversarial restricted-role suite. Proves, from the PostgreSQL
 // system catalogs, that the role/RLS/function security model is exactly as specified, and that a hostile
 // `acbp_app` session cannot cross tenants, escalate, or tamper with the security objects. Setup/seed runs
 // on the superuser connection; every adversarial assertion runs on a second pool connected as `acbp_app`.
@@ -34,7 +34,7 @@ async function seedAccount(admin: DatabaseClient): Promise<{ userId: string; acc
   return { userId: user.id, accountId: acct.id };
 }
 
-describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real PostgreSQL) â€” ACBP-P1-006/CDR-013', () => {
+describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real PostgreSQL) — ACBP-P1-006/CDR-013', () => {
   let admin: DatabaseClient;
   let app: DatabaseClient;
 
@@ -69,7 +69,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     });
   }
 
-  // â”€â”€ Catalog: role attributes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Catalog: role attributes ──────────────────────────────────────────────────────────────────────
   test('acbp_app is NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, NOCREATEDB, and not a member of any owner role', async () => {
     const r = await sql<{ rolsuper: boolean; rolbypassrls: boolean; rolcreaterole: boolean; rolcreatedb: boolean }>`select rolsuper, rolbypassrls, rolcreaterole, rolcreatedb from pg_roles where rolname = 'acbp_app'`.execute(admin.kysely);
     expect(r.rows[0]).toMatchObject({ rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false });
@@ -84,7 +84,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     for (const row of fnOwners.rows) expect(row.owner).not.toBe('acbp_app');
   });
 
-  // â”€â”€ Catalog: tables have ENABLE + FORCE RLS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Catalog: tables have ENABLE + FORCE RLS ─────────────────────────────────────────────────────────
   test('all three protected tables have ENABLE + FORCE row-level security', async () => {
     const r = await sql<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relname, relrowsecurity, relforcerowsecurity from pg_class where relname = any(${sql.val([...PROTECTED])}) and relkind = 'r'`.execute(admin.kysely);
     expect(r.rows).toHaveLength(3);
@@ -113,7 +113,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     expect(r.rows.some((x) => x.cmd === 'DELETE' || x.cmd === 'ALL')).toBe(false);
   });
 
-  // â”€â”€ Catalog: bootstrap functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Catalog: bootstrap functions ────────────────────────────────────────────────────────────────────
   test('exactly three SECURITY DEFINER functions, each with a fixed search_path and no PUBLIC execute', async () => {
     const fns = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null }>`select p.proname, p.prosecdef, p.proconfig from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'acbp\\_%' order by p.proname`.execute(admin.kysely);
     expect(fns.rows.map((x) => x.proname)).toEqual([...BOOTSTRAP_FNS]);
@@ -133,13 +133,13 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     expect(grantees.has('PUBLIC')).toBe(false);
   });
 
-  // â”€â”€ Adversarial: unfiltered access / fail-closed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Adversarial: unfiltered access / fail-closed ────────────────────────────────────────────────────
   test('unfiltered SELECT/UPDATE with NO context affects nothing; DELETE is denied at the grant level', async () => {
     const a = await seedAccount(admin);
     const seen = await asApp({}, (db) => sql<{ n: number }>`select count(*)::int as n from accounts`.execute(db).then((x) => x.rows[0]?.n));
     expect(seen).toBe(0); // RLS hides all rows without context
     await asApp({}, (db) => sql`update accounts set plan_state = 'x'`.execute(db)); // acbp_app has UPDATE, but RLS matches 0 rows
-    // acbp_app was granted NO DELETE on the protected tables â€” a delete is denied before RLS even applies.
+    // acbp_app was granted NO DELETE on the protected tables — a delete is denied before RLS even applies.
     await expect(asApp({}, (db) => sql`delete from accounts`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`delete from account_profiles`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`delete from memberships`.execute(db))).rejects.toBeDefined();
@@ -155,7 +155,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     }
   });
 
-  // â”€â”€ Adversarial: cross-account isolation via joins / CTEs / subqueries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Adversarial: cross-account isolation via joins / CTEs / subqueries ──────────────────────────────
   test('joins, CTEs, and subqueries cannot reveal another account', async () => {
     const a = await seedAccount(admin);
     const b = await seedAccount(admin);
@@ -185,7 +185,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     await expect(asApp({ 'app.current_account': a.accountId }, (db) => sql`update memberships set account_id = ${b.accountId}`.execute(db))).rejects.toBeDefined();
   });
 
-  // â”€â”€ Adversarial: privilege / escalation attempts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Adversarial: privilege / escalation attempts ────────────────────────────────────────────────────
   test('acbp_app cannot SET ROLE, CREATE ROLE, ALTER the functions/policies/tables', async () => {
     await expect(asApp({}, (db) => sql`set role postgres`.execute(db))).rejects.toBeDefined();
     await expect(asApp({}, (db) => sql`create role attacker_role login`.execute(db))).rejects.toBeDefined();
@@ -195,7 +195,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
   });
 
   test('a self-GRANT does not escalate (PostgreSQL grants nothing without grant option; DELETE stays denied)', async () => {
-    // GRANT without grant option is a no-op warning (not an error), so it resolves â€” but it confers nothing:
+    // GRANT without grant option is a no-op warning (not an error), so it resolves — but it confers nothing:
     // acbp_app still has no DELETE privilege afterward, and has no grant option on the protected tables.
     await asApp({}, (db) => sql`grant all on public.accounts to acbp_app`.execute(db)).catch(() => undefined);
     await expect(asApp({}, (db) => sql`delete from accounts`.execute(db))).rejects.toBeDefined();
@@ -211,7 +211,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     expect(row.rows[0]?.status).toBe('invited'); // untouched
   });
 
-  // â”€â”€ Adversarial: pool / transaction leakage + concurrency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Adversarial: pool / transaction leakage + concurrency ──────────────────────────────────────────
   test('context does not leak after commit or rollback, and concurrent account transactions stay isolated', async () => {
     const a = await seedAccount(admin);
     const b = await seedAccount(admin);

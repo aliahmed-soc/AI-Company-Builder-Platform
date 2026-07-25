@@ -1,4 +1,4 @@
-// ACBP-P1-002 â€” real-PostgreSQL nightly reconciliation tests. Proves forward-drift repair, idempotency,
+// ACBP-P1-002 — real-PostgreSQL nightly reconciliation tests. Proves forward-drift repair, idempotency,
 // last-write-wins (no overwrite of newer state), non-destructive not_found/unavailable handling, no
 // tombstone resurrection, and keyset pagination. Skips when ACBP_TEST_DATABASE_URL is unset; never
 // mocked. Self-cleaning. Fake identities + injected reader (no live Clerk).

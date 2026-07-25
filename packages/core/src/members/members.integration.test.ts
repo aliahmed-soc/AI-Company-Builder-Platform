@@ -1,4 +1,4 @@
-// ACBP-P1-004 â€” real-PostgreSQL tests for the membership use cases (CDR-011). Trust-critical: proves the
+// ACBP-P1-004 — real-PostgreSQL tests for the membership use cases (CDR-011). Trust-critical: proves the
 // role matrix is enforced server-side, invites are email-bound + single-use, revocation is immediate,
 // the last owner cannot be removed, and a non-member (incl. another account's owner) cannot read or
 // mutate. Skips when ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning; runs no migrate-down.
@@ -21,7 +21,7 @@ async function seedUser(seed: DatabaseClient, email: string, verified = true): P
   return row.id;
 }
 
-describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restricted role) â€” ACBP-P1-004/006', () => {
+describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restricted role) — ACBP-P1-004/006', () => {
   let seed: DatabaseClient;
   let app: DatabaseClient;
   let ownerId: string;
@@ -64,7 +64,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     }
   });
 
-  test('full invite â†’ accept flow: an owner invites a viewer who accepts with a matching verified email', async () => {
+  test('full invite → accept flow: an owner invites a viewer who accepts with a matching verified email', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'joiner@example.com', role: 'viewer' });
     expect(invite.status).toBe('ok');
     if (invite.status !== 'ok') return;
@@ -136,7 +136,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
   });
 
-  test('member:read_invited_email â€” an owner sees pending-invite emails; a viewer gets them redacted â€” ACBP-P1-007', async () => {
+  test('member:read_invited_email — an owner sees pending-invite emails; a viewer gets them redacted — ACBP-P1-007', async () => {
     // Owner creates a pending invite (an unaccepted row carrying an invited_email).
     const pending = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'pending@example.com', role: 'viewer' });
     if (pending.status !== 'ok') throw new Error('setup pending invite failed');
@@ -147,7 +147,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     const viewerId = await seedUser(seed, 'viewer@example.com');
     if ((await acceptInvite(app, { token: vInvite.token, acceptingUserId: viewerId })).status !== 'ok') throw new Error('setup viewer accept failed');
 
-    // Owner sees the pending invite's email; the viewer gets it redacted (member:read_invited_email â†’ owner).
+    // Owner sees the pending invite's email; the viewer gets it redacted (member:read_invited_email → owner).
     const asOwner = await listMembers(app, { accountId, actingUserId: ownerId });
     const asViewer = await listMembers(app, { accountId, actingUserId: viewerId });
     const ownerPendingRow = asOwner.status === 'ok' ? asOwner.members.find((m) => m.status === 'invited' && m.membershipId === pending.membershipId) : undefined;
@@ -156,7 +156,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(viewerPendingRow?.invitedEmail).toBeNull();
   });
 
-  test('a role change is reflected on the very next authorization decision (no caching) â€” ACBP-P1-007', async () => {
+  test('a role change is reflected on the very next authorization decision (no caching) — ACBP-P1-007', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'promote@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup invite failed');
     const memberId = await seedUser(seed, 'promote@example.com');
@@ -169,7 +169,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     // Promote the member to owner directly in the database (seed/superuser) between two requests.
     await seed.kysely.updateTable('memberships').set({ role: 'owner' }).where('id', '=', accepted.membershipId).execute();
 
-    // The VERY NEXT call sees the new role â€” the decision is not cached across requests.
+    // The VERY NEXT call sees the new role — the decision is not cached across requests.
     expect((await inviteMember(app, { accountId, actingUserId: memberId, invitedEmail: 'a@example.com', role: 'viewer' })).status).toBe('ok');
   });
 
@@ -178,12 +178,12 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup@example.com', role: 'viewer' })).status).toBe('conflict');
   });
 
-  // â”€â”€ ACBP-P1-008: durable in-transaction audit for the two high-risk membership lifecycle ops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── ACBP-P1-008: durable in-transaction audit for the two high-risk membership lifecycle ops ──────────
   // These call the CORE use cases DIRECTLY (no web route), proving the mandatory durable write lives at the
   // trusted use-case seam. Audit rows are read via the superuser `seed` client (bypasses RLS to see all).
   const failingWriter: AuditWriteFn = () => Promise.reject(new Error('audit boom'));
 
-  test('membership.invited: an invite writes exactly one durable audit row in-tx, server-bound + PII-free â€” ACBP-P1-008', async () => {
+  test('membership.invited: an invite writes exactly one durable audit row in-tx, server-bound + PII-free — ACBP-P1-008', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'audit-join@example.com', role: 'viewer' });
     expect(invite.status).toBe('ok');
     if (invite.status !== 'ok') return;
@@ -198,13 +198,13 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(serialized).not.toContain(invite.token); // no invite token
   });
 
-  test('membership.invited: an audit-write failure rolls back the invite (fail-closed) â€” no invite, no audit â€” ACBP-P1-008', async () => {
+  test('membership.invited: an audit-write failure rolls back the invite (fail-closed) — no invite, no audit — ACBP-P1-008', async () => {
     await expect(inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'rollback@example.com', role: 'viewer' }, { auditWriter: failingWriter })).rejects.toBeDefined();
     expect(await seed.kysely.selectFrom('memberships').selectAll().where('invited_email', '=', 'rollback@example.com').execute()).toHaveLength(0);
     expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
   });
 
-  test('atomicity: writing the audit THEN throwing rolls BOTH the invite and the audit row back â€” ACBP-P1-008', async () => {
+  test('atomicity: writing the audit THEN throwing rolls BOTH the invite and the audit row back — ACBP-P1-008', async () => {
     const writeThenThrow: AuditWriteFn = async (scope, event, ctx) => {
       await writeAuditEvent(scope, event, ctx); // the row is inserted in this tx...
       throw new Error('post-write boom'); // ...then the throw rolls the WHOLE tx back
@@ -214,14 +214,14 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
   });
 
-  test('invite mutation failure (duplicate) writes no success audit â€” ACBP-P1-008', async () => {
+  test('invite mutation failure (duplicate) writes no success audit — ACBP-P1-008', async () => {
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup2@example.com', role: 'viewer' })).status).toBe('ok');
     await seed.kysely.deleteFrom('audit_events').execute(); // clear the first, successful audit
     expect((await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'dup2@example.com', role: 'viewer' })).status).toBe('conflict');
     expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
   });
 
-  test('membership.revoked: a real revocation writes exactly one durable audit row in-tx â€” ACBP-P1-008', async () => {
+  test('membership.revoked: a real revocation writes exactly one durable audit row in-tx — ACBP-P1-008', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'rev@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup');
     const viewerId = await seedUser(seed, 'rev@example.com');
@@ -235,7 +235,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(rows[0]?.payload).toEqual({ role: 'viewer' });
   });
 
-  test('membership.revoked: an audit-write failure rolls back the revocation â€” target stays active, no audit â€” ACBP-P1-008', async () => {
+  test('membership.revoked: an audit-write failure rolls back the revocation — target stays active, no audit — ACBP-P1-008', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'revfail@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup');
     const viewerId = await seedUser(seed, 'revfail@example.com');
@@ -248,7 +248,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0);
   });
 
-  test('no success audit for last-owner denial, missing target, or already-revoked no-op â€” ACBP-P1-008', async () => {
+  test('no success audit for last-owner denial, missing target, or already-revoked no-op — ACBP-P1-008', async () => {
     const list = await listMembers(app, { accountId, actingUserId: ownerId });
     const ownerRow = list.status === 'ok' ? list.members.find((m) => m.role === 'owner') : undefined;
     expect((await revokeMember(app, { accountId, actingUserId: ownerId, membershipId: ownerRow?.membershipId ?? 'x' })).status).toBe('last_owner');
@@ -265,7 +265,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     expect(await seed.kysely.selectFrom('audit_events').selectAll().execute()).toHaveLength(0); // NO new audit
   });
 
-  test('concurrent revoke of the same membership yields exactly ONE success audit â€” ACBP-P1-008', async () => {
+  test('concurrent revoke of the same membership yields exactly ONE success audit — ACBP-P1-008', async () => {
     const invite = await inviteMember(app, { accountId, actingUserId: ownerId, invitedEmail: 'conc@example.com', role: 'viewer' });
     if (invite.status !== 'ok') throw new Error('setup');
     const vId = await seedUser(seed, 'conc@example.com');
@@ -277,11 +277,11 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
       revokeMember(app, { accountId, actingUserId: ownerId, membershipId: acc.membershipId }),
     ]);
     expect([a.status, b.status].sort()).toEqual(['ok', 'ok']);
-    // Only the transaction that actually flipped activeâ†’revoked audits; the racing no-op does not.
+    // Only the transaction that actually flipped active→revoked audits; the racing no-op does not.
     expect(await seed.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'membership.revoked').execute()).toHaveLength(1);
   });
 
-  test('cross-account: an outsider cannot revoke here and writes no audit for this account â€” ACBP-P1-008', async () => {
+  test('cross-account: an outsider cannot revoke here and writes no audit for this account — ACBP-P1-008', async () => {
     const outsiderId = await seedUser(seed, 'outsider2@example.com');
     await provisionPersonalAccount(app, outsiderId); // their OWN account
     await seed.kysely.deleteFrom('audit_events').execute();
@@ -293,7 +293,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
 
   // Automated completeness: a driver per APPROVED MEMBERSHIP operation, exhaustive over the membership subset
   // at compile time (a new membership operation without a driver fails to compile). Each driver runs the REAL
-  // use case and must leave exactly one durable audit row of its mapped event â€” so a use case that ever loses
+  // use case and must leave exactly one durable audit row of its mapped event — so a use case that ever loses
   // its in-tx write fails CI here, not just review discipline (closes the "parallel bookkeeping" gap). Company
   // operations are driven by the company producer test (ACBP-P1-010), keeping the domains independent.
   const OP_DRIVERS: Record<MembershipAuditedOperation, () => Promise<void>> = {
@@ -313,7 +313,7 @@ describe.skipIf(!hasTestDatabase)('membership use cases (real PostgreSQL, restri
     },
   };
 
-  test.each(MEMBERSHIP_AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event â€” ACBP-P1-008', async (op) => {
+  test.each(MEMBERSHIP_AUDITED_OPERATION_IDS)('completeness: approved operation %s writes exactly one durable audit of its mapped event — ACBP-P1-008', async (op) => {
     await seed.kysely.deleteFrom('audit_events').execute();
     await OP_DRIVERS[op]();
     const all = await seed.kysely.selectFrom('audit_events').selectAll().execute();

@@ -1,8 +1,8 @@
-// ACBP-P1-002 Slice 3 â€” real-PostgreSQL read-through reconciliation tests. Proves authoritative
+// ACBP-P1-002 Slice 3 — real-PostgreSQL read-through reconciliation tests. Proves authoritative
 // convergence, race handling (read-through/read-through and read-through/webhook), the last_event_id=null
 // ordering interaction, no-resurrection, and that read-through writes NO webhook receipt. Skips when
 // ACBP_TEST_DATABASE_URL is unset; never mocked. Self-cleaning. Fake identities + an injected reader
-// (no live Clerk). Lives in @acbp/core (core â†’ database is allowed; the reverse would be a cycle).
+// (no live Clerk). Lives in @acbp/core (core → database is allowed; the reverse would be a cycle).
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { parseDatabaseConfig } from '@acbp/config';
 import { createDatabase, closeDatabase, migrateToLatest, type DatabaseClient, type UserRow, type ProviderIdentityKey } from '@acbp/database';

@@ -1,10 +1,10 @@
-// ACBP-P2-009 / CDR-030 â€” real-PostgreSQL proof of understanding_item_reviews + understanding_confirmation_events
+// ACBP-P2-009 / CDR-030 — real-PostgreSQL proof of understanding_item_reviews + understanding_confirmation_events
 // under the RESTRICTED role. Setup/seed on the superuser (owner) connection; every assertion runs as `acbp_app`
 // (NOSUPERUSER, NOBYPASSRLS, non-owner). Proves: dual-keyed company-scoped SELECT/INSERT (both account AND company;
 // fail closed without the company key; cross-company read impossible; cross-tenant insert refused); APPEND-ONLY (no
 // UPDATE/DELETE grant); the decision/kind CHECKs, the confirmed/corrected shape CHECK, note + correction_ref length;
-// UNIQUE (document_id, kind) idempotency (one confirmed + one corrected per version); FK cascade (documentâ†’reviews/
-// events, companyâ†’all); clean down/up/reapply BY NAME; catalog invariants (FORCE RLS, exactly select+insert
+// UNIQUE (document_id, kind) idempotency (one confirmed + one corrected per version); FK cascade (document→reviews/
+// events, company→all); clean down/up/reapply BY NAME; catalog invariants (FORCE RLS, exactly select+insert
 // policies, SELECT+INSERT grants only, 3 SECURITY DEFINER, acbp_app NOBYPASSRLS/non-owner, 0020 applied). Skips when
 // ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -28,7 +28,7 @@ function appRoleClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: u.toString(), DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-app-rev-test' }));
 }
 
-describe.skipIf(!hasTestDatabase)('understanding_item_reviews + understanding_confirmation_events (real PostgreSQL, restricted role) â€” ACBP-P2-009/CDR-030', () => {
+describe.skipIf(!hasTestDatabase)('understanding_item_reviews + understanding_confirmation_events (real PostgreSQL, restricted role) — ACBP-P2-009/CDR-030', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
   let userU = '';
@@ -91,7 +91,7 @@ describe.skipIf(!hasTestDatabase)('understanding_item_reviews + understanding_co
     itemA = (await sql<{ id: string }>`insert into understanding_items (account_id, company_id, document_id, item_class, content, confidence, source_ref) values (${accountA}::uuid, ${companyA1}::uuid, ${docA}::uuid, 'fact', 'x', 0.8, null) returning id`.execute(su.kysely)).rows[0]!.id;
     docB = (await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, 1, 'complete', 0.5, ${userV}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
 
-    // down/up/reapply BY NAME â€” proves 0020 is reversible + idempotent through the migrator.
+    // down/up/reapply BY NAME — proves 0020 is reversible + idempotent through the migrator.
     const down = await createMigrator(su).migrateTo('0019_understanding');
     expect(down.error).toBeUndefined();
     const up = await migrateToLatest(su);
@@ -165,7 +165,7 @@ describe.skipIf(!hasTestDatabase)('understanding_item_reviews + understanding_co
     expect(await insertEvent(accountA, companyA1, docA, { kind: 'corrected', correctionRef: 'ref', dependentsFlagged: 1 })).toBeTruthy();
   });
 
-  test('UNIQUE (document_id, kind): confirm is idempotent â€” a second confirmed of the same version is rejected', async () => {
+  test('UNIQUE (document_id, kind): confirm is idempotent — a second confirmed of the same version is rejected', async () => {
     await insertEvent(accountA, companyA1, docA, { kind: 'confirmed' });
     await expect(insertEvent(accountA, companyA1, docA, { kind: 'confirmed' })).rejects.toThrow();
     // One correction per version too.
