@@ -97,5 +97,24 @@ unchanged by the fixes.
 
 ## Status
 Re-verified after the fixes: recursive typecheck + lint + secrets + boundaries clean; contracts/audit/authz unit suites
-green; the real-PG `decisions` (11) and `decision-record` (11) suites discovered and structurally green (local PG
+green; the real-PG `decisions` (10) and `decision-record` (11) suites discovered and structurally green (local PG
 unreachable → skipped). Hosted exact-head CI on the exact SHA is the authoritative zero-skip run.
+
+**Re-review verdict: PASS** — 0 Blocker / 0 Critical / 0 High / 0 Medium. The reviewer independently re-derived the M2
+attack and confirmed the `mode` snapshot closes it structurally (immutable, closed-set, DB-CHECKed) rather than by
+convention, and that no unqualified "reads for a decision" phrasing survives in CDR-038, DATA-ARCHITECTURE, or
+AUTHORIZATION. Three Lows remained at re-review: two doc nits (fixed — CDR-038 §2's preamble now discloses the
+`strategy_selections` constraint; this ledger's suite counts corrected) and **LOW-14** below.
+
+- **LOW-14 (accepted, tracked follow-up) — the `mode` snapshot's fidelity is enforced in application code, not by the
+  DB.** The composite FK pins `(selection_id, generation_id)`, but nothing ties `decisions.mode` to the referenced
+  `strategy_selections.mode`. A raw-SQL writer already inside company scope could therefore store `mode = 'select'` on
+  a decision that hardens a `reject` selection, defeating the P4-001 gate. The product path is correct
+  (`recordDecision` always copies `selection.mode`, read under RLS in the same transaction), so this is
+  defense-in-depth of the same class as LOW-6. **Cheap hardening for a follow-up:** widen the FK to
+  `(selection_id, generation_id, mode) → strategy_selections(id, generation_id, mode)` with the matching additive
+  unique constraint, which would make §6-G1's safety DB-guaranteed rather than code-guaranteed.
+- **Advisory (accepted) — backlog `Done` ordering.** The row is flipped to `Done` during finalization, before the
+  merge completes, so the file briefly asserts `Done` while the PR is open. The owner's standing window directive
+  authorizes the full per-ticket cycle; flipping the row as the last step of the merge sequence would make the file
+  self-consistent at every commit and is the better habit going forward.

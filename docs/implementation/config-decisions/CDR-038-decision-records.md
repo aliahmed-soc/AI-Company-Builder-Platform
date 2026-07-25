@@ -52,7 +52,9 @@ simplification, not a correctness fix.
 ## 2. Storage — migration 0025 (additive; one table)
 
 Additive only: migrations 0001–0024 untouched, no new SECURITY DEFINER (the closed allowlist stays exactly three), no
-new role, no BYPASSRLS, no existing table/policy change.
+new role, no BYPASSRLS, no policy change. The ONE change to an existing table is additive and reversed by `down()`:
+a `UNIQUE(id, generation_id)` on `strategy_selections` so the composite FK below can reference it (the same trick 0023
+used for `strategy_options`).
 
 `decisions` — company-owned, dual-keyed FORCE-RLS, **IMMUTABLE** (`I`), SELECT+INSERT only (the
 `strategy_selections` 0024 / `strategy_recommendations` 0023 pattern):
