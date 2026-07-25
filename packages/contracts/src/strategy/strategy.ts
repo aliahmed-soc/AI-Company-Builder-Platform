@@ -1,11 +1,11 @@
-// @acbp/contracts — strategy-option-generation contracts (ACBP-P3-001; CDR-034; STRAT-001/002; ADR-011/019).
+// @acbp/contracts — strategy-option-generation contracts (ACBP-P3-001/P3-002; CDR-034/CDR-035; STRAT-001/002; ADR-011/019).
 //
 // Provider-neutral shapes + PURE logic for the strategy options generated from a CONFIRMED understanding version. The
 // model returns options; the gateway validates via `parseStrategyOptions` (deny-by-default). The 16-field content
 // standard (PRD §11.3) is the closed, canonical field set — every option MUST carry all 16 fields, and a field the
 // model cannot determine MUST be the explicit `"unknown"` sentinel (ADR-019 no fake precision), never fabricated. The
-// honest fewer-than-three status is derived here from the option count (the RIGOROUS cosmetic-variant distinctness
-// engine is P3-002 — this ticket records `similarity_check_result: 'pending'`). Zero-dependency leaf: no SDK/DB/framework.
+// STRAT-001 similarity check (`dedupeByDistinctness`, ACBP-P3-002/CDR-035) rejects near-duplicates (options matching on
+// customer/offer/business_model) and yields the `distinct`/`insufficient_distinct` verdict. Zero-dependency leaf: no SDK/DB/framework.
 
 /** The CLOSED, canonical 16-field option content standard (PRD §11.3, verbatim + order). NOT content-derived. */
 export const STRATEGY_OPTION_FIELDS = [

@@ -117,6 +117,17 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     }
   });
 
+  test('fewer-than-three with NO model reason and NO duplicates → a factual reason is still recorded (never unexplained)', async () => {
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    // Two genuinely-distinct options, no fewer_reason from the model, nothing to dedupe.
+    const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(2)) });
+    const r = await generateStrategyOptions(product, base(), { gateway: gw });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.generation.status).toBe('fewer_than_three');
+    expect(r.generation.fewerReason).toBe('The model produced only 2 genuinely distinct options for this understanding.');
+  });
+
   test('ADR-019 no-fabrication: an option missing a field persists NOTHING; the labeled "unknown" sentinel is accepted', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
     // Missing a field (drop cost_range) → the validator rejects the whole output → generation_failed, nothing persisted.

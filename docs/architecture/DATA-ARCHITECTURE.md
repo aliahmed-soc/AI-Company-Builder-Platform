@@ -52,13 +52,20 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 <!-- IMPLEMENTED (ACBP-P3-001; CDR-034): the `Strategy option` row above is realized by migration 0022 as two
      company-owned, dual-keyed FORCE RLS, IMMUTABLE (`I`) tables — `strategy_generations` (one generation from a
      CONFIRMED understanding version; closed status {complete, fewer_than_three}; `similarity_check_result`
-     {pending, distinct, insufficient_distinct}, written `pending` here — the P3-002 distinctness engine sets the
+     {pending, distinct, insufficient_distinct} — the P3-002 distinctness engine now sets the
      verdict; FK to understanding_documents) + `strategy_options` (the validated 16-field `fields` jsonb object;
      UNIQUE(generation_id, ordinal)). Both SELECT+INSERT only (a re-generation is a NEW generation, never an edit —
      the "generating→ready_for_review→selected/rejected→superseded" lifecycle's later transitions live in P3-004/005).
      P3-001 implements only the generation `gen` node: gated on the owner-confirmed understanding (strategy blocked
      pre-confirm), the 16-field standard with ADR-019 no-fake-precision labeling, and the honest fewer-than-three path.
      Model usage metered via the gateway; `strategy.generated` audited in-tx. No new SECURITY DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P3-002; CDR-035): the STRAT-001 similarity check. `generateStrategyOptions` now runs a
+     deterministic, model-free distinctness check (two options are genuinely distinct IFF they differ on ≥1 of
+     {customer, offer, business_model}, normalized) and persists ONLY the distinct set — near-duplicates (cosmetic
+     variants) are rejected, not stored. `similarity_check_result` is written `distinct` (≥3 distinct) or
+     `insufficient_distinct`; the honest fewer-than-three outcome + reason follow from the DISTINCT count. No schema
+     change (the existing column + enum + the P3-001 status↔option_count CHECK hold since option_count = distinct
+     count); no new migration/audit/authz. `pending` remains a legal enum value but is no longer written by this path. -->
 
 
 

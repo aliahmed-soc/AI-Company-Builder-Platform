@@ -1,13 +1,13 @@
-// @acbp/core — strategy option generation use case (ACBP-P3-001; CDR-034; STRAT-001/002; ADR-011/019).
+// @acbp/core — strategy option generation use case (ACBP-P3-001/P3-002; CDR-034/CDR-035; STRAT-001/002; ADR-011/019).
 //
 // Generate a set of strategy options from the company's CONFIRMED understanding version. Gated: strategy generation is
 // BLOCKED until the owner confirms the understanding (UNDER-003/P2-009 — planning/strategy locked pre-confirm). The
 // model call runs BETWEEN scoped operations (never in a held tx): read the confirmed understanding (its own scope) →
 // call the P2-003 GATEWAY (injected, provider-neutral; fake in P3-001 — live is the deferred owner gate CDR-026 §0) →
-// validate the 16-field standard (ADR-019 no fake precision; honest fewer-than-three) → persist ONE immutable
-// generation + its options + the `strategy.generated` audit in a SINGLE company-scoped transaction (audit-or-nothing).
-// A gateway failure or malformed output persists NOTHING. The rigorous cosmetic-variant distinctness engine is P3-002
-// (this ticket records `similarity_check_result: 'pending'`).
+// validate the 16-field standard (ADR-019 no fake precision) → run the STRAT-001 similarity check (P3-002/CDR-035:
+// reject near-duplicates; persist ONLY the genuinely-distinct set; real distinct/insufficient_distinct verdict; honest
+// fewer-than-three) → persist ONE immutable generation + its distinct options + the `strategy.generated` audit in a
+// SINGLE company-scoped transaction (audit-or-nothing). A gateway failure or malformed output persists NOTHING.
 import { StrategyRepository, UnderstandingRepository, UnderstandingReviewRepository, writeAuditEvent, type DatabaseClient, type AuditScope, type AuditWriteContext, type StrategyGenerationRow, type StrategyOptionRow } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -218,17 +218,20 @@ export async function getLatestStrategyGeneration(client: DatabaseClient, params
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────
 /**
- * The honest fewer-than-three reason (STRAT-001 "stated honestly with reasons rather than padded"). Prefers the
- * model's own reason; otherwise, when near-duplicates collapsed the set below three, states the FACTUAL check outcome
- * (never fabricated — ADR-019): how many genuinely-distinct options remain and how many cosmetic variants were
- * rejected. Returns null only when there is genuinely nothing to explain (no model reason, no duplicates rejected).
+ * The honest fewer-than-three reason (STRAT-001 "stated honestly with reasons rather than padded"). ALWAYS returns a
+ * factual, non-fabricated reason (ADR-019) — never null — so a `fewer_than_three` generation is never unexplained.
+ * Prefers the model's own reason; else, when near-duplicates collapsed the set, states how many genuinely-distinct
+ * options remain + how many cosmetic variants were rejected; else (the model simply produced fewer than three) states
+ * that plainly. Only fixed axis names + counts are used — no option content.
  */
-function honestFewerReason(modelReason: string | null, distinctCount: number, duplicatesRejected: number): string | null {
+function honestFewerReason(modelReason: string | null, distinctCount: number, duplicatesRejected: number): string {
   if (modelReason !== null) return modelReason;
-  if (duplicatesRejected <= 0) return null;
   const optWord = distinctCount === 1 ? 'option' : 'options';
-  const dupWord = duplicatesRejected === 1 ? 'near-duplicate' : 'near-duplicates';
-  return `${distinctCount} genuinely distinct ${optWord}; ${duplicatesRejected} ${dupWord} on customer/offer/business_model were rejected.`.slice(0, FEWER_REASON_MAX);
+  if (duplicatesRejected > 0) {
+    const dupWord = duplicatesRejected === 1 ? 'near-duplicate' : 'near-duplicates';
+    return `${distinctCount} genuinely distinct ${optWord}; ${duplicatesRejected} ${dupWord} on customer/offer/business_model were rejected.`.slice(0, FEWER_REASON_MAX);
+  }
+  return `The model produced only ${distinctCount} genuinely distinct ${optWord} for this understanding.`.slice(0, FEWER_REASON_MAX);
 }
 
 function toGenerationDTO(row: StrategyGenerationRow, options: readonly StrategyOptionRow[]): StrategyGenerationDTO {

@@ -3,6 +3,24 @@
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
 ## Active
+- **ACBP-P3-002 distinctness check — CORE DONE / FINALIZING (2nd 8-hour autonomous window).**
+  Branch `p3-002-distinctness-check` (from main `450c768`, after P3-001 merged), draft PR **#34**, CDR-035. Adds the
+  STRAT-001 similarity check P3-001 deferred (it wrote `similarity_check_result = 'pending'`). Canon is explicit
+  (searched thoroughly — no product-semantics gap): two options are genuinely distinct IFF they differ on ≥1 of
+  {customer, offer, business_model} (PRD J-07 + REQUIREMENTS STRAT-001); the check rejects near-duplicates ("same plan,
+  different title"); fewer than 3 distinct → stated honestly with reasons. Deterministic, model-free (AI-AND-WORKER §1);
+  no metering, no owner gate. Contract `dedupeByDistinctness` (normalized 3-axis key, NUL-separated to avoid boundary
+  collisions; keeps the first representative per group; `distinct`/`insufficient_distinct`). Wired into
+  `generateStrategyOptions`: persists ONLY the distinct set (near-duplicates rejected, not stored), records the real
+  verdict (never `pending` again), derives status from the distinct count, and writes an honest fewer-reason on
+  collapse. NO schema/migration change (the existing `similarity_check_result` column + P3-001 status↔option_count CHECK
+  hold since option_count = distinct count); no new audit/authz. Commits: CDR+contracts `f563d14` → core `cba98cc` →
+  NUL-escape source cleanup `faf4c91`. Local: contracts distinctness 8/8 + strategy 19 unit; core strategy real-PG
+  11/11 (incl. near-duplicate rejection adversarial); full recursive typecheck/lint/secrets/boundaries clean; unit 995.
+  Independent review in progress. Finalization → backlog Done → exact-head CI → squash-merge "ACBP-P3-002: Distinctness
+  check" → exact-main CI → delete branch. Migrations stay **0022**.
+- **ACBP-P3-001 strategy option generation — DONE** (squash `450c768`, PR #33; exact-main CI green zero-skip; branch
+  deleted). Phase 3 1/7.
 - **ACBP-P3-001 strategy option generation — CORE DONE / FINALIZING (8-hour autonomous window).**
   Branch `p3-001-strategy-option-generation` (from main `08e7d6a`, after P4-002 merged), draft PR **#33**, CDR-034.
   Generates strategy options from the CONFIRMED understanding version (STRAT-001/002). Corrects an earlier mistaken
