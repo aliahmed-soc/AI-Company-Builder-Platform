@@ -210,4 +210,15 @@ describe('distinctness check — dedupeByDistinctness (ACBP-P3-002/CDR-035/STRAT
     expect(r.result).toBe('insufficient_distinct');
     expect(r.distinct).toHaveLength(0);
   });
+
+  test('axis boundaries do not collide: shifting a word across adjacent axes yields DISTINCT keys (NUL-separated)', () => {
+    // customer="a b"/offer="c" vs customer="a"/offer="b c" must NOT be treated as duplicates (a space join would collide).
+    const a = fields({ customer: 'a b', offer: 'c', business_model: 'x' });
+    const b = fields({ customer: 'a', offer: 'b c', business_model: 'x' });
+    const c = fields({ customer: 'z', offer: 'z', business_model: 'z' });
+    const r = dedupeByDistinctness([a, b, c]);
+    expect(r.result).toBe('distinct');
+    expect(r.distinct).toHaveLength(3);
+    expect(r.duplicatesRejected).toBe(0);
+  });
 });

@@ -169,7 +169,7 @@ function normalizeAxisValue(v: string): string {
 /** The normalized 3-axis distinctness key of an option (equal keys ⇒ near-duplicates). */
 export function distinctnessKey(fields: StrategyOptionFields): string {
   // A NUL join avoids axis-boundary collisions (e.g. "a"/"bc" vs "ab"/"c").
-  return DISTINCTNESS_AXES.map((axis) => normalizeAxisValue(fields[axis])).join(' ');
+  return DISTINCTNESS_AXES.map((axis) => normalizeAxisValue(fields[axis])).join('\u0000');
 }
 
 export interface DistinctnessResult {
