@@ -73,6 +73,31 @@ function description(v: unknown): string | null | undefined {
 }
 
 /**
+ * The invariants a roadmap must satisfy to be PERSISTABLE, applied identically by the raw parse and by the defensive
+ * re-entry so the two can never drift (a weaker backstop would let a caller that wires a different gateway validator
+ * persist a plan the parser exists to reject).
+ *
+ * - An EMPTY plan is not an honest partial — there is nothing to persist.
+ * - A plan missing EITHER side (no goals, or no milestones) may only be labeled `partial`: ROAD-001's acceptance is a
+ *   roadmap that contains goals AND sequenced milestones, so a one-sided plan can never be `complete`.
+ * - Bounded sizes, so a plan can never exceed what the DB CHECKs accept (a length that only the DB rejects would
+ *   surface as a raw constraint error instead of an honest `generation_failed`).
+ */
+function roadmapShapeOk(goals: readonly PlanItemInput[], milestones: readonly MilestoneInput[], partial: boolean): boolean {
+  if (goals.length === 0 && milestones.length === 0) return false;
+  if ((goals.length === 0 || milestones.length === 0) && !partial) return false;
+  if (goals.length > PLAN_ITEMS_MAX || milestones.length > PLAN_ITEMS_MAX) return false;
+  for (const item of [...goals, ...milestones]) {
+    if (item.title.length === 0 || item.title.length > PLAN_TITLE_MAX) return false;
+    if (item.description !== null && (item.description.length === 0 || item.description.length > PLAN_DESCRIPTION_MAX)) return false;
+  }
+  for (const m of milestones) {
+    if (m.goalOrdinal !== null && (!Number.isInteger(m.goalOrdinal) || m.goalOrdinal < 0 || m.goalOrdinal >= goals.length)) return false;
+  }
+  return true;
+}
+
+/**
  * Parse the gateway's roadmap output (the gateway shape-validator). DENY-BY-DEFAULT: any malformed member rejects the
  * WHOLE payload rather than silently dropping it — a partially-understood plan must never be presented as a plan.
  *
@@ -95,9 +120,6 @@ export function parseRoadmapOutput(raw: string): RoadmapParse {
   const partial = rawPartial === true;
 
   if (!Array.isArray(obj.goals) || !Array.isArray(obj.milestones)) return FAIL;
-  // A plan with no goals AND no milestones is empty, not partial — there is nothing honest to persist.
-  if (obj.goals.length === 0 && obj.milestones.length === 0) return FAIL;
-  if (obj.goals.length > PLAN_ITEMS_MAX || obj.milestones.length > PLAN_ITEMS_MAX) return FAIL;
 
   const goals: PlanItemInput[] = [];
   for (const g of obj.goals) {
@@ -124,12 +146,17 @@ export function parseRoadmapOutput(raw: string): RoadmapParse {
     milestones.push({ title: t, description: d, goalOrdinal });
   }
 
+  if (!roadmapShapeOk(goals, milestones, partial)) return FAIL;
   return { ok: true, value: { goals, milestones, partial } };
 }
 
 /**
  * Defensively re-enter the gateway's ALREADY-VALIDATED output (camelCase, produced by parseRoadmapOutput at the
  * gateway seam). No raw re-parse — a corrupted seam value yields undefined, which the caller treats as a failure.
+ *
+ * It re-applies the SAME persistability invariants as the parse (via `roadmapShapeOk`), deliberately: the gateway is
+ * injected, so a caller that wires a different (or missing) validator must not be able to slip past the honesty rules
+ * the parser exists to enforce — an empty or one-sided plan labeled `complete`, or a title only the DB would reject.
  */
 export function narrowRoadmapOutput(validated: unknown): RoadmapOutput | undefined {
   if (typeof validated !== 'object' || validated === null) return undefined;
@@ -152,6 +179,7 @@ export function narrowRoadmapOutput(validated: unknown): RoadmapOutput | undefin
     if (o !== null && (typeof o !== 'number' || !Number.isInteger(o) || o < 0 || o >= goals.length)) return undefined;
     milestones.push({ title: t, description: d, goalOrdinal: o });
   }
+  if (!roadmapShapeOk(goals, milestones, v.partial)) return undefined;
   return { goals, milestones, partial: v.partial };
 }
 

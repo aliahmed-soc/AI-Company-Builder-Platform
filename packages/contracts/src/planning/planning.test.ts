@@ -82,15 +82,23 @@ describe('parseRoadmapOutput — deny-by-default (ROAD-001)', () => {
     expect(parseRoadmapOutput('not json').ok).toBe(false);
     expect(parseRoadmapOutput('[]').ok).toBe(false);
     expect(parseRoadmapOutput('null').ok).toBe(false);
-    expect(parseRoadmapOutput(JSON.stringify({ goals: [], milestones: [] })).ok).toBe(false); // empty ≠ partial
+    // Empty is never an honest partial — refused even WITH the partial label (so it cannot pass for the wrong reason).
+    expect(parseRoadmapOutput(JSON.stringify({ goals: [], milestones: [] })).ok).toBe(false);
+    expect(parseRoadmapOutput(JSON.stringify({ goals: [], milestones: [], partial: true })).ok).toBe(false);
     expect(parseRoadmapOutput(JSON.stringify({ goals: [{ title: 'g', description: null }] })).ok).toBe(false); // no milestones key
     const tooMany = Array.from({ length: PLAN_ITEMS_MAX + 1 }, (_, i) => ({ title: `g${i}`, description: null }));
     expect(parseRoadmapOutput(plan({ goals: tooMany })).ok).toBe(false);
   });
 
-  test('a goals-only or milestones-only plan is legal (honest partial planning)', () => {
+  test('a one-sided plan is legal ONLY when honestly labeled partial — never as `complete`', () => {
+    // ROAD-001 acceptance is a roadmap containing goals AND sequenced milestones, so a one-sided plan cannot be
+    // complete. It IS a legitimate honest partial.
     expect(parseRoadmapOutput(JSON.stringify({ goals: [{ title: 'g', description: null }], milestones: [], partial: true })).ok).toBe(true);
     expect(parseRoadmapOutput(JSON.stringify({ goals: [], milestones: [{ title: 'm', description: null }], partial: true })).ok).toBe(true);
+    // The same shapes WITHOUT the partial label are refused — otherwise a milestone-less plan would persist as complete.
+    expect(parseRoadmapOutput(JSON.stringify({ goals: [{ title: 'g', description: null }], milestones: [], partial: false })).ok).toBe(false);
+    expect(parseRoadmapOutput(JSON.stringify({ goals: [{ title: 'g', description: null }], milestones: [] })).ok).toBe(false);
+    expect(parseRoadmapOutput(JSON.stringify({ goals: [], milestones: [{ title: 'm', description: null }] })).ok).toBe(false);
   });
 });
 
@@ -105,6 +113,23 @@ describe('narrowRoadmapOutput — defensive re-entry of the gateway-validated va
     }
     // A milestone whose goalOrdinal no longer resolves is a corrupted seam value, not a usable plan.
     expect(narrowRoadmapOutput({ goals: [], milestones: [{ title: 'm', description: null, goalOrdinal: 0 }], partial: false })).toBeUndefined();
+  });
+
+  test('narrow re-applies the PERSISTABILITY invariants, not just types — the gateway validator is injected', () => {
+    // A caller wiring a different (or missing) validator must not be able to slip past the honesty rules the parser
+    // enforces. These all typecheck as a "RoadmapOutput" but are not persistable plans.
+    const goal = { title: 'g', description: null };
+    const milestone = { title: 'm', description: null, goalOrdinal: null };
+    expect(narrowRoadmapOutput({ goals: [], milestones: [], partial: false })).toBeUndefined(); // empty
+    expect(narrowRoadmapOutput({ goals: [], milestones: [], partial: true })).toBeUndefined(); // empty ≠ partial
+    expect(narrowRoadmapOutput({ goals: [goal], milestones: [], partial: false })).toBeUndefined(); // one-sided + complete
+    expect(narrowRoadmapOutput({ goals: [goal], milestones: [], partial: true })).toBeDefined(); // one-sided + honest
+    // Bounds the DB would otherwise be the first to reject (surfacing a raw constraint error, not generation_failed).
+    expect(narrowRoadmapOutput({ goals: [{ title: 'x'.repeat(PLAN_TITLE_MAX + 1), description: null }], milestones: [milestone], partial: false })).toBeUndefined();
+    expect(narrowRoadmapOutput({ goals: [{ title: 'g', description: 'x'.repeat(PLAN_DESCRIPTION_MAX + 1) }], milestones: [milestone], partial: false })).toBeUndefined();
+    expect(narrowRoadmapOutput({ goals: [{ title: '', description: null }], milestones: [milestone], partial: false })).toBeUndefined();
+    const tooMany = Array.from({ length: PLAN_ITEMS_MAX + 1 }, (_, i) => ({ title: `g${i}`, description: null }));
+    expect(narrowRoadmapOutput({ goals: tooMany, milestones: [milestone], partial: false })).toBeUndefined();
   });
 });
 

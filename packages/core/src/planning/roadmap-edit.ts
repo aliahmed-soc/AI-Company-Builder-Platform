@@ -12,11 +12,11 @@
 // OWNER-ONLY (`roadmap:edit`; API-CONTRACTS "Owner (edit)"). "Affected open tasks" (CDR-039 §7-G7): tasks whose
 // milestone belongs to the SUPERSEDED version, whose state is not terminal. No model call is involved — the owner
 // authors the content.
-import { PlanningRepository, writeAuditEvent, type DatabaseClient, type AuditScope, type AuditWriteContext, type GoalRow, type MilestoneRow } from '@acbp/database';
+import { PlanningRepository, StrategyRepository, writeAuditEvent, type DatabaseClient, type AuditScope, type AuditWriteContext, type GoalRow, type MilestoneRow } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { roadmapEdited, normalizeEditReason, parseRoadmapOutput, type AuditEvent, type RoadmapDTO, type RoadmapStatus } from '@acbp/contracts';
-import { toRoadmapDTO } from './roadmap-generation.js';
+import { toRoadmapDTO, classifyPlanningGate, isRoadmapVersionConflict } from './roadmap-generation.js';
 import type { Logger } from '@acbp/observability';
 
 type AuditWriteFn = (scope: AuditScope, event: AuditEvent, ctx?: AuditWriteContext) => Promise<string>;
@@ -49,6 +49,9 @@ export type EditRoadmapResult =
   | { readonly status: 'ok'; readonly roadmap: RoadmapDTO; readonly flaggedTaskCount: number }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
+  // The company's latest decision REJECTED the strategy. An edit AUTHORS the new CURRENT plan, so it is planning and
+  // is gated exactly like generation (CDR-039 §7-G1) — otherwise a rejection could be side-stepped by editing.
+  | { readonly status: 'decision_rejected' }
   // `expectedRoadmapId` is not the company's current version — the owner is editing a stale view (API-CONTRACTS
   // "version-guarded"). Nothing is written; the caller should re-read and retry.
   | { readonly status: 'stale_version' }
@@ -76,30 +79,46 @@ export async function editRoadmap(
       const parsed = parseRoadmapOutput(params.plan);
       if (!parsed.ok) return { status: 'invalid' };
 
+      // THE PLANNING GATE (CDR-039 §7-G1) applies to the edit too. An edit authors the new CURRENT roadmap version —
+      // that is planning — so if the company's latest decision REJECTED the strategy, editing must be blocked exactly
+      // as generation is. Without this, a rejection could be side-stepped by revising instead of regenerating.
+      const gate = classifyPlanningGate(await new StrategyRepository(scope.db).latestDecisionForCompany(params.companyId));
+      // `no_decision` is unreachable in practice (a roadmap cannot exist without the decision it was planned from) but
+      // is classified rather than assumed; either way planning is closed.
+      if (gate.kind !== 'open') return gate.kind === 'rejected' ? { status: 'decision_rejected' } : { status: 'not_found' };
+
       const planning = new PlanningRepository(scope.db);
       const current = await planning.latestRoadmap(params.companyId);
       if (current === undefined) return { status: 'not_found' };
       // Version guard: the owner must be revising the version they actually read.
       if (current.id !== params.expectedRoadmapId) return { status: 'stale_version' };
 
-      // The tasks to flag are read BEFORE the new version exists, so they are unambiguously the ones tied to the
-      // version being superseded (CDR-039 §7-G7).
-      const affected = await planning.listAffectedOpenTasks(current.id);
+      // The tasks to flag are read BEFORE the new version exists, so every existing milestone belongs to a version the
+      // new one supersedes — exactly the affected set (CDR-039 §7-G7).
+      const affected = await planning.listAffectedOpenTasks(params.companyId);
 
-      const roadmap = await planning.insertRoadmap({
-        accountId: params.accountId,
-        companyId: params.companyId,
-        version: current.version + 1,
-        // An edit re-plans the SAME decision — a new decision would require a new generation, not an edit.
-        decisionId: current.decision_id,
-        // An owner edit is authored content, so it is never "model-flagged partial"; its completeness is the owner's.
-        status: 'complete' satisfies RoadmapStatus,
-        origin: 'edited',
-        supersedesRoadmapId: current.id,
-        editReason: reason,
-        modelFlaggedPartial: false,
-        createdByUserId: params.userId,
-      });
+      let roadmap;
+      try {
+        roadmap = await planning.insertRoadmap({
+          accountId: params.accountId,
+          companyId: params.companyId,
+          version: current.version + 1,
+          // An edit re-plans the SAME decision — a new decision would require a new generation, not an edit.
+          decisionId: current.decision_id,
+          // An owner edit is authored content, so it is never "model-flagged partial"; completeness is the owner's.
+          status: 'complete' satisfies RoadmapStatus,
+          origin: 'edited',
+          supersedesRoadmapId: current.id,
+          editReason: reason,
+          modelFlaggedPartial: false,
+          createdByUserId: params.userId,
+        });
+      } catch (error) {
+        // A concurrent writer took this version number between the guard and the insert (READ COMMITTED) — surface the
+        // same honest "the head moved" result the guard would have, never a raw constraint error.
+        if (isRoadmapVersionConflict(error)) return { status: 'stale_version' };
+        throw error;
+      }
 
       const goalRows: GoalRow[] = [];
       for (let i = 0; i < parsed.value.goals.length; i += 1) {
@@ -109,8 +128,11 @@ export async function editRoadmap(
       const milestoneRows: MilestoneRow[] = [];
       for (let i = 0; i < parsed.value.milestones.length; i += 1) {
         const m = parsed.value.milestones[i]!;
-        const goalId = m.goalOrdinal === null ? null : (goalRows[m.goalOrdinal]?.id ?? null);
-        milestoneRows.push(await planning.insertMilestone({ accountId: params.accountId, companyId: params.companyId, roadmapId: roadmap.id, goalId, ordinal: i, title: m.title, description: m.description }));
+        // The parse bounded goalOrdinal to the goals present — a non-resolving ordinal is a broken invariant, not a
+        // milestone to quietly unlink.
+        const goalId = m.goalOrdinal === null ? null : goalRows[m.goalOrdinal]?.id;
+        if (m.goalOrdinal !== null && goalId === undefined) throw new Error(`roadmap goal ordinal ${m.goalOrdinal} did not resolve to a persisted goal`);
+        milestoneRows.push(await planning.insertMilestone({ accountId: params.accountId, companyId: params.companyId, roadmapId: roadmap.id, goalId: goalId ?? null, ordinal: i, title: m.title, description: m.description }));
       }
 
       // ROAD-002 "affected open tasks are flagged for review" — in the SAME transaction as the version, so a flag can

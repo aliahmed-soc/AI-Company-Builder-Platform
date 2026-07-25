@@ -6,6 +6,7 @@
 // parameterized queries only; no raw SQL interpolation. Every table is append-only (SELECT + INSERT) — there is no
 // update/delete path, so a new roadmap version is always a new row.
 import type { Kysely } from 'kysely';
+import { TERMINAL_TASK_STATES } from '@acbp/contracts';
 import type { DatabaseSchema, RoadmapRow, GoalRow, MilestoneRow, TaskReviewFlagRow, TaskRow } from './schema.js';
 
 export type PlanningExecutor = Kysely<DatabaseSchema>;
@@ -42,8 +43,12 @@ export interface NewTaskReviewFlagInput {
   readonly reason: string | null;
 }
 
-/** Task states that are TERMINAL — a task in one of these is not "open" for ROAD-002 flagging (CDR-039 §7-G7). */
-export const CLOSED_TASK_STATES = ['completed', 'failed', 'cancelled'] as const;
+/**
+ * Task states that are TERMINAL — a task in one of these is not "open" for ROAD-002 flagging (CDR-039 §7-G7).
+ * DERIVED from the contract's transition table, never hand-copied: a restated list would silently classify a task in a
+ * newly-added terminal state as "open" and flag it for review forever.
+ */
+export const CLOSED_TASK_STATES: readonly string[] = TERMINAL_TASK_STATES;
 
 export class PlanningRepository {
   readonly #db: PlanningExecutor;
@@ -87,12 +92,18 @@ export class PlanningRepository {
       .executeTakeFirstOrThrow();
   }
 
-  insertTaskReviewFlag(input: NewTaskReviewFlagInput): Promise<TaskReviewFlagRow> {
+  /**
+   * Flag one task for review against a roadmap version. Genuinely idempotent: a repeat for the same
+   * (task, version) is a no-op rather than a unique-violation, so a retry can never fail the surrounding transaction.
+   * Returns undefined when the flag already existed.
+   */
+  insertTaskReviewFlag(input: NewTaskReviewFlagInput): Promise<TaskReviewFlagRow | undefined> {
     return this.#db
       .insertInto('task_review_flags')
       .values({ account_id: input.accountId, company_id: input.companyId, task_id: input.taskId, roadmap_id: input.roadmapId, reason: input.reason })
+      .onConflict((oc) => oc.columns(['task_id', 'roadmap_id']).doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
   }
 
   /** The company's CURRENT (highest-version) roadmap (RLS-confined), or undefined when none exists yet. */
@@ -116,15 +127,22 @@ export class PlanningRepository {
   }
 
   /**
-   * The OPEN tasks affected by superseding `roadmapId` (ROAD-002 / CDR-039 §7-G7): tasks whose milestone belongs to
-   * that roadmap version and whose state is not terminal. RLS-confined to the caller's company.
+   * The OPEN tasks affected by creating a new roadmap version (ROAD-002 "affected open tasks are flagged for review";
+   * CDR-039 §7-G7): every non-terminal task of this company whose milestone belongs to a roadmap version that the new
+   * version supersedes.
+   *
+   * Scoped by COMPANY, not by the single version being superseded: tasks are never re-pointed at the new version's
+   * milestones, so after the first revision they still reference the ORIGINAL version. Keying on "the version being
+   * superseded" would therefore flag correctly once and then silently stop — a task two revisions stale would never be
+   * flagged again. At call time (before the new version is inserted) every existing milestone belongs to a version the
+   * new one supersedes, so joining through `milestones` is exactly the affected set. RLS confines both sides.
    */
-  listAffectedOpenTasks(roadmapId: string): Promise<TaskRow[]> {
+  listAffectedOpenTasks(companyId: string): Promise<TaskRow[]> {
     return this.#db
       .selectFrom('tasks')
       .selectAll('tasks')
       .innerJoin('milestones', 'milestones.id', 'tasks.milestone_id')
-      .where('milestones.roadmap_id', '=', roadmapId)
+      .where('tasks.company_id', '=', companyId)
       .where('tasks.state', 'not in', [...CLOSED_TASK_STATES])
       .orderBy('tasks.id', 'asc')
       .execute();

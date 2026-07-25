@@ -197,11 +197,26 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
       asApp(scope(accountA, companyA1), (k) => sql`insert into tasks (account_id, company_id, milestone_id, title, state, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, gen_random_uuid(), 'orphan', 'draft', ${userU}::uuid)`.execute(k)),
     ).rejects.toThrow();
     const task = await asApp(scope(accountA, companyA1), async (k) => (await sql<{ id: string }>`insert into tasks (account_id, company_id, milestone_id, title, state, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, ${ms}::uuid, 'real', 'draft', ${userU}::uuid) returning id`.execute(k)).rows[0]!.id);
-    // ON DELETE SET NULL: dropping the roadmap version orphans the link rather than deleting the task (history kept).
+    // ON DELETE SET NULL (milestone_id): dropping the roadmap version orphans the LINK rather than deleting the task
+    // (history kept), and the task's tenancy columns are untouched — a bare composite SET NULL would have nulled
+    // company_id, which is NOT NULL.
     await sql`delete from roadmaps where id = ${rm}::uuid`.execute(su.kysely);
-    const row = (await sql<{ milestone_id: string | null }>`select milestone_id from tasks where id = ${task}::uuid`.execute(su.kysely)).rows[0];
+    const row = (await sql<{ milestone_id: string | null; company_id: string }>`select milestone_id, company_id from tasks where id = ${task}::uuid`.execute(su.kysely)).rows[0];
     expect(row).toBeDefined();
     expect(row?.milestone_id).toBeNull();
+    expect(row?.company_id).toBe(companyA1);
+  });
+
+  test('the tasks FK is TENANT-PINNED: company B cannot point a task at company A’s milestone (RI bypasses RLS)', async () => {
+    const rm = await insertRoadmap(accountA, companyA1, decisionA);
+    const msOfA = await insertMilestone(accountA, companyA1, rm, 0);
+    // Referential-integrity checks always bypass row security, so a single-column FK would ACCEPT this: B's own
+    // account/company columns satisfy the RLS WITH CHECK, and the FK would only verify the milestone id EXISTS.
+    // Carrying company_id into the FK makes the cross-tenant link impossible at the DB.
+    await expect(
+      asApp(scope(accountB, companyB1), (k) => sql`insert into tasks (account_id, company_id, milestone_id, title, state, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, ${msOfA}::uuid, 'cross-tenant', 'draft', ${userU}::uuid)`.execute(k)),
+    ).rejects.toThrow();
+    expect((await sql<{ n: number }>`select count(*)::int as n from tasks where company_id = ${companyB1}::uuid`.execute(su.kysely)).rows[0]!.n).toBe(0);
   });
 
   test('task_review_flags: idempotent per (task, version); bounded reason; cascades with the task', async () => {
@@ -209,8 +224,11 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
     const task = await asApp(scope(accountA, companyA1), async (k) => (await sql<{ id: string }>`insert into tasks (account_id, company_id, title, state, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 't', 'planned', ${userU}::uuid) returning id`.execute(k)).rows[0]!.id);
     const flag = (reason: string | null) => asApp(scope(accountA, companyA1), (k) => sql`insert into task_review_flags (account_id, company_id, task_id, roadmap_id, reason) values (${accountA}::uuid, ${companyA1}::uuid, ${task}::uuid, ${rm}::uuid, ${reason})`.execute(k));
     await flag('roadmap revised');
-    await expect(flag('again')).rejects.toThrow(); // UNIQUE(task_id, roadmap_id) — a re-flag is idempotent, not a duplicate
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into task_review_flags (account_id, company_id, task_id, roadmap_id, reason) values (${accountA}::uuid, ${companyA1}::uuid, ${task}::uuid, ${rm}::uuid, ${''})`.execute(k))).rejects.toThrow();
+    await expect(flag('again')).rejects.toThrow(); // UNIQUE(task_id, roadmap_id) — a duplicate raw insert is refused
+    // The blank-reason CHECK, proved on a DIFFERENT (task, version) pair so the UNIQUE constraint cannot fire first and
+    // let this pass for the wrong reason.
+    const task2 = await asApp(scope(accountA, companyA1), async (k) => (await sql<{ id: string }>`insert into tasks (account_id, company_id, title, state, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 't2', 'planned', ${userU}::uuid) returning id`.execute(k)).rows[0]!.id);
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into task_review_flags (account_id, company_id, task_id, roadmap_id, reason) values (${accountA}::uuid, ${companyA1}::uuid, ${task2}::uuid, ${rm}::uuid, ${''})`.execute(k))).rejects.toThrow();
     await sql`delete from tasks where id = ${task}::uuid`.execute(su.kysely);
     expect((await sql<{ n: number }>`select count(*)::int as n from task_review_flags`.execute(su.kysely)).rows[0]!.n).toBe(0);
   });

@@ -157,6 +157,33 @@ ROAD-001 (Must) lands before ROAD-002 (Should) so that a mid-ticket stop still l
   whose `milestone_id` belongs to the superseded roadmap version; **open** = `state NOT IN ('completed', 'failed',
   'cancelled')` (derived from the closed task state set and the terminal states in WORKFLOW-STATE-MACHINES §4). Flags
   are written in the same transaction as the new version and `roadmap.edited`.
+- **G9 — the gate applies to EDITS, not only to generation.** An edit authors the new **current** roadmap version, so
+  it is planning. If only generation were gated, a rejection could be side-stepped by revising instead of
+  regenerating, and the company's current plan would be one authored after the strategy was rejected — contradicting
+  §2 ("J-08 … is enforced here") and WORKFLOW's `→rejected` routing back to understanding review. `editRoadmap`
+  therefore applies the same `classifyPlanningGate` and returns `decision_rejected`. *(Added after the independent
+  review found the edit path ungated.)*
+- **G10 — the defensive re-entry re-applies the PERSISTABILITY invariants, not just types.** The gateway is injected,
+  so a caller that wires a different or missing validator must not be able to persist a plan the parser exists to
+  reject. `narrowRoadmapOutput` therefore re-checks emptiness, the one-sided/partial rule, item counts and title and
+  description bounds — a weaker backstop would let an empty plan persist labeled `complete`, or let a length only the
+  DB rejects surface as a raw constraint error instead of an honest `generation_failed`.
+- **G11 — a ONE-SIDED plan may only be labeled `partial`.** ROAD-001's acceptance is a roadmap containing goals **and**
+  sequenced milestones, so a plan missing either side cannot honestly be `complete`; it is a legitimate partial. An
+  EMPTY plan is neither — it is rejected outright even when flagged partial.
+- **G12 — "affected open tasks" is scoped by COMPANY, not by the single superseded version.** Tasks are never
+  re-pointed at a new version's milestones, so after the first revision they still reference the ORIGINAL version.
+  Keying the flag query on "the version being superseded" would flag correctly once and then silently stop — a task
+  two revisions stale would never be flagged again. At flag time every existing milestone belongs to a version the new
+  one supersedes, so joining through `milestones` within the company is exactly the affected set. *(Refines G7 after
+  the review found the re-flagging gap.)*
+- **G13 — the version-uniqueness violation is mapped to the honest stale result.** The read-then-insert guard runs at
+  READ COMMITTED, so two writers can both pass it; `roadmaps_company_version_uq` is the real serializer. The loser is
+  mapped to `stale_decision`/`stale_version` — scoped to that EXACT constraint, never a blanket 23505 (CLAUDE.md).
+- **G14 — the `tasks.milestone_id` FK is TENANT-PINNED.** Referential-integrity checks always bypass row security, so
+  a single-column FK would let a member of company B create a task naming company A's milestone (an existence oracle,
+  and a cross-tenant `SET NULL` when A drops that version). The FK carries `company_id`, with a column-scoped
+  `ON DELETE SET NULL (milestone_id)` (PostgreSQL 15+; CI runs 16) so the task's tenancy is never nulled.
 - **G8 — both requirements stay in this ticket, ROAD-001 first.** ROAD-002 is only a "Should", but the backlog's
   single acceptance criterion for P4-001 is "Versioned edits flag affected tasks" — the ROAD-002 path. Both are
   therefore in scope, sliced Must-first.

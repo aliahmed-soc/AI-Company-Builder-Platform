@@ -109,6 +109,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     // different version. A NULL goal_id (an unlinked milestone) skips the check (MATCH SIMPLE).
     .addForeignKeyConstraint('milestones_goal_fk', ['goal_id', 'roadmap_id'], 'goals', ['id', 'roadmap_id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addUniqueConstraint('milestones_ordinal_uq', ['roadmap_id', 'ordinal'])
+    // Additive, so the tasks FK below can be TENANT-PINNED. Referential-integrity checks bypass row security, so a
+    // single-column `tasks.milestone_id → milestones(id)` would let a member of company B create a task in B pointing
+    // at company A's milestone (an existence oracle, and a cross-tenant SET NULL when A drops that version).
+    .addUniqueConstraint('milestones_id_company_uq', ['id', 'company_id'])
     .addCheckConstraint('milestones_ordinal_nonneg', sql`ordinal >= 0`)
     .addCheckConstraint('milestones_title_len', sql`char_length(title) between 1 and 200`)
     .addCheckConstraint('milestones_description_len', sql`description is null or char_length(description) between 1 and 4000`)
@@ -142,7 +146,16 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   // validation because milestones did not exist yet — the P4-002 review recorded this and flagged it for P4-001.
   // ON DELETE SET NULL runs as the table OWNER, so the app role's deliberately absent UPDATE(milestone_id) grant is not
   // an obstacle: dropping a roadmap version orphans its tasks' milestone link rather than deleting the tasks.
-  await sql`alter table public.tasks add constraint tasks_milestone_fk foreign key (milestone_id) references public.milestones(id) on delete set null`.execute(db);
+  //
+  // TENANT-PINNED, deliberately: referential-integrity checks ALWAYS bypass row security, so a single-column
+  // `(milestone_id) → milestones(id)` would let a member of company B create a task in B naming company A's milestone
+  // — an existence oracle for foreign ids, and a cross-tenant SET NULL write when A later drops that version. Carrying
+  // `company_id` into the FK makes a cross-company link impossible at the DB, matching the composite-FK pattern used
+  // for the same-version goal link above and in migrations 0023/0025.
+  //
+  // `SET NULL (milestone_id)` is COLUMN-SCOPED (PostgreSQL 15+; CI runs 16): a bare composite SET NULL would try to
+  // null `company_id` too, which is NOT NULL — only the milestone link is cleared, the task's tenancy is untouched.
+  await sql`alter table public.tasks add constraint tasks_milestone_fk foreign key (milestone_id, company_id) references public.milestones(id, company_id) on delete set null (milestone_id)`.execute(db);
 
   // Least-privilege grants: SELECT + INSERT only on all four (immutable/append-only — no UPDATE, no DELETE).
   for (const t of TABLES) {

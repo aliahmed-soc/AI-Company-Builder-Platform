@@ -106,6 +106,25 @@ export function classifyPlanningGate(decision: DecisionRow | undefined): { reado
   return { kind: 'open', decision };
 }
 
+/**
+ * Is this error the roadmap VERSION-uniqueness violation?
+ *
+ * The read-then-insert guard runs at READ COMMITTED, where a concurrent uncommitted insert is invisible: two writers
+ * can both pass the guard and both attempt the same version number. `roadmaps_company_version_uq` is the real
+ * serializer, so the loser must surface the same honest "someone else moved the head" result the guard would have
+ * produced — never a raw constraint error. Scoped to the EXACT constraint (never a blanket 23505), per CLAUDE.md.
+ */
+/** A goalOrdinal the parse guaranteed resolvable did not resolve — a broken invariant, never a silent unlink. */
+function unresolvableGoal(ordinal: number): never {
+  throw new Error(`roadmap goal ordinal ${ordinal} did not resolve to a persisted goal`);
+}
+
+export function isRoadmapVersionConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as { code?: unknown; constraint?: unknown };
+  return e.code === '23505' && e.constraint === 'roadmaps_company_version_uq';
+}
+
 type PreRead = { readonly kind: 'ready'; readonly decision: DecisionRow; readonly prompt: string; readonly nextVersion: number; readonly supersedes: string | null } | { readonly kind: 'forbidden' } | { readonly kind: 'no_decision' } | { readonly kind: 'rejected' };
 
 export async function generateRoadmap(client: DatabaseClient, params: GenerateRoadmapParams, deps: RoadmapGenerationDeps, options: RoadmapGenerationOptions = {}): Promise<GenerateRoadmapResult> {
@@ -125,12 +144,16 @@ export async function generateRoadmap(client: DatabaseClient, params: GenerateRo
       // decision authored its own fields on the selection.
       const selection = await strategy.findSelection(gate.decision.selection_id);
       const fields = selection?.chosen_fields ?? (selection?.selected_option_id !== undefined && selection?.selected_option_id !== null ? (await strategy.findOption(selection.selected_option_id))?.fields : undefined);
+      // FAIL CLOSED rather than planning from nothing: if the decided content cannot be resolved, the model would be
+      // asked to plan from a bare mode + version line and its output would persist as a normal roadmap. That is a
+      // fabricated plan, not an honest partial — treat it as a failed generation instead (ADR-019).
+      if (fields === undefined || Object.keys(fields).length === 0) return { kind: 'no_decision' };
       const planning = new PlanningRepository(scope.db);
       const latest = await planning.latestRoadmap(params.companyId);
       return {
         kind: 'ready',
         decision: gate.decision,
-        prompt: formatDecisionForPlanning({ mode: gate.decision.mode, understandingVersion: gate.decision.understanding_version, fields: fields ?? {} }),
+        prompt: formatDecisionForPlanning({ mode: gate.decision.mode, understandingVersion: gate.decision.understanding_version, fields }),
         nextVersion: (latest?.version ?? 0) + 1,
         supersedes: latest?.id ?? null,
       };
@@ -170,18 +193,26 @@ export async function generateRoadmap(client: DatabaseClient, params: GenerateRo
       const latest = await planning.latestRoadmap(params.companyId);
       if ((latest?.id ?? null) !== pre.supersedes) return { status: 'stale_decision' };
 
-      const roadmap = await planning.insertRoadmap({
-        accountId: params.accountId,
-        companyId: params.companyId,
-        version: pre.nextVersion,
-        decisionId: gate.decision.id,
-        status,
-        origin: 'generated',
-        supersedesRoadmapId: pre.supersedes,
-        editReason: null,
-        modelFlaggedPartial: parsed.partial,
-        createdByUserId: params.userId,
-      });
+      let roadmap: RoadmapRow;
+      try {
+        roadmap = await planning.insertRoadmap({
+          accountId: params.accountId,
+          companyId: params.companyId,
+          version: pre.nextVersion,
+          decisionId: gate.decision.id,
+          status,
+          origin: 'generated',
+          supersedesRoadmapId: pre.supersedes,
+          editReason: null,
+          modelFlaggedPartial: parsed.partial,
+          createdByUserId: params.userId,
+        });
+      } catch (error) {
+        // A concurrent writer took this version number between the guard and the insert (READ COMMITTED). Surface the
+        // same honest result the guard would have — never a raw constraint error. Any OTHER error still propagates.
+        if (isRoadmapVersionConflict(error)) return { status: 'stale_decision' };
+        throw error;
+      }
 
       const goalRows: GoalRow[] = [];
       for (let i = 0; i < parsed.goals.length; i += 1) {
@@ -192,7 +223,9 @@ export async function generateRoadmap(client: DatabaseClient, params: GenerateRo
       for (let i = 0; i < parsed.milestones.length; i += 1) {
         const m = parsed.milestones[i]!;
         // The parse already bounded goalOrdinal to the goals present, so this resolves or is deliberately unlinked.
-        const goalId = m.goalOrdinal === null ? null : (goalRows[m.goalOrdinal]?.id ?? null);
+        // The parse bounded goalOrdinal to the goals present, so this always resolves. Throwing rather than silently
+        // unlinking keeps the failure loud if that invariant is ever weakened (deny-by-default, not quiet degradation).
+        const goalId = m.goalOrdinal === null ? null : (goalRows[m.goalOrdinal]?.id ?? unresolvableGoal(m.goalOrdinal));
         milestoneRows.push(await planning.insertMilestone({ accountId: params.accountId, companyId: params.companyId, roadmapId: roadmap.id, goalId, ordinal: i, title: m.title, description: m.description }));
       }
 

@@ -1,5 +1,5 @@
 // core/planning — module public index (ACBP-P4-001; CDR-039). Cross-module imports go through this index (spec rule 10).
-export { generateRoadmap, getLatestRoadmap, toRoadmapDTO, classifyPlanningGate, formatDecisionForPlanning, buildRoadmapRequest } from './roadmap-generation.js';
+export { generateRoadmap, getLatestRoadmap, toRoadmapDTO, classifyPlanningGate, isRoadmapVersionConflict, formatDecisionForPlanning, buildRoadmapRequest } from './roadmap-generation.js';
 export type {
   GenerateRoadmapParams,
   RoadmapGenerationDeps,

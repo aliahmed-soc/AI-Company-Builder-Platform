@@ -160,6 +160,33 @@ describe.skipIf(!hasTestDatabase)('roadmap edit / ROAD-002 (real PostgreSQL, res
     expect(await editAuditCount()).toBe(0);
   });
 
+  test('THE GATE applies to EDITS too: after a REJECT decision, an edit is blocked (a rejection cannot be side-stepped by revising)', async () => {
+    // An edit AUTHORS the new CURRENT plan — that is planning, so CDR-039 §7-G1 gates it exactly like generation.
+    await sql`insert into decisions (account_id, company_id, generation_id, selection_id, mode, understanding_version, created_by_user_id) select account_id, company_id, generation_id, selection_id, 'reject', understanding_version, created_by_user_id from decisions where company_id = ${w.companyA1}::uuid order by created_at desc limit 1`.execute(owner.kysely);
+    const r = await editRoadmap(product, { ...base(), expectedRoadmapId: v1, plan: REVISED, reason: 'sneaking a revision past the rejection' });
+    expect(r.status).toBe('decision_rejected');
+    // The already-generated version is retained; no new version, no flags, no audit.
+    expect(await roadmapsFor()).toHaveLength(1);
+    expect(await flagsFor()).toHaveLength(0);
+    expect(await editAuditCount()).toBe(0);
+  });
+
+  test('ROAD-002 re-flagging: a SECOND revision still flags the stale task (tasks are never re-pointed at new versions)', async () => {
+    const m1 = await milestoneOf(v1);
+    const task = await seedTask(m1, 'planned');
+    const first = await editRoadmap(product, { ...base(), expectedRoadmapId: v1, plan: REVISED, reason: 'first revision' });
+    expect(first.status === 'ok' && first.flaggedTaskCount).toBe(1);
+    if (first.status !== 'ok') return;
+    // The task still points at v1's milestone — nothing re-points it. A second revision must flag it AGAIN against the
+    // newest version, otherwise "affected open tasks are flagged for review" silently stops after one edit.
+    const second = await editRoadmap(product, { ...base(), expectedRoadmapId: first.roadmap.roadmapId, plan: REVISED, reason: 'second revision' });
+    expect(second.status === 'ok' && second.flaggedTaskCount).toBe(1);
+    const flags = await flagsFor();
+    expect(flags).toHaveLength(2); // one per version, both naming the same still-stale task
+    expect(new Set(flags.map((f) => f.task_id))).toEqual(new Set([task]));
+    expect(new Set(flags.map((f) => f.roadmap_id)).size).toBe(2);
+  });
+
   test('cross-company isolation: company A2 has no roadmap, so an edit there is not_found and A1 is unaffected', async () => {
     const a2 = { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA2, expectedRoadmapId: v1, plan: REVISED, reason: 'r' };
     expect((await editRoadmap(product, a2)).status).toBe('not_found');
