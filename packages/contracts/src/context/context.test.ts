@@ -130,11 +130,14 @@ describe('secret blocklist (invariant 12 / NFR-018)', () => {
     expect(red).toContain(SECRET_PLACEHOLDER);
   });
 
-  test('H1 (no ReDoS): many BEGIN markers with no END terminator redact in well under a second', () => {
-    const adversarial = '-----BEGIN A PRIVATE KEY-----x'.repeat(20_000); // ~600 KB, quadratic under the old pattern
+  test('H1 (no ReDoS): a large adversarial BEGIN-with-no-END input redacts in bounded (linear) time', () => {
+    // ~1.5 MB of BEGIN markers with no END terminator. The OLD unbounded pattern was QUADRATIC here (reviewer-measured
+    // ~23 s); the bounded pattern is LINEAR (~3 s). The generous 10 s bound catches a regression to the quadratic
+    // pattern without being flaky on a slow/shared CI runner (where the linear pass still finishes with wide margin).
+    const adversarial = '-----BEGIN A PRIVATE KEY-----x'.repeat(50_000);
     const start = Date.now();
     redactSecrets(adversarial);
-    expect(Date.now() - start).toBeLessThan(1_000);
+    expect(Date.now() - start).toBeLessThan(10_000);
   });
 
   test('M1: a JWT is redacted', () => {
