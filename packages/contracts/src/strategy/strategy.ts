@@ -244,6 +244,24 @@ export function parseStrategyRecommendation(raw: string): StrategyRecommendation
   return { ok: true, value: { recommendedOrdinal, rationale, sensitivities } };
 }
 
+/**
+ * Defensively narrow an ALREADY-VALIDATED recommendation output (the gateway's `validatedOutput`, produced by
+ * `parseStrategyRecommendation`) back to `StrategyRecommendationOutput` — WITHOUT re-parsing raw text. Rejects a
+ * corrupted seam value (`undefined`). This is the single, safe re-entry the core use case consumes (mirrors
+ * `narrowStrategyOutput`).
+ */
+export function narrowStrategyRecommendation(value: unknown): StrategyRecommendationOutput | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const v = value as { recommendedOrdinal?: unknown; rationale?: unknown; sensitivities?: unknown };
+  const ord = v.recommendedOrdinal ?? null;
+  if (ord !== null && (typeof ord !== 'number' || !Number.isInteger(ord))) return undefined;
+  const rationale = v.rationale ?? null;
+  if (rationale !== null && typeof rationale !== 'string') return undefined;
+  const sensitivities = v.sensitivities ?? null;
+  if (sensitivities !== null && typeof sensitivities !== 'string') return undefined;
+  return { recommendedOrdinal: ord, rationale, sensitivities };
+}
+
 /** A resolved, SHOWABLE recommendation — one in-range option + a non-blank bounded rationale + sensitivities. */
 export interface ResolvedRecommendation {
   readonly recommendedOrdinal: number;

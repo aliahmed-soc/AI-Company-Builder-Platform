@@ -8,3 +8,10 @@ export type {
   StrategyReadParams,
   LatestStrategyResult,
 } from './strategy-generation.js';
+export { recommendStrategy, toRecommendationDTO, formatOptionsForRecommendation, buildRecommendationRequest } from './strategy-recommendation.js';
+export type {
+  RecommendStrategyParams,
+  StrategyRecommendationDeps,
+  StrategyRecommendationOptions,
+  RecommendStrategyResult,
+} from './strategy-recommendation.js';

@@ -167,6 +167,9 @@ export type {
   StrategyOptionsTable,
   StrategyOptionRow,
   NewStrategyOption,
+  StrategyRecommendationsTable,
+  StrategyRecommendationRow,
+  NewStrategyRecommendation,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

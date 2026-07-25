@@ -16,6 +16,7 @@ import {
   dedupeByDistinctness,
   parseStrategyRecommendation,
   resolveRecommendation,
+  narrowStrategyRecommendation,
   RATIONALE_MAX,
   type StrategyOptionField,
 } from './strategy.js';
@@ -263,6 +264,17 @@ describe('AI recommendation — parse + resolve (ACBP-P3-003/CDR-036/STRAT-004)'
     expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: '   ', sensitivities: 'y' }), 3)).toBeNull(); // blank rationale
     expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: 'x', sensitivities: '' }), 3)).toBeNull(); // blank sensitivities
     expect(resolveRecommendation(mk({ recommended_ordinal: 0, rationale: 'z'.repeat(RATIONALE_MAX + 1), sensitivities: 'y' }), 3)).toBeNull(); // over-long
+  });
+
+  test('narrowStrategyRecommendation re-narrows the gateway-validated (camelCase) value without re-parsing', () => {
+    const parsed = parseStrategyRecommendation(rec());
+    if (!parsed.ok) throw new Error('unreachable');
+    // A round-trip of the validated value (camelCase) narrows back cleanly — the core consumes THIS, not raw text.
+    expect(narrowStrategyRecommendation(parsed.value)).toEqual(parsed.value);
+    expect(narrowStrategyRecommendation({ recommendedOrdinal: null, rationale: null, sensitivities: null })).toEqual({ recommendedOrdinal: null, rationale: null, sensitivities: null });
+    // A corrupted seam value is rejected.
+    expect(narrowStrategyRecommendation({ recommendedOrdinal: 'x' })).toBeUndefined();
+    expect(narrowStrategyRecommendation(null)).toBeUndefined();
   });
 
   test('resolveRecommendation trims the surfaced rationale/sensitivities', () => {
