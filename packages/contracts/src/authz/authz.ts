@@ -99,6 +99,11 @@ export const AUTHZ_ACTIONS = [
   // gate owned by a later ticket (TASK-004/P6), NOT part of this create grant. `task:depend` folds into `task:create`.
   'task:create',
   'task:read',
+  // Strategy option generation (ACBP-P3-001; CDR-034 §4; STRAT-001/002). `strategy:generate` covers generation +
+  // request-another; `strategy:read` lists the options. Both owner|viewer (any active member drives the flow, like
+  // understanding:generate). The owner-only SELECTION gate is STRAT-003/P3-004's separate action.
+  'strategy:generate',
+  'strategy:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -187,6 +192,9 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // RUN trigger (planned→queued) is a later ticket's separate action.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
+  // Strategy generation is a member action (like understanding:generate); owner-only selection is P3-004's action.
+  'strategy:generate': ['owner', 'viewer'],
+  'strategy:read': ['owner', 'viewer'],
 };
 
 /**

@@ -49,6 +49,16 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      `interview.ts` precedent); the execution transitions (credit reservation on planned→queued, worker runs, holds,
      terminals) are DEFINED-legal in the state machine but their EFFECTS belong to later P5/P6 tickets. `milestone_id` is
      nullable — milestones are P4-001 (not yet built); ad-hoc tasks have none. No new SECURITY DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P3-001; CDR-034): the `Strategy option` row above is realized by migration 0022 as two
+     company-owned, dual-keyed FORCE RLS, IMMUTABLE (`I`) tables — `strategy_generations` (one generation from a
+     CONFIRMED understanding version; closed status {complete, fewer_than_three}; `similarity_check_result`
+     {pending, distinct, insufficient_distinct}, written `pending` here — the P3-002 distinctness engine sets the
+     verdict; FK to understanding_documents) + `strategy_options` (the validated 16-field `fields` jsonb object;
+     UNIQUE(generation_id, ordinal)). Both SELECT+INSERT only (a re-generation is a NEW generation, never an edit —
+     the "generating→ready_for_review→selected/rejected→superseded" lifecycle's later transitions live in P3-004/005).
+     P3-001 implements only the generation `gen` node: gated on the owner-confirmed understanding (strategy blocked
+     pre-confirm), the 16-field standard with ADR-019 no-fake-precision labeling, and the honest fewer-than-three path.
+     Model usage metered via the gateway; `strategy.generated` audited in-tx. No new SECURITY DEFINER / role / BYPASSRLS. -->
 
 
 

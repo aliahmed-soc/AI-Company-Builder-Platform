@@ -18,4 +18,5 @@ export * from './model/index.js';
 export * from './understanding/index.js';
 export * from './context/index.js';
 export * from './task/index.js';
+export * from './strategy/index.js';
 

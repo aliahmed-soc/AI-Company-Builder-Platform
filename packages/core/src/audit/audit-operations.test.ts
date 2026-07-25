@@ -31,6 +31,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'context.flag-conflict',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
+      // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
+      'strategy.generate',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.

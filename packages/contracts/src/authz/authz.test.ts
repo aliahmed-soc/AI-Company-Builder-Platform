@@ -53,6 +53,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Task model (ACBP-P4-002; CDR-033): create/plan + read = any active company member.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
+  // Strategy option generation (ACBP-P3-001; CDR-034): generate/request-another + read = any active company member.
+  'strategy:generate': ['owner', 'viewer'],
+  'strategy:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

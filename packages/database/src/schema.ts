@@ -530,6 +530,41 @@ export interface TaskDependenciesTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Strategy generations (ACBP-P3-001; CDR-034). A company-owned, dual-keyed FORCE RLS, IMMUTABLE record of one
+ * strategy-option generation from a confirmed understanding version (SELECT+INSERT only). Every column is `never`
+ * on update; `similarity_check_result` defaults to 'pending' (the P3-002 distinctness engine sets the verdict).
+ */
+export interface StrategyGenerationsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  understanding_document_id: ColumnType<string, string, never>;
+  understanding_version: ColumnType<number, number, never>;
+  status: ColumnType<string, string, never>;
+  option_count: ColumnType<number, number, never>;
+  fewer_reason: ColumnType<string | null, string | null | undefined, never>;
+  similarity_check_result: ColumnType<string, string | undefined, never>;
+  model_flagged_partial: ColumnType<boolean, boolean | undefined, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * Strategy options (ACBP-P3-001; CDR-034). A company-owned, dual-keyed FORCE RLS, IMMUTABLE option row carrying the
+ * validated 16-field `fields` jsonb object (SELECT+INSERT only). UNIQUE (generation_id, ordinal); every column
+ * `never` on update. `fields` is a flat string→string map (the validated 16-field content standard).
+ */
+export interface StrategyOptionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  generation_id: ColumnType<string, string, never>;
+  ordinal: ColumnType<number, number, never>;
+  fields: ColumnType<Record<string, string>, Record<string, string>, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -555,6 +590,8 @@ export interface DatabaseSchema {
   understanding_confirmation_events: UnderstandingConfirmationEventsTable;
   tasks: TasksTable;
   task_dependencies: TaskDependenciesTable;
+  strategy_generations: StrategyGenerationsTable;
+  strategy_options: StrategyOptionsTable;
 }
 
 // Repository-facing row shapes.
@@ -612,3 +649,7 @@ export type NewTask = Insertable<TasksTable>;
 export type TaskUpdate = Updateable<TasksTable>;
 export type TaskDependencyRow = Selectable<TaskDependenciesTable>;
 export type NewTaskDependency = Insertable<TaskDependenciesTable>;
+export type StrategyGenerationRow = Selectable<StrategyGenerationsTable>;
+export type NewStrategyGeneration = Insertable<StrategyGenerationsTable>;
+export type StrategyOptionRow = Selectable<StrategyOptionsTable>;
+export type NewStrategyOption = Insertable<StrategyOptionsTable>;

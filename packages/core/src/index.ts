@@ -11,6 +11,7 @@ export * from './discovery/index.js';
 export * from './memory/index.js';
 export * from './understanding/index.js';
 export * from './tasks/index.js';
+export * from './strategy/index.js';
 export * from './context/index.js';
 export * from './model/index.js';
 export * from './composition/index.js';
