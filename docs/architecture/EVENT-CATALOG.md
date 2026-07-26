@@ -135,6 +135,14 @@ Retention default: activity-projected events with company data; audit-relevant e
      This does NOT contradict the P4-003 note: that rule holds because a DRAFT TASK is not on the board, and drafts
      remain unaudited here. A planning RUN is a platform action taken on the owner's behalf — what ADR-015 audits.
      Activity fan-out remains DEFERRED. -->
+<!-- ACBP-P4-004 (CDR-042; TASK-001 views) registers NO NEW EVENT. The board is a pure READ projection over the
+     eleven-state machine P4-002 built: it adds no state, no transition, no storage and no migration, so there is
+     nothing to audit. TASK-001's acceptance ("all state transitions are server-enforced, audited, and visible") is
+     satisfied by P4-002's transition enforcement plus `task.created`; this ticket delivers the VISIBLE half.
+     Note for future work: the six PRD buckets are TABS observed in the reference product, not persisted states —
+     `raw-audit/evidence/task-states.csv` records four of them as empty tabs. `recurring` and `rejected` are declared
+     but unreachable in this version (PLAN-003/TASK-003 are Post-MVP; the reject control is P4-005), and HELD is a
+     bucket this platform adds so a stalled task cannot read as progressing. -->
 | task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id (created: {has_milestone} only, P4-002), (run_id, attempt on started) | audited | with company |
 | task.waiting_for_input / task.waiting_for_approval | Coordinator | Decision Room, notification | task_id, blocking_ref (question/approval id) | audited | with company |
 | task.completed | Coordinator | activity, usage, documents | task_id, run_id, artifact_refs[] (**required — no artifactless completion without explicit no-artifact rationale, TASK-005**) | audited | with company |
