@@ -9,6 +9,34 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-004 task dependencies and board — CORE DONE / IN REVIEW.**
+  Branch `p4-004-task-dependencies-and-board` (from main `b8dc466`, after P4-006 merged), draft PR **#42**, CDR-042.
+  TASK-001's **views**: the six-bucket board plus visible dependencies. A pure READ — no state, no transition, no
+  audit event, no storage, **no migration**.
+  **The load-bearing reading (CDR-042 §2):** TASK-001 names six states while P4-002 implemented eleven. The evidence
+  settles it — `raw-audit/evidence/task-states.csv` records four of the six as **empty tabs** ("existence observed;
+  instances unknown"). What was directly observed is a set of board TABS, not six persisted states, and the backlog
+  scopes this ticket to `TASK-001 (views)`. Inventing a `recurring` or `rejected` state would fabricate a mechanism
+  the evidence never observed and silently widen P4-002's ratified machine.
+  `placeOnBoard` is TOTAL: every state resolves to a bucket or an explicit `off_board`, and the board's own counts
+  prove it (placed + drafts + unplaceable = rows). A task in the wrong bucket is a bug; a task in no bucket is
+  invisible. `draft` stays off the board (CDR-033 §4) but is COUNTED. HELD is its own bucket — a task waiting on the
+  owner is stalled, not progressing. `recurring`/`rejected` declare `not_in_this_version` rather than looking empty.
+  Dependencies are indexed BOTH ways (a stuck task's cost is what waits behind it) from ONE company-wide query, and a
+  prerequisite outside the page BLOCKS — fail closed.
+  Commits: CDR `0d3ecf0` → window-reset note `39a779b` → contracts `504c439` → core `a278d54` → docs `fd541fb` →
+  review-pass-1 fixes `1faaefc` → review-pass-2 fixes `aecad4d`.
+  **Both review passes returned FAIL**, and four of the ten most serious findings were defects in my own review fixes.
+  Pass 1's HIGH-2 was product-breaking: the page limit was applied to an unfiltered newest-first query, so a planning
+  run's drafts would have rendered every bucket EMPTY while planned work existed. Pass 2's HIGH was a regression
+  introduced by pass 1's own fix: filtering draft/unresolvable prerequisites before the blocked derivation turned
+  fail-CLOSED into fail-OPEN, reporting work as ready while its input did not exist. See
+  `docs/implementation/P4-004-REVIEW-COVERAGE.md`.
+  **TASK-001 is NOT fully satisfied by this ticket** — `recurring` and `rejected` remain unreachable pending
+  PLAN-003/TASK-003 (Post-MVP) and P4-005. The ticket delivers the VIEWS it was scoped to.
+  Exact-head CI green zero-skip **1894/1894** at `aecad4d`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch.
+- **ACBP-P4-006 planning transparency — DONE** (squash `b8dc466`, PR #41; exact-main CI green zero-skip 1846/1846; branch deleted). Phase 4 4/7.
 - **ACBP-P4-006 planning transparency — CORE DONE / IN REVIEW (5th autonomous window).**
   Branch `p4-006-planning-transparency` (from main `6274cd3`, after P4-003 merged), draft PR **#41**, CDR-041.
   PLAN-004: every planning run links its input snapshot and a per-task rationale. Migration **0028** adds

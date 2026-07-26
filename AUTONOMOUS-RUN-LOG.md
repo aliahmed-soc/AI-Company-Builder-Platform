@@ -153,3 +153,48 @@ Started immediately after the window-4 report, without pausing, per the standing
 Opening state: main = `00a580d`, migrations end 0026 on main (0027 on the branch), tree clean.
 Active: ACBP-P4-003 on `p4-003-task-generation` at `ed4be0c`, pushed, hosted CI in flight on that exact SHA.
 Plan: finalize P4-003, then re-read the backlog and take the next Ready, unblocked ticket without stopping.
+
+---
+
+## WINDOW CLOCK RESET — new window started 2026-07-26 16:30:58 +03:00
+
+The owner reset the window clock. This timestamp is a real system-clock read, not an estimate, and it **supersedes**
+the previous window-5 start (09:10 +03:00) and its 17:10 boundary. The next boundary is
+**2026-07-27 00:30:58 +03:00**, to be verified against the actual clock rather than inferred from work completed.
+
+Why the reset: I had been reporting elapsed time by feel rather than by clock — at one point overstating it by about
+35 minutes (claimed "~6h45m" when the true figure was 6h10m). Every elapsed figure from here is a measured read
+against this recorded start.
+
+**Disk at window start: E: 107.34 GB free** (C: 14.95 GB) — far above the 3 GB threshold; no cleanup performed or
+needed.
+
+### State carried into this window
+
+- main = `b8dc466` (ACBP-P4-006 merged; exact-main CI green zero-skip 1846/1846; branch deleted).
+- **56 tickets Done. Phase 4 → 4/7. Migrations end 0028.**
+- Active: **ACBP-P4-004** (task dependencies and board, TASK-001 views) on
+  `p4-004-task-dependencies-and-board`, draft PR **#42**, CDR-042 committed (`0d3ecf0`). Slice 1 (contracts) in
+  progress.
+- **ACBP-P0-005** ("Decide object-storage provider", Type: Decision) is treated as an OWNER GATE and left alone:
+  selecting a provider is an architecture decision changing provider strategy. It is the only other unblocked
+  non-gated backlog row, so it will keep appearing in Ready scans and will keep being skipped.
+
+### Work completed in the previous (reset) window, 09:10 → 16:30
+
+| Ticket | Squash | PR | exact-main CI |
+| --- | --- | --- | --- |
+| ACBP-P4-003 task generation + chat steering | `6274cd3` | #40 | green zero-skip, 1802/1802 |
+| ACBP-P4-006 planning transparency | `b8dc466` | #41 | green zero-skip, 1846/1846 |
+
+P4-006 ran two independent review passes, **both FAIL**, and three of the five findings across them were defects in my
+own fixes rather than in the original code:
+
+1. Pass 1 — the memory half of the planning prompt was **unbounded** while the roadmap half was capped. A truncating
+   provider would have left the run linking memory items the model never read: fabricated traceability inside the
+   feature whose entire purpose is an honest input snapshot.
+2. Pass 1 — untrusted-origin memory arrived as `system` messages **ahead of** the instruction saying it is not
+   instructions.
+3. Pass 2 — two pass-1 fixes, each correct alone, combined to produce an invalid `('failed', null)` pair that the new
+   shape CHECK rejects, destroying the run record on the gateway-failure-during-staleness path while the other fix's
+   error swallow hid it. Pass 1 could not have found this: it reviewed a tree where neither change existed.

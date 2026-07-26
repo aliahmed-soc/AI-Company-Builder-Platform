@@ -108,4 +108,67 @@ export class TaskRepository {
   listDependencies(taskId: string): Promise<TaskDependencyRow[]> {
     return this.#db.selectFrom('task_dependencies').selectAll().where('task_id', '=', taskId).orderBy('id', 'asc').execute();
   }
+
+  /**
+   * One page of BOARD tasks — everything except `draft` (ACBP-P4-004).
+   *
+   * Drafts are excluded IN THE QUERY, not after it. `list` orders newest-first and drafts are rows like any other, so
+   * a planning run that mints a page-worth of drafts would otherwise consume the entire budget and leave the board
+   * rendering empty while real `planned`/`running` work existed — the "a task in no bucket is invisible" failure
+   * arriving through the pagination door. The limit must bound BOARD rows to mean anything.
+   */
+  listBoardPage(options: ListTasksOptions): Promise<TaskRow[]> {
+    return this.#db.selectFrom('tasks').selectAll().where('state', '!=', 'draft').orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+  }
+
+  /** How many DRAFT tasks the company holds (RLS-confined). Counted, not paged: the board reports them off-board. */
+  async countDrafts(companyId: string): Promise<number> {
+    const row = await this.#db
+      .selectFrom('tasks')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('company_id', '=', companyId)
+      .where('state', '=', 'draft')
+      .executeTakeFirst();
+    return Number(row?.n ?? 0);
+  }
+
+  /**
+   * Dependency edges touching ANY of `taskIds`, in either direction (RLS-confined; ACBP-P4-004).
+   *
+   * Scoped to the rendered page rather than the whole company: one query still (a per-task fetch could render a task
+   * against a different snapshot than its prerequisites, showing "blocked" and "ready" states that never coexisted),
+   * but BOUNDED — `task_dependencies` is append-only with no cap, so a company that scripts edge creation could
+   * otherwise make every board read materialise an unbounded row set from a single cheap request.
+   *
+   * The `limit` bounds the RESULT, not just the IN list. Scoping to a bounded set of page ids caps the predicate but
+   * not the rows returned: one task may carry unlimited edges, and the ids harvested from those rows then feed an
+   * `in (...)` lookup that would blow past the bind-parameter ceiling long before memory became the issue.
+   */
+  listDependenciesForTasks(taskIds: readonly string[], limit: number): Promise<TaskDependencyRow[]> {
+    if (taskIds.length === 0) return Promise.resolve([]);
+    const ids = [...taskIds];
+    return this.#db
+      .selectFrom('task_dependencies')
+      .selectAll()
+      .where((eb) => eb.or([eb('task_id', 'in', ids), eb('depends_on_task_id', 'in', ids)]))
+      .orderBy('id', 'asc')
+      .limit(limit)
+      .execute();
+  }
+
+  /**
+   * The states of specific tasks (RLS-confined), for resolving prerequisites that fall OUTSIDE the rendered page.
+   *
+   * Without this, a truncated board reports almost every dependent as blocked: `list` is newest-first, so
+   * prerequisites are by construction older than their dependents and are the FIRST rows dropped. Failing closed on a
+   * prerequisite we simply did not fetch is safe but wrong often enough to make the indicator useless.
+   */
+  findStatesByIds(taskIds: readonly string[]): Promise<{ id: string; state: string }[]> {
+    if (taskIds.length === 0) return Promise.resolve([]);
+    return this.#db
+      .selectFrom('tasks')
+      .select(['id', 'state'])
+      .where('id', 'in', [...taskIds])
+      .execute();
+  }
 }
