@@ -18,7 +18,7 @@ const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `plan_${'test'}_pw_1970`;
 
-const ALL = ['task_review_flags', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
+const ALL = ['planning_run_inputs', 'planning_runs', 'task_review_flags', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
 function superuserClient(): DatabaseClient {
   return createDatabase(parseDatabaseConfig({ APP_ENV: 'test', DATABASE_URL: url, DATABASE_SSL: process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable', DATABASE_APP_NAME: 'acbp-plan-int' }));
@@ -109,7 +109,7 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
 
   beforeEach(async () => {
     // Child-first: flags -> tasks -> milestones -> goals -> roadmaps (the decision + its chain are reused).
-    for (const t of ['task_review_flags', 'tasks', 'milestones', 'goals', 'roadmaps'] as const) {
+    for (const t of ['planning_run_inputs', 'planning_runs', 'task_review_flags', 'tasks', 'milestones', 'goals', 'roadmaps'] as const) {
       await sql`delete from ${sql.ref(t)}`.execute(su.kysely);
     }
   });
@@ -259,5 +259,162 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
     expect(migs.rows.map((m) => m.name)).toContain('0026_planning');
+  });
+
+  // ── ACBP-P4-006 / CDR-041 — planning transparency (PLAN-004) ────────────────────────────────────────────
+
+  describe('planning runs + input snapshot (migration 0028)', () => {
+    /** SQLSTATE of a rejected operation, walking the cause chain (a normalized error's own `code` is the PLATFORM code). */
+    const sqlStateOf = (p: Promise<unknown>): Promise<string> =>
+      p.then(() => 'no-error').catch((e: unknown) => {
+        for (let cur: unknown = e, hops = 0; cur !== null && cur !== undefined && hops < 5; hops += 1) {
+          const node = cur as { code?: unknown; cause?: unknown };
+          if (typeof node.code === 'string' && /^[0-9A-Z]{5}$/.test(node.code)) return node.code;
+          cur = node.cause;
+        }
+        return /sqlstate=([0-9A-Z]{5})/.exec(String(e))?.[1] ?? 'unknown';
+      });
+
+    const insertRun = (a: string, c: string, roadmap: string, decision: string, over: Record<string, unknown> = {}) =>
+      asApp(scope(a, c), async (k) => {
+        const v = { mode: 'autonomous', outcome: 'ok', failure_reason: null, roadmap_version: 1, phase_scope: null, task_count: 3, tasks_missing_rationale: 0, milestones_in_scope: 2, milestones_omitted: 0, memory_items_considered: 5, memory_items_omitted: 0, ...over };
+        const r = await sql<{ id: string }>`insert into planning_runs (account_id, company_id, mode, outcome, failure_reason, roadmap_id, roadmap_version, decision_id, phase_scope, task_count, tasks_missing_rationale, milestones_in_scope, milestones_omitted, memory_items_considered, memory_items_omitted, created_by_user_id)
+          values (${a}::uuid, ${c}::uuid, ${v.mode}, ${v.outcome}, ${v.failure_reason}, ${roadmap}::uuid, ${v.roadmap_version}, ${decision}::uuid, ${v.phase_scope}, ${v.task_count}, ${v.tasks_missing_rationale}, ${v.milestones_in_scope}, ${v.milestones_omitted}, ${v.memory_items_considered}, ${v.memory_items_omitted}, ${userU}::uuid) returning id`.execute(k);
+        return r.rows[0]!.id;
+      });
+
+    test('a run records its snapshot, and its inputs link by closed kind', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      const ms = await insertMilestone(accountA, companyA1, rm, 0);
+      const run = await insertRun(accountA, companyA1, rm, decisionA);
+      await asApp(scope(accountA, companyA1), async (k) => {
+        for (const [kind, ref] of [
+          ['roadmap', rm],
+          ['decision', decisionA],
+          ['milestone', ms],
+        ] as const) {
+          await sql`insert into planning_run_inputs (account_id, company_id, run_id, kind, ref_id) values (${accountA}::uuid, ${companyA1}::uuid, ${run}::uuid, ${kind}, ${ref}::uuid)`.execute(k);
+        }
+      });
+      const rows = await sql<{ kind: string; ref_id: string }>`select kind, ref_id from planning_run_inputs where run_id = ${run}::uuid order by kind`.execute(su.kysely);
+      expect(rows.rows.map((r) => r.kind)).toEqual(['decision', 'milestone', 'roadmap']);
+      // An unknown kind is refused — the discriminator is closed so a typo cannot become a silent new category.
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`insert into planning_run_inputs (account_id, company_id, run_id, kind, ref_id) values (${accountA}::uuid, ${companyA1}::uuid, ${run}::uuid, 'vibes', ${rm}::uuid)`.execute(k)))).toBe('23514');
+    });
+
+    test('a FAILED run is recordable — "every planning run links its input snapshot" is unqualified (CDR-041 §3-G3)', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      // A failure must say WHY (shape CHECK) — `failed` alone would collapse three distinct causes into one word.
+      const run = await insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, tasks_missing_rationale: 0, failure_reason: 'generation' });
+      expect(run).toBeTruthy();
+      // Steering's honest answers are recordable too, are NOT failures, and carry NO failure reason.
+      for (const honest of ['clarification', 'refusal']) {
+        expect(await insertRun(accountA, companyA1, rm, decisionA, { mode: 'steered', outcome: honest, task_count: 0, tasks_missing_rationale: 0 })).toBeTruthy();
+      }
+    });
+
+    test('the outcome and the counts can never contradict each other', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      // `ok`/`partial` mean tasks were drafted; clarification/refusal/failed drafted none. A run claiming an outcome
+      // its counts contradict would be exactly the dishonest record PLAN-004 exists to prevent.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'ok', task_count: 0 }))).toBe('23514');
+      // A valid failure_reason is supplied so the OUTCOME/COUNT constraint is what refuses this, not the shape one.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 2, failure_reason: 'generation' }))).toBe('23514');
+      // More missing rationales than tasks is impossible — the pair is the "fully explained" summary an owner reads.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { task_count: 2, tasks_missing_rationale: 3 }))).toBe('23514');
+      // A failure MUST say why, and a non-failure must NOT — either would be its own kind of dishonest record.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: null }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'ok', failure_reason: 'generation' }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: 'because_reasons' }))).toBe('23514');
+      // The four legitimate reasons all insert.
+      for (const reason of ['generation', 'out_of_scope', 'stale_decision', 'stale_roadmap']) {
+        expect(await insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: reason })).toBeTruthy();
+      }
+      // Closed enums.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { mode: 'telepathy' }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'maybe' }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { phase_scope: 'half_a_phase' }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { memory_items_considered: -1 }))).toBe('23514');
+    });
+
+    test('BOTH tables are IMMUTABLE to the app role — a run is a historical record', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      const run = await insertRun(accountA, companyA1, rm, decisionA);
+      await asApp(scope(accountA, companyA1), (k) => sql`insert into planning_run_inputs (account_id, company_id, run_id, kind, ref_id) values (${accountA}::uuid, ${companyA1}::uuid, ${run}::uuid, 'roadmap', ${rm}::uuid)`.execute(k));
+      // 42501 exactly: the GRANT must be what refuses these, not a CHECK or a cast error.
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`update planning_runs set outcome = 'ok' where id = ${run}::uuid`.execute(k)))).toBe('42501');
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`delete from planning_runs where id = ${run}::uuid`.execute(k)))).toBe('42501');
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`update planning_run_inputs set kind = 'decision' where run_id = ${run}::uuid`.execute(k)))).toBe('42501');
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`delete from planning_run_inputs where run_id = ${run}::uuid`.execute(k)))).toBe('42501');
+    });
+
+    test('cross-tenant: a run can never reference another company\'s roadmap or decision (RI bypasses RLS)', async () => {
+      const rmA = await insertRoadmap(accountA, companyA1, decisionA);
+      // Company B naming company A's roadmap must fail at the FK, not merely be invisible: referential-integrity
+      // checks ALWAYS bypass row security, so a single-column FK would leak an existence oracle for foreign ids.
+      const state = await sqlStateOf(
+        asApp(scope(accountB, companyB1), (k) =>
+          sql`insert into planning_runs (account_id, company_id, mode, outcome, roadmap_id, roadmap_version, decision_id, phase_scope, task_count, tasks_missing_rationale, milestones_in_scope, memory_items_considered, created_by_user_id)
+            values (${accountB}::uuid, ${companyB1}::uuid, 'autonomous', 'ok', ${rmA}::uuid, 1, ${decisionA}::uuid, null, 1, 0, 1, 0, ${userU}::uuid)`.execute(k),
+        ),
+      );
+      expect(state).toBe('23503');
+      // And B cannot even see A's runs.
+      await insertRun(accountA, companyA1, rmA, decisionA);
+      const seen = await asApp(scope(accountB, companyB1), (k) => sql<{ n: number }>`select count(*)::int as n from planning_runs`.execute(k));
+      expect(seen.rows[0]?.n).toBe(0);
+    });
+
+    test('the same input recorded twice for one run is idempotent, not a duplicate', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      const run = await insertRun(accountA, companyA1, rm, decisionA);
+      const add = () =>
+        asApp(scope(accountA, companyA1), (k) =>
+          sql`insert into planning_run_inputs (account_id, company_id, run_id, kind, ref_id) values (${accountA}::uuid, ${companyA1}::uuid, ${run}::uuid, 'roadmap', ${rm}::uuid) on conflict (run_id, kind, ref_id) do nothing`.execute(k),
+        );
+      await add();
+      await add();
+      const n = await sql<{ n: number }>`select count(*)::int as n from planning_run_inputs where run_id = ${run}::uuid`.execute(su.kysely);
+      expect(n.rows[0]?.n).toBe(1);
+    });
+
+    test('tasks.rationale: nullable, bounded, and INSERT-ONLY (the (state, updated_at) grant is untouched)', async () => {
+      const rm = await insertRoadmap(accountA, companyA1, decisionA);
+      const ms = await insertMilestone(accountA, companyA1, rm, 0);
+      const mk = (rationale: string | null) =>
+        asApp(scope(accountA, companyA1), async (k) => {
+          const r = await sql<{ id: string }>`insert into tasks (account_id, company_id, title, state, milestone_id, rationale, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 'planned work', 'draft', ${ms}::uuid, ${rationale}, ${userU}::uuid) returning id`.execute(k);
+          return r.rows[0]!.id;
+        });
+      // NULL is legal: a missing rationale renders as "not recorded", never invented (PLAN-004 failure clause).
+      expect(await mk(null)).toBeTruthy();
+      const withReason = await mk('Highest-signal first contact.');
+      expect(withReason).toBeTruthy();
+      expect(await sqlStateOf(mk('x'.repeat(2001)))).toBe('23514');
+      // INSERT-ONLY, like task_type/priority from 0027.
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`update tasks set rationale = 'edited' where id = ${withReason}::uuid`.execute(k)))).toBe('42501');
+      expect((await sql<{ rationale: string | null }>`select rationale from tasks where id = ${withReason}::uuid`.execute(su.kysely)).rows[0]?.rationale).toBe('Highest-signal first contact.');
+    });
+
+    test('catalog: FORCE RLS + select/insert policies + SELECT/INSERT grants + no column UPDATE; 0028 applied', async () => {
+      for (const t of ['planning_runs', 'planning_run_inputs'] as const) {
+        const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = ${t} and relkind = 'r'`.execute(su.kysely);
+        expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+        const pols = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = ${t} order by cmd`.execute(su.kysely);
+        expect(pols.rows.map((p) => p.cmd)).toEqual(['INSERT', 'SELECT']);
+        const gr = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = ${t} order by privilege_type`.execute(su.kysely);
+        expect(gr.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT']);
+        const cols = await sql<{ n: number }>`select count(*)::int as n from information_schema.column_privileges where grantee = 'acbp_app' and table_schema = 'public' and table_name = ${t} and privilege_type = 'UPDATE'`.execute(su.kysely);
+        expect(cols.rows[0]?.n).toBe(0);
+      }
+      // 0028 adds NO new SECURITY DEFINER and no new grant on `tasks` — the closed allowlist stays exactly three, and
+      // the task column-UPDATE grant stays exactly (state, updated_at).
+      const definers = await sql<{ proname: string }>`select proname from pg_proc where prosecdef = true and pronamespace = 'public'::regnamespace order by proname`.execute(su.kysely);
+      expect(definers.rows.map((d) => d.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
+      const taskCols = await sql<{ column_name: string }>`select column_name from information_schema.column_privileges where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'tasks' and privilege_type = 'UPDATE' order by column_name`.execute(su.kysely);
+      expect(taskCols.rows.map((c) => c.column_name)).toEqual(['state', 'updated_at']);
+      const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
+      expect(migs.rows.map((m) => m.name)).toContain('0028_planning_transparency');
+    });
   });
 });

@@ -123,6 +123,26 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      Postgres: ADR-016 object storage is blocked on the provider selection (ACBP-P0-005). Task GENERATION is P4-003
      (CDR-039 §7-G3). No new SECURITY DEFINER / role / BYPASSRLS. -->
 
+<!-- IMPLEMENTED (ACBP-P4-006; CDR-041; PLAN-004): migration 0028 adds `planning_runs` + `planning_run_inputs` —
+     company-owned, dual-keyed FORCE RLS, SELECT+INSERT only (a run is a HISTORICAL RECORD of what planning
+     considered; rewriting it would defeat the requirement). One run row per planning invocation, autonomous or
+     steered, recorded even when generation FAILED — "every planning run links its input snapshot" is unqualified,
+     and a failed run is the one an owner most wants to inspect (§3-G3). Its `outcome` keeps steering's honest
+     `clarification`/`refusal` DISTINCT from `failed`, and two CHECKs make the record internally consistent: an
+     outcome can never contradict its task count, and a run can never report more missing rationales than tasks.
+     The snapshot LINKS, never COPIES (§3-G2): `planning_run_inputs` holds resolvable references under a CLOSED
+     `kind` discriminator (`roadmap` · `decision` · `milestone` · `memory_item` · `memory_item_withheld` · `metric` ·
+     `prior_result`), so adding metrics (P6-009) or prior results (Phase 5) is an INSERT, not a migration. A
+     MEM-004-conflicted item is linked as `memory_item_withheld` — considered and deliberately not used — because
+     omitting it would make the snapshot claim the item was never examined.
+     Both FKs to `roadmaps`/`decisions` are TENANT-PINNED composites (RI checks always bypass RLS), for which 0028
+     additively adds `(id, company_id)` UNIQUE to both parents.
+     0028 also adds `tasks.rationale` (PLAN-004's per-task "why"): nullable — a missing rationale renders as "not
+     recorded" and is COUNTED, never invented (ADR-019) — and INSERT-ONLY, with the `(state, updated_at)` column
+     grant untouched. This ticket also wires `assembleContext` into planning (AI-AND-WORKER §1 puts context assembly
+     first in every generation path; P4-003 had skipped it), which is what makes the memory links real rather than
+     always-empty. No new SECURITY DEFINER / role / BYPASSRLS. -->
+
 | Decision | C | decision_id | links understanding version + options considered + selection | recorded (terminal) | **I** | — | Permanent (with company) | decision.recorded | MVP |
 | Goal | C | goal_id | belongs to Roadmap | active→achieved/dropped | V | — | With company | roadmap versions | MVP |
 | Roadmap | C | roadmap_id, version | has Goals/Milestones; from Decision | versioned | V | — | With company | ROAD-002 versions | MVP |

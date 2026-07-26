@@ -122,6 +122,19 @@ Retention default: activity-projected events with company data; audit-relevant e
      behind it; EVENT-CATALOG registers none, and P4-006 owns the run/snapshot linkage (PLAN-004). The P4-003 backlog
      row's Audit = "roadmap.generated audited" is inherited boilerplate: that event is P4-001's, is subject-typed
      `roadmap`, and its metadata is already fixed. -->
+<!-- ACBP-P4-006 (CDR-041 §3-G6; PLAN-004) registers ONE new event, `planning.run_recorded`, subject type
+     `planning_run` — the run/snapshot linkage EVENT-CATALOG deferred to this ticket in the P4-003 note above.
+     AUDITED in-tx with the run row, its input links and the task drafts (ADR-015 audit-or-nothing). Bounded metadata
+     is scalars ONLY — {mode, outcome, task_count, tasks_missing_rationale, memory_items_considered,
+     milestones_in_scope} — never rationale text, task titles, or memory content; the exact input set is recoverable
+     from the immutable `planning_run_inputs` rows (audit metadata forbids arrays).
+     Its audit OUTCOME is `success` even for a run whose generation failed: the audited operation is RECORDING THE
+     RUN, which succeeded, and the run's own result is the `outcome` metadata scalar. This follows `strategy.selected`
+     recording a `reject` mode as metadata rather than as a non-success outcome, and keeps `denied`/`blocked`
+     meaningful for authorization and policy.
+     This does NOT contradict the P4-003 note: that rule holds because a DRAFT TASK is not on the board, and drafts
+     remain unaudited here. A planning RUN is a platform action taken on the owner's behalf — what ADR-015 audits.
+     Activity fan-out remains DEFERRED. -->
 | task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id (created: {has_milestone} only, P4-002), (run_id, attempt on started) | audited | with company |
 | task.waiting_for_input / task.waiting_for_approval | Coordinator | Decision Room, notification | task_id, blocking_ref (question/approval id) | audited | with company |
 | task.completed | Coordinator | activity, usage, documents | task_id, run_id, artifact_refs[] (**required — no artifactless completion without explicit no-artifact rationale, TASK-005**) | audited | with company |

@@ -316,4 +316,271 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
     expect((await sql<{ n: number }>`select count(*)::int as n from tasks where company_id = ${w.companyA2}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
     expect(await tasksFor()).toHaveLength(3);
   });
+
+  // ── ACBP-P4-006 / CDR-041 — planning transparency (PLAN-004) ────────────────────────────────────────────
+
+  describe('planning transparency: the run, its input snapshot, and the per-task rationale', () => {
+    const runsFor = async () =>
+      (
+        await sql<{ id: string; mode: string; outcome: string; failure_reason: string | null; task_count: number; tasks_missing_rationale: number; milestones_in_scope: number; milestones_omitted: number; memory_items_considered: number; memory_items_omitted: number; phase_scope: string | null; roadmap_version: number }>`
+        select id, mode, outcome, failure_reason, task_count, tasks_missing_rationale, milestones_in_scope, milestones_omitted, memory_items_considered, memory_items_omitted, phase_scope, roadmap_version from planning_runs where company_id = ${w.companyA1}::uuid order by created_at, id`.execute(owner.kysely)
+      ).rows;
+    const inputsFor = async (runId: string) => (await sql<{ kind: string; ref_id: string }>`select kind, ref_id from planning_run_inputs where run_id = ${runId}::uuid order by kind, ref_id`.execute(owner.kysely)).rows;
+    // `audit_events` stamps `occurred_at`, not `created_at` — the audit trail records when the event HAPPENED.
+    const runAudits = async () => (await sql<{ subject_id: string; payload: Record<string, unknown> }>`select subject_id, payload from audit_events where name = 'planning.run_recorded' and company_id = ${w.companyA1}::uuid order by occurred_at, event_id`.execute(owner.kysely)).rows;
+    const seedMemory = (content: string, sourceRef: string, type = 'user_fact', sourceType = 'interview_answer') =>
+      sql`insert into memory_items (account_id, company_id, type, content, source_type, source_ref, confirmation_state, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${type}, ${content}, ${sourceType}, ${sourceRef}, 'accepted', ${w.aOwner}::uuid)`.execute(owner.kysely);
+
+    test('PLAN-004: every run links its input snapshot — roadmap, decision, in-scope milestones AND memory items', async () => {
+      await seedChain('whole_plan');
+      await seedMemory('We sell to small clinics in Cairo.', 'q:customer');
+      await seedMemory('We cannot spend more than 5k a month.', 'q:budget', 'constraint');
+
+      const r = await generateTasks(product, base(), { gateway: okGateway() });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.memoryItemsConsidered).toBe(2);
+
+      const runs = await runsFor();
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ mode: 'autonomous', outcome: 'ok', task_count: 3, milestones_in_scope: 4, memory_items_considered: 2, phase_scope: 'whole_plan', roadmap_version: 1 });
+
+      const inputs = await inputsFor(runs[0]!.id);
+      // The link set is exactly: the roadmap, the decision, every in-scope milestone, and every memory item.
+      expect(inputs.filter((i) => i.kind === 'roadmap')).toHaveLength(1);
+      expect(inputs.filter((i) => i.kind === 'decision')).toHaveLength(1);
+      expect(inputs.filter((i) => i.kind === 'milestone')).toHaveLength(4);
+      expect(inputs.filter((i) => i.kind === 'memory_item')).toHaveLength(2);
+      // Every ref RESOLVES within this company (MEM-003 "resolvable source link") — a dangling link would be a
+      // snapshot that cannot actually be inspected.
+      const memIds = (await sql<{ id: string }>`select id from memory_items where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows.map((x) => x.id);
+      for (const i of inputs.filter((x) => x.kind === 'memory_item')) expect(memIds).toContain(i.ref_id);
+      expect(inputs.find((i) => i.kind === 'roadmap')!.ref_id).toBe(roadmapA);
+    });
+
+    test('the run is AUDITED in the same transaction, with counts only — never rationale text or memory content', async () => {
+      await seedChain('whole_plan');
+      await seedMemory('Our secret sauce is the roasting curve.', 'q:ops');
+      const withReasons = okGateway({ tasks: [planned({ rationale: 'Highest-signal first contact.' }), planned({ title: 'B', rationale: 'Cheapest to test.' }), planned({ title: 'C' })] });
+      const r = await generateTasks(product, base(), { gateway: withReasons });
+      expect(r.status).toBe('ok');
+
+      const audits = await runAudits();
+      expect(audits).toHaveLength(1);
+      const runs = await runsFor();
+      expect(audits[0]!.subject_id).toBe(runs[0]!.id);
+      expect(audits[0]!.payload).toEqual({ mode: 'autonomous', outcome: 'ok', task_count: 3, tasks_missing_rationale: 1, memory_items_considered: 1, milestones_in_scope: 4 });
+      // No free text of any kind reaches the audit row.
+      expect(JSON.stringify(audits[0]!.payload)).not.toMatch(/Highest-signal|Cheapest|roasting/);
+      // The DRAFT tasks remain unaudited — CDR-040 §7 is untouched by this ticket.
+      expect(await taskAudits()).toBe(0);
+    });
+
+    test('PLAN-004: the per-task rationale persists, and a MISSING one is "not recorded" rather than invented', async () => {
+      await seedChain('whole_plan');
+      const mixed = okGateway({ tasks: [planned({ rationale: 'Closes the fastest.' }), planned({ title: 'B' }), planned({ title: 'C', rationale: null })] });
+      const r = await generateTasks(product, base(), { gateway: mixed });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.tasksMissingRationale).toBe(2);
+
+      const rows = (await sql<{ rationale: string | null }>`select rationale from tasks where company_id = ${w.companyA1}::uuid order by priority`.execute(owner.kysely)).rows;
+      expect(rows.map((x) => x.rationale)).toEqual(['Closes the fastest.', null, null]);
+      expect((await runsFor())[0]).toMatchObject({ tasks_missing_rationale: 2, task_count: 3 });
+    });
+
+    test('a FAILED generation records a run with NO tasks — the failure is inspectable, not invisible', async () => {
+      await seedChain('whole_plan');
+      await seedMemory('We sell to small clinics.', 'q:customer');
+      expect((await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) })).status).toBe('generation_failed');
+      expect((await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'respond', output: 'not json' }, 4) })).status).toBe('generation_failed');
+
+      const runs = await runsFor();
+      expect(runs).toHaveLength(2);
+      expect(runs.every((x) => x.outcome === 'failed' && x.task_count === 0)).toBe(true);
+      // Still NO phantom tasks — a run row is not a task.
+      expect(await tasksFor()).toHaveLength(0);
+      // And the failed run still links what it considered, which is the whole point of inspecting it.
+      expect((await inputsFor(runs[0]!.id)).filter((i) => i.kind === 'memory_item')).toHaveLength(1);
+    });
+
+    test('steering records a run per outcome, keeping clarification and refusal DISTINCT from failure', async () => {
+      await seedChain('whole_plan');
+      await steerTaskPlanning(product, { ...base(), request: 'get me customers' }, { gateway: gatewayWith({ kind: 'respond', output: steerOutput() }, 4) });
+      await steerTaskPlanning(product, { ...base(), request: 'do the thing' }, { gateway: gatewayWith({ kind: 'respond', output: JSON.stringify({ outcome: 'clarification', question: 'Which segment?' }) }, 4) });
+      await steerTaskPlanning(product, { ...base(), request: 'file my taxes' }, { gateway: gatewayWith({ kind: 'respond', output: JSON.stringify({ outcome: 'refusal', reason: 'Outside this roadmap.' }) }, 4) });
+      await steerTaskPlanning(product, { ...base(), request: 'anything' }, { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) });
+
+      const runs = await runsFor();
+      expect(runs.map((x) => x.outcome)).toEqual(['ok', 'clarification', 'refusal', 'failed']);
+      expect(runs.every((x) => x.mode === 'steered')).toBe(true);
+      // Only the `ok` run drafted anything.
+      expect(runs.map((x) => x.task_count)).toEqual([1, 0, 0, 0]);
+      expect(await tasksFor()).toHaveLength(1);
+    });
+
+    test('a MEM-004-conflicted item is linked as WITHHELD — considered, deliberately not used', async () => {
+      await seedChain('whole_plan');
+      // A confirmed user fact + an AI assumption on the SAME source_ref is the MEM-004 conflict: both are held out of
+      // the model context and surfaced instead. The snapshot must say so rather than imply they were never examined.
+      await seedMemory('Our target is small clinics.', 'question:7');
+      await seedMemory('Assuming the target is large chains.', 'question:7', 'ai_assumption', 'model_generation');
+      await seedMemory('We are based in Cairo.', 'q:location');
+
+      const r = await generateTasks(product, base(), { gateway: okGateway() });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.memoryItemsConsidered).toBe(1);
+
+      const runs = await runsFor();
+      const inputs = await inputsFor(runs[0]!.id);
+      expect(inputs.filter((i) => i.kind === 'memory_item')).toHaveLength(1);
+      expect(inputs.filter((i) => i.kind === 'memory_item_withheld')).toHaveLength(2);
+      // The run's own count is the USED items only — the withheld pair is linked but not counted as considered-and-used.
+      expect(runs[0]!.memory_items_considered).toBe(1);
+    });
+
+    test('audit-or-nothing: an in-tx audit failure rolls back the run, its links AND the drafts (ADR-015)', async () => {
+      await seedChain('whole_plan');
+      const boom = () => Promise.reject(new Error('audit write failed'));
+      await expect(generateTasks(product, base(), { gateway: okGateway() }, { auditWriter: boom })).rejects.toThrow();
+      // Nothing survives: no tasks, no run, no links. A reader can never find tasks whose run was never recorded.
+      expect(await tasksFor()).toHaveLength(0);
+      expect(await runsFor()).toHaveLength(0);
+      expect((await sql<{ n: number }>`select count(*)::int as n from planning_run_inputs where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
+    });
+
+    test('a gateway failure DURING a stale decision still records ONE valid run — the two failure causes must not collide', async () => {
+      // The produce-nothing path also reaches the staleness branch with an empty task list, so deriving the run's
+      // outcome from "was it about to draft?" alone yielded ('failed', null) — which the shape CHECK rejects, rolling
+      // back the whole transaction and leaving NO run at all for exactly the run an owner wants to inspect.
+      await seedChain('whole_plan');
+      const r = await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) }, { beforePersist: async () => void (await seedRejectDecision()) });
+      expect(r.status).toBe('generation_failed');
+      const runs = await runsFor();
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ outcome: 'failed', task_count: 0 });
+      expect(runs[0]!.failure_reason).toBe('generation');
+      expect(await tasksFor()).toHaveLength(0);
+    });
+
+    test('a run-record failure on a produce-nothing path still returns the TYPED failure, and leaves nothing behind', async () => {
+      // PLAN-001 asks that planning failure be "visible with reason". Surfacing it as an unhandled exception — because
+      // the transparency record could not be written — would make the feature the reason the caller crashes. No drafts
+      // are in flight on this path, so audit-or-nothing has nothing to protect.
+      await seedChain('whole_plan');
+      const boom = () => Promise.reject(new Error('audit write failed'));
+      const r = await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) }, { auditWriter: boom });
+      expect(r.status).toBe('generation_failed');
+      expect(await runsFor()).toHaveLength(0);
+      expect(await tasksFor()).toHaveLength(0);
+      expect((await sql<{ n: number }>`select count(*)::int as n from planning_run_inputs where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
+      // Steering's honest answers behave identically — still the honest answer, still nothing persisted.
+      const out = JSON.stringify({ outcome: 'refusal', reason: 'Outside this roadmap.' });
+      const s = await steerTaskPlanning(product, { ...base(), request: 'file my taxes' }, { gateway: gatewayWith({ kind: 'respond', output: out }, 4) }, { auditWriter: boom });
+      expect(s.status).toBe('refused');
+      expect(await runsFor()).toHaveLength(0);
+    });
+
+    test('stale_decision and stale_roadmap still RECORD the abandoned run (CDR-041 §3-G3)', async () => {
+      await seedChain('whole_plan');
+      const stale = await generateTasks(product, base(), { gateway: okGateway() }, { beforePersist: async () => void (await seedRejectDecision()) });
+      expect(stale.status).toBe('stale_decision');
+      expect(await tasksFor()).toHaveLength(0);
+      const runs = await runsFor();
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ outcome: 'failed', task_count: 0 });
+    });
+
+    test('degrades honestly when memory is UNREADABLE: planning still works and records ZERO considered (CDR-041 §3-G9)', async () => {
+      // The branch is unreachable through authz today (`memory:read` and `task:generate` carry the same roles), so the
+      // denial is INJECTED. Asserting it via a viewer who can in fact read memory would be a tautology that passes
+      // identically against an implementation that always assembles and one that never does.
+      await seedChain('whole_plan');
+      await seedMemory('We sell to small clinics.', 'q:customer');
+      const denied = () => Promise.resolve({ status: 'forbidden' as const });
+      const r = await generateTasks(product, base(), { gateway: okGateway() }, { contextAssembler: denied });
+      // The plan still happens — a caller who may plan but not read memory keeps the capability they hold.
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.memoryItemsConsidered).toBe(0);
+      expect(await tasksFor()).toHaveLength(3);
+      const runs = await runsFor();
+      // And the run says so truthfully: no memory links, despite a memory item existing.
+      expect(runs[0]!.memory_items_considered).toBe(0);
+      expect((await inputsFor(runs[0]!.id)).filter((i) => i.kind.startsWith('memory_item'))).toHaveLength(0);
+    });
+
+    test('a PARTIAL plan is recorded as `partial` with its tasks — the outcome/count CHECK is satisfied end to end', async () => {
+      // The one outcome where the DB CHECK sits closest to the code (`parsed.partial || pre.milestonesOmitted > 0`).
+      // A regression letting a partial reach the insert with 0 tasks would surface as a raw 23514, untested.
+      await seedChain('whole_plan');
+      const honestPartial = gatewayWith({ kind: 'respond', output: JSON.stringify({ tasks: [planned({ rationale: 'Only one I can defend.' })], partial: true }) }, 4);
+      const r = await generateTasks(product, base(), { gateway: honestPartial });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.partial).toBe(true);
+      const runs = await runsFor();
+      expect(runs[0]).toMatchObject({ outcome: 'partial', task_count: 1, tasks_missing_rationale: 0 });
+      expect(runs[0]!.failure_reason).toBeNull();
+    });
+
+    test('a failed run records WHY it failed — the three causes are never collapsed into one word', async () => {
+      await seedChain('whole_plan');
+      // (1) the model failed.
+      await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) });
+      // (2) the owner's own decision changed mid-run.
+      await generateTasks(product, base(), { gateway: okGateway() }, { beforePersist: async () => void (await seedRejectDecision()) });
+      const runs = await runsFor();
+      expect(runs.map((x): string | null => x.failure_reason)).toEqual(['generation', 'stale_decision']);
+      // An owner inspecting an empty run can tell a model failure from their own concurrent change.
+      expect(runs.every((x) => x.outcome === 'failed' && x.task_count === 0)).toBe(true);
+    });
+
+    test('a clarification during a stale decision stays a CLARIFICATION — staleness only invalidates a run that drafts', async () => {
+      // Nothing was going to be written, so the owner's decision change does not make the model's honest question
+      // untrue. Recording it as `failed` would be the exact conflation the outcome enum exists to prevent.
+      await seedChain('whole_plan');
+      const out = JSON.stringify({ outcome: 'clarification', question: 'Which segment?' });
+      const r = await steerTaskPlanning(product, { ...base(), request: 'do the thing' }, { gateway: gatewayWith({ kind: 'respond', output: out }, 4) }, { beforePersist: async () => void (await seedRejectDecision()) });
+      expect(r.status).toBe('clarification_needed');
+      const runs = await runsFor();
+      expect(runs[0]).toMatchObject({ outcome: 'clarification', task_count: 0 });
+      expect(runs[0]!.failure_reason).toBeNull();
+    });
+
+    test('the memory block is BOUNDED, and the run links only what actually fit (no fabricated traceability)', async () => {
+      // Assembly returns up to 200 items and an item may hold 10,000 chars. Unbounded, a thoroughly-interviewed
+      // company would ship a vast prompt on every call — and a truncating provider would leave the run linking items
+      // the model never read. Whole items only, and `memory_items_considered` counts what was SHOWN.
+      await seedChain('whole_plan');
+      const big = 'x'.repeat(5_000);
+      for (let i = 0; i < 5; i += 1) await seedMemory(`${big} ${i}`, `q:big-${i}`);
+      const r = await generateTasks(product, base(), { gateway: okGateway() });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      // Some were dropped for size, and BOTH numbers are reported rather than one silently absorbing the other.
+      expect(r.memoryItemsConsidered).toBeGreaterThan(0);
+      expect(r.memoryItemsConsidered).toBeLessThan(5);
+      const runs = await runsFor();
+      expect(runs[0]!.memory_items_considered).toBe(r.memoryItemsConsidered);
+      expect(runs[0]!.memory_items_omitted).toBe(5 - r.memoryItemsConsidered);
+      // The LINKS match what was shown — never the full set.
+      expect((await inputsFor(runs[0]!.id)).filter((i) => i.kind === 'memory_item')).toHaveLength(r.memoryItemsConsidered);
+    });
+
+    test('planning does NOT re-audit MEM-004 conflicts on every run (append-only store must not accumulate duplicates)', async () => {
+      await seedChain('whole_plan');
+      await seedMemory('Our target is small clinics.', 'question:7');
+      await seedMemory('Assuming the target is large chains.', 'question:7', 'ai_assumption', 'model_generation');
+      await generateTasks(product, base(), { gateway: okGateway() });
+      await generateTasks(product, base(), { gateway: okGateway() });
+      const conflictAudits = (await sql<{ n: number }>`select count(*)::int as n from audit_events where name = 'context.conflict_flagged' and company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n;
+      expect(conflictAudits).toBe(0);
+      // The conflict is still recorded per-run, durably and without duplication, as withheld input links.
+      const runs = await runsFor();
+      expect(runs).toHaveLength(2);
+      for (const run of runs) expect((await inputsFor(run.id)).filter((i) => i.kind === 'memory_item_withheld')).toHaveLength(2);
+    });
+  });
 });

@@ -32,12 +32,21 @@ export function isTaskType(v: unknown): v is TaskType {
   return typeof v === 'string' && (TASK_TYPES as readonly string[]).includes(v);
 }
 
-/** The gateway output-schema refs (the composition dispatches validateOutput on these). */
-export const TASK_PLAN_SCHEMA = 'planning.tasks.output@1';
-export const TASK_STEERING_SCHEMA = 'planning.task_steering.output@1';
+/**
+ * The gateway output-schema refs (the composition dispatches validateOutput on these).
+ *
+ * At **@2** since ACBP-P4-006: each task may carry a `rationale` (PLAN-004 "why the top tasks were chosen"). Adding a
+ * field changes the contract the model is held to, and the schema ref is the unit of versioning (CDR-041 §3-G5). @1 is
+ * not retained — nothing persisted references it, and a dead ref invites a caller to pin a version with no reason
+ * behind it. Steering bumps too: its task members carry the same new field.
+ */
+export const TASK_PLAN_SCHEMA = 'planning.tasks.output@2';
+export const TASK_STEERING_SCHEMA = 'planning.task_steering.output@2';
 
 export const PLANNED_TASK_TITLE_MAX = 200;
 export const PLANNED_TASK_DESCRIPTION_MAX = 4_000;
+/** PLAN-004's per-task "why". Bounded like every other model-authored string that reaches the database. */
+export const PLANNED_TASK_RATIONALE_MAX = 2_000;
 export const STEERING_REQUEST_MAX = 2_000;
 export const STEERING_MESSAGE_MAX = 1_000;
 /** A bound on how many tasks one planning run may propose — a plan, not a dump. */
@@ -55,6 +64,11 @@ export interface PlannedTaskInput {
   readonly taskType: TaskType | null;
   /** The milestone this task serves, by ordinal within the roadmap shown to the model. Never dangling. */
   readonly milestoneOrdinal: number;
+  /**
+   * PLAN-004: why THIS task was chosen. `null` means the model did not give one, and it renders as "not recorded" —
+   * never fabricated (ADR-019), the same treatment `taskType` gets. See {@link countMissingRationale}.
+   */
+  readonly rationale: string | null;
 }
 
 export interface TaskPlanOutput {
@@ -78,11 +92,19 @@ function title(v: unknown): string | undefined {
   const t = v.trim();
   return t.length === 0 || t.length > PLANNED_TASK_TITLE_MAX ? undefined : t;
 }
-function description(v: unknown): string | null | undefined {
+/**
+ * A bounded string that MAY be absent. Three outcomes, deliberately distinct:
+ *   `null`      — absent, explicitly null, or whitespace-only. The honest "not stated".
+ *   `undefined` — present but UNUSABLE (not a string, or over the bound). A rejection, never a silent null: nulling a
+ *                 structurally wrong value would let a malformed payload masquerade as an honest omission.
+ *   the trimmed text otherwise.
+ * The caller decides whether `null` is acceptable for its field.
+ */
+function optionalText(v: unknown, max: number): string | null | undefined {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string') return undefined;
   const t = v.trim();
-  if (t.length > PLANNED_TASK_DESCRIPTION_MAX) return undefined;
+  if (t.length > max) return undefined;
   return t.length === 0 ? null : t;
 }
 /** A bounded non-blank message (a clarifying question, a refusal reason, or the interpreted intent). */
@@ -99,8 +121,11 @@ function message(v: unknown, max: number): string | undefined {
 function plannedTask(raw: unknown, milestoneCount: number): PlannedTaskInput | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const t = title((raw as { title?: unknown }).title);
-  const d = description((raw as { description?: unknown }).description);
-  if (t === undefined || d === undefined) return undefined;
+  const d = optionalText((raw as { description?: unknown }).description, PLANNED_TASK_DESCRIPTION_MAX);
+  // PLAN-004: the "why". Unlike the description, a MISSING one is legal — the model must never invent a reason it does
+  // not have (ADR-019) — but a malformed one is still a rejection (see `optionalText`).
+  const rationale = optionalText((raw as { rationale?: unknown }).rationale, PLANNED_TASK_RATIONALE_MAX);
+  if (t === undefined || d === undefined || rationale === undefined) return undefined;
   // PLAN-001: "each has type and description". The DESCRIPTION is required — it is the model's own prose about what
   // doing the task involves, so demanding it guesses nothing, and a description-less task is not a plannable task.
   // (The TYPE stays optional: it comes from a closed set, and forcing a choice the model cannot justify WOULD be a
@@ -116,7 +141,7 @@ function plannedTask(raw: unknown, milestoneCount: number): PlannedTaskInput | u
   }
   const rawOrdinal = (raw as { milestone_ordinal?: unknown }).milestone_ordinal;
   if (typeof rawOrdinal !== 'number' || !Number.isInteger(rawOrdinal) || rawOrdinal < 0 || rawOrdinal >= milestoneCount) return undefined;
-  return { title: t, description: d, taskType, milestoneOrdinal: rawOrdinal };
+  return { title: t, description: d, taskType, milestoneOrdinal: rawOrdinal, rationale };
 }
 
 /** Every task list must be non-empty, bounded, and (for autonomous planning) meet PLAN-001's 3+ unless flagged partial. */
@@ -239,13 +264,16 @@ function narrowTasks(raw: readonly unknown[], milestoneCount: number): PlannedTa
   const tasks: PlannedTaskInput[] = [];
   for (const t of raw) {
     if (typeof t !== 'object' || t === null) return undefined;
-    const { title: ti, description: d, taskType, milestoneOrdinal: o } = t as { title?: unknown; description?: unknown; taskType?: unknown; milestoneOrdinal?: unknown };
+    const { title: ti, description: d, taskType, milestoneOrdinal: o, rationale: r } = t as { title?: unknown; description?: unknown; taskType?: unknown; milestoneOrdinal?: unknown; rationale?: unknown };
     if (!usableText(ti, PLANNED_TASK_TITLE_MAX)) return undefined;
     // PLAN-001 requires a description on every task (see `plannedTask`) — the backstop enforces it too.
     if (!usableText(d, PLANNED_TASK_DESCRIPTION_MAX)) return undefined;
     if (taskType !== null && !isTaskType(taskType)) return undefined;
     if (typeof o !== 'number' || !Number.isInteger(o) || o < 0 || o >= milestoneCount) return undefined;
-    tasks.push({ title: ti as string, description: d as string, taskType, milestoneOrdinal: o });
+    // PLAN-004 rationale: absent/null is the honest "not recorded"; anything present must be usable text. Mirrors the
+    // parse exactly, because the validator that produced this object is INJECTED and may not be the parser.
+    if (r !== undefined && r !== null && !usableText(r, PLANNED_TASK_RATIONALE_MAX)) return undefined;
+    tasks.push({ title: ti as string, description: d as string, taskType, milestoneOrdinal: o, rationale: r === undefined || r === null ? null : (r as string).trim() });
   }
   return tasks;
 }
@@ -257,6 +285,15 @@ function narrowTasks(raw: readonly unknown[], milestoneCount: number): PlannedTa
  */
 export function countMissingType(tasks: readonly PlannedTaskInput[]): number {
   return tasks.reduce((n, t) => (t.taskType === null ? n + 1 : n), 0);
+}
+
+/**
+ * How many planned tasks carry NO rationale (PLAN-004). Same honesty rule as {@link countMissingType}: the shortfall is
+ * reported so it can be rendered as "not recorded" and counted, rather than disappearing into a run that presents
+ * itself as fully explained.
+ */
+export function countMissingRationale(tasks: readonly PlannedTaskInput[]): number {
+  return tasks.reduce((n, t) => (t.rationale === null ? n + 1 : n), 0);
 }
 
 /** The bounded natural-language request an owner types into the steering surface (PLAN-002). */

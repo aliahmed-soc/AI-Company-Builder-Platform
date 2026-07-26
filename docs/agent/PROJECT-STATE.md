@@ -9,6 +9,35 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-006 planning transparency — CORE DONE / IN REVIEW (5th autonomous window).**
+  Branch `p4-006-planning-transparency` (from main `6274cd3`, after P4-003 merged), draft PR **#41**, CDR-041.
+  PLAN-004: every planning run links its input snapshot and a per-task rationale. Migration **0028** adds
+  `planning_runs` + `planning_run_inputs` (company-owned, dual-keyed FORCE RLS, SELECT+INSERT only — a run is a
+  historical record) and `tasks.rationale` (nullable, INSERT-ONLY, the `(state, updated_at)` grant untouched).
+  **The load-bearing reading (CDR-041 §2):** P4-003's `generateTasks` built its prompt from roadmap milestones alone
+  and never called `assembleContext`, so planning considered NO memory. Snapshotting that would satisfy PLAN-004's
+  letter while its honest answer stayed "the roadmap, and nothing the founder ever told us". PLAN-004 depends on
+  MEM-003 and AI-AND-WORKER §1 puts context assembly first in every generation path, so this ticket WIRES ASSEMBLY IN
+  rather than recording a knowingly incomplete input set. It changes what planning READS only — every P4-003 guarantee
+  (STRAT-005 boundary, PLAN-001 minimum, partial honesty, no phantom tasks, drafts unaudited) holds unchanged.
+  The run + its links + ONE new audit event (`planning.run_recorded`, scalars only) are written in the SAME
+  transaction as the drafts (ADR-015). The run is recorded even when generation FAILED (§3-G3) — a run row is not a
+  task, so "no phantom tasks" is untouched. Steering's clarification/refusal stay DISTINCT outcomes from failed.
+  `assembleContext` gained an ADDITIVE `itemIds`/`withheldItemIds` return (§3-G8); P2-007 behaviour is unchanged.
+  Commits: CDR `b85fcdb` → contracts `9a59443` → migration 0028 `2c23458` → assembly `47fe3b5` → wiring `f120550`
+  → docs `7d6dc03` → CI fix `98784c5` → review-pass-1 fixes.
+  Hosted CI green zero-skip twice already: **1828/1828** at `2c23458` (migration in isolation) and **1839/1839** at
+  `98784c5` (the whole wiring).
+  Review pass 1: **FAIL** — 2 High, 6 Medium, 3 Low, all applied. Both Highs were consequences of wiring assembly in:
+  an UNBOUNDED memory prompt (the roadmap half was capped, the memory half was not — and a truncating provider would
+  have left the run linking items the model never read), and untrusted-origin memory arriving as `system` messages
+  AHEAD of the instruction saying it is not instructions. See `docs/implementation/P4-006-REVIEW-COVERAGE.md`.
+  **The `BACKLOG.csv` row already reads `Done`** — written in this ticket's finalization commit as in every prior
+  ticket, and NOT the completion claim: done means exact-head CI zero-skip → squash-merge → exact-main CI zero-skip →
+  branch deleted. Until then this line, not the CSV, is the true state.
+  Next: review pass 2 against the fixed tree → exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete.
+  Migrations end **0028**.
+- **ACBP-P4-003 task generation + chat steering — DONE** (squash `6274cd3`, PR #40; exact-main CI green zero-skip 1802/1802; branch deleted). Phase 4 3/7.
 - **ACBP-P4-003 task generation + chat steering — CORE DONE / IN REVIEW (4th autonomous window).**
   Branch `p4-003-task-generation` (from main `00a580d`, after P4-001 merged), draft PR **#40**, CDR-040.
   `generateTasks` (PLAN-001: 3+ prioritized, typed, milestone-traced tasks or an honest partial) and

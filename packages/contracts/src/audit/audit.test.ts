@@ -31,6 +31,7 @@ import {
   decisionRecorded,
   roadmapGenerated,
   roadmapEdited,
+  planningRunRecorded,
   type AuditEventName,
 } from './index.js';
 
@@ -113,6 +114,8 @@ describe('event-name registry (deny unregistered)', () => {
       // Planning (ACBP-P4-001; CDR-039 §5; ROAD-001/002).
       'roadmap.generated',
       'roadmap.edited',
+      // Planning transparency (ACBP-P4-006; CDR-041 §3-G6; PLAN-004).
+      'planning.run_recorded',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -327,5 +330,21 @@ describe('typed factories', () => {
     expect(ev).toEqual({ name: 'roadmap.edited', schemaVersion: 1, subjectType: 'roadmap', subjectId: 'rm_3', outcome: 'success', metadata: { roadmap_version: 2, supersedes_version: 1, affected_task_count: 4, has_reason: true } });
     // No key anywhere carries free text.
     expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'number' || typeof v === 'boolean')).toBe(true);
+  });
+
+  test('planningRunRecorded: counts only — never rationale text, task titles, or memory content (PLAN-004)', () => {
+    const ev = planningRunRecorded({ runId: 'pr_1', mode: 'autonomous', outcome: 'partial', taskCount: 3, tasksMissingRationale: 1, memoryItemsConsidered: 7, milestonesInScope: 2 });
+    expect(ev).toEqual({ name: 'planning.run_recorded', schemaVersion: 1, subjectType: 'planning_run', subjectId: 'pr_1', outcome: 'success', metadata: { mode: 'autonomous', outcome: 'partial', task_count: 3, tasks_missing_rationale: 1, memory_items_considered: 7, milestones_in_scope: 2 } });
+    // Scalars only, and no arrays (AuditMetadata forbids them — the exact input set lives in planning_run_inputs).
+    expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'number' || typeof v === 'string')).toBe(true);
+    expect(Object.values(ev.metadata ?? {}).some((v) => Array.isArray(v))).toBe(false);
+  });
+
+  test('a FAILED run is still audited with a success OUTCOME — the audited operation is recording the run', () => {
+    // CDR-041 §3-G3/G6: the run's own result is metadata. Reserving `denied`/`blocked` for authorization and policy
+    // keeps those outcomes meaningful, and mirrors `strategy.selected` recording a `reject` mode as metadata.
+    const ev = planningRunRecorded({ runId: 'pr_2', mode: 'steered', outcome: 'failed', taskCount: 0, tasksMissingRationale: 0, memoryItemsConsidered: 0, milestonesInScope: 4 });
+    expect(ev.outcome).toBe('success');
+    expect(ev.metadata?.['outcome']).toBe('failed');
   });
 });

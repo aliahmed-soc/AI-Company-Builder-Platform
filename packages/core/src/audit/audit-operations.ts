@@ -40,6 +40,7 @@ import {
   decisionRecorded,
   roadmapGenerated,
   roadmapEdited,
+  planningRunRecorded,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -88,6 +89,8 @@ export const AUDITED_OPERATIONS = {
   // Planning (ACBP-P4-001; CDR-039 §5; ROAD-001/002) - a roadmap version was planned, or authored by an owner edit.
   'roadmap.generate': 'roadmap.generated',
   'roadmap.edit': 'roadmap.edited',
+  // Planning transparency (ACBP-P4-006; CDR-041 §3-G6; PLAN-004) - a planning run + its linked input snapshot.
+  'planning.run_record': 'planning.run_recorded',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -105,7 +108,7 @@ export type ContextAuditedOperation = 'context.flag-conflict';
 export type TaskAuditedOperation = 'task.plan';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
-export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit';
+export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -117,7 +120,7 @@ export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] =
 export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan'];
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
-export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit'];
+export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
@@ -202,6 +205,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => roadmapGenerated({ roadmapId: subjectId, roadmapVersion: 1, goalCount: 1, milestoneCount: 1, status: 'complete', modelFlaggedPartial: false });
     case 'roadmap.edit':
       return (subjectId) => roadmapEdited({ roadmapId: subjectId, roadmapVersion: 2, supersedesVersion: 1, affectedTaskCount: 0, hasReason: true });
+    case 'planning.run_record':
+      return (subjectId) => planningRunRecorded({ runId: subjectId, mode: 'autonomous', outcome: 'ok', taskCount: 3, tasksMissingRationale: 0, memoryItemsConsidered: 0, milestonesInScope: 1 });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

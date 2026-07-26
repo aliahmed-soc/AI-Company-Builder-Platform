@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -79,6 +79,10 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   goals: ['INSERT', 'SELECT'],
   milestones: ['INSERT', 'SELECT'],
   task_review_flags: ['INSERT', 'SELECT'],
+  // Planning transparency (ACBP-P4-006; CDR-041; PLAN-004): a run is a historical record of what planning considered,
+  // so rewriting it would defeat the requirement — SELECT+INSERT only, like every other immutable planning table.
+  planning_runs: ['INSERT', 'SELECT'],
+  planning_run_inputs: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -211,7 +215,7 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect(byTable.get('decisions') ?? []).toEqual([]);
     // Planning (ACBP-P4-001): roadmaps are versioned append-only and goals/milestones/flags immutable — a roadmap is
     // revised by writing a NEW version, never by updating a column, so none of them carry a column UPDATE grant.
-    for (const t of ['roadmaps', 'goals', 'milestones', 'task_review_flags']) {
+    for (const t of ['roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs']) {
       expect(byTable.get(t) ?? []).toEqual([]);
     }
   });

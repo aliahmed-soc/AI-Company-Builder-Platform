@@ -69,7 +69,7 @@ export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, ListTasksOptio
 export { StrategyRepository } from './strategy-repository.js';
 export type { StrategyExecutor, NewStrategyGenerationInput, NewStrategyOptionInput, NewStrategyRecommendationInput, NewStrategySelectionInput, NewDecisionInput, ListStrategyGenerationsOptions } from './strategy-repository.js';
 export { PlanningRepository, CLOSED_TASK_STATES } from './planning-repository.js';
-export type { PlanningExecutor, NewRoadmapInput, NewGoalInput, NewMilestoneInput, NewTaskReviewFlagInput } from './planning-repository.js';
+export type { PlanningExecutor, NewRoadmapInput, NewGoalInput, NewMilestoneInput, NewTaskReviewFlagInput, NewPlanningRunFields, NewPlanningRunInputLink } from './planning-repository.js';
 
 // The PURPOSE-SPECIFIC platform-admin tenant-read primitive (ACBP-P1-013; CDR-019). Exactly ONE audited
 // operation; consumed solely by @acbp/core's admin module. NOT a generic cross-tenant tool — no runAsTenant/
@@ -190,6 +190,12 @@ export type {
   TaskReviewFlagsTable,
   TaskReviewFlagRow,
   NewTaskReviewFlag,
+  PlanningRunsTable,
+  PlanningRunRow,
+  NewPlanningRun,
+  PlanningRunInputsTable,
+  PlanningRunInputRow,
+  NewPlanningRunInput,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from
