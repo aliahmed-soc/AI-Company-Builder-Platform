@@ -304,9 +304,10 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
 
     test('a FAILED run is recordable — "every planning run links its input snapshot" is unqualified (CDR-041 §3-G3)', async () => {
       const rm = await insertRoadmap(accountA, companyA1, decisionA);
-      const run = await insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, tasks_missing_rationale: 0 });
+      // A failure must say WHY (shape CHECK) — `failed` alone would collapse three distinct causes into one word.
+      const run = await insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, tasks_missing_rationale: 0, failure_reason: 'generation' });
       expect(run).toBeTruthy();
-      // Steering's honest answers are recordable too, and are NOT failures.
+      // Steering's honest answers are recordable too, are NOT failures, and carry NO failure reason.
       for (const honest of ['clarification', 'refusal']) {
         expect(await insertRun(accountA, companyA1, rm, decisionA, { mode: 'steered', outcome: honest, task_count: 0, tasks_missing_rationale: 0 })).toBeTruthy();
       }
@@ -317,7 +318,8 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
       // `ok`/`partial` mean tasks were drafted; clarification/refusal/failed drafted none. A run claiming an outcome
       // its counts contradict would be exactly the dishonest record PLAN-004 exists to prevent.
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'ok', task_count: 0 }))).toBe('23514');
-      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 2 }))).toBe('23514');
+      // A valid failure_reason is supplied so the OUTCOME/COUNT constraint is what refuses this, not the shape one.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 2, failure_reason: 'generation' }))).toBe('23514');
       // More missing rationales than tasks is impossible — the pair is the "fully explained" summary an owner reads.
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { task_count: 2, tasks_missing_rationale: 3 }))).toBe('23514');
       // A failure MUST say why, and a non-failure must NOT — either would be its own kind of dishonest record.
