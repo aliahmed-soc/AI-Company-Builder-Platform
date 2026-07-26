@@ -24,9 +24,18 @@ ticket without a DONE line above it is genuinely in flight._
   owner is stalled, not progressing. `recurring`/`rejected` declare `not_in_this_version` rather than looking empty.
   Dependencies are indexed BOTH ways (a stuck task's cost is what waits behind it) from ONE company-wide query, and a
   prerequisite outside the page BLOCKS — fail closed.
-  Commits: CDR `0d3ecf0` → window-reset note `39a779b` → contracts `504c439` → core `a278d54`.
-  Next: docs → TWO independent review passes → exact-head CI zero-skip → squash-merge → exact-main CI zero-skip →
-  delete branch.
+  Commits: CDR `0d3ecf0` → window-reset note `39a779b` → contracts `504c439` → core `a278d54` → docs `fd541fb` →
+  review-pass-1 fixes `1faaefc` → review-pass-2 fixes `aecad4d`.
+  **Both review passes returned FAIL**, and four of the ten most serious findings were defects in my own review fixes.
+  Pass 1's HIGH-2 was product-breaking: the page limit was applied to an unfiltered newest-first query, so a planning
+  run's drafts would have rendered every bucket EMPTY while planned work existed. Pass 2's HIGH was a regression
+  introduced by pass 1's own fix: filtering draft/unresolvable prerequisites before the blocked derivation turned
+  fail-CLOSED into fail-OPEN, reporting work as ready while its input did not exist. See
+  `docs/implementation/P4-004-REVIEW-COVERAGE.md`.
+  **TASK-001 is NOT fully satisfied by this ticket** — `recurring` and `rejected` remain unreachable pending
+  PLAN-003/TASK-003 (Post-MVP) and P4-005. The ticket delivers the VIEWS it was scoped to.
+  Exact-head CI green zero-skip **1894/1894** at `aecad4d`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch.
 - **ACBP-P4-006 planning transparency — DONE** (squash `b8dc466`, PR #41; exact-main CI green zero-skip 1846/1846; branch deleted). Phase 4 4/7.
 - **ACBP-P4-006 planning transparency — CORE DONE / IN REVIEW (5th autonomous window).**
   Branch `p4-006-planning-transparency` (from main `6274cd3`, after P4-003 merged), draft PR **#41**, CDR-041.
