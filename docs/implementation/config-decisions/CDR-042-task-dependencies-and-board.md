@@ -56,10 +56,28 @@ would be fabricating a mechanism the evidence never observed, and would silently
   surface — indistinguishable from one actively running, and TASK-001's failure clause ("stuck tasks time out to
   Failed with reason") shows canon treats stuck-ness as a first-class concern. This is a bucket the reference product
   did not have; it is added because hiding it would be dishonest, not to add a feature.
-- **G5 — the projection is TOTAL and closed.** Every one of the eleven states maps to exactly one bucket, asserted by
-  a compile-exhaustive switch plus a test that iterates `TASK_STATES`. An unrecognized value renders as `unknown` —
-  never silently dropped from the board and never folded into a healthy bucket (the `toTaskDisplayPhase` precedent).
-  A task that vanished from every bucket would be worse than one in the wrong bucket: it would be invisible.
+- **G5 — the projection is TOTAL and closed.** Every one of the eleven states maps to exactly one bucket. Enforced by
+  narrowing with `isTaskState` BEFORE the switch so the `default` branch assigns to `never` — a twelfth state fails
+  the build. (Switching on `state as TaskState` would have left `state` un-narrowed and the `default` unchecked, so
+  the earlier claim of compile-exhaustiveness was false; a test over `TASK_STATES` backs it up regardless.) An
+  unrecognized value renders as `unknown` — never silently dropped and never folded into a healthy bucket. A task that
+  vanished from every bucket would be worse than one in the wrong bucket: it would be invisible.
+- **G11 — the page bounds BOARD rows, and drafts are counted by their own query.** Applying `limit` to an unfiltered
+  newest-first read let a planning run's freshly-minted drafts consume the entire page, rendering every bucket empty
+  while `planned`/`running` work existed — the "invisible task" failure G5 exists to prevent, arriving through the
+  pagination door. `listBoardPage` excludes `draft` in SQL; `countDrafts` reports them separately.
+- **G12 — prerequisite states outside the page are RESOLVED, not assumed.** The page is newest-first, so prerequisites
+  are by construction older than their dependents and are the first rows dropped on truncation. Failing closed on
+  every one of them is safe but wrong so often that the indicator stops meaning anything, so a bounded
+  `findStatesByIds` fills them in. A state that still cannot be found blocks — fail closed remains the last word.
+- **G13 — dependency edges are scoped to the rendered page.** One query, not N (a per-task fetch could render a task
+  against a different snapshot than its prerequisites, showing "blocked" and "ready" states that never coexisted) —
+  but BOUNDED. `task_dependencies` is append-only with no cap, so a company-wide edge read would let a single cheap
+  request materialise an unbounded row set.
+- **G14 — a DRAFT endpoint is dropped from both edge directions.** `addTaskDependency` imposes no state requirement,
+  so a draft may legally sit on either end. Surfacing it in `blocksTaskIds` would put unconfirmed planning-preview
+  work back on the board by the side door, contradicting G1, and would inflate the stuck-task cost signal G6 exists
+  to give.
 - **G6 — dependencies are READ-ONLY on the board.** `task_dependencies` (migration 0021) is already append-only with
   its own insert path. This ticket surfaces edges (`dependsOn` / `blocks`) and derives a `blocked` indicator; it adds
   no new write path, no cycle-breaking, and no automatic transition.

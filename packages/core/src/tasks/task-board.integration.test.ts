@@ -153,6 +153,64 @@ describe.skipIf(!hasTestDatabase)('task board (real PostgreSQL, restricted role)
     expect(three.status === 'ok' && three.board.truncated).toBe(false);
   });
 
+  test('DRAFTS DO NOT CONSUME THE PAGE — a planning run cannot push real board work out of view', async () => {
+    // The bug this pins: `limit` applied to an unfiltered, newest-first query meant a batch of freshly-minted drafts
+    // occupied the whole page, rendering every bucket empty while planned work existed. The limit must bound BOARD
+    // rows to mean anything.
+    const onBoard = await planned('real work');
+    for (let i = 0; i < 5; i += 1) await draft(`preview ${i}`);
+
+    const r = await getTaskBoard(product, { ...base(), limit: 2 });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.board.draftsOffBoard).toBe(5);
+    // The single board task is visible despite five NEWER drafts and a limit of 2.
+    expect(bucket(r.board, 'to_do').tasks.map((t) => t.task.taskId)).toEqual([onBoard]);
+    expect(r.board.truncated).toBe(false);
+    expect(r.board.unplaceable).toBe(0);
+  });
+
+  test('an off-page prerequisite is RESOLVED, so a truncated board does not report everything as blocked', async () => {
+    // Prerequisites are older than their dependents, so a newest-first page drops them FIRST. Failing closed on every
+    // one would make a large board read as gridlocked.
+    const prerequisite = await planned('older prerequisite');
+    const dependent = await planned('newer dependent');
+    await addTaskDependency(product, { ...base(), taskId: dependent, dependsOnTaskId: prerequisite });
+    await forceState(prerequisite, 'completed');
+
+    // limit 1 keeps only the NEWER dependent; the prerequisite falls off the page entirely.
+    const r = await getTaskBoard(product, { ...base(), limit: 1 });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.board.truncated).toBe(true);
+    const shown = r.board.buckets.flatMap((b) => b.tasks);
+    expect(shown.map((t) => t.task.taskId)).toEqual([dependent]);
+    // Resolved from the database, not guessed: the completed prerequisite genuinely unblocks it.
+    expect(shown[0]!.dependsOnTaskIds).toEqual([prerequisite]);
+    expect(shown[0]!.dependencyBlocked).toBe(false);
+  });
+
+  test('a DRAFT endpoint never appears in either edge direction (CDR-042 §3-G1)', async () => {
+    const onBoard = await planned('board task');
+    const unconfirmed = await draft('still a preview');
+    // A draft may legally be either end of an edge — the board must simply not surface it.
+    expect((await addTaskDependency(product, { ...base(), taskId: unconfirmed, dependsOnTaskId: onBoard })).status).toBe('ok');
+
+    const board = await boardOk();
+    const shown = board.buckets.flatMap((b) => b.tasks);
+    expect(shown.map((t) => t.task.taskId)).toEqual([onBoard]);
+    expect(shown[0]!.blocksTaskIds).toEqual([]);
+    expect(board.draftsOffBoard).toBe(1);
+  });
+
+  test('a non-integer limit falls back to the default instead of reaching SQL', async () => {
+    await planned('work');
+    for (const bad of [Number.NaN, 2.5, -1]) {
+      const r = await getTaskBoard(product, { ...base(), limit: bad });
+      expect(r.status).toBe('ok');
+    }
+  });
+
   test('authz: a viewer may read the board; a non-member is forbidden', async () => {
     await planned('visible work');
     expect((await getTaskBoard(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 })).status).toBe('ok');

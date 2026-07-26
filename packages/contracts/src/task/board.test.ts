@@ -32,8 +32,11 @@ describe('the bucket set (CDR-042 §2 — the six observed TABS, plus held and c
     }
   });
 
-  test('every bucket has an availability — a bucket the UI cannot classify is a bucket that lies', () => {
-    for (const b of TASK_BOARD_BUCKETS) expect(BUCKET_AVAILABILITY[b]).toBeDefined();
+  test('availability is one of exactly two values — a typo would otherwise render as an unknown label', () => {
+    // `toBeDefined()` here would be vacuous: the Record type already makes a missing key a compile error. What a
+    // runtime test can still catch is a WRONG value.
+    for (const b of TASK_BOARD_BUCKETS) expect(['available', 'not_in_this_version']).toContain(BUCKET_AVAILABILITY[b]);
+    expect(Object.keys(BUCKET_AVAILABILITY)).toHaveLength(TASK_BOARD_BUCKETS.length);
   });
 });
 

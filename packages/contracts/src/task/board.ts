@@ -9,7 +9,8 @@
 // So this module is a PROJECTION from the internal machine onto the observed buckets. It defines no state, no
 // transition and no storage: inventing a `recurring` or `rejected` state to make the wording literally true would
 // fabricate a mechanism the evidence never observed (CDR-042 §2).
-import type { TaskState, TaskDTO } from './task.js';
+import { isTaskState } from './task.js';
+import type { TaskDTO } from './task.js';
 
 /**
  * The board's buckets, in the order the reference product showed them, then the two this platform must add to stay
@@ -69,7 +70,10 @@ const IN_BUCKET = (bucket: TaskBoardBucket): BoardPlacement => ({ kind: 'bucket'
  * clause ("stuck tasks time out to Failed with reason") shows canon treats stuck-ness as first-class (CDR-042 §3-G4).
  */
 export function placeOnBoard(state: unknown): BoardPlacement {
-  switch (state as TaskState) {
+  // Narrow BEFORE the switch. Switching on `state as TaskState` would never narrow `state` itself, so the `default`
+  // branch could not be exhaustiveness-checked — the switch would compile happily after a twelfth state was added.
+  if (!isTaskState(state)) return { kind: 'unknown' };
+  switch (state) {
     // The planning preview: accepted work only reaches the board via `planTask` (draft -> planned).
     case 'draft':
       return { kind: 'off_board', reason: 'draft' };
@@ -92,8 +96,12 @@ export function placeOnBoard(state: unknown): BoardPlacement {
     // make the platform look less reliable than it is, or hide a real failure behind a deliberate stop.
     case 'cancelled':
       return IN_BUCKET('cancelled');
-    default:
-      return { kind: 'unknown' };
+    default: {
+      // COMPILE-EXHAUSTIVE: a `TaskState` no case above handles is assigned to `never`, so adding a twelfth state
+      // FAILS THE BUILD here rather than silently routing it to `unknown` and into the board's `unplaceable` counter.
+      const exhaustive: never = state;
+      return exhaustive;
+    }
   }
 }
 

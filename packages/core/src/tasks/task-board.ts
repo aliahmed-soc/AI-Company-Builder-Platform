@@ -45,30 +45,56 @@ const MAX_LIMIT = 500;
  * Exported and model-free so the projection can be tested without a database: every honesty property here (totality,
  * the derived blocked flag, the off-board draft count) is a pure function of its inputs.
  */
-export function buildTaskBoard(rows: readonly TaskRow[], edges: readonly TaskDependencyRow[], truncated: boolean): TaskBoardDTO {
-  // Edge indexes. Both directions are built because the board shows what a task waits on AND what waits on it — a
-  // stuck task's true cost is the set of tasks behind it, which is invisible from the prerequisite direction alone.
+export interface BuildTaskBoardInput {
+  /** The page of BOARD rows — drafts are excluded upstream, so the page budget bounds visible work. */
+  readonly rows: readonly TaskRow[];
+  readonly edges: readonly TaskDependencyRow[];
+  /** Drafts held off the board, COUNTED by a separate query rather than paged (CDR-033 §4). */
+  readonly draftsOffBoard: number;
+  /** States of tasks referenced by edges but absent from `rows` (older prerequisites, or drafts). */
+  readonly offPageStates: ReadonlyMap<string, string>;
+  readonly truncated: boolean;
+}
+
+export function buildTaskBoard(input: BuildTaskBoardInput): TaskBoardDTO {
+  const { rows, edges, draftsOffBoard, offPageStates, truncated } = input;
+
+  // Every state we know, page first then off-page resolutions. Built BEFORE the edge indexes so both can consult it.
+  const stateById = new Map<string, string>(offPageStates);
+  for (const r of rows) stateById.set(r.id, r.state);
+
+  // A draft endpoint is dropped from BOTH edge directions: CDR-042 §3-G1 keeps drafts off the board, and surfacing
+  // `blocksTaskIds: ['<draft-id>']` would put unconfirmed planning-preview work back on it by the side door — while
+  // also inflating the "cost of a stuck task" signal the reverse index exists to give.
+  const onBoard = (id: string): boolean => {
+    const state = stateById.get(id);
+    return state !== undefined && state !== 'draft';
+  };
+
+  // Both directions: the board shows what a task waits on AND what waits on it — a stuck task's true cost is the set
+  // of tasks behind it, which the prerequisite direction alone cannot show.
   const dependsOn = new Map<string, string[]>();
   const blocks = new Map<string, string[]>();
+  const push = (map: Map<string, string[]>, key: string, value: string): void => {
+    const existing = map.get(key);
+    if (existing === undefined) map.set(key, [value]);
+    else existing.push(value);
+  };
   for (const e of edges) {
-    (dependsOn.get(e.task_id) ?? dependsOn.set(e.task_id, []).get(e.task_id)!).push(e.depends_on_task_id);
-    (blocks.get(e.depends_on_task_id) ?? blocks.set(e.depends_on_task_id, []).get(e.depends_on_task_id)!).push(e.task_id);
+    if (onBoard(e.depends_on_task_id)) push(dependsOn, e.task_id, e.depends_on_task_id);
+    if (onBoard(e.task_id)) push(blocks, e.depends_on_task_id, e.task_id);
   }
-
-  // Prerequisite states are read from the SAME page of rows. A prerequisite outside the page is deliberately treated
-  // as unknown by `isDependencyBlocked` (fail closed) rather than assumed complete: claiming a task is ready because
-  // we did not fetch its prerequisite would be the dishonest direction.
-  const stateById = new Map<string, string>(rows.map((r) => [r.id, r.state]));
 
   const byBucket = new Map<TaskBoardBucket, BoardTaskDTO[]>(TASK_BOARD_BUCKETS.map((b) => [b, []]));
   const counts = emptyBoardCounts();
-  let draftsOffBoard = 0;
   let unplaceable = 0;
 
   for (const row of rows) {
     const placed = placeOnBoard(row.state);
     if (placed.kind === 'off_board') {
-      draftsOffBoard += 1;
+      // Unreachable: `listBoardPage` filters drafts out. Counted rather than dropped so a future query change cannot
+      // make a task silently disappear from both the buckets and the totals.
+      unplaceable += 1;
       continue;
     }
     if (placed.kind === 'unknown') {
@@ -80,7 +106,8 @@ export function buildTaskBoard(rows: readonly TaskRow[], edges: readonly TaskDep
       task: toTaskDTO(row),
       dependsOnTaskIds: prerequisites,
       blocksTaskIds: blocks.get(row.id) ?? [],
-      // `stateById.get` returns undefined for a prerequisite outside this page — which blocks, by design.
+      // Every prerequisite's state is resolved (page or off-page), so this is a fact rather than a fail-closed guess.
+      // A state we still cannot find blocks — see `isDependencyBlocked`.
       dependencyBlocked: isDependencyBlocked(prerequisites.map((id) => stateById.get(id))),
     });
     counts[placed.bucket] += 1;
@@ -99,22 +126,38 @@ export function buildTaskBoard(rows: readonly TaskRow[], edges: readonly TaskDep
  * invisible, not filtered out in application code.
  */
 export async function getTaskBoard(client: DatabaseClient, params: GetTaskBoardParams, options: TaskBoardOptions = {}): Promise<GetTaskBoardResult> {
-  const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  // A non-integer limit is REPLACED, not clamped: `Math.min(Math.max(NaN, 1), 500)` is NaN, which reaches SQL and
+  // errors on an otherwise authorized read, and a fractional limit is equally meaningless to `LIMIT`.
+  const requested = params.limit;
+  const limit = Number.isInteger(requested) ? Math.min(Math.max(requested as number, 1), MAX_LIMIT) : DEFAULT_LIMIT;
+  // Trimmed once, so the scope resolver and the queries below agree on the id. `runInCompanyScope` trims internally,
+  // so an untrimmed value would otherwise yield a valid scope and then a `22P02` on the uuid bind.
+  const companyId = typeof params.companyId === 'string' ? params.companyId.trim() : params.companyId;
   const optsBase = { ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}), ...(options.logger !== undefined ? { logger: options.logger } : {}) };
 
   const run = await runInCompanyScope(
     client,
-    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: companyId },
     async (scope, role): Promise<GetTaskBoardResult> => {
       if (checkAuthorization(role, 'task:read', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
       const tasks = new TaskRepository(scope.db);
       // Read one MORE than the limit purely to detect truncation honestly, then drop it. Reporting `truncated` from
-      // `rows.length === limit` would false-positive on a company holding exactly `limit` tasks.
-      const rows = await tasks.list({ limit: limit + 1 });
+      // `rows.length === limit` would false-positive on a company holding exactly `limit` board tasks.
+      const rows = await tasks.listBoardPage({ limit: limit + 1 });
       const truncated = rows.length > limit;
       const page = truncated ? rows.slice(0, limit) : rows;
-      const edges = await tasks.listAllDependencies(params.companyId);
-      return { status: 'ok', board: buildTaskBoard(page, edges, truncated) };
+
+      const draftsOffBoard = await tasks.countDrafts(companyId);
+      const edges = await tasks.listDependenciesForTasks(page.map((r) => r.id));
+
+      // Resolve prerequisite (and dependent) states that fall OUTSIDE the page. Without this a truncated board reports
+      // almost everything as blocked: the page is newest-first, so prerequisites are by construction older than their
+      // dependents and are the first rows dropped — turning a safe default into a systematically wrong answer.
+      const onPage = new Set(page.map((r) => r.id));
+      const missing = [...new Set(edges.flatMap((e) => [e.task_id, e.depends_on_task_id]).filter((id) => !onPage.has(id)))];
+      const offPageStates = new Map((await tasks.findStatesByIds(missing)).map((r) => [r.id, r.state]));
+
+      return { status: 'ok', board: buildTaskBoard({ rows: page, edges, draftsOffBoard, offPageStates, truncated }) };
     },
     optsBase,
   );
