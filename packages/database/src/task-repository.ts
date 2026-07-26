@@ -139,8 +139,12 @@ export class TaskRepository {
    * against a different snapshot than its prerequisites, showing "blocked" and "ready" states that never coexisted),
    * but BOUNDED — `task_dependencies` is append-only with no cap, so a company that scripts edge creation could
    * otherwise make every board read materialise an unbounded row set from a single cheap request.
+   *
+   * The `limit` bounds the RESULT, not just the IN list. Scoping to a bounded set of page ids caps the predicate but
+   * not the rows returned: one task may carry unlimited edges, and the ids harvested from those rows then feed an
+   * `in (...)` lookup that would blow past the bind-parameter ceiling long before memory became the issue.
    */
-  listDependenciesForTasks(taskIds: readonly string[]): Promise<TaskDependencyRow[]> {
+  listDependenciesForTasks(taskIds: readonly string[], limit: number): Promise<TaskDependencyRow[]> {
     if (taskIds.length === 0) return Promise.resolve([]);
     const ids = [...taskIds];
     return this.#db
@@ -148,6 +152,7 @@ export class TaskRepository {
       .selectAll()
       .where((eb) => eb.or([eb('task_id', 'in', ids), eb('depends_on_task_id', 'in', ids)]))
       .orderBy('id', 'asc')
+      .limit(limit)
       .execute();
   }
 

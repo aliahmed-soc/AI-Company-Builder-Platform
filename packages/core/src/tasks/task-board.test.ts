@@ -122,25 +122,39 @@ describe('buildTaskBoard — dependencies (CDR-042 §3-G6/G7)', () => {
     expect(bucketOf(running, 'to_do').tasks[0]!.dependencyBlocked).toBe(true);
   });
 
-  test('a prerequisite whose state cannot be found at all still BLOCKS — fail closed', () => {
-    // Resolution is best-effort; when it genuinely fails, claiming the task is ready is the dishonest direction.
-    const board = build([row('b', 'planned')], [edge('b', 'vanished')], false, { offPageStates: new Map([['vanished', 'queued']]) });
+  test('a prerequisite whose state cannot be found AT ALL still BLOCKS — fail closed', () => {
+    // Genuinely unresolvable: NO entry in offPageStates. (An earlier version of this test supplied a state, so it
+    // passed on "queued !== completed" and never exercised the fail-closed path at all — which is exactly how a
+    // fail-OPEN regression slipped through.)
+    const board = build([row('b', 'planned')], [edge('b', 'vanished')]);
     expect(bucketOf(board, 'to_do').tasks[0]!.dependencyBlocked).toBe(true);
+    // The unresolvable id is not DISPLAYED, but it still counted.
+    expect(bucketOf(board, 'to_do').tasks[0]!.dependsOnTaskIds).toEqual([]);
   });
 
-  test('DRAFT endpoints are dropped from both edge directions — a draft never reaches the board sideways', () => {
-    // CDR-042 §3-G1 keeps drafts off the board; surfacing `blocksTaskIds: ['<draft>']` would put unconfirmed
-    // planning-preview work back on it, and would inflate the "cost of a stuck task" signal.
+  test('a DRAFT prerequisite is HIDDEN but still BLOCKS — hiding an id must not change the answer', () => {
+    // Reachable through the normal API: create A (draft), create B (draft), depend B on A, then plan B. B's input is
+    // an unconfirmed preview that may never be accepted, so B is not ready — even though §3-G14 forbids showing A's
+    // id on the board. Filtering before the derivation would report B as ready to run: fail-OPEN, and worse than the
+    // leak it was meant to fix.
     const board = build([row('a', 'running'), row('b', 'planned')], [edge('draft-1', 'a'), edge('b', 'draft-2')], false, {
       offPageStates: new Map([
         ['draft-1', 'draft'],
         ['draft-2', 'draft'],
       ]),
     });
+    // Display: no draft id in either direction.
     expect(bucketOf(board, 'in_progress').tasks[0]!.blocksTaskIds).toEqual([]);
     const b = bucketOf(board, 'to_do').tasks[0]!;
     expect(b.dependsOnTaskIds).toEqual([]);
-    // With its only prerequisite dropped, the task is genuinely unblocked — not blocked by an invisible draft.
+    // Derivation: the draft prerequisite is not `completed`, so it blocks.
+    expect(b.dependencyBlocked).toBe(true);
+  });
+
+  test('hiding never flips the flag: a COMPLETED off-page prerequisite unblocks while staying displayed', () => {
+    const board = build([row('b', 'planned')], [edge('b', 'older')], true, { offPageStates: new Map([['older', 'completed']]) });
+    const b = bucketOf(board, 'to_do').tasks[0]!;
+    expect(b.dependsOnTaskIds).toEqual(['older']);
     expect(b.dependencyBlocked).toBe(false);
   });
 

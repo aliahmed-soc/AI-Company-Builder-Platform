@@ -38,6 +38,15 @@ export type GetTaskBoardResult = { readonly status: 'ok'; readonly board: TaskBo
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 500;
+/**
+ * Hard cap on dependency edges loaded for one board render.
+ *
+ * Page-scoping bounds the query's PREDICATE but not its result: one task may carry unlimited edges, and the ids
+ * harvested from those rows then feed an `in (...)` state lookup, which fails outright past Postgres' bind-parameter
+ * ceiling. Generous enough that no plausible real board reaches it, low enough that a scripted edge explosion cannot
+ * turn one cheap read into an unbounded fetch.
+ */
+const MAX_EDGES = 5_000;
 
 /**
  * Assemble the board from the task rows and the company's dependency edges.
@@ -63,16 +72,21 @@ export function buildTaskBoard(input: BuildTaskBoardInput): TaskBoardDTO {
   const stateById = new Map<string, string>(offPageStates);
   for (const r of rows) stateById.set(r.id, r.state);
 
-  // A draft endpoint is dropped from BOTH edge directions: CDR-042 §3-G1 keeps drafts off the board, and surfacing
-  // `blocksTaskIds: ['<draft-id>']` would put unconfirmed planning-preview work back on it by the side door — while
-  // also inflating the "cost of a stuck task" signal the reverse index exists to give.
-  const onBoard = (id: string): boolean => {
+  // An id is SHOWABLE when it is a real, non-draft task. CDR-042 §3-G1 keeps drafts off the board, so surfacing
+  // `blocksTaskIds: ['<draft-id>']` would put unconfirmed planning-preview work back on it by the side door.
+  //
+  // This governs DISPLAY ONLY. It must never gate the blocked derivation: filtering a prerequisite out before the
+  // derivation makes `isDependencyBlocked([])` return false, so an unresolvable — or merely unconfirmed —
+  // prerequisite would UNBLOCK its dependent. That is fail-OPEN, and strictly worse than showing a draft's id: the
+  // board would report work as ready to run while its input does not exist yet (violating §3-G7 and §3-G12).
+  const showable = (id: string): boolean => {
     const state = stateById.get(id);
     return state !== undefined && state !== 'draft';
   };
 
   // Both directions: the board shows what a task waits on AND what waits on it — a stuck task's true cost is the set
-  // of tasks behind it, which the prerequisite direction alone cannot show.
+  // of tasks behind it, which the prerequisite direction alone cannot show. Kept UNFILTERED here; filtering happens
+  // per-field below, so the derivation always sees every prerequisite.
   const dependsOn = new Map<string, string[]>();
   const blocks = new Map<string, string[]>();
   const push = (map: Map<string, string[]>, key: string, value: string): void => {
@@ -81,8 +95,9 @@ export function buildTaskBoard(input: BuildTaskBoardInput): TaskBoardDTO {
     else existing.push(value);
   };
   for (const e of edges) {
-    if (onBoard(e.depends_on_task_id)) push(dependsOn, e.task_id, e.depends_on_task_id);
-    if (onBoard(e.task_id)) push(blocks, e.depends_on_task_id, e.task_id);
+    push(dependsOn, e.task_id, e.depends_on_task_id);
+    // The reverse index is display-only (nothing is derived from it), so a non-showable dependent is dropped here.
+    if (showable(e.task_id)) push(blocks, e.depends_on_task_id, e.task_id);
   }
 
   const byBucket = new Map<TaskBoardBucket, BoardTaskDTO[]>(TASK_BOARD_BUCKETS.map((b) => [b, []]));
@@ -101,13 +116,16 @@ export function buildTaskBoard(input: BuildTaskBoardInput): TaskBoardDTO {
       unplaceable += 1;
       continue;
     }
+    // EVERY prerequisite, including drafts and ids we could not resolve.
     const prerequisites = dependsOn.get(row.id) ?? [];
     byBucket.get(placed.bucket)!.push({
       task: toTaskDTO(row),
-      dependsOnTaskIds: prerequisites,
+      // Filtered for DISPLAY (§3-G14) — the derivation below still sees the full set.
+      dependsOnTaskIds: prerequisites.filter(showable),
       blocksTaskIds: blocks.get(row.id) ?? [],
-      // Every prerequisite's state is resolved (page or off-page), so this is a fact rather than a fail-closed guess.
-      // A state we still cannot find blocks — see `isDependencyBlocked`.
+      // Derived over the FULL set: an off-page prerequisite is normally resolved (so this is a fact, not a guess),
+      // but a draft prerequisite is not `completed` and therefore blocks, and an id that resolves to nothing at all
+      // blocks too. Hiding an id must never change the answer.
       dependencyBlocked: isDependencyBlocked(prerequisites.map((id) => stateById.get(id))),
     });
     counts[placed.bucket] += 1;
@@ -118,7 +136,9 @@ export function buildTaskBoard(input: BuildTaskBoardInput): TaskBoardDTO {
     availability: BUCKET_AVAILABILITY[bucket],
     tasks: byBucket.get(bucket)!,
   }));
-  return { buckets, counts, draftsOffBoard, unplaceable, truncated };
+  // Clamped: the count is now an input rather than something derived here, so a caller could otherwise put a
+  // negative or fractional value straight into the DTO.
+  return { buckets, counts, draftsOffBoard: Math.max(0, Math.trunc(draftsOffBoard)), unplaceable, truncated };
 }
 
 /**
@@ -143,12 +163,19 @@ export async function getTaskBoard(client: DatabaseClient, params: GetTaskBoardP
       const tasks = new TaskRepository(scope.db);
       // Read one MORE than the limit purely to detect truncation honestly, then drop it. Reporting `truncated` from
       // `rows.length === limit` would false-positive on a company holding exactly `limit` board tasks.
+      // Count drafts BEFORE reading the page. Each statement gets its own read-committed snapshot, so a task
+      // confirmed (draft → planned) between the two reads is otherwise missed by both — counted as neither a draft
+      // nor a board row, and so invisible for that render. Counting first makes the residual skew "briefly visible in
+      // both", which is the safe direction: a task shown twice is confusing, a task shown nowhere is a lie.
+      const draftsOffBoard = await tasks.countDrafts(companyId);
+
       const rows = await tasks.listBoardPage({ limit: limit + 1 });
       const truncated = rows.length > limit;
       const page = truncated ? rows.slice(0, limit) : rows;
-
-      const draftsOffBoard = await tasks.countDrafts(companyId);
-      const edges = await tasks.listDependenciesForTasks(page.map((r) => r.id));
+      const edges = await tasks.listDependenciesForTasks(
+        page.map((r) => r.id),
+        MAX_EDGES,
+      );
 
       // Resolve prerequisite (and dependent) states that fall OUTSIDE the page. Without this a truncated board reports
       // almost everything as blocked: the page is newest-first, so prerequisites are by construction older than their

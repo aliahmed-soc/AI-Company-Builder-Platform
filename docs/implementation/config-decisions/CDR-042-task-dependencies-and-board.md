@@ -74,10 +74,15 @@ would be fabricating a mechanism the evidence never observed, and would silently
   against a different snapshot than its prerequisites, showing "blocked" and "ready" states that never coexisted) —
   but BOUNDED. `task_dependencies` is append-only with no cap, so a company-wide edge read would let a single cheap
   request materialise an unbounded row set.
-- **G14 — a DRAFT endpoint is dropped from both edge directions.** `addTaskDependency` imposes no state requirement,
-  so a draft may legally sit on either end. Surfacing it in `blocksTaskIds` would put unconfirmed planning-preview
-  work back on the board by the side door, contradicting G1, and would inflate the stuck-task cost signal G6 exists
-  to give.
+- **G14 — a DRAFT endpoint is hidden from DISPLAY, never from the derivation.** `addTaskDependency` imposes no state
+  requirement, so a draft may legally sit on either end. Surfacing it in `dependsOnTaskIds`/`blocksTaskIds` would put
+  unconfirmed planning-preview work back on the board by the side door, contradicting G1.
+  - **G14 vs G7/G12 — reconciled explicitly, because getting this wrong is worse than the leak it prevents.**
+    Filtering a prerequisite out BEFORE the blocked derivation makes `isDependencyBlocked([])` return `false`, so a
+    draft — or merely unresolvable — prerequisite would *unblock* its dependent. That is fail-OPEN: the board would
+    report work as ready to run while its input does not exist yet. So the rule is **filter for display, derive over
+    the full set**. A draft prerequisite is not `completed`, so per G7 it blocks; its id simply is not shown.
+    Reachable without any race: create two drafts, depend one on the other, confirm only the dependent.
 - **G6 — dependencies are READ-ONLY on the board.** `task_dependencies` (migration 0021) is already append-only with
   its own insert path. This ticket surfaces edges (`dependsOn` / `blocks`) and derives a `blocked` indicator; it adds
   no new write path, no cycle-breaking, and no automatic transition.

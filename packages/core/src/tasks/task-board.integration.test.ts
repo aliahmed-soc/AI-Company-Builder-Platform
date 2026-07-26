@@ -190,7 +190,7 @@ describe.skipIf(!hasTestDatabase)('task board (real PostgreSQL, restricted role)
     expect(shown[0]!.dependencyBlocked).toBe(false);
   });
 
-  test('a DRAFT endpoint never appears in either edge direction (CDR-042 §3-G1)', async () => {
+  test('a DRAFT endpoint is never DISPLAYED, in either direction (CDR-042 §3-G1/G14)', async () => {
     const onBoard = await planned('board task');
     const unconfirmed = await draft('still a preview');
     // A draft may legally be either end of an edge — the board must simply not surface it.
@@ -200,6 +200,24 @@ describe.skipIf(!hasTestDatabase)('task board (real PostgreSQL, restricted role)
     const shown = board.buckets.flatMap((b) => b.tasks);
     expect(shown.map((t) => t.task.taskId)).toEqual([onBoard]);
     expect(shown[0]!.blocksTaskIds).toEqual([]);
+    expect(board.draftsOffBoard).toBe(1);
+  });
+
+  test('a DRAFT PREREQUISITE is hidden but still BLOCKS — hiding an id must not change the answer', async () => {
+    // Fully reachable through the normal API, no races: both tasks start as drafts, the edge is legal, then only the
+    // dependent is confirmed. Its input is an unconfirmed preview that may never be accepted, so it is NOT ready.
+    const prerequisite = await draft('unconfirmed prerequisite');
+    const dependentId = await draft('dependent');
+    expect((await addTaskDependency(product, { ...base(), taskId: dependentId, dependsOnTaskId: prerequisite })).status).toBe('ok');
+    expect((await planTask(product, { ...base(), taskId: dependentId })).status).toBe('ok');
+
+    const board = await boardOk();
+    const shown = board.buckets.flatMap((b) => b.tasks);
+    expect(shown.map((t) => t.task.taskId)).toEqual([dependentId]);
+    // Hidden from display (G14)...
+    expect(shown[0]!.dependsOnTaskIds).toEqual([]);
+    // ...but the derivation still saw it, so the task is honestly blocked (G7/G12).
+    expect(shown[0]!.dependencyBlocked).toBe(true);
     expect(board.draftsOffBoard).toBe(1);
   });
 

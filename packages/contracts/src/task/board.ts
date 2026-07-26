@@ -100,7 +100,10 @@ export function placeOnBoard(state: unknown): BoardPlacement {
       // COMPILE-EXHAUSTIVE: a `TaskState` no case above handles is assigned to `never`, so adding a twelfth state
       // FAILS THE BUILD here rather than silently routing it to `unknown` and into the board's `unplaceable` counter.
       const exhaustive: never = state;
-      return exhaustive;
+      void exhaustive;
+      // Unreachable today. Returning the narrowed value itself would hand callers a raw STRING where they switch on
+      // `.kind`, yielding `undefined` and a silent drop — the opposite of what this branch is for.
+      return { kind: 'unknown' };
     }
   }
 }
@@ -146,8 +149,9 @@ export interface TaskBoardDTO {
    */
   readonly draftsOffBoard: number;
   /**
-   * Tasks whose state this version could not classify. Should always be 0; surfaced so that if it is ever non-zero
-   * the board says so instead of quietly showing fewer tasks than the company has.
+   * Page rows that did NOT land in a bucket — either an unclassifiable state, or a `draft` that reached the page
+   * despite being filtered upstream. Should always be 0; surfaced so that if it is ever non-zero the board says so
+   * instead of quietly showing fewer tasks than the page contained.
    */
   readonly unplaceable: number;
   /** True when the task list was truncated by `limit` — the board is a page, and says so rather than implying totality. */
