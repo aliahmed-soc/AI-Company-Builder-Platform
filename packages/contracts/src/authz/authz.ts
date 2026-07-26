@@ -119,6 +119,9 @@ export const AUTHZ_ACTIONS = [
   'roadmap:generate',
   'roadmap:read',
   'roadmap:edit',
+  // Task planning (ACBP-P4-003; CDR-040; PLAN-001/002) — autonomous generation AND chat steering, both of which spend
+  // metered model budget. Confirming a previewed draft reuses task:create (the existing planTask path).
+  'task:generate',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -221,6 +224,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'roadmap:read': ['owner', 'viewer'],
   // The versioned roadmap EDIT is owner-only (API-CONTRACTS "Owner (edit)"; ROAD-002 records author + reason).
   'roadmap:edit': ['owner'],
+  // Task planning is a member action (the generate-class precedent); the tasks it mints are DRAFTS, not board work.
+  'task:generate': ['owner', 'viewer'],
 };
 
 /**

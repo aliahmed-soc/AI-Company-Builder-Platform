@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'planning.roadmap', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'planning.roadmap', 'planning.tasks', 'planning.task_steering', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -138,6 +138,32 @@ const TEMPLATES: readonly TemplateDefinition[] = [
     segments: [
       { role: 'system', text: 'You turn a founder\'s DECIDED strategy into a plan: a set of goals, and milestones sequenced in the order they should be reached. Each goal and milestone needs a short title and a description. Sequence milestones by ORDER ONLY — never invent target dates, durations, or numeric estimates. Do NOT produce tasks. If you can only plan part of the way honestly, return what you can justify and set partial to true rather than padding the plan. Return only the structured plan.' },
       { role: 'user', text: 'Decided strategy:\n{{decision}}' },
+    ],
+  },
+  // Autonomous task planning (ACBP-P4-003; PLAN-001). Proposes concrete work against the roadmap's milestones. The
+  // 3+ minimum, the closed type set, ordinal resolvability and the honest `partial` flag are enforced by
+  // parseTaskPlanOutput, not this wording. Quality-bearing generation → prefers queueing over fallback.
+  {
+    family: 'planning.tasks',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['roadmap'],
+    segments: [
+      { role: 'system', text: 'You turn a founder\'s approved roadmap into concrete next work. Propose at least three tasks, each naming the milestone it serves by that milestone\'s ordinal, with a short title, a description of what doing it involves, and a type from the allowed set. Order them so the most important comes first. Never invent effort estimates, dates, or costs. If you can only justify fewer than three tasks, return the ones you can defend and set partial to true rather than padding. Return only the structured tasks.' },
+      { role: 'user', text: 'Approved roadmap (milestones by ordinal):\n{{roadmap}}' },
+    ],
+  },
+  // User-steered planning (ACBP-P4-003; PLAN-002). MUST answer with exactly one of: tasks, a clarifying question, or
+  // an honest refusal — the three-way discriminator is enforced by parseSteeringOutput. Guessing at an ambiguous
+  // request is precisely what PLAN-002's failure clause forbids.
+  {
+    family: 'planning.task_steering',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['roadmap', 'steering_request'],
+    segments: [
+      { role: 'system', text: 'You help a founder direct their own planning. Answer their request with EXACTLY ONE of three outcomes. (1) tasks: when the request is clear and achievable against this roadmap — restate the intent you acted on, then give the tasks, each naming the milestone it serves by ordinal, with a title, description and allowed type. (2) clarification: when the request is ambiguous — ask ONE specific question instead of guessing what they meant. (3) refusal: when the request cannot honestly be met from this roadmap — say plainly why. Never invent dates, costs or effort. Never guess at an unclear request. Return only the structured outcome.' },
+      { role: 'user', text: 'Approved roadmap (milestones by ordinal):\n{{roadmap}}\n\nThe founder asks:\n{{steering_request}}' },
     ],
   },
   // Structured field extraction (extraction task class — fallback-eligible, interactive timeout).
