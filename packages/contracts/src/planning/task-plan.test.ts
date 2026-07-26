@@ -12,6 +12,10 @@ import {
   narrowSteeringOutput,
   normalizeSteeringRequest,
   countMissingType,
+  countMissingRationale,
+  PLANNED_TASK_RATIONALE_MAX,
+  TASK_PLAN_SCHEMA,
+  TASK_STEERING_SCHEMA,
   PLANNED_TASK_TITLE_MAX,
   PLANNED_TASK_DESCRIPTION_MAX,
   PLANNED_TASKS_MAX,
@@ -24,6 +28,63 @@ const MILESTONES = 3;
 const task = (over: Record<string, unknown> = {}) => ({ title: 'Interview ten clinics', description: 'Book and run the calls.', task_type: 'market_research', milestone_ordinal: 0, ...over });
 const plan = (over: Record<string, unknown> = {}) => JSON.stringify({ tasks: [task(), task({ title: 'Map competitors' }), task({ title: 'Draft pricing' })], ...over });
 const steer = (over: Record<string, unknown> = {}) => JSON.stringify({ outcome: 'tasks', intent: 'Find early customers', tasks: [task()], ...over });
+
+describe('per-task rationale (ACBP-P4-006 / CDR-041 §3-G4; PLAN-004)', () => {
+  test('the schema refs are at @2 — adding rationale changes the contract the model is held to', () => {
+    // CDR-041 §3-G5: schema refs are the unit of versioning, and @1 is NOT retained (nothing persisted references it,
+    // and a dead ref invites a caller to pin a version with no reason behind it). Steering bumps for the same reason:
+    // its task members carry the same new field.
+    expect(TASK_PLAN_SCHEMA).toBe('planning.tasks.output@2');
+    expect(TASK_STEERING_SCHEMA).toBe('planning.task_steering.output@2');
+  });
+
+  test('a rationale is parsed and trimmed on both entry points', () => {
+    const r = parseTaskPlanOutput(plan({ tasks: [task({ rationale: '  Highest-signal first contact.  ' }), task(), task()] }), MILESTONES);
+    expect(r.ok && r.value.tasks[0]?.rationale).toBe('Highest-signal first contact.');
+    const s = parseSteeringOutput(steer({ tasks: [task({ rationale: 'Closes the fastest.' })] }), MILESTONES);
+    expect(s.ok && s.value.outcome === 'tasks' && s.value.tasks[0]?.rationale).toBe('Closes the fastest.');
+  });
+
+  test('a MISSING rationale is null ("not recorded"), never invented and never a rejection', () => {
+    // PLAN-004's failure clause: "Missing rationale renders as 'not recorded'". Unlike the description (which the
+    // model authors as a matter of course), a rationale it cannot give must not be fabricated — ADR-019. Absent,
+    // explicitly null, and whitespace-only all mean the same honest thing.
+    for (const missing of [undefined, null, '   ']) {
+      const r = parseTaskPlanOutput(plan({ tasks: [task({ rationale: missing }), task(), task()] }), MILESTONES);
+      expect(r.ok && r.value.tasks[0]?.rationale).toBeNull();
+    }
+    // Omitted entirely — the common case for a model that was never asked.
+    const omitted = { title: 'T', description: 'what it involves', task_type: 'market_research', milestone_ordinal: 0 };
+    const r2 = parseTaskPlanOutput(JSON.stringify({ tasks: [omitted, task(), task()] }), MILESTONES);
+    expect(r2.ok && r2.value.tasks[0]?.rationale).toBeNull();
+  });
+
+  test('a MALFORMED rationale is a rejection, not a silent null (same rule as task_type)', () => {
+    // Silently nulling a non-string would let a structurally wrong payload look like an honest "not recorded".
+    for (const bad of [42, true, {}, ['a'], 'x'.repeat(PLANNED_TASK_RATIONALE_MAX + 1)]) {
+      expect(parseTaskPlanOutput(plan({ tasks: [task({ rationale: bad }), task(), task()] }), MILESTONES).ok).toBe(false);
+      expect(parseSteeringOutput(steer({ tasks: [task({ rationale: bad })] }), MILESTONES).ok).toBe(false);
+    }
+  });
+
+  test('countMissingRationale reports the shortfall so it can never be silently absorbed', () => {
+    const r = parseTaskPlanOutput(plan({ tasks: [task({ rationale: 'because' }), task(), task({ rationale: null })] }), MILESTONES);
+    expect(r.ok && countMissingRationale(r.value.tasks)).toBe(2);
+    const all = parseTaskPlanOutput(plan({ tasks: [task({ rationale: 'a' }), task({ rationale: 'b' }), task({ rationale: 'c' })] }), MILESTONES);
+    expect(all.ok && countMissingRationale(all.value.tasks)).toBe(0);
+  });
+
+  test('the defensive narrow applies the SAME rationale rules as the parse', () => {
+    // The gateway validator is injected, so the narrow must independently refuse what the parser refuses.
+    const ok = narrowTaskPlanOutput({ tasks: [{ title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: 'r' }, { title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: null }, { title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: null }], partial: false }, MILESTONES);
+    expect(ok?.tasks[0]?.rationale).toBe('r');
+    expect(ok && countMissingRationale(ok.tasks)).toBe(2);
+    const bad = (rationale: unknown) => narrowTaskPlanOutput({ tasks: [{ title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale }, { title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: null }, { title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: null }], partial: false }, MILESTONES);
+    for (const v of [42, true, '   ', 'x'.repeat(PLANNED_TASK_RATIONALE_MAX + 1)]) expect(bad(v)).toBeUndefined();
+    // An ABSENT field on the narrow path is the honest null, matching the parse.
+    expect(narrowSteeringOutput({ outcome: 'tasks', intent: 'i', tasks: [{ title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0 }] }, MILESTONES)).toEqual({ outcome: 'tasks', intent: 'i', tasks: [{ title: 'T', description: 'D', taskType: null, milestoneOrdinal: 0, rationale: null }] });
+  });
+});
 
 describe('task types (ACBP-P4-003/CDR-040 §8-G2)', () => {
   test('the set is exactly the seven PRD "initial task types"', () => {
@@ -38,7 +99,7 @@ describe('parseTaskPlanOutput — autonomous planning (PLAN-001)', () => {
     const r = parseTaskPlanOutput(plan({ tasks: [task({ title: '  Interview ten clinics  ', description: '  Book and run the calls.  ' }), task(), task()] }), MILESTONES);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.tasks[0]).toEqual({ title: 'Interview ten clinics', description: 'Book and run the calls.', taskType: 'market_research', milestoneOrdinal: 0 });
+    expect(r.value.tasks[0]).toEqual({ title: 'Interview ten clinics', description: 'Book and run the calls.', taskType: 'market_research', milestoneOrdinal: 0, rationale: null });
     expect(r.value.partial).toBe(false);
   });
 

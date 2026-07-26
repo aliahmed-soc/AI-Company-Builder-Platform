@@ -118,6 +118,19 @@ export const AUDIT_EVENTS = {
   // than losing history. Subject = the NEW version id; bounded metadata {roadmap_version, supersedes_version,
   // affected_task_count, has_reason} — NEVER the reason text, titles, or descriptions.
   'roadmap.edited': { schemaVersion: 1, subjectType: 'roadmap' },
+  // Planning transparency (ACBP-P4-006; CDR-041 §3-G6; PLAN-004) — a planning run happened, and its inputs are
+  // linked. AUDITED in-tx with the run row, its input links and the task drafts (ADR-015). Subject = the run id;
+  // bounded metadata {mode, outcome, task_count, tasks_missing_rationale, memory_items_considered,
+  // milestones_in_scope} — NEVER rationale text, task titles, or any memory content.
+  //
+  // The event's OUTCOME is `success` even for a run whose generation failed: the audited operation is *recording the
+  // run*, which succeeded, and the run's own result is the `outcome` metadata scalar. This follows `strategy.selected`,
+  // which records a `reject` mode as metadata rather than as a non-success audit outcome. Reserving `denied`/`blocked`
+  // for authorization and policy keeps them meaningful.
+  //
+  // This does NOT contradict CDR-040 §7 (planning writes no event): that rule holds because a DRAFT TASK is not on the
+  // board. A planning RUN is a platform action taken on the owner's behalf — precisely what ADR-015 audits.
+  'planning.run_recorded': { schemaVersion: 1, subjectType: 'planning_run' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
   // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
@@ -417,6 +430,33 @@ export function roadmapGenerated(input: { readonly roadmapId: string; readonly r
  */
 export function roadmapEdited(input: { readonly roadmapId: string; readonly roadmapVersion: number; readonly supersedesVersion: number; readonly affectedTaskCount: number; readonly hasReason: boolean }): AuditEvent {
   return makeEvent('roadmap.edited', input.roadmapId, 'success', { roadmap_version: input.roadmapVersion, supersedes_version: input.supersedesVersion, affected_task_count: input.affectedTaskCount, has_reason: input.hasReason });
+}
+
+/**
+ * A planning run was recorded with its input snapshot (ACBP-P4-006; PLAN-004). Subject = the planning run id.
+ *
+ * Metadata is scalars only (audit metadata forbids arrays): the exact inputs are recoverable through the run's
+ * immutable `planning_run_inputs` rows, so the counts here are a summary, never the set. NEVER carries rationale text,
+ * task titles, or memory content. `outcome` is the RUN's result — a failed generation is still a recorded run
+ * (CDR-041 §3-G3), because a failed run is exactly the one an owner wants to inspect.
+ */
+export function planningRunRecorded(input: {
+  readonly runId: string;
+  readonly mode: string;
+  readonly outcome: string;
+  readonly taskCount: number;
+  readonly tasksMissingRationale: number;
+  readonly memoryItemsConsidered: number;
+  readonly milestonesInScope: number;
+}): AuditEvent {
+  return makeEvent('planning.run_recorded', input.runId, 'success', {
+    mode: input.mode,
+    outcome: input.outcome,
+    task_count: input.taskCount,
+    tasks_missing_rationale: input.tasksMissingRationale,
+    memory_items_considered: input.memoryItemsConsidered,
+    milestones_in_scope: input.milestonesInScope,
+  });
 }
 
 /**
