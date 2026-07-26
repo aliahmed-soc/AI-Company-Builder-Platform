@@ -18,6 +18,10 @@ export interface NewTaskInput {
   readonly title: string;
   readonly description: string | null;
   readonly milestoneId: string | null;
+  /** ACBP-P4-003: the planned type, or null when not stated (never guessed). Manual creation supplies none. */
+  readonly taskType?: string | null;
+  /** ACBP-P4-003: the planning RANK (0 = first), or null for a manually created task. */
+  readonly priority?: number | null;
   readonly createdByUserId: string;
 }
 
@@ -42,7 +46,7 @@ export class TaskRepository {
   insert(input: NewTaskInput): Promise<TaskRow> {
     return this.#db
       .insertInto('tasks')
-      .values({ account_id: input.accountId, company_id: input.companyId, state: 'draft', title: input.title, description: input.description, milestone_id: input.milestoneId, created_by_user_id: input.createdByUserId })
+      .values({ account_id: input.accountId, company_id: input.companyId, state: 'draft', title: input.title, description: input.description, milestone_id: input.milestoneId, task_type: input.taskType ?? null, priority: input.priority ?? null, created_by_user_id: input.createdByUserId })
       .returningAll()
       .executeTakeFirstOrThrow();
   }

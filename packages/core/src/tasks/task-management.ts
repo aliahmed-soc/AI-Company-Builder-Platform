@@ -36,6 +36,8 @@ export function toTaskDTO(row: TaskRow): TaskDTO {
     title: row.title,
     description: row.description,
     milestoneId: row.milestone_id,
+    taskType: row.task_type,
+    priority: row.priority,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };

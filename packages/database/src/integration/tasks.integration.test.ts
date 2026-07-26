@@ -171,5 +171,34 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
     expect(migs.rows.map((m) => m.name)).toContain('0021_tasks');
+    expect(migs.rows.map((m) => m.name)).toContain('0027_task_planning');
+  });
+
+  test('ACBP-P4-003 planning columns: closed task_type set, non-negative priority rank, both INSERT-ONLY', async () => {
+    const mk = (over: { type?: string | null; priority?: number | null } = {}) =>
+      asApp(scope(accountA, companyA1), async (k) => {
+        const r = await sql<{ id: string }>`insert into tasks (account_id, company_id, title, state, task_type, priority, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 'planned work', 'draft', ${over.type ?? null}, ${over.priority ?? null}, ${userU}::uuid) returning id`.execute(k);
+        return r.rows[0]!.id;
+      });
+
+    // All seven PRD types are accepted; NULL is legal ("not stated", never guessed — TASK-002/ADR-019).
+    for (const t of ['market_research', 'competitor_research', 'customer_segment_analysis', 'business_model_comparison', 'business_plan_generation', 'landing_page_copy', 'internal_product_requirements']) {
+      expect(await mk({ type: t })).toBeTruthy();
+    }
+    expect(await mk({ type: null })).toBeTruthy();
+    // An unknown type is refused — the set is closed deliberately (CDR-040 §8-G2).
+    await expect(mk({ type: 'vibes_research' })).rejects.toThrow();
+
+    // priority is a RANK: any non-negative integer, or null. Negative is refused; there is no upper bound to invent.
+    const ranked = await mk({ priority: 0 });
+    expect(ranked).toBeTruthy();
+    expect(await mk({ priority: 999 })).toBeTruthy();
+    await expect(mk({ priority: -1 })).rejects.toThrow();
+
+    // INSERT-ONLY: the app role may still flip `state`, but neither planning column (CDR-040 §8-G9 — widening the
+    // pinned (state, updated_at) grant to make J-10's "adjust priorities" reachable is deliberately out of scope).
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set priority = 1 where id = ${ranked}::uuid`.execute(k))).rejects.toThrow();
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set task_type = 'market_research' where id = ${ranked}::uuid`.execute(k))).rejects.toThrow();
+    expect((await sql<{ priority: number | null }>`select priority from tasks where id = ${ranked}::uuid`.execute(su.kysely)).rows[0]?.priority).toBe(0);
   });
 });

@@ -194,7 +194,9 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // stamp); title/description/milestone/identity/provenance columns are immutable to the app role.
     const tasks = byTable.get('tasks') ?? [];
     expect([...tasks].sort()).toEqual(['state', 'updated_at']);
-    for (const forbidden of ['id', 'account_id', 'company_id', 'title', 'description', 'milestone_id', 'created_at', 'created_by_user_id']) {
+    // ACBP-P4-003 added `task_type` and `priority` — both INSERT-ONLY. They must NOT appear here: widening the column
+    // grant to make J-10's "adjust priorities" reachable is deliberately out of scope (CDR-040 §8-G9).
+    for (const forbidden of ['id', 'account_id', 'company_id', 'title', 'description', 'milestone_id', 'task_type', 'priority', 'created_at', 'created_by_user_id']) {
       expect(tasks).not.toContain(forbidden);
     }
     // task_dependencies is append-only — no column-level UPDATE grants at all.
