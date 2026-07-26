@@ -55,7 +55,18 @@ export interface AssembledConflict {
 }
 
 export type AssembleContextResult =
-  | { readonly status: 'ok'; readonly contextParts: readonly ModelContextPart[]; readonly conflicts: readonly AssembledConflict[] }
+  | {
+      readonly status: 'ok';
+      readonly contextParts: readonly ModelContextPart[];
+      readonly conflicts: readonly AssembledConflict[];
+      /**
+       * The memory items behind `contextParts`, in the same order (ACBP-P4-006; PLAN-004; MEM-003). Exposed so a
+       * caller can LINK what it considered rather than copy it — `itemIds[i]` is the item `contextParts[i]` came from.
+       */
+      readonly itemIds: readonly string[];
+      /** Items considered and then WITHHELD for a MEM-004 conflict. Not "never looked at" — deliberately not used. */
+      readonly withheldItemIds: readonly string[];
+    }
   | { readonly status: 'forbidden' };
 
 function clampLimit(value: number | undefined): number {
@@ -98,10 +109,14 @@ export async function assembleContext(client: DatabaseClient, params: AssembleCo
       const withheld = conflictedItemIds(conflicts);
 
       // Rank the NON-conflicting items (a conflict is surfaced, never silently rank-resolved), then redact secrets.
+      // `id` rides along purely so the caller can LINK what was considered (ACBP-P4-006 / PLAN-004 / MEM-003
+      // "resolvable source link"). `rankMemoryForContext` is generic and preserves extra fields, and it also drops
+      // untiered items — so `ranked` is exactly the set that reaches the model, not a superset of it. Nothing about
+      // the ranking, redaction or withholding changes.
       const ranked = rankMemoryForContext(
         rows
           .filter((r) => !withheld.has(r.id))
-          .map((r) => ({ type: r.type as MemoryType, content: r.content, confidence: r.confidence ?? 0, confirmationState: r.confirmation_state as MemoryConfirmationState, createdAt: new Date(r.created_at).toISOString() })),
+          .map((r) => ({ id: r.id, type: r.type as MemoryType, content: r.content, confidence: r.confidence ?? 0, confirmationState: r.confirmation_state as MemoryConfirmationState, createdAt: new Date(r.created_at).toISOString() })),
       );
       const contextParts: ModelContextPart[] = ranked.map((i) => ({ role: 'system', content: redactSecrets(i.content) }));
 
@@ -111,7 +126,18 @@ export async function assembleContext(client: DatabaseClient, params: AssembleCo
       }
       if (conflicts.length > 0) options.logger?.info('context.conflict_flagged', { metadata: { accountId: params.accountId, companyId: params.companyId, conflictCount: conflicts.length } });
 
-      return { status: 'ok', contextParts, conflicts: conflicts.map(toConflictDTO) };
+      return {
+        status: 'ok',
+        contextParts,
+        conflicts: conflicts.map(toConflictDTO),
+        // ADDITIVE (ACBP-P4-006 / CDR-041 §3-G8): the ids behind the parts, so a caller can record WHAT it considered
+        // without re-deriving the ranking or copying the content. `itemIds[i]` corresponds to `contextParts[i]`.
+        itemIds: ranked.map((i) => i.id),
+        // Considered and then deliberately WITHHELD for a MEM-004 conflict. Reported separately because "looked at it
+        // and did not use it, because it conflicts" is transparency; omitting these would make a snapshot claim the
+        // item was never examined at all.
+        withheldItemIds: [...withheld],
+      };
     },
     optsBase,
   );

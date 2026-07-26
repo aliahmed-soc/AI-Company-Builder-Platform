@@ -92,7 +92,49 @@ describe.skipIf(!hasTestDatabase)('context assembly (real PostgreSQL, restricted
 
   test('empty memory: an empty, conflict-free context', async () => {
     const r = await assembleContext(product, base());
-    expect(r).toEqual({ status: 'ok', contextParts: [], conflicts: [] });
+    expect(r).toEqual({ status: 'ok', contextParts: [], conflicts: [], itemIds: [], withheldItemIds: [] });
+  });
+
+  test('ACBP-P4-006: itemIds correspond POSITIONALLY to contextParts — the link set is what reached the model', async () => {
+    // PLAN-004 needs a resolvable link to what the run considered (MEM-003). Exposing the ids is only honest if they
+    // are the SAME set, in the SAME order, as the parts — an id list that drifted from the content would be a
+    // snapshot claiming inputs the model never saw, which is the fabricated-traceability failure ADR-019 forbids.
+    await seedResearch('The market grows about 10% a year.', 'r:1');
+    await seedAssumption('Assuming pricing is a monthly subscription.', 'q:pricing');
+    await seedFact('We sell single-origin coffee to shops in Cairo.', 'q:customer');
+
+    const r = await assembleContext(product, base());
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.itemIds).toHaveLength(r.contextParts.length);
+    expect(new Set(r.itemIds).size).toBe(r.itemIds.length);
+    expect(r.withheldItemIds).toEqual([]);
+    // Resolve each id back to its row and confirm it is the content at the same index (redaction aside).
+    const rows = await owner.kysely.selectFrom('memory_items').select(['id', 'content']).where('company_id', '=', w.companyA1).execute();
+    const byId = new Map(rows.map((x) => [x.id, x.content]));
+    r.itemIds.forEach((id, i) => {
+      expect(byId.get(id)).toBe(r.contextParts[i]!.content);
+    });
+  });
+
+  test('ACBP-P4-006: a MEM-004-withheld item is reported as WITHHELD, not as never considered', async () => {
+    // "Looked at it and did not use it, because it conflicts" is transparency. Reporting nothing would make the
+    // snapshot claim the item was never examined at all.
+    await seedFact('Our target customer is small coffee shops.', 'question:7');
+    await seedAssumption('Assuming the target customer is large chains.', 'question:7');
+    await seedFact('We are based in Cairo.', 'q:location');
+
+    const r = await assembleContext(product, base());
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.withheldItemIds).toHaveLength(2);
+    expect(r.itemIds).toHaveLength(1);
+    // The two sets are disjoint: an item is either in the context or withheld from it, never both.
+    expect(r.itemIds.some((id) => r.withheldItemIds.includes(id))).toBe(false);
+    const rows = await owner.kysely.selectFrom('memory_items').select(['id', 'content']).where('company_id', '=', w.companyA1).execute();
+    const byId = new Map(rows.map((x) => [x.id, x.content]));
+    expect(byId.get(r.itemIds[0]!)).toContain('based in Cairo');
+    expect(r.withheldItemIds.map((id) => byId.get(id)).join('\n')).toContain('large chains');
   });
 
   test('a non-member is forbidden from assembling context', async () => {
