@@ -277,9 +277,9 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
 
     const insertRun = (a: string, c: string, roadmap: string, decision: string, over: Record<string, unknown> = {}) =>
       asApp(scope(a, c), async (k) => {
-        const v = { mode: 'autonomous', outcome: 'ok', roadmap_version: 1, phase_scope: null, task_count: 3, tasks_missing_rationale: 0, milestones_in_scope: 2, memory_items_considered: 5, ...over };
-        const r = await sql<{ id: string }>`insert into planning_runs (account_id, company_id, mode, outcome, roadmap_id, roadmap_version, decision_id, phase_scope, task_count, tasks_missing_rationale, milestones_in_scope, memory_items_considered, created_by_user_id)
-          values (${a}::uuid, ${c}::uuid, ${v.mode}, ${v.outcome}, ${roadmap}::uuid, ${v.roadmap_version}, ${decision}::uuid, ${v.phase_scope}, ${v.task_count}, ${v.tasks_missing_rationale}, ${v.milestones_in_scope}, ${v.memory_items_considered}, ${userU}::uuid) returning id`.execute(k);
+        const v = { mode: 'autonomous', outcome: 'ok', failure_reason: null, roadmap_version: 1, phase_scope: null, task_count: 3, tasks_missing_rationale: 0, milestones_in_scope: 2, milestones_omitted: 0, memory_items_considered: 5, memory_items_omitted: 0, ...over };
+        const r = await sql<{ id: string }>`insert into planning_runs (account_id, company_id, mode, outcome, failure_reason, roadmap_id, roadmap_version, decision_id, phase_scope, task_count, tasks_missing_rationale, milestones_in_scope, milestones_omitted, memory_items_considered, memory_items_omitted, created_by_user_id)
+          values (${a}::uuid, ${c}::uuid, ${v.mode}, ${v.outcome}, ${v.failure_reason}, ${roadmap}::uuid, ${v.roadmap_version}, ${decision}::uuid, ${v.phase_scope}, ${v.task_count}, ${v.tasks_missing_rationale}, ${v.milestones_in_scope}, ${v.milestones_omitted}, ${v.memory_items_considered}, ${v.memory_items_omitted}, ${userU}::uuid) returning id`.execute(k);
         return r.rows[0]!.id;
       });
 
@@ -320,6 +320,14 @@ describe.skipIf(!hasTestDatabase)('planning tables (real PostgreSQL, restricted 
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 2 }))).toBe('23514');
       // More missing rationales than tasks is impossible — the pair is the "fully explained" summary an owner reads.
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { task_count: 2, tasks_missing_rationale: 3 }))).toBe('23514');
+      // A failure MUST say why, and a non-failure must NOT — either would be its own kind of dishonest record.
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: null }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'ok', failure_reason: 'generation' }))).toBe('23514');
+      expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: 'because_reasons' }))).toBe('23514');
+      // The four legitimate reasons all insert.
+      for (const reason of ['generation', 'out_of_scope', 'stale_decision', 'stale_roadmap']) {
+        expect(await insertRun(accountA, companyA1, rm, decisionA, { outcome: 'failed', task_count: 0, failure_reason: reason })).toBeTruthy();
+      }
       // Closed enums.
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { mode: 'telepathy' }))).toBe('23514');
       expect(await sqlStateOf(insertRun(accountA, companyA1, rm, decisionA, { outcome: 'maybe' }))).toBe('23514');

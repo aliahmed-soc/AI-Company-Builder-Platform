@@ -24,9 +24,18 @@ ticket without a DONE line above it is genuinely in flight._
   transaction as the drafts (ADR-015). The run is recorded even when generation FAILED (§3-G3) — a run row is not a
   task, so "no phantom tasks" is untouched. Steering's clarification/refusal stay DISTINCT outcomes from failed.
   `assembleContext` gained an ADDITIVE `itemIds`/`withheldItemIds` return (§3-G8); P2-007 behaviour is unchanged.
-  Commits: CDR `b85fcdb` → contracts `9a59443` → migration 0028 `2c23458` → assembly `47fe3b5` → wiring `f120550`.
-  Migration 0028 already proved green on hosted CI at `2c23458`: **1828/1828, zero skips.**
-  Next: two independent review passes → exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete.
+  Commits: CDR `b85fcdb` → contracts `9a59443` → migration 0028 `2c23458` → assembly `47fe3b5` → wiring `f120550`
+  → docs `7d6dc03` → CI fix `98784c5` → review-pass-1 fixes.
+  Hosted CI green zero-skip twice already: **1828/1828** at `2c23458` (migration in isolation) and **1839/1839** at
+  `98784c5` (the whole wiring).
+  Review pass 1: **FAIL** — 2 High, 6 Medium, 3 Low, all applied. Both Highs were consequences of wiring assembly in:
+  an UNBOUNDED memory prompt (the roadmap half was capped, the memory half was not — and a truncating provider would
+  have left the run linking items the model never read), and untrusted-origin memory arriving as `system` messages
+  AHEAD of the instruction saying it is not instructions. See `docs/implementation/P4-006-REVIEW-COVERAGE.md`.
+  **The `BACKLOG.csv` row already reads `Done`** — written in this ticket's finalization commit as in every prior
+  ticket, and NOT the completion claim: done means exact-head CI zero-skip → squash-merge → exact-main CI zero-skip →
+  branch deleted. Until then this line, not the CSV, is the true state.
+  Next: review pass 2 against the fixed tree → exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete.
   Migrations end **0028**.
 - **ACBP-P4-003 task generation + chat steering — DONE** (squash `6274cd3`, PR #40; exact-main CI green zero-skip 1802/1802; branch deleted). Phase 4 3/7.
 - **ACBP-P4-003 task generation + chat steering — CORE DONE / IN REVIEW (4th autonomous window).**

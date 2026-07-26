@@ -322,8 +322,8 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
   describe('planning transparency: the run, its input snapshot, and the per-task rationale', () => {
     const runsFor = async () =>
       (
-        await sql<{ id: string; mode: string; outcome: string; task_count: number; tasks_missing_rationale: number; milestones_in_scope: number; memory_items_considered: number; phase_scope: string | null; roadmap_version: number }>`
-        select id, mode, outcome, task_count, tasks_missing_rationale, milestones_in_scope, memory_items_considered, phase_scope, roadmap_version from planning_runs where company_id = ${w.companyA1}::uuid order by created_at, id`.execute(owner.kysely)
+        await sql<{ id: string; mode: string; outcome: string; failure_reason: string | null; task_count: number; tasks_missing_rationale: number; milestones_in_scope: number; milestones_omitted: number; memory_items_considered: number; memory_items_omitted: number; phase_scope: string | null; roadmap_version: number }>`
+        select id, mode, outcome, failure_reason, task_count, tasks_missing_rationale, milestones_in_scope, milestones_omitted, memory_items_considered, memory_items_omitted, phase_scope, roadmap_version from planning_runs where company_id = ${w.companyA1}::uuid order by created_at, id`.execute(owner.kysely)
       ).rows;
     const inputsFor = async (runId: string) => (await sql<{ kind: string; ref_id: string }>`select kind, ref_id from planning_run_inputs where run_id = ${runId}::uuid order by kind, ref_id`.execute(owner.kysely)).rows;
     // `audit_events` stamps `occurred_at`, not `created_at` — the audit trail records when the event HAPPENED.
@@ -460,21 +460,95 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
       expect(runs[0]).toMatchObject({ outcome: 'failed', task_count: 0 });
     });
 
-    test('degrades honestly when memory is unreadable: planning still works and records ZERO considered (CDR-041 §3-G9)', async () => {
-      // `task:generate` is [owner, viewer]; `memory:read` may be narrower. A caller who may plan but may not read
-      // memory keeps the capability they hold, and the run truthfully says it considered no memory items.
+    test('degrades honestly when memory is UNREADABLE: planning still works and records ZERO considered (CDR-041 §3-G9)', async () => {
+      // The branch is unreachable through authz today (`memory:read` and `task:generate` carry the same roles), so the
+      // denial is INJECTED. Asserting it via a viewer who can in fact read memory would be a tautology that passes
+      // identically against an implementation that always assembles and one that never does.
       await seedChain('whole_plan');
       await seedMemory('We sell to small clinics.', 'q:customer');
-      const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
-      const r = await generateTasks(product, viewer, { gateway: okGateway() });
+      const denied = () => Promise.resolve({ status: 'forbidden' as const });
+      const r = await generateTasks(product, base(), { gateway: okGateway() }, { contextAssembler: denied });
+      // The plan still happens — a caller who may plan but not read memory keeps the capability they hold.
       expect(r.status).toBe('ok');
       if (r.status !== 'ok') return;
+      expect(r.memoryItemsConsidered).toBe(0);
+      expect(await tasksFor()).toHaveLength(3);
       const runs = await runsFor();
-      expect(runs).toHaveLength(1);
-      // Whatever the viewer's memory:read grant is, the recorded count MATCHES what was actually assembled — the run
-      // never claims inputs it did not have.
+      // And the run says so truthfully: no memory links, despite a memory item existing.
+      expect(runs[0]!.memory_items_considered).toBe(0);
+      expect((await inputsFor(runs[0]!.id)).filter((i) => i.kind.startsWith('memory_item'))).toHaveLength(0);
+    });
+
+    test('a PARTIAL plan is recorded as `partial` with its tasks — the outcome/count CHECK is satisfied end to end', async () => {
+      // The one outcome where the DB CHECK sits closest to the code (`parsed.partial || pre.milestonesOmitted > 0`).
+      // A regression letting a partial reach the insert with 0 tasks would surface as a raw 23514, untested.
+      await seedChain('whole_plan');
+      const honestPartial = gatewayWith({ kind: 'respond', output: JSON.stringify({ tasks: [planned({ rationale: 'Only one I can defend.' })], partial: true }) }, 4);
+      const r = await generateTasks(product, base(), { gateway: honestPartial });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      expect(r.partial).toBe(true);
+      const runs = await runsFor();
+      expect(runs[0]).toMatchObject({ outcome: 'partial', task_count: 1, tasks_missing_rationale: 0 });
+      expect(runs[0]!.failure_reason).toBeNull();
+    });
+
+    test('a failed run records WHY it failed — the three causes are never collapsed into one word', async () => {
+      await seedChain('whole_plan');
+      // (1) the model failed.
+      await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) });
+      // (2) the owner's own decision changed mid-run.
+      await generateTasks(product, base(), { gateway: okGateway() }, { beforePersist: async () => void (await seedRejectDecision()) });
+      const runs = await runsFor();
+      expect(runs.map((x): string | null => x.failure_reason)).toEqual(['generation', 'stale_decision']);
+      // An owner inspecting an empty run can tell a model failure from their own concurrent change.
+      expect(runs.every((x) => x.outcome === 'failed' && x.task_count === 0)).toBe(true);
+    });
+
+    test('a clarification during a stale decision stays a CLARIFICATION — staleness only invalidates a run that drafts', async () => {
+      // Nothing was going to be written, so the owner's decision change does not make the model's honest question
+      // untrue. Recording it as `failed` would be the exact conflation the outcome enum exists to prevent.
+      await seedChain('whole_plan');
+      const out = JSON.stringify({ outcome: 'clarification', question: 'Which segment?' });
+      const r = await steerTaskPlanning(product, { ...base(), request: 'do the thing' }, { gateway: gatewayWith({ kind: 'respond', output: out }, 4) }, { beforePersist: async () => void (await seedRejectDecision()) });
+      expect(r.status).toBe('clarification_needed');
+      const runs = await runsFor();
+      expect(runs[0]).toMatchObject({ outcome: 'clarification', task_count: 0 });
+      expect(runs[0]!.failure_reason).toBeNull();
+    });
+
+    test('the memory block is BOUNDED, and the run links only what actually fit (no fabricated traceability)', async () => {
+      // Assembly returns up to 200 items and an item may hold 10,000 chars. Unbounded, a thoroughly-interviewed
+      // company would ship a vast prompt on every call — and a truncating provider would leave the run linking items
+      // the model never read. Whole items only, and `memory_items_considered` counts what was SHOWN.
+      await seedChain('whole_plan');
+      const big = 'x'.repeat(5_000);
+      for (let i = 0; i < 5; i += 1) await seedMemory(`${big} ${i}`, `q:big-${i}`);
+      const r = await generateTasks(product, base(), { gateway: okGateway() });
+      expect(r.status).toBe('ok');
+      if (r.status !== 'ok') return;
+      // Some were dropped for size, and BOTH numbers are reported rather than one silently absorbing the other.
+      expect(r.memoryItemsConsidered).toBeGreaterThan(0);
+      expect(r.memoryItemsConsidered).toBeLessThan(5);
+      const runs = await runsFor();
       expect(runs[0]!.memory_items_considered).toBe(r.memoryItemsConsidered);
+      expect(runs[0]!.memory_items_omitted).toBe(5 - r.memoryItemsConsidered);
+      // The LINKS match what was shown — never the full set.
       expect((await inputsFor(runs[0]!.id)).filter((i) => i.kind === 'memory_item')).toHaveLength(r.memoryItemsConsidered);
+    });
+
+    test('planning does NOT re-audit MEM-004 conflicts on every run (append-only store must not accumulate duplicates)', async () => {
+      await seedChain('whole_plan');
+      await seedMemory('Our target is small clinics.', 'question:7');
+      await seedMemory('Assuming the target is large chains.', 'question:7', 'ai_assumption', 'model_generation');
+      await generateTasks(product, base(), { gateway: okGateway() });
+      await generateTasks(product, base(), { gateway: okGateway() });
+      const conflictAudits = (await sql<{ n: number }>`select count(*)::int as n from audit_events where name = 'context.conflict_flagged' and company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n;
+      expect(conflictAudits).toBe(0);
+      // The conflict is still recorded per-run, durably and without duplication, as withheld input links.
+      const runs = await runsFor();
+      expect(runs).toHaveLength(2);
+      for (const run of runs) expect((await inputsFor(run.id)).filter((i) => i.kind === 'memory_item_withheld')).toHaveLength(2);
     });
   });
 });

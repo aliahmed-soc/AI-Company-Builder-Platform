@@ -28,6 +28,18 @@ export function isPlanningRunOutcome(v: unknown): v is PlanningRunOutcome {
 }
 
 /**
+ * WHY a run produced nothing. `outcome` alone collapses three very different causes into `failed`, and an owner
+ * inspecting an empty run needs to know whether the model failed or their own decision change aborted it.
+ *
+ * `null` on every non-failed run — a reason without a failure would be its own kind of dishonesty.
+ */
+export const PLANNING_FAILURE_REASONS = ['generation', 'out_of_scope', 'stale_decision', 'stale_roadmap'] as const;
+export type PlanningFailureReason = (typeof PLANNING_FAILURE_REASONS)[number];
+export function isPlanningFailureReason(v: unknown): v is PlanningFailureReason {
+  return typeof v === 'string' && (PLANNING_FAILURE_REASONS as readonly string[]).includes(v);
+}
+
+/**
  * The kind of thing an input reference points at. CLOSED, and deliberately wider than what P4-006 records today:
  * `metric` and `prior_result` have no subsystem yet (usage rollups are P6-009; task-run artifacts are Phase 5), and
  * declaring them now is what makes adding them later an INSERT rather than a migration (CDR-041 §2).
@@ -65,7 +77,16 @@ export interface PlanningRunDTO {
    */
   readonly tasksMissingRationale: number;
   readonly milestonesInScope: number;
+  /**
+   * In-scope milestones the prompt budget could not fit, so the model never saw them. Without this a reader of a
+   * `partial` run cannot tell whether partiality came from the model or from truncation.
+   */
+  readonly milestonesOmitted: number;
   readonly memoryItemsConsidered: number;
+  /** Memory items assembly resolved but the prompt budget could not fit — considered, then dropped for size. */
+  readonly memoryItemsOmitted: number;
+  /** Why the run produced nothing, or null when it did not fail. */
+  readonly failureReason: PlanningFailureReason | null;
   readonly createdAt: string;
   readonly inputs: readonly PlanningRunInputDTO[];
 }

@@ -75,8 +75,8 @@ unchanged, and its tests stay green as written.
   substitution would re-stringify already-redacted content and let memory text collide with the placeholder syntax.
   P4-006 is the first consumer of `assembleContext`, so this sets the precedent for every later one.
 - **G6 — ONE new audit event, `planning.run_recorded`,** subject-typed `planning_run`, metadata scalars only
-  (`{outcome, task_count, tasks_missing_rationale, memory_items_considered, milestones_in_scope}` — no titles, no
-  rationale text, no memory content). This is the backlog row's "Snapshot linked in audit" and does not contradict
+  (`{mode, outcome, task_count, tasks_missing_rationale, memory_items_considered, milestones_in_scope}` — no titles,
+  no rationale text, no memory content). This is the backlog row's "Snapshot linked in audit" and does not contradict
   CDR-040 §7: that rule says a DRAFT TASK is unaudited because it is not on the board. A planning run is not a task —
   it is a platform action taken on the owner's behalf, which is precisely what ADR-015 audits. Requires the four
   coordinated `AUDITED_OPERATIONS` edits (compile-exhaustive).
@@ -84,11 +84,42 @@ unchanged, and its tests stay green as written.
   the task drafts. An in-tx audit failure rolls back the whole planning result.
 - **G8 — `assembleContext` gains an ADDITIVE return of the item ids it included** (and the ids it withheld for a
   MEM-004 conflict). It already resolves them; it simply does not surface them. No behavioural change: the same items
-  are ranked, redacted, and withheld exactly as before, and P2-007's tests stay green unmodified. Withheld-on-conflict
-  ids are recorded as *considered-and-withheld*, because "did not use it, and why" is transparency, not noise.
+  are ranked, redacted, and withheld exactly as before. Withheld-on-conflict ids are recorded as
+  *considered-and-withheld*, because "did not use it, and why" is transparency, not noise.
+  - One P2-007 assertion did change: its empty-memory test compares the whole result with `toEqual`, so the two new
+    fields had to be added there. No P2-007 *behaviour* assertion changed.
 - **G9 — a context-assembly failure does not fail planning.** `assembleContext` returns `forbidden` only when
-  `memory:read` is denied; `task:generate` is `['owner','viewer']` and `memory:read` may not be. Planning then proceeds
-  with no memory items and the run records zero — degraded honestly rather than blocking a capability the owner has.
+  `memory:read` is denied. Planning then proceeds with no memory items and the run records zero — degraded honestly
+  rather than blocking a capability the caller holds.
+  - **Stated plainly: this branch is UNREACHABLE today.** `memory:read` and `task:generate` currently carry the same
+    role set (`['owner','viewer']`), so no caller can reach planning and be refused memory. It is defence for a future
+    narrowing of `memory:read`, and its test injects a denial rather than pretending a viewer triggers it — a test
+    that cannot reach a branch is not covering it.
+- **G13 — the memory block is BOUNDED and delimited as data, and it follows the system instruction.** Two problems the
+  first review pass found, both created by G2's decision to wire assembly in:
+  - **Size.** Assembly returns up to 200 items and an item may hold 10,000 characters, while the roadmap half of the
+    same prompt is capped at 12,000. Unbounded, a thoroughly-interviewed company would ship a vast prompt on every
+    call — and a *truncating* provider is the worse outcome, because the run would still link every item as
+    considered. `CONTEXT_PROMPT_MAX` applies the same whole-items-only rule as `formatMilestonesForPlanning`, only
+    the included ids are linked, and the dropped count is recorded (`memory_items_omitted`).
+  - **Order and role.** Memory can carry content that did not originate with the founder (a `research_finding` from an
+    external source), so it must not arrive as a `system` message ahead of the very instruction that says it is not
+    instructions. The block is `user`-role, explicitly delimited as DATA, and emitted AFTER the template's system
+    segment (NFR-021 / AI-AND-WORKER §4).
+- **G14 — planning does NOT re-audit MEM-004 conflicts.** `assembleContext` writes one `context.conflict_flagged`
+  event per conflict per call; planning runs on demand, so an unresolved conflict would otherwise add a duplicate row
+  to an append-only store on every plan, forever. Assembly gains an `auditConflicts` option (default true, preserving
+  P2-007); planning passes false and records the conflict per-run as `memory_item_withheld` links instead — durable,
+  inspectable, and free of duplication.
+- **G15 — a failed run records WHY.** `outcome = 'failed'` alone collapses a model failure, an out-of-scope plan and
+  the owner's own concurrent decision change into one word. `failure_reason` (closed CHECK, and a shape CHECK binding
+  it to `outcome = 'failed'`) distinguishes them. Staleness only invalidates a run that was going to DRAFT: a
+  clarification or refusal drafts nothing, so a concurrent decision change does not make the model's honest answer
+  untrue, and it keeps its own outcome.
+- **G16 — recording a failed run must not itself become the failure.** On the paths that produce nothing, no drafts
+  are in flight, so audit-or-nothing has nothing to protect. If the run row cannot be written, the caller still gets
+  the typed failure PLAN-001 asks to be "visible with reason" rather than an unhandled exception; the transaction
+  rolls back cleanly and the loss is logged as a count. The SUCCESS path still throws, as ADR-015 requires.
 - **G10 — no HTTP route, no UI** (CDR-026 §0), no new role, no new SECURITY DEFINER, no BYPASSRLS.
 
 ## 4. Storage — migration 0028

@@ -45,6 +45,15 @@ export interface AssembleContextOptions {
   readonly limit?: number;
   /** TEST SEAM ONLY: override the in-tx audit writer to force a failure (prove nothing is surfaced). */
   readonly auditWriter?: AuditWriteFn;
+  /**
+   * Write a `context.conflict_flagged` audit event per detected MEM-004 conflict. Default TRUE (P2-007 behaviour).
+   *
+   * A SECONDARY consumer that assembles on demand should pass `false`: `audit_events` is append-only, so a caller
+   * that runs repeatedly (planning, ACBP-P4-006) would otherwise add a duplicate row for the same unresolved conflict
+   * on every invocation, forever, and any surface built on that stream would re-raise the same conflict each time.
+   * Such callers are expected to record the conflict in their own per-run structure instead.
+   */
+  readonly auditConflicts?: boolean;
 }
 
 /** A surfaced MEM-004 conflict (the caller turns it into an open question for the founder). */
@@ -121,8 +130,11 @@ export async function assembleContext(client: DatabaseClient, params: AssembleCo
       const contextParts: ModelContextPart[] = ranked.map((i) => ({ role: 'system', content: redactSecrets(i.content) }));
 
       // Each conflict is audited in the SAME transaction (audit-or-nothing) — BACKLOG "Conflict events audited".
-      for (const c of conflicts) {
-        await audit(scope, contextConflictFlagged({ itemId: c.confirmedItemIds[0]!, confirmedCount: c.confirmedItemIds.length, assumptionCount: c.assumptionItemIds.length }), auditCtx);
+      // Suppressible for repeat-invocation consumers (see `auditConflicts`); the WITHHOLDING itself is unconditional.
+      if (options.auditConflicts !== false) {
+        for (const c of conflicts) {
+          await audit(scope, contextConflictFlagged({ itemId: c.confirmedItemIds[0]!, confirmedCount: c.confirmedItemIds.length, assumptionCount: c.assumptionItemIds.length }), auditCtx);
+        }
       }
       if (conflicts.length > 0) options.logger?.info('context.conflict_flagged', { metadata: { accountId: params.accountId, companyId: params.companyId, conflictCount: conflicts.length } });
 

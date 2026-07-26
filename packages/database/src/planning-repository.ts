@@ -43,12 +43,19 @@ export interface NewTaskReviewFlagInput {
   readonly reason: string | null;
 }
 
-/** The fields a caller supplies to record a planning run (ACBP-P4-006; identity/created_at are server-set). */
-export interface NewPlanningRunInput {
+/**
+ * The fields a caller supplies to record a planning run (ACBP-P4-006; identity/created_at are server-set).
+ *
+ * NOT named `NewPlanningRunInput`: `schema.ts` already exports that as `Insertable<PlanningRunInputsTable>` — a row of
+ * the *inputs* table — so the two would collide the moment these types are re-exported from the package index, and
+ * until then would silently type-check against the wrong shape.
+ */
+export interface NewPlanningRunFields {
   readonly accountId: string;
   readonly companyId: string;
   readonly mode: string;
   readonly outcome: string;
+  readonly failureReason: string | null;
   readonly roadmapId: string;
   readonly roadmapVersion: number;
   readonly decisionId: string;
@@ -56,7 +63,9 @@ export interface NewPlanningRunInput {
   readonly taskCount: number;
   readonly tasksMissingRationale: number;
   readonly milestonesInScope: number;
+  readonly milestonesOmitted: number;
   readonly memoryItemsConsidered: number;
+  readonly memoryItemsOmitted: number;
   readonly createdByUserId: string;
 }
 
@@ -182,7 +191,7 @@ export class PlanningRepository {
   // ── planning transparency (ACBP-P4-006; PLAN-004) ───────────────────────────────────────────────────────
 
   /** Insert one planning run (append-only). Written in the same transaction as its inputs and its audit event. */
-  insertPlanningRun(input: NewPlanningRunInput): Promise<PlanningRunRow> {
+  insertPlanningRun(input: NewPlanningRunFields): Promise<PlanningRunRow> {
     return this.#db
       .insertInto('planning_runs')
       .values({
@@ -190,6 +199,7 @@ export class PlanningRepository {
         company_id: input.companyId,
         mode: input.mode,
         outcome: input.outcome,
+        failure_reason: input.failureReason,
         roadmap_id: input.roadmapId,
         roadmap_version: input.roadmapVersion,
         decision_id: input.decisionId,
@@ -197,7 +207,9 @@ export class PlanningRepository {
         task_count: input.taskCount,
         tasks_missing_rationale: input.tasksMissingRationale,
         milestones_in_scope: input.milestonesInScope,
+        milestones_omitted: input.milestonesOmitted,
         memory_items_considered: input.memoryItemsConsidered,
+        memory_items_omitted: input.memoryItemsOmitted,
         created_by_user_id: input.createdByUserId,
       })
       .returningAll()

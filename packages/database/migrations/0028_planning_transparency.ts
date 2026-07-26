@@ -49,7 +49,16 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('task_count', 'integer', (col) => col.notNull())
     .addColumn('tasks_missing_rationale', 'integer', (col) => col.notNull())
     .addColumn('milestones_in_scope', 'integer', (col) => col.notNull())
+    // In-scope milestones the prompt budget could not fit. Without it, a reader of a `partial` run cannot tell
+    // whether partiality came from the model or from truncation, and `milestones_in_scope` under-reports the phase.
+    .addColumn('milestones_omitted', 'integer', (col) => col.notNull().defaultTo(0))
     .addColumn('memory_items_considered', 'integer', (col) => col.notNull())
+    // Memory items assembly resolved but the prompt budget could not fit — considered, then dropped for size. A run
+    // that silently shipped fewer items than it linked would be claiming inputs the model never read.
+    .addColumn('memory_items_omitted', 'integer', (col) => col.notNull().defaultTo(0))
+    // WHY the run produced nothing. `outcome` alone collapses a model failure, an out-of-scope plan and the owner's
+    // own concurrent decision change into one word.
+    .addColumn('failure_reason', 'text')
     .addColumn('created_by_user_id', 'uuid', (col) => col.notNull())
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addForeignKeyConstraint('planning_runs_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
@@ -68,7 +77,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addCheckConstraint('planning_runs_outcome_valid', sql`outcome in ('ok', 'partial', 'clarification', 'refusal', 'failed')`)
     .addCheckConstraint('planning_runs_phase_scope_valid', sql`phase_scope is null or phase_scope in ('first_phase', 'whole_plan')`)
     .addCheckConstraint('planning_runs_version_positive', sql`roadmap_version >= 1`)
-    .addCheckConstraint('planning_runs_counts_nonneg', sql`task_count >= 0 and tasks_missing_rationale >= 0 and milestones_in_scope >= 0 and memory_items_considered >= 0`)
+    .addCheckConstraint('planning_runs_counts_nonneg', sql`task_count >= 0 and tasks_missing_rationale >= 0 and milestones_in_scope >= 0 and memory_items_considered >= 0 and milestones_omitted >= 0 and memory_items_omitted >= 0`)
+    .addCheckConstraint('planning_runs_failure_reason_valid', sql`failure_reason is null or failure_reason in ('generation', 'out_of_scope', 'stale_decision', 'stale_roadmap')`)
+    // A reason without a failure, or a failure without a reason, would each be their own kind of dishonest record.
+    .addCheckConstraint('planning_runs_failure_reason_shape', sql`(outcome = 'failed' and failure_reason is not null) or (outcome <> 'failed' and failure_reason is null)`)
     // A run cannot be missing more rationales than it produced tasks — the pair is the "fully explained" summary an
     // owner reads, and an impossible pair would make it meaningless.
     .addCheckConstraint('planning_runs_missing_within_count', sql`tasks_missing_rationale <= task_count`)

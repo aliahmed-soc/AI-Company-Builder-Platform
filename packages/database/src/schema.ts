@@ -713,7 +713,11 @@ export interface PlanningRunsTable {
   task_count: ColumnType<number, number, never>;
   tasks_missing_rationale: ColumnType<number, number, never>;
   milestones_in_scope: ColumnType<number, number, never>;
+  milestones_omitted: ColumnType<number, number | undefined, never>;
   memory_items_considered: ColumnType<number, number, never>;
+  memory_items_omitted: ColumnType<number, number | undefined, never>;
+  /** Why the run produced nothing; null unless `outcome = 'failed'` (shape CHECK). */
+  failure_reason: ColumnType<string | null, string | null | undefined, never>;
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
