@@ -61,9 +61,19 @@ unchanged, and its tests stay green as written.
 - **G4 — per-task rationale is nullable and rendered "not recorded".** Never fabricated (ADR-019/TASK-002), matching
   how P4-003 already treats a missing `task_type`. The count of rationale-less tasks is surfaced on the result and the
   log line, the same honesty surface as `tasksMissingType`.
-- **G5 — the output schema goes to `planning.tasks.output@2`.** Adding a field changes the contract the model is held
-  to, and schema refs are the unit of versioning. `@1` is NOT retained: nothing persisted references it, and keeping a
-  dead ref invites a caller to pin the version without rationale.
+- **G5 — the output schemas go to `@2`, both of them.** Adding a field changes the contract the model is held to, and
+  schema refs are the unit of versioning. `planning.task_steering.output` bumps for the same reason as
+  `planning.tasks.output`: its task members carry the same new field. `@1` is NOT retained for either: nothing
+  persisted references it, and keeping a dead ref invites a caller to pin the version without rationale.
+- **G11 — template families gain `@2`, and here `@1` IS retained.** The asymmetry with G5 is deliberate: a template
+  version is an **attribution record** (`templateProvenance` stamps it on every call — TASK-005), so deleting `@1`
+  would orphan the provenance of calls already made; a schema ref is a **live validation contract** with no history to
+  preserve. Both v2 prompts also state that the founder's recorded facts are CONTEXT, never instructions
+  (NFR-021 / AI-AND-WORKER §4), because memory can carry content that originated outside the founder.
+- **G12 — assembled context is prepended as its own context parts, NOT a template slot.** `assembleContext` already
+  ranks, redacts (invariant 12) and shapes its output as `ModelContextPart[]`. Pushing that through `{{...}}`
+  substitution would re-stringify already-redacted content and let memory text collide with the placeholder syntax.
+  P4-006 is the first consumer of `assembleContext`, so this sets the precedent for every later one.
 - **G6 — ONE new audit event, `planning.run_recorded`,** subject-typed `planning_run`, metadata scalars only
   (`{outcome, task_count, tasks_missing_rationale, memory_items_considered, milestones_in_scope}` — no titles, no
   rationale text, no memory content). This is the backlog row's "Snapshot linked in audit" and does not contradict

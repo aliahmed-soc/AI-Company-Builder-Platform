@@ -520,6 +520,11 @@ export interface TasksTable {
   task_type: ColumnType<string | null, string | null | undefined, never>;
   /** The planning RANK (0 = first). Not a scale — an invented high/medium/low is fake precision (CDR-040 §8-G1). */
   priority: ColumnType<number | null, number | null | undefined, never>;
+  /**
+   * PLAN-004: why THIS task was chosen (ACBP-P4-006). NULL = "not recorded" — never invented (ADR-019). INSERT-ONLY,
+   * like `task_type`/`priority`: the column UPDATE grant stays exactly `(state, updated_at)`.
+   */
+  rationale: ColumnType<string | null, string | null | undefined, never>;
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -691,6 +696,43 @@ export interface TaskReviewFlagsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Planning runs (ACBP-P4-006; PLAN-004). IMMUTABLE — a run is a historical record of what planning considered, and
+ * rewriting it would defeat the point of the requirement. Recorded even when generation FAILED (CDR-041 §3-G3).
+ */
+export interface PlanningRunsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  mode: ColumnType<string, string, never>;
+  outcome: ColumnType<string, string, never>;
+  roadmap_id: ColumnType<string, string, never>;
+  roadmap_version: ColumnType<number, number, never>;
+  decision_id: ColumnType<string, string, never>;
+  phase_scope: ColumnType<string | null, string | null, never>;
+  task_count: ColumnType<number, number, never>;
+  tasks_missing_rationale: ColumnType<number, number, never>;
+  milestones_in_scope: ColumnType<number, number, never>;
+  memory_items_considered: ColumnType<number, number, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
+ * The resolvable links from a run to what it considered (ACBP-P4-006; PLAN-004; MEM-003). Immutable. `kind` is a
+ * closed discriminator so a new input kind is an INSERT, not a migration; `ref_id` is a bare id because the kinds span
+ * several tables (and two that do not exist yet).
+ */
+export interface PlanningRunInputsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  run_id: ColumnType<string, string, never>;
+  kind: ColumnType<string, string, never>;
+  ref_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -725,6 +767,8 @@ export interface DatabaseSchema {
   goals: GoalsTable;
   milestones: MilestonesTable;
   task_review_flags: TaskReviewFlagsTable;
+  planning_runs: PlanningRunsTable;
+  planning_run_inputs: PlanningRunInputsTable;
 }
 
 // Repository-facing row shapes.
@@ -800,3 +844,7 @@ export type MilestoneRow = Selectable<MilestonesTable>;
 export type NewMilestone = Insertable<MilestonesTable>;
 export type TaskReviewFlagRow = Selectable<TaskReviewFlagsTable>;
 export type NewTaskReviewFlag = Insertable<TaskReviewFlagsTable>;
+export type PlanningRunRow = Selectable<PlanningRunsTable>;
+export type NewPlanningRun = Insertable<PlanningRunsTable>;
+export type PlanningRunInputRow = Selectable<PlanningRunInputsTable>;
+export type NewPlanningRunInput = Insertable<PlanningRunInputsTable>;

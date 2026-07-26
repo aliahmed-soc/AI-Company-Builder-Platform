@@ -7,7 +7,7 @@
 // update/delete path, so a new roadmap version is always a new row.
 import type { Kysely } from 'kysely';
 import { TERMINAL_TASK_STATES } from '@acbp/contracts';
-import type { DatabaseSchema, RoadmapRow, GoalRow, MilestoneRow, TaskReviewFlagRow, TaskRow } from './schema.js';
+import type { DatabaseSchema, RoadmapRow, GoalRow, MilestoneRow, TaskReviewFlagRow, TaskRow, PlanningRunRow, PlanningRunInputRow } from './schema.js';
 
 export type PlanningExecutor = Kysely<DatabaseSchema>;
 
@@ -41,6 +41,32 @@ export interface NewTaskReviewFlagInput {
   readonly taskId: string;
   readonly roadmapId: string;
   readonly reason: string | null;
+}
+
+/** The fields a caller supplies to record a planning run (ACBP-P4-006; identity/created_at are server-set). */
+export interface NewPlanningRunInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly mode: string;
+  readonly outcome: string;
+  readonly roadmapId: string;
+  readonly roadmapVersion: number;
+  readonly decisionId: string;
+  readonly phaseScope: string | null;
+  readonly taskCount: number;
+  readonly tasksMissingRationale: number;
+  readonly milestonesInScope: number;
+  readonly memoryItemsConsidered: number;
+  readonly createdByUserId: string;
+}
+
+/** One resolvable link from a run to something it considered. */
+export interface NewPlanningRunInputLink {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly runId: string;
+  readonly kind: string;
+  readonly refId: string;
 }
 
 /**
@@ -151,5 +177,59 @@ export class PlanningRepository {
   /** The review flags raised against a task (RLS-confined), newest first. */
   listTaskReviewFlags(taskId: string): Promise<TaskReviewFlagRow[]> {
     return this.#db.selectFrom('task_review_flags').selectAll().where('task_id', '=', taskId).orderBy('created_at', 'desc').orderBy('id', 'desc').execute();
+  }
+
+  // ── planning transparency (ACBP-P4-006; PLAN-004) ───────────────────────────────────────────────────────
+
+  /** Insert one planning run (append-only). Written in the same transaction as its inputs and its audit event. */
+  insertPlanningRun(input: NewPlanningRunInput): Promise<PlanningRunRow> {
+    return this.#db
+      .insertInto('planning_runs')
+      .values({
+        account_id: input.accountId,
+        company_id: input.companyId,
+        mode: input.mode,
+        outcome: input.outcome,
+        roadmap_id: input.roadmapId,
+        roadmap_version: input.roadmapVersion,
+        decision_id: input.decisionId,
+        phase_scope: input.phaseScope,
+        task_count: input.taskCount,
+        tasks_missing_rationale: input.tasksMissingRationale,
+        milestones_in_scope: input.milestonesInScope,
+        memory_items_considered: input.memoryItemsConsidered,
+        created_by_user_id: input.createdByUserId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
+  /**
+   * Link the things a run considered, in ONE statement. `ON CONFLICT DO NOTHING` on the (run, kind, ref) triple makes a
+   * repeated input a no-op rather than a unique-violation that would abort the surrounding transaction — the same
+   * input recorded twice for one run is the same fact, not two.
+   *
+   * A no-op on an empty list: a run that considered no memory items still records its roadmap/decision/milestone links,
+   * and an INSERT with no rows would throw.
+   */
+  async insertPlanningRunInputs(inputs: readonly NewPlanningRunInputLink[]): Promise<number> {
+    if (inputs.length === 0) return 0;
+    const rows = await this.#db
+      .insertInto('planning_run_inputs')
+      .values(inputs.map((i) => ({ account_id: i.accountId, company_id: i.companyId, run_id: i.runId, kind: i.kind, ref_id: i.refId })))
+      .onConflict((oc) => oc.columns(['run_id', 'kind', 'ref_id']).doNothing())
+      .returningAll()
+      .execute();
+    return rows.length;
+  }
+
+  /** A company's planning runs (RLS-confined), newest first, bounded. */
+  listPlanningRuns(companyId: string, limit: number): Promise<PlanningRunRow[]> {
+    return this.#db.selectFrom('planning_runs').selectAll().where('company_id', '=', companyId).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(limit).execute();
+  }
+
+  /** The inputs a run considered (RLS-confined), grouped stably by kind then id. */
+  listPlanningRunInputs(runId: string): Promise<PlanningRunInputRow[]> {
+    return this.#db.selectFrom('planning_run_inputs').selectAll().where('run_id', '=', runId).orderBy('kind', 'asc').orderBy('id', 'asc').execute();
   }
 }
