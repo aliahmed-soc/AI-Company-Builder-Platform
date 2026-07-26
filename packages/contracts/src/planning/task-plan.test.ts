@@ -11,6 +11,7 @@ import {
   narrowTaskPlanOutput,
   narrowSteeringOutput,
   normalizeSteeringRequest,
+  countMissingType,
   PLANNED_TASK_TITLE_MAX,
   PLANNED_TASK_DESCRIPTION_MAX,
   PLANNED_TASKS_MAX,
@@ -33,11 +34,11 @@ describe('task types (ACBP-P4-003/CDR-040 §8-G2)', () => {
 });
 
 describe('parseTaskPlanOutput — autonomous planning (PLAN-001)', () => {
-  test('a well-formed plan parses, trimming and normalizing a blank description to null', () => {
-    const r = parseTaskPlanOutput(plan({ tasks: [task({ title: '  Interview ten clinics  ', description: '   ' }), task(), task()] }), MILESTONES);
+  test('a well-formed plan parses, trimming title and description', () => {
+    const r = parseTaskPlanOutput(plan({ tasks: [task({ title: '  Interview ten clinics  ', description: '  Book and run the calls.  ' }), task(), task()] }), MILESTONES);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.tasks[0]).toEqual({ title: 'Interview ten clinics', description: null, taskType: 'market_research', milestoneOrdinal: 0 });
+    expect(r.value.tasks[0]).toEqual({ title: 'Interview ten clinics', description: 'Book and run the calls.', taskType: 'market_research', milestoneOrdinal: 0 });
     expect(r.value.partial).toBe(false);
   });
 
@@ -75,12 +76,29 @@ describe('parseTaskPlanOutput — autonomous planning (PLAN-001)', () => {
     expect(withBad('a string')).toBe(false);
   });
 
-  test('an ABSENT type is null (explicitly missing, never guessed — ADR-019/TASK-002)', () => {
+  test('an ABSENT type is null (explicitly missing, never guessed — ADR-019/TASK-002), and is COUNTED', () => {
     const r = parseTaskPlanOutput(plan({ tasks: [task({ task_type: null }), task(), task()] }), MILESTONES);
     expect(r.ok && r.value.tasks[0]?.taskType).toBeNull();
-    const omitted = { title: 'T', description: null, milestone_ordinal: 0 };
+    const omitted = { title: 'T', description: 'what it involves', milestone_ordinal: 0 };
     const r2 = parseTaskPlanOutput(JSON.stringify({ tasks: [omitted, task(), task()] }), MILESTONES);
     expect(r2.ok && r2.value.tasks[0]?.taskType).toBeNull();
+    // The shortfall is surfaced rather than absorbed — PLAN-001's failure clause covers a partial shortfall too.
+    expect(r2.ok && countMissingType(r2.value.tasks)).toBe(1);
+    expect(r.ok && countMissingType(r.value.tasks)).toBe(1);
+    const allTyped = parseTaskPlanOutput(plan(), MILESTONES);
+    expect(allTyped.ok && countMissingType(allTyped.value.tasks)).toBe(0);
+  });
+
+  test('PLAN-001 requires a DESCRIPTION on every task — a description-less task is not plannable', () => {
+    // Unlike the type (a closed set the model must not be forced to guess), the description is the model's own prose
+    // about what doing the task involves, so demanding it guesses nothing.
+    for (const bad of [null, undefined, '   ']) {
+      expect(parseTaskPlanOutput(plan({ tasks: [task({ description: bad }), task(), task()] }), MILESTONES).ok).toBe(false);
+    }
+    const omitted = { title: 'T', task_type: 'market_research', milestone_ordinal: 0 };
+    expect(parseTaskPlanOutput(JSON.stringify({ tasks: [omitted, task(), task()] }), MILESTONES).ok).toBe(false);
+    // Steering tasks obey the same rule.
+    expect(parseSteeringOutput(steer({ tasks: [task({ description: null })] }), MILESTONES).ok).toBe(false);
   });
 
   test('structurally unusable payloads are rejected', () => {

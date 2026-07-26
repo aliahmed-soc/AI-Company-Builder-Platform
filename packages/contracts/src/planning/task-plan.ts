@@ -101,6 +101,11 @@ function plannedTask(raw: unknown, milestoneCount: number): PlannedTaskInput | u
   const t = title((raw as { title?: unknown }).title);
   const d = description((raw as { description?: unknown }).description);
   if (t === undefined || d === undefined) return undefined;
+  // PLAN-001: "each has type and description". The DESCRIPTION is required — it is the model's own prose about what
+  // doing the task involves, so demanding it guesses nothing, and a description-less task is not a plannable task.
+  // (The TYPE stays optional: it comes from a closed set, and forcing a choice the model cannot justify WOULD be a
+  // guess — ADR-019/TASK-002. A missing type is instead surfaced explicitly; see `countMissingType`.)
+  if (d === null) return undefined;
   // PLAN-001 requires a type on every task; an UNKNOWN type is null rather than a guess (ADR-019) — the use case
   // surfaces it as explicitly missing (TASK-002) instead of inventing one.
   const rawType = (raw as { task_type?: unknown }).task_type;
@@ -196,12 +201,14 @@ export function parseSteeringOutput(raw: string, milestoneCount: number): Steeri
  * PERSISTABILITY invariants as the parse — the gateway is injected, so a caller wiring a different or missing
  * validator must not be able to persist a plan the parser exists to reject (the CDR-039 §7-G10 lesson).
  */
-export function narrowTaskPlanOutput(validated: unknown, milestoneCount: number, enforceMinimum = true): TaskPlanOutput | undefined {
+export function narrowTaskPlanOutput(validated: unknown, milestoneCount: number): TaskPlanOutput | undefined {
   if (typeof validated !== 'object' || validated === null) return undefined;
   const v = validated as { tasks?: unknown; partial?: unknown };
   if (!Array.isArray(v.tasks) || typeof v.partial !== 'boolean') return undefined;
   const tasks = narrowTasks(v.tasks, milestoneCount);
-  if (tasks === undefined || !taskListOk(tasks, v.partial, enforceMinimum)) return undefined;
+  // The 3+ minimum is always enforced here: this is the AUTONOMOUS-planning backstop, and an exported switch to
+  // disable it would be a public way to bypass PLAN-001's acceptance criterion. Steering uses its own narrow.
+  if (tasks === undefined || !taskListOk(tasks, v.partial, true)) return undefined;
   return { tasks, partial: v.partial };
 }
 
@@ -210,17 +217,22 @@ export function narrowSteeringOutput(validated: unknown, milestoneCount: number)
   if (typeof validated !== 'object' || validated === null) return undefined;
   const v = validated as { outcome?: unknown; tasks?: unknown; intent?: unknown; question?: unknown; reason?: unknown };
   if (v.outcome === 'clarification') {
-    return typeof v.question === 'string' && v.question.length > 0 && v.question.length <= STEERING_MESSAGE_MAX ? { outcome: 'clarification', question: v.question } : undefined;
+    return usableText(v.question, STEERING_MESSAGE_MAX) ? { outcome: 'clarification', question: v.question as string } : undefined;
   }
   if (v.outcome === 'refusal') {
-    return typeof v.reason === 'string' && v.reason.length > 0 && v.reason.length <= STEERING_MESSAGE_MAX ? { outcome: 'refusal', reason: v.reason } : undefined;
+    return usableText(v.reason, STEERING_MESSAGE_MAX) ? { outcome: 'refusal', reason: v.reason as string } : undefined;
   }
   if (v.outcome !== 'tasks') return undefined;
-  if (typeof v.intent !== 'string' || v.intent.length === 0 || v.intent.length > STEERING_MESSAGE_MAX) return undefined;
+  if (!usableText(v.intent, STEERING_MESSAGE_MAX)) return undefined;
   if (!Array.isArray(v.tasks)) return undefined;
   const tasks = narrowTasks(v.tasks, milestoneCount);
   if (tasks === undefined || !taskListOk(tasks, false, false)) return undefined;
-  return { outcome: 'tasks', tasks, intent: v.intent };
+  return { outcome: 'tasks', tasks, intent: v.intent as string };
+}
+
+/** A non-blank bounded string, applying the SAME blank rule the parser applies (a whitespace-only value is not text). */
+function usableText(v: unknown, max: number): boolean {
+  return typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 }
 
 function narrowTasks(raw: readonly unknown[], milestoneCount: number): PlannedTaskInput[] | undefined {
@@ -228,13 +240,23 @@ function narrowTasks(raw: readonly unknown[], milestoneCount: number): PlannedTa
   for (const t of raw) {
     if (typeof t !== 'object' || t === null) return undefined;
     const { title: ti, description: d, taskType, milestoneOrdinal: o } = t as { title?: unknown; description?: unknown; taskType?: unknown; milestoneOrdinal?: unknown };
-    if (typeof ti !== 'string' || ti.length === 0 || ti.length > PLANNED_TASK_TITLE_MAX) return undefined;
-    if (d !== null && (typeof d !== 'string' || d.length === 0 || d.length > PLANNED_TASK_DESCRIPTION_MAX)) return undefined;
+    if (!usableText(ti, PLANNED_TASK_TITLE_MAX)) return undefined;
+    // PLAN-001 requires a description on every task (see `plannedTask`) — the backstop enforces it too.
+    if (!usableText(d, PLANNED_TASK_DESCRIPTION_MAX)) return undefined;
     if (taskType !== null && !isTaskType(taskType)) return undefined;
     if (typeof o !== 'number' || !Number.isInteger(o) || o < 0 || o >= milestoneCount) return undefined;
-    tasks.push({ title: ti, description: d, taskType, milestoneOrdinal: o });
+    tasks.push({ title: ti as string, description: d as string, taskType, milestoneOrdinal: o });
   }
   return tasks;
+}
+
+/**
+ * How many planned tasks carry NO type. PLAN-001 wants a type on every task but ADR-019/TASK-002 forbid inventing one,
+ * so a missing type is surfaced as an explicit count rather than silently absorbed — "planning failure is visible with
+ * reason" applies to a partial shortfall too, not only to a total failure.
+ */
+export function countMissingType(tasks: readonly PlannedTaskInput[]): number {
+  return tasks.reduce((n, t) => (t.taskType === null ? n + 1 : n), 0);
 }
 
 /** The bounded natural-language request an owner types into the steering surface (PLAN-002). */

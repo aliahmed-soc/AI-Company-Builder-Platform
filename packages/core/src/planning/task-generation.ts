@@ -15,13 +15,15 @@
 // deferred "generates tasks solely for that phase / violations blocked server-side" to this ticket. The model is only
 // ever shown the in-scope milestones, and every returned ordinal is re-checked against that same set server-side —
 // an out-of-scope task is refused, never silently re-pointed.
-import { PlanningRepository, StrategyRepository, TaskRepository, type DatabaseClient, type TaskRow, type MilestoneRow, type DecisionRow, type RoadmapRow } from '@acbp/database';
+import { PlanningRepository, StrategyRepository, TaskRepository, type DatabaseClient, type TaskRow, type MilestoneRow, type DecisionRow, type RoadmapRow, type TenantScope } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+import type { MemberRole } from '../members/roles.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import {
   narrowTaskPlanOutput,
   narrowSteeringOutput,
   normalizeSteeringRequest,
+  countMissingType,
   resolveTemplateRef,
   renderTemplateSegments,
   templateRef,
@@ -78,10 +80,28 @@ type PlanningFailure =
   // The gateway failed, or its output was unusable. NOTHING is persisted — "no phantom tasks".
   | { readonly status: 'generation_failed' };
 
-export type GenerateTasksResult = { readonly status: 'ok'; readonly tasks: readonly TaskDTO[]; readonly partial: boolean } | PlanningFailure;
+export type GenerateTasksResult =
+  | {
+      readonly status: 'ok';
+      readonly tasks: readonly TaskDTO[];
+      readonly partial: boolean;
+      /**
+       * How many of the returned tasks carry NO type. PLAN-001 wants a type on every task, but ADR-019/TASK-002 forbid
+       * inventing one, so a shortfall is reported explicitly rather than absorbed silently — "planning failure is
+       * visible with reason" applies to a partial shortfall too.
+       */
+      readonly tasksMissingType: number;
+      /**
+       * In-scope milestones the prompt budget could not fit, so the model never saw them. Non-zero forces `partial`:
+       * the plan covers only a PREFIX of the approved phase, and reporting that as complete is the same
+       * fabricated-completeness failure one level up from a task traced to an unseen milestone.
+       */
+      readonly milestonesOmitted: number;
+    }
+  | PlanningFailure;
 
 export type SteerTaskPlanningResult =
-  | { readonly status: 'ok'; readonly tasks: readonly TaskDTO[]; readonly intent: string }
+  | { readonly status: 'ok'; readonly tasks: readonly TaskDTO[]; readonly intent: string; readonly tasksMissingType: number; readonly milestonesOmitted: number }
   // "Ambiguous requests trigger clarification, not guessed execution" — a SUCCESSFUL answer, not a failure.
   | { readonly status: 'clarification_needed'; readonly question: string }
   // "relevant tasks or an honest refusal" — also a SUCCESSFUL answer.
@@ -89,11 +109,29 @@ export type SteerTaskPlanningResult =
   | { readonly status: 'invalid' }
   | PlanningFailure;
 
-/** Render the in-scope milestones into the bounded `{{roadmap}}` prompt text — the model plans only against these. */
-export function formatMilestonesForPlanning(roadmap: RoadmapRow, milestones: readonly MilestoneRow[]): string {
+/**
+ * Render the in-scope milestones into the bounded `{{roadmap}}` prompt text.
+ *
+ * Returns the milestones ACTUALLY INCLUDED alongside the text, and the caller uses THAT array as the ordinal space.
+ * A blind `.slice(ROADMAP_PROMPT_MAX)` would silently desynchronize the two: with enough long descriptions the tail of
+ * the list would be cut from the prompt while the parser still accepted its ordinals, so tasks could persist —
+ * complete and unflagged — traced to milestones the model never read. That is fabricated traceability (ADR-019), so
+ * "shown" and "resolvable" are made the same set by construction: whole milestones are added until the budget is
+ * exhausted, never a half one.
+ */
+export function formatMilestonesForPlanning(roadmap: RoadmapRow, milestones: readonly MilestoneRow[]): { readonly prompt: string; readonly shown: readonly MilestoneRow[] } {
   const head = `Roadmap version ${roadmap.version}${roadmap.status === 'partial' ? ' (partial)' : ''}`;
-  const lines = milestones.map((m, i) => `Milestone ${i}: ${m.title}${m.description === null ? '' : ` — ${m.description}`}`);
-  return [head, ...lines].join('\n').slice(0, ROADMAP_PROMPT_MAX);
+  const shown: MilestoneRow[] = [];
+  const lines: string[] = [];
+  let used = head.length;
+  for (const m of milestones) {
+    const line = `Milestone ${shown.length}: ${m.title}${m.description === null ? '' : ` — ${m.description}`}`;
+    if (used + line.length + 1 > ROADMAP_PROMPT_MAX) break; // whole milestones only — never a truncated one
+    shown.push(m);
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return { prompt: [head, ...lines].join('\n'), shown };
 }
 
 function buildRequest(family: 'planning.tasks@1' | 'planning.task_steering@1', schemaRef: string, input: { accountId: string; companyId: string; values: Record<string, string>; correlationId?: string }): ModelGatewayRequest {
@@ -128,7 +166,15 @@ export function milestonesInPhaseScope(phaseScope: string | null, goals: readonl
 }
 
 type PreRead =
-  | { readonly kind: 'ready'; readonly decision: DecisionRow; readonly roadmap: RoadmapRow; readonly inScope: readonly MilestoneRow[]; readonly prompt: string; readonly nextPriority: number }
+  | {
+      readonly kind: 'ready';
+      readonly decision: DecisionRow;
+      readonly roadmap: RoadmapRow;
+      readonly inScope: readonly MilestoneRow[];
+      readonly prompt: string;
+      /** In-scope milestones the prompt budget could not fit. Non-zero means the plan CANNOT be complete (§below). */
+      readonly milestonesOmitted: number;
+    }
   | { readonly kind: 'failure'; readonly result: PlanningFailure };
 
 /** Gate + read the planning input under company scope. Shared by both entry points so the rules cannot drift. */
@@ -148,15 +194,18 @@ async function readPlanningInput(client: DatabaseClient, params: GenerateTasksPa
       // Every task must trace to a milestone (ROAD-001 / M4 exit); with no roadmap there is nothing to trace to.
       if (roadmap === undefined) return { kind: 'failure', result: { status: 'no_roadmap' } };
 
-      // STRAT-005: the approved phase scope restricts what may be planned at all.
+      // STRAT-005: the approved phase scope restricts what may be planned at all. FAIL CLOSED if the selection cannot
+      // be resolved — an unresolvable selection is not "no phase scope recorded", and defaulting to the whole plan
+      // would silently widen the approved boundary.
       const selection = await strategy.findSelection(gate.decision.selection_id);
-      const inScope = milestonesInPhaseScope(selection?.phase_scope ?? null, await planning.listGoals(roadmap.id), await planning.listMilestones(roadmap.id));
-      if (inScope.length === 0) return { kind: 'failure', result: { status: 'no_milestones_in_scope' } };
+      if (selection === undefined) return { kind: 'failure', result: { status: 'generation_failed' } };
+      const inPhase = milestonesInPhaseScope(selection.phase_scope, await planning.listGoals(roadmap.id), await planning.listMilestones(roadmap.id));
+      if (inPhase.length === 0) return { kind: 'failure', result: { status: 'no_milestones_in_scope' } };
 
-      // Ranks continue after whatever planning already produced, so a second run does not restate rank 0.
-      const existing = await new TaskRepository(scope.db).list({ limit: 200 });
-      const nextPriority = existing.reduce((max, t) => (t.priority !== null && t.priority >= max ? t.priority + 1 : max), 0);
-      return { kind: 'ready', decision: gate.decision, roadmap, inScope, prompt: formatMilestonesForPlanning(roadmap, inScope), nextPriority };
+      // The ordinal space is exactly what the prompt SHOWS (see formatMilestonesForPlanning) — never a superset.
+      const { prompt, shown } = formatMilestonesForPlanning(roadmap, inPhase);
+      if (shown.length === 0) return { kind: 'failure', result: { status: 'no_milestones_in_scope' } };
+      return { kind: 'ready', decision: gate.decision, roadmap, inScope: shown, prompt, milestonesOmitted: inPhase.length - shown.length };
     },
     optsBase,
   );
@@ -175,46 +224,65 @@ async function persistDrafts(
   planned: readonly PlannedTaskInput[],
   optsBase: Record<string, unknown>,
 ): Promise<{ readonly status: 'ok'; readonly tasks: readonly TaskDTO[] } | PlanningFailure> {
-  const run = await runInCompanyScope(
-    client,
-    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
-    async (scope, role): Promise<{ readonly status: 'ok'; readonly tasks: readonly TaskDTO[] } | PlanningFailure> => {
-      if (checkAuthorization(role, 'task:generate', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
-      const strategy = new StrategyRepository(scope.db);
-      const gate = classifyPlanningGate(await strategy.latestDecisionForCompany(params.companyId));
-      if (gate.kind !== 'open' || gate.decision.id !== pre.decision.id) return { status: 'stale_decision' };
-      const planning = new PlanningRepository(scope.db);
-      const latest = await planning.latestRoadmap(params.companyId);
-      // A roadmap edit during the model call would leave these tasks pinned to a superseded version — exactly what
-      // ROAD-002's affected-task flagging exists to avoid. Persist nothing instead.
-      if (latest === undefined || latest.id !== pre.roadmap.id) return { status: 'stale_roadmap' };
+  const body = async (scope: TenantScope, role: MemberRole): Promise<{ readonly status: 'ok'; readonly tasks: readonly TaskDTO[] } | PlanningFailure> => {
+    if (checkAuthorization(role, 'task:generate', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { status: 'forbidden' };
+    const strategy = new StrategyRepository(scope.db);
+    const gate = classifyPlanningGate(await strategy.latestDecisionForCompany(params.companyId));
+    if (gate.kind !== 'open' || gate.decision.id !== pre.decision.id) return { status: 'stale_decision' };
+    const planning = new PlanningRepository(scope.db);
+    const latest = await planning.latestRoadmap(params.companyId);
+    // A roadmap edit during the model call would leave these tasks pinned to a superseded version — exactly what
+    // ROAD-002's affected-task flagging exists to avoid. Persist nothing instead.
+    if (latest === undefined || latest.id !== pre.roadmap.id) return { status: 'stale_roadmap' };
 
-      const tasks = new TaskRepository(scope.db);
-      const rows: TaskRow[] = [];
-      for (let i = 0; i < planned.length; i += 1) {
-        const t = planned[i]!;
-        // Server-side phase-boundary re-check (STRAT-005 "violations are blocked server-side"). The parse already
-        // bounded the ordinal to the in-scope set; re-resolving here means a boundary violation can never be
-        // silently re-pointed at an in-scope milestone.
-        const milestone = pre.inScope[t.milestoneOrdinal];
-        if (milestone === undefined) return { status: 'generation_failed' };
-        rows.push(
-          await tasks.insert({
-            accountId: params.accountId,
-            companyId: params.companyId,
-            title: t.title,
-            description: t.description,
-            milestoneId: milestone.id,
-            taskType: t.taskType,
-            priority: pre.nextPriority + i,
-            createdByUserId: params.userId,
-          }),
-        );
-      }
-      return { status: 'ok', tasks: rows.map(toTaskDTO) };
-    },
-    optsBase,
-  );
+    // Server-side phase-boundary re-check (STRAT-005 "violations are blocked server-side"), done for the WHOLE batch
+    // BEFORE anything is inserted. The parse already bounded the ordinal to the in-scope set, but that bound comes
+    // from an INJECTED validator, so a validator built against a wider milestone count — a wiring mistake, not a model
+    // one — would let an out-of-scope ordinal reach here. Re-resolving means a violation can never be silently
+    // re-pointed at an in-scope milestone.
+    //
+    // RESOLVE-THEN-INSERT, deliberately: checking inside the insert loop would mean a late violation is discovered
+    // after earlier tasks are already inserted, and simply returning there would COMMIT them — phantom tasks under a
+    // "no phantom tasks" result. Rolling back via a throw would also work, but the transaction helper normalizes and
+    // re-wraps thrown errors, so control flow would depend on unwrapping a `cause` chain. Resolving first leaves
+    // nothing to roll back: on a violation this returns before the first write.
+    const resolved: MilestoneRow[] = [];
+    for (const t of planned) {
+      const milestone = pre.inScope[t.milestoneOrdinal];
+      if (milestone === undefined) return { status: 'generation_failed' };
+      resolved.push(milestone);
+    }
+
+    const tasks = new TaskRepository(scope.db);
+    // Ranks continue after whatever planning already produced, so a second run does not restate rank 0. Read the MAX
+    // directly rather than scanning a page: a page could miss older ranked rows behind newer unranked (manually
+    // created) ones and silently restart at 0.
+    //
+    // Read HERE, inside the persist transaction, not in the pre-read: the model call sits between the two, so a rank
+    // read before it is stale by exactly the width of that call. Two overlapping runs would both see max = -1 and both
+    // write ranks 0,1,2 — and since `priority` has no uniqueness constraint nothing would error, leaving the company
+    // with a silently ambiguous order under a result that claims to be "prioritized".
+    const nextPriority = (await tasks.maxPriority(params.companyId)) + 1;
+    const rows: TaskRow[] = [];
+    for (let i = 0; i < planned.length; i += 1) {
+      const t = planned[i]!;
+      rows.push(
+        await tasks.insert({
+          accountId: params.accountId,
+          companyId: params.companyId,
+          title: t.title,
+          description: t.description,
+          milestoneId: resolved[i]!.id,
+          taskType: t.taskType,
+          priority: nextPriority + i,
+          createdByUserId: params.userId,
+        }),
+      );
+    }
+    return { status: 'ok', tasks: rows.map(toTaskDTO) };
+  };
+
+  const run = await runInCompanyScope(client, { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId }, body, optsBase);
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
@@ -238,8 +306,12 @@ export async function generateTasks(client: DatabaseClient, params: GenerateTask
 
   const persisted = await persistDrafts(client, params, pre, parsed.tasks, optsBase);
   if (persisted.status !== 'ok') return persisted;
-  deps.logger?.info('planning.tasks_drafted', { metadata: { accountId: params.accountId, companyId: params.companyId, roadmapVersion: pre.roadmap.version, taskCount: persisted.tasks.length, partial: parsed.partial, inScopeMilestones: pre.inScope.length } });
-  return { status: 'ok', tasks: persisted.tasks, partial: parsed.partial };
+  const tasksMissingType = countMissingType(parsed.tasks);
+  // A truncated prompt means the model planned against a PREFIX of the approved phase, so the plan cannot honestly be
+  // called complete no matter what the model said about itself.
+  const partial = parsed.partial || pre.milestonesOmitted > 0;
+  deps.logger?.info('planning.tasks_drafted', { metadata: { accountId: params.accountId, companyId: params.companyId, roadmapVersion: pre.roadmap.version, taskCount: persisted.tasks.length, partial, tasksMissingType, inScopeMilestones: pre.inScope.length, milestonesOmitted: pre.milestonesOmitted } });
+  return { status: 'ok', tasks: persisted.tasks, partial, tasksMissingType, milestonesOmitted: pre.milestonesOmitted };
 }
 
 /** PLAN-002 — the owner steers planning. Answers with tasks, a clarifying question, or an honest refusal. */
@@ -275,7 +347,9 @@ export async function steerTaskPlanning(client: DatabaseClient, params: SteerTas
 
   const persisted = await persistDrafts(client, params, pre, answer.tasks, optsBase);
   if (persisted.status !== 'ok') return persisted;
-  deps.logger?.info('planning.steering_drafted', { metadata: { accountId: params.accountId, companyId: params.companyId, roadmapVersion: pre.roadmap.version, taskCount: persisted.tasks.length } });
+  // Steered tasks run through the same parse, so they carry the same honesty obligations as the autonomous path.
+  const tasksMissingType = countMissingType(answer.tasks);
+  deps.logger?.info('planning.steering_drafted', { metadata: { accountId: params.accountId, companyId: params.companyId, roadmapVersion: pre.roadmap.version, taskCount: persisted.tasks.length, tasksMissingType, milestonesOmitted: pre.milestonesOmitted } });
   // The interpreted intent is returned for PREVIEW and never persisted (CDR-040 §8-G8 — the input snapshot is P4-006).
-  return { status: 'ok', tasks: persisted.tasks, intent: answer.intent };
+  return { status: 'ok', tasks: persisted.tasks, intent: answer.intent, tasksMissingType, milestonesOmitted: pre.milestonesOmitted };
 }

@@ -21,10 +21,15 @@ ticket without a DONE line above it is genuinely in flight._
   `classifyPlanningGate` + requires a current roadmap; both re-verified in the persist tx (`stale_decision` /
   `stale_roadmap`). Migration **0027** is ALTER-only: `tasks.task_type` (closed CHECK, nullable) + `tasks.priority`
   (integer RANK, no invented scale) — both INSERT-ONLY, the `(state, updated_at)` grant untouched.
-  Commits: contracts `7fe3c4b` → migration 0027 `65e83be` → both core use cases `8ebbb64`.
-  Local: full unit 1055 passed / 0 failed; planning real-PG 38 discovered (local PG down → **skipped, not green**;
-  hosted CI is the evidence); recursive typecheck/lint/secrets/boundaries clean; 0 mojibake.
-  Independent review next, then exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete branch.
+  Commits: contracts `7fe3c4b` → migration 0027 `65e83be` → both core use cases `8ebbb64` → review fixes.
+  Independent review: **PASS** — 0 Blocker/Critical/High, 4 Medium, 10 Low; every Medium and every actionable Low
+  applied (see `docs/implementation/P4-003-REVIEW-COVERAGE.md`).
+  Local: full unit suite passing; planning real-PG discovered but **skipped, not green** (local PG down) — hosted CI is
+  the evidence; recursive typecheck/lint/secrets/boundaries clean; 0 mojibake.
+  **The `BACKLOG.csv` row already reads `Done`** — that flip is written in this ticket's finalization commit, matching
+  every prior ticket, and is NOT the completion claim: the ticket is done only after exact-head CI green zero-skip →
+  squash-merge → exact-main CI green zero-skip → branch deleted. Until then this line, not the CSV, is the true state.
+  Next: exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete branch.
   Migrations end **0027**.
 - **ACBP-P4-001 goals, roadmap and milestones — DONE** (squash `00a580d`, PR #39; exact-main CI green zero-skip 1755/1755; branch deleted). Phase 4 2/7.
 - **ACBP-P4-001 goals, roadmap and milestones — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**

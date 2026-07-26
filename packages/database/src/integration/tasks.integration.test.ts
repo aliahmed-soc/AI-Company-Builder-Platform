@@ -186,19 +186,22 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
       expect(await mk({ type: t })).toBeTruthy();
     }
     expect(await mk({ type: null })).toBeTruthy();
-    // An unknown type is refused — the set is closed deliberately (CDR-040 §8-G2).
-    await expect(mk({ type: 'vibes_research' })).rejects.toThrow();
+    // An unknown type is refused — the set is closed deliberately (CDR-040 §8-G2). Pinned to the CONSTRAINT NAME: a
+    // bare `.rejects.toThrow()` would also be satisfied by an RLS denial or a NOT NULL violation, so it would keep
+    // passing even if the CHECK were dropped.
+    await expect(mk({ type: 'vibes_research' })).rejects.toThrow(/tasks_task_type_valid/);
 
     // priority is a RANK: any non-negative integer, or null. Negative is refused; there is no upper bound to invent.
     const ranked = await mk({ priority: 0 });
     expect(ranked).toBeTruthy();
     expect(await mk({ priority: 999 })).toBeTruthy();
-    await expect(mk({ priority: -1 })).rejects.toThrow();
+    await expect(mk({ priority: -1 })).rejects.toThrow(/tasks_priority_nonneg/);
 
     // INSERT-ONLY: the app role may still flip `state`, but neither planning column (CDR-040 §8-G9 — widening the
     // pinned (state, updated_at) grant to make J-10's "adjust priorities" reachable is deliberately out of scope).
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set priority = 1 where id = ${ranked}::uuid`.execute(k))).rejects.toThrow();
-    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set task_type = 'market_research' where id = ${ranked}::uuid`.execute(k))).rejects.toThrow();
+    // Pinned to the PRIVILEGE error: the point is that the column grant refuses these, not merely that something did.
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set priority = 1 where id = ${ranked}::uuid`.execute(k))).rejects.toThrow(/permission denied/i);
+    await expect(asApp(scope(accountA, companyA1), (k) => sql`update tasks set task_type = 'market_research' where id = ${ranked}::uuid`.execute(k))).rejects.toThrow(/permission denied/i);
     expect((await sql<{ priority: number | null }>`select priority from tasks where id = ${ranked}::uuid`.execute(su.kysely)).rows[0]?.priority).toBe(0);
   });
 });

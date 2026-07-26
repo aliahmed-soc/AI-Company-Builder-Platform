@@ -67,6 +67,27 @@ Implementation: read the decision's selection (`phase_scope`), then restrict the
 against — and re-check server-side that every returned milestone ordinal is inside that set. A task naming an
 out-of-scope milestone is refused, not silently re-pointed (§8-G3 defines "first phase").
 
+The gateway's shape validator is **injected** by the composition layer (`taskPlanOutputValidator(milestoneCount)`), so
+a validator constructed against the wrong milestone count is a wiring mistake, not a model one. The use case therefore
+does not trust the injected bound: it re-narrows the model's output with `pre.inScope.length` — the count it resolved
+itself — which is what actually refuses an over-permissive validator's ordinal. That re-narrow is the live gate.
+
+The persist transaction ALSO re-resolves every ordinal against the same in-scope array. Stated honestly: because both
+layers key off the same `pre.inScope`, that second check is **unreachable by construction** today. It is kept as
+defence-in-depth against a future edit that decouples them, not as a second live gate, and no test claims otherwise.
+
+Where the ordering does matter is *within* the persist step: every ordinal is resolved **before the first insert**,
+not checked inside the insert loop. Checking inside the loop would discover a late violation only after earlier tasks
+were already written, and simply returning there would COMMIT them — phantom tasks under a "no phantom tasks" result.
+Throwing to force a rollback would also work, but the transaction helper normalizes and re-wraps thrown errors, so
+control flow would then depend on unwrapping a `cause` chain. Resolving first leaves nothing to roll back.
+
+**Scope of the gate — `task:generate` only.** Manual `createTask` (`task:create`, ACBP-P4-002) is **not** phase-gated
+and is not changed by this ticket. STRAT-005 constrains *work generation* — what the platform proposes on the owner's
+behalf — not what the owner chooses to write down themselves; gating the manual path would mean the product refused
+to record a human's own task because a machine-authored phase boundary excluded it. Manual tasks also carry neither
+`task_type` nor `priority` (both nullable, §5), so they never enter the planning rank order.
+
 ## 5. Storage — migration 0027 (ALTER only; no new table)
 
 Two additive columns on the existing `tasks` table, both required by canon rather than invented:
@@ -125,10 +146,15 @@ surface, and conflating any of them with `generation_failed` would report an hon
   added later; removing one cannot.
 - **G2 — the seven task types are a closed CHECK, nullable.** The PRD calls them "initial task types", so the set may
   grow; deny-by-default matches every other enum in the schema, and widening a CHECK later is additive.
-- **G3 — "first phase" = the FIRST GOAL (`ordinal = 0`) and its milestones**; if the roadmap has no goals, the single
+- **G3 — "first phase" = the LOWEST-ORDINAL GOAL and its milestones**; if the roadmap has no goals, the single
   lowest-ordinal milestone. Canon defines no "phase" object — `CDR-037 §5` says so explicitly — and STRAT-005's
   failure clause ("violations are blocked server-side") argues for the narrowest honest reading. Loosening later is
   additive.
+  - Stated as the MINIMUM ordinal, not literally `ordinal = 0`, and `milestonesInPhaseScope` resolves it that way (a
+    `reduce` to the lowest ordinal). In practice P4-001 writes goals with contiguous ordinals from 0, so the two
+    readings coincide today; the minimum is used anyway so that a roadmap whose goal ordinals do not start at 0 still
+    resolves to a real first goal instead of silently falling through to the no-goals branch and planning against a
+    single milestone that belongs to some other goal.
 - **G4 — the preview is persisted `draft` rows, not a stateless echo.** Canon routes both paths through `draft`
   (§2), so this invents nothing; it also avoids trusting a client-echoed payload on confirm. Cost, stated: unconfirmed
   drafts linger until P4-005's delete control lands — acceptable, since a draft is invisible on the board.

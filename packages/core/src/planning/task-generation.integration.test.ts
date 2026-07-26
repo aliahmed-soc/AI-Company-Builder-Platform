@@ -142,6 +142,68 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
     expect(await tasksFor()).toHaveLength(0);
   });
 
+  test('STRAT-005: an OVER-PERMISSIVE injected validator still cannot cross the phase boundary — the use case rebinds the bound itself', async () => {
+    // The gateway's shape validator is INJECTED by the composition layer, so a validator constructed against the whole
+    // roadmap (4) while the approved scope is the first goal (2) is a wiring mistake, not a model one. What makes that
+    // harmless is that the use case does NOT trust the injected bound: it re-narrows with `pre.inScope.length`, the
+    // count it resolved itself. This test pins that rebinding — remove it and the over-permissive validator's ordinal
+    // would sail through.
+    //
+    // Note precisely what this does and does not prove. The re-narrow is what refuses the plan here; the persist-time
+    // re-resolution in `persistDrafts` is NOT reached, because both layers key off the same `pre.inScope`, which makes
+    // the persist guard unreachable by construction (defence-in-depth against a future edit that decouples them, not a
+    // live second gate). No claim is made here about rollback: with the batch refused before the transaction opens,
+    // there is nothing to roll back — which is the point of resolving every ordinal before the first insert.
+    await seedChain('first_phase', { goals: 2, milestonesPerGoal: 2 });
+    const overPermissive = gatewayWith({ kind: 'respond', output: planOutput({ tasks: [planned({ milestone_ordinal: 0 }), planned({ milestone_ordinal: 1 }), planned({ milestone_ordinal: 3 })] }) }, 4);
+    const r = await generateTasks(product, base(), { gateway: overPermissive });
+    expect(r.status).toBe('generation_failed');
+    expect(await tasksFor()).toHaveLength(0);
+    expect(await taskAudits()).toBe(0);
+    // Steering re-narrows against the same resolved count, so it inherits the same defence.
+    const steerOver = gatewayWith({ kind: 'respond', output: steerOutput({ tasks: [planned({ milestone_ordinal: 0 }), planned({ milestone_ordinal: 3 })] }) }, 4);
+    expect((await steerTaskPlanning(product, { ...base(), request: 'Plan the launch' }, { gateway: steerOver })).status).toBe('generation_failed');
+    expect(await tasksFor()).toHaveLength(0);
+  });
+
+  test('ranks do not collide across overlapping runs: the MAX is read inside the persist transaction, after the model call', async () => {
+    // `beforePersist` runs between the model call and the persist transaction — exactly where a concurrent run's rows
+    // would land. A rank read in the PRE-read (before the model call) would be stale by the width of that call, and
+    // since `priority` has no uniqueness constraint the collision would be silent: two tasks at rank 0, no error, and
+    // an ambiguous order under a result that calls itself "prioritized".
+    await seedChain('whole_plan');
+    const r = await generateTasks(
+      product,
+      base(),
+      { gateway: okGateway() },
+      {
+        beforePersist: async () => {
+          await sql`insert into tasks (account_id, company_id, title, state, priority, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'concurrent', 'draft', 7, ${w.aOwner}::uuid)`.execute(owner.kysely);
+        },
+      },
+    );
+    expect(r.status).toBe('ok');
+    const ranks = (await tasksFor()).map((t) => t.priority);
+    // The interloper holds 7, so the generated three must continue at 8,9,10 — never restart at 0.
+    expect(ranks).toEqual([7, 8, 9, 10]);
+    expect(new Set(ranks).size).toBe(ranks.length);
+  });
+
+  test('a prompt-budget truncation is reported as PARTIAL, never as a complete plan', async () => {
+    // A milestone whose line does not fit the 12,000-char budget is excluded from the prompt AND from the ordinal
+    // space, so the model plans against a PREFIX of the approved phase. Reporting that as complete is the same
+    // fabricated-completeness failure as tracing a task to a milestone the model never saw.
+    await seedChain('whole_plan', { goals: 1, milestonesPerGoal: 4 });
+    const long = 'x'.repeat(3_900);
+    await sql`update milestones set description = ${long} where roadmap_id = ${roadmapA}::uuid`.execute(owner.kysely);
+    const r = await generateTasks(product, base(), { gateway: okGateway({ tasks: [planned(), planned({ title: 'B' }), planned({ title: 'C' })] }, 3) });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.milestonesOmitted).toBeGreaterThan(0);
+    // The model said nothing about being partial; the TRUNCATION alone forces the honest label.
+    expect(r.partial).toBe(true);
+  });
+
   test('NO PHANTOM TASKS: a gateway failure, a malformed output, and a sub-3 plan without an honest partial each persist NOTHING', async () => {
     await seedChain('whole_plan');
     expect((await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) })).status).toBe('generation_failed');

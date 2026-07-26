@@ -33,7 +33,8 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
-  await sql`drop index if exists tasks_company_priority_idx`.execute(db);
+  // Schema-qualified, matching `up` and the 0008 precedent: an unqualified drop resolves through search_path.
+  await sql`drop index if exists public.tasks_company_priority_idx`.execute(db);
   await sql`alter table public.tasks drop constraint if exists tasks_priority_nonneg`.execute(db);
   await sql`alter table public.tasks drop constraint if exists tasks_task_type_valid`.execute(db);
   await db.schema.alterTable('tasks').dropColumn('priority').execute();

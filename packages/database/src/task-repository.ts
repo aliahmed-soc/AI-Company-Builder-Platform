@@ -51,6 +51,23 @@ export class TaskRepository {
       .executeTakeFirstOrThrow();
   }
 
+  /**
+   * The highest planning RANK already used by this company, or -1 when nothing has been ranked (ACBP-P4-003).
+   * Read as a MAX rather than by scanning a page: a page ordered by recency could miss older ranked rows behind newer
+   * unranked (manually created) ones and silently restart the rank at 0.
+   */
+  async maxPriority(companyId: string): Promise<number> {
+    const row = await this.#db.selectFrom('tasks').select((eb) => eb.fn.max('priority').as('max')).where('company_id', '=', companyId).executeTakeFirst();
+    const max = row?.max;
+    // Only "no ranked rows yet" may fall back to -1. Anything else that is not a finite number is a DRIVER surprise
+    // (node-pg hands int8 back as a string, so a widened column or a type-parser change would land here) — coercing it
+    // to -1 would silently restart the rank at 0 and reintroduce the collision this method exists to prevent.
+    if (max === null || max === undefined) return -1;
+    const n = Number(max);
+    if (!Number.isFinite(n)) throw new TypeError('tasks.priority MAX did not read back as a number');
+    return n;
+  }
+
   /** A single task by id (RLS-confined; undefined when absent/invisible). */
   findById(id: string): Promise<TaskRow | undefined> {
     return this.#db.selectFrom('tasks').selectAll().where('id', '=', id).executeTakeFirst();
