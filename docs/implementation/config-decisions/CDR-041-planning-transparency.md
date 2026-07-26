@@ -111,6 +111,11 @@ unchanged, and its tests stay green as written.
   to an append-only store on every plan, forever. Assembly gains an `auditConflicts` option (default true, preserving
   P2-007); planning passes false and records the conflict per-run as `memory_item_withheld` links instead — durable,
   inspectable, and free of duplication.
+  - **Consequence, stated plainly:** planning is currently the ONLY production caller of `assembleContext`, so the
+    `context.conflict_flagged` stream is now empty in practice. The requirement ("conflict events audited") is an
+    obligation on `assembleContext`, which still holds — the default is unchanged, P2-007's suites are untouched, and
+    the WITHHOLDING itself remains unconditional. But any future surface built on that event stream must either read
+    the run links instead, or be fed by a non-repeating caller.
 - **G15 — a failed run records WHY.** `outcome = 'failed'` alone collapses a model failure, an out-of-scope plan and
   the owner's own concurrent decision change into one word. `failure_reason` (closed CHECK, and a shape CHECK binding
   it to `outcome = 'failed'`) distinguishes them. Staleness only invalidates a run that was going to DRAFT: a

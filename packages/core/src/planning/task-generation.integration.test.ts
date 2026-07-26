@@ -450,6 +450,38 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
       expect((await sql<{ n: number }>`select count(*)::int as n from planning_run_inputs where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
     });
 
+    test('a gateway failure DURING a stale decision still records ONE valid run — the two failure causes must not collide', async () => {
+      // The produce-nothing path also reaches the staleness branch with an empty task list, so deriving the run's
+      // outcome from "was it about to draft?" alone yielded ('failed', null) — which the shape CHECK rejects, rolling
+      // back the whole transaction and leaving NO run at all for exactly the run an owner wants to inspect.
+      await seedChain('whole_plan');
+      const r = await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) }, { beforePersist: async () => void (await seedRejectDecision()) });
+      expect(r.status).toBe('generation_failed');
+      const runs = await runsFor();
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ outcome: 'failed', task_count: 0 });
+      expect(runs[0]!.failure_reason).toBe('generation');
+      expect(await tasksFor()).toHaveLength(0);
+    });
+
+    test('a run-record failure on a produce-nothing path still returns the TYPED failure, and leaves nothing behind', async () => {
+      // PLAN-001 asks that planning failure be "visible with reason". Surfacing it as an unhandled exception — because
+      // the transparency record could not be written — would make the feature the reason the caller crashes. No drafts
+      // are in flight on this path, so audit-or-nothing has nothing to protect.
+      await seedChain('whole_plan');
+      const boom = () => Promise.reject(new Error('audit write failed'));
+      const r = await generateTasks(product, base(), { gateway: gatewayWith({ kind: 'fail', error: 'provider_unavailable' }, 4) }, { auditWriter: boom });
+      expect(r.status).toBe('generation_failed');
+      expect(await runsFor()).toHaveLength(0);
+      expect(await tasksFor()).toHaveLength(0);
+      expect((await sql<{ n: number }>`select count(*)::int as n from planning_run_inputs where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
+      // Steering's honest answers behave identically — still the honest answer, still nothing persisted.
+      const out = JSON.stringify({ outcome: 'refusal', reason: 'Outside this roadmap.' });
+      const s = await steerTaskPlanning(product, { ...base(), request: 'file my taxes' }, { gateway: gatewayWith({ kind: 'respond', output: out }, 4) }, { auditWriter: boom });
+      expect(s.status).toBe('refused');
+      expect(await runsFor()).toHaveLength(0);
+    });
+
     test('stale_decision and stale_roadmap still RECORD the abandoned run (CDR-041 §3-G3)', async () => {
       await seedChain('whole_plan');
       const stale = await generateTasks(product, base(), { gateway: okGateway() }, { beforePersist: async () => void (await seedRejectDecision()) });

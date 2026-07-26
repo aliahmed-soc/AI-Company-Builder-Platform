@@ -306,10 +306,15 @@ function renderMemoryBlock(parts: readonly ModelContextPart[], itemIds: readonly
   const keptIds: string[] = [];
   let used = header.length;
   for (let i = 0; i < parts.length; i += 1) {
+    // Defensive: the real assembler builds `contextParts` and `itemIds` from one `.map`, so they cannot drift — but
+    // the injected test seam is typed loosely enough to return a shorter id list, and pushing `undefined` here would
+    // land in a `ref_id` insert. Stop rather than link an id we do not have.
+    const id = itemIds[i];
+    if (id === undefined) break;
     const line = `- ${parts[i]!.content}`;
     if (used + line.length + 1 > CONTEXT_PROMPT_MAX) break; // whole items only — never a truncated fact
     kept.push(line);
-    keptIds.push(itemIds[i]!);
+    keptIds.push(id);
     used += line.length + 1;
   }
   if (kept.length === 0) return { parts: [], itemIds: [], omittedCount: parts.length };
@@ -424,10 +429,25 @@ async function persistDrafts(
     // `failed` would be the very conflation the outcome enum exists to prevent.
     const drafting = planned.length > 0;
 
+    /**
+     * The (outcome, reason) pair to record when staleness aborts this run.
+     *
+     * `drafting === false` does NOT imply the caller's outcome is a clarification or a refusal: a gateway failure
+     * ALSO arrives here with an empty task list (via `recordFailedRun`). Hard-coding a null reason in that case
+     * produced `('failed', null)` — which the `failure_reason_shape` CHECK rejects, rolling the whole transaction
+     * back and leaving NO run row at all for exactly the run an owner most wants to inspect. Deriving the reason
+     * from the outcome makes the pair valid on every path.
+     */
+    const staleOutcome = (reason: PlanningFailureReason): readonly [PlanningRunOutcome, PlanningFailureReason | null] => {
+      if (drafting) return ['failed', reason];
+      return run.outcome === 'failed' ? ['failed', 'generation'] : [run.outcome, null];
+    };
+
     const strategy = new StrategyRepository(scope.db);
     const gate = classifyPlanningGate(await strategy.latestDecisionForCompany(params.companyId));
     if (gate.kind !== 'open' || gate.decision.id !== pre.decision.id) {
-      await recordRun(drafting ? 'failed' : run.outcome, [], drafting ? 'stale_decision' : null);
+      const [outcome, reason] = staleOutcome('stale_decision');
+      await recordRun(outcome, [], reason);
       return drafting ? { status: 'stale_decision' } : { status: 'ok', tasks: [] };
     }
     const latest = await planning.latestRoadmap(params.companyId);
@@ -435,7 +455,8 @@ async function persistDrafts(
     // ROAD-002's affected-task flagging exists to avoid. Persist no TASKS instead — the run itself is still recorded,
     // because a run that was abandoned for staleness is precisely the history PLAN-004 asks to be inspectable.
     if (latest === undefined || latest.id !== pre.roadmap.id) {
-      await recordRun(drafting ? 'failed' : run.outcome, [], drafting ? 'stale_roadmap' : null);
+      const [outcome, reason] = staleOutcome('stale_roadmap');
+      await recordRun(outcome, [], reason);
       return drafting ? { status: 'stale_roadmap' } : { status: 'ok', tasks: [] };
     }
 
@@ -517,9 +538,12 @@ async function recordFailedRun(
 ): Promise<void> {
   try {
     await persistDrafts(client, params, pre, [], optsBase, run);
-  } catch {
-    // Deliberately swallowed and reported as a count, never as provider/DB text (the charter forbids surfacing it).
-    deps.logger?.warn('planning.run_record_failed', { metadata: { accountId: params.accountId, companyId: params.companyId, mode: run.mode } });
+  } catch (error) {
+    // Swallowed, but never silently identical: a CONSTRAINT violation is a bug in this module, while a connection
+    // failure is the transient case this catch exists for. The category is a bounded scalar — never provider or DB
+    // text, which the charter forbids surfacing.
+    const category = typeof (error as { category?: unknown })?.category === 'string' ? String((error as { category: string }).category) : 'unknown';
+    deps.logger?.warn('planning.run_record_failed', { metadata: { accountId: params.accountId, companyId: params.companyId, mode: run.mode, outcome: run.outcome, errorCategory: category } });
   }
 }
 
@@ -600,7 +624,10 @@ export async function steerTaskPlanning(client: DatabaseClient, params: SteerTas
 
   if (options.beforePersist !== undefined) await options.beforePersist();
 
-  const persisted = await persistDrafts(client, params, pre, answer.tasks, optsBase, runBase('ok'));
+  // A truncated roadmap prompt makes a steered plan partial for the same reason it does an autonomous one: the model
+  // answered against a PREFIX of the approved phase. Steering's own output schema has no `partial` flag, so the
+  // honesty has to come from the run record — leaving it `ok` would apply the rule asymmetrically.
+  const persisted = await persistDrafts(client, params, pre, answer.tasks, optsBase, runBase(pre.milestonesOmitted > 0 ? 'partial' : 'ok'));
   if (persisted.status !== 'ok') return persisted;
   // Steered tasks run through the same parse, so they carry the same honesty obligations as the autonomous path.
   const tasksMissingType = countMissingType(answer.tasks);

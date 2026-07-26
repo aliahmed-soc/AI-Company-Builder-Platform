@@ -61,9 +61,43 @@ directions found inside it"). Ratified as **G13**.
 ## Pass 2 — against the fixed tree
 
 Run after applying every pass-1 finding, because pass 1 changed the prompt construction, the transaction's failure
-handling and the migration. Recorded below.
+handling and the migration. **Verdict: FAIL — 1 High, 1 Medium, 2 Low.** All applied.
 
-<!-- PASS-2 -->
+Pass 2 confirmed the pass-1 fixes themselves correct: `renderMemoryBlock`'s `parts[i] ↔ itemIds[i]` pairing is
+guaranteed upstream (both arrays are `.map`s over the same `ranked`), the `buildRequest` reorder is a strict partition
+that cannot drop or duplicate a segment, the audit-or-nothing test still drives the un-caught success path, `down()`
+still reverses `up()`, and `{status:'ok', tasks: []}` is unreachable by any caller that could misread it (both narrows
+reject an empty task list, so only `recordFailedRun` — which discards the return — ever passes `planned = []`).
+
+### 2H-1 (HIGH) — the two pass-1 fixes collided, producing an invalid `(failed, null)` pair
+
+`drafting === false` does **not** imply the caller's outcome is a clarification or refusal: a gateway failure also
+reaches the staleness branch with an empty task list, via `recordFailedRun`. The hard-coded null reason therefore
+produced `('failed', null)`, which the new `failure_reason_shape` CHECK rejects — rolling back the transaction and
+leaving **no run row at all** for exactly the run PLAN-004 exists to make inspectable. And because the M-3 fix
+swallows errors on that path, the failure was invisible: a generic warn, no run, no signal.
+
+A defect created purely by the interaction of two fixes that were each correct alone. Fixed by deriving the pair from
+the outcome (`staleOutcome`) so every path yields a valid combination, and covered by a real-PG test that fails the
+gateway *and* rejects the decision in the same run.
+
+### 2M-2 (MEDIUM) — the swallow itself was untested, which is what hid 2H-1
+
+The `auditWriter: boom` seam only exercised the success path. Added a test that drives a failing gateway **and** a
+failing audit writer, asserting the typed `generation_failed` (never an exception), zero runs, zero tasks, zero links —
+and the same for steering's refusal. The catch now also logs a bounded `errorCategory` scalar, so a constraint
+violation (a bug in this module) is no longer indistinguishable from the connection blip the catch exists for.
+
+### 2L-3 / 2L-4 (LOW)
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 2L-3 | Steering recorded `ok` even when the roadmap prompt truncated, applying the L-9 honesty rule asymmetrically | steering now records `partial` when `milestonesOmitted > 0`; its output schema has no partial flag, so the honesty has to come from the run record |
+| 2L-4 | `itemIds[i]!` was safe only because of the real assembler's construction; the injected test seam could push `undefined` into a `ref_id` | guarded — stop rather than link an id we do not have |
+
+Pass 2 also confirmed the `auditConflicts: false` trade is **acceptable, not a lost requirement**, with the caveat now
+recorded in CDR-041 §3-G14: the obligation is on `assembleContext` (default unchanged, withholding unconditional), but
+the event stream is empty in practice, so a future surface must read the run links instead.
 
 ## Verification
 
