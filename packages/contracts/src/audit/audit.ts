@@ -131,6 +131,15 @@ export const AUDIT_EVENTS = {
   // This does NOT contradict CDR-040 §7 (planning writes no event): that rule holds because a DRAFT TASK is not on the
   // board. A planning RUN is a platform action taken on the owner's behalf — precisely what ADR-015 audits.
   'planning.run_recorded': { schemaVersion: 1, subjectType: 'planning_run' },
+  // Task repeat (ACBP-P4-005; CDR-043 §4-G4; TASK-008 "repeated (re-queued as a new task)"). AUDITED in-tx with the
+  // NEW task row. Subject = the NEW task id; bounded metadata {source_task_id, source_state} — never titles or
+  // descriptions. A repeat is a new row, never a state rewind, so the original's history stays intact.
+  'task.repeated': { schemaVersion: 1, subjectType: 'task' },
+  // Task delete (ACBP-P4-005; CDR-043 §4-G1; TASK-008 "delete requires confirmation and is audited"). AUDITED in-tx
+  // with the append-only `task_deletions` record. Subject = the deleted task id; bounded metadata
+  // {state_at_delete, has_reason} — never the reason text. `tasks` has NO DELETE grant: the row survives and reads
+  // exclude it, so "deleted" is a recorded fact rather than an erasure that would destroy this very audit trail.
+  'task.deleted': { schemaVersion: 1, subjectType: 'task' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
   // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
@@ -457,6 +466,25 @@ export function planningRunRecorded(input: {
     memory_items_considered: input.memoryItemsConsidered,
     milestones_in_scope: input.milestonesInScope,
   });
+}
+
+/**
+ * A task was repeated — re-queued as a NEW task (ACBP-P4-005; TASK-008). Subject = the NEW task id, because that is
+ * the row this event brought into existence; the source is metadata, so the lineage reads forward from either end.
+ * Bounded scalars only — never the copied title or description.
+ */
+export function taskRepeated(input: { readonly newTaskId: string; readonly sourceTaskId: string; readonly sourceState: string }): AuditEvent {
+  return makeEvent('task.repeated', input.newTaskId, 'success', { source_task_id: input.sourceTaskId, source_state: input.sourceState });
+}
+
+/**
+ * A task was deleted (ACBP-P4-005; TASK-008 "delete requires confirmation and is audited"). Subject = the deleted
+ * task id. `state_at_delete` records what the owner actually removed — a completed task and a queued one are very
+ * different losses. `has_reason` is a boolean: the reason TEXT is owner-authored free text and never enters the audit
+ * payload.
+ */
+export function taskDeleted(input: { readonly taskId: string; readonly stateAtDelete: string; readonly hasReason: boolean }): AuditEvent {
+  return makeEvent('task.deleted', input.taskId, 'success', { state_at_delete: input.stateAtDelete, has_reason: input.hasReason });
 }
 
 /**

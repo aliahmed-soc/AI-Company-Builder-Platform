@@ -32,6 +32,8 @@ import {
   roadmapGenerated,
   roadmapEdited,
   planningRunRecorded,
+  taskRepeated,
+  taskDeleted,
   type AuditEventName,
 } from './index.js';
 
@@ -116,6 +118,9 @@ describe('event-name registry (deny unregistered)', () => {
       'roadmap.edited',
       // Planning transparency (ACBP-P4-006; CDR-041 §3-G6; PLAN-004).
       'planning.run_recorded',
+      // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008).
+      'task.repeated',
+      'task.deleted',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -330,6 +335,22 @@ describe('typed factories', () => {
     expect(ev).toEqual({ name: 'roadmap.edited', schemaVersion: 1, subjectType: 'roadmap', subjectId: 'rm_3', outcome: 'success', metadata: { roadmap_version: 2, supersedes_version: 1, affected_task_count: 4, has_reason: true } });
     // No key anywhere carries free text.
     expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'number' || typeof v === 'boolean')).toBe(true);
+  });
+
+  test('taskRepeated: subject is the NEW task; the source is metadata so lineage reads from either end', () => {
+    const ev = taskRepeated({ newTaskId: 't_new', sourceTaskId: 't_old', sourceState: 'failed' });
+    expect(ev).toEqual({ name: 'task.repeated', schemaVersion: 1, subjectType: 'task', subjectId: 't_new', outcome: 'success', metadata: { source_task_id: 't_old', source_state: 'failed' } });
+    // No copied content reaches the audit row.
+    expect(JSON.stringify(ev.metadata)).not.toMatch(/title|description/i);
+  });
+
+  test('taskDeleted: records WHAT was lost, never the owner-authored reason text (TASK-008)', () => {
+    const ev = taskDeleted({ taskId: 't_1', stateAtDelete: 'completed', hasReason: true });
+    expect(ev).toEqual({ name: 'task.deleted', schemaVersion: 1, subjectType: 'task', subjectId: 't_1', outcome: 'success', metadata: { state_at_delete: 'completed', has_reason: true } });
+    // `has_reason` is a BOOLEAN: deleting a completed task and deleting a queued one are very different losses, and
+    // the state records that — but the reason itself is free text and stays out of the payload.
+    expect(typeof ev.metadata?.['has_reason']).toBe('boolean');
+    expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'string' || typeof v === 'boolean')).toBe(true);
   });
 
   test('planningRunRecorded: counts only — never rationale text, task titles, or memory content (PLAN-004)', () => {

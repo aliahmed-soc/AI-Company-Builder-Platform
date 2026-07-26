@@ -42,6 +42,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'roadmap.edit',
       // Planning transparency (ACBP-P4-006; CDR-041 §3-G6; PLAN-004) — deliberately approved addition.
       'planning.run_record',
+      // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "Controls audited") — deliberately approved.
+      'task.repeat',
+      'task.delete',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -81,6 +84,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['roadmap.generate']).toBe('roadmap.generated');
     expect(AUDITED_OPERATIONS['roadmap.edit']).toBe('roadmap.edited');
     expect(AUDITED_OPERATIONS['planning.run_record']).toBe('planning.run_recorded');
+    expect(AUDITED_OPERATIONS['task.repeat']).toBe('task.repeated');
+    expect(AUDITED_OPERATIONS['task.delete']).toBe('task.deleted');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
