@@ -171,5 +171,62 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
     expect(role.rows[0]).toEqual({ rolbypassrls: false, rolsuper: false });
     const migs = await sql<{ name: string }>`select name from kysely_migration order by name`.execute(su.kysely);
     expect(migs.rows.map((m) => m.name)).toContain('0021_tasks');
+    expect(migs.rows.map((m) => m.name)).toContain('0027_task_planning');
+  });
+
+  test('ACBP-P4-003 planning columns: closed task_type set, non-negative priority rank, both INSERT-ONLY', async () => {
+    const mk = (over: { type?: string | null; priority?: number | null } = {}) =>
+      asApp(scope(accountA, companyA1), async (k) => {
+        const r = await sql<{ id: string }>`insert into tasks (account_id, company_id, title, state, task_type, priority, created_by_user_id) values (${accountA}::uuid, ${companyA1}::uuid, 'planned work', 'draft', ${over.type ?? null}, ${over.priority ?? null}, ${userU}::uuid) returning id`.execute(k);
+        return r.rows[0]!.id;
+      });
+
+    // The SQLSTATE of a rejected operation, or 'no-error' if it unexpectedly succeeded.
+    //
+    // Asserting the SQLSTATE rather than a constraint name is not a weaker test, it is the only honest one here:
+    // `toDatabaseError` sanitizes every database error down to a category, a note and the SQLSTATE, deliberately free
+    // of SQL text and identifiers, so no constraint name ever reaches a caller — and that sanitization is a security
+    // property this test must not ask anyone to relax. Pinning the EXACT code is what stops one failure mode
+    // masquerading as another (a bare `.rejects.toThrow()` is satisfied by any of them).
+    //
+    // The chain is walked rather than reading `.code` directly: `asApp` errors arrive already normalized, and a
+    // PlatformError's own `code` is the PLATFORM code ('VALIDATION_FAILED'), with the driver's SQLSTATE preserved only
+    // on `cause`. Taking the first `code` would therefore silently assert the wrong field.
+    const isSqlState = (v: unknown): v is string => typeof v === 'string' && /^[0-9A-Z]{5}$/.test(v);
+    const sqlStateOf = (p: Promise<unknown>): Promise<string> =>
+      p.then(() => 'no-error').catch((e: unknown) => {
+        for (let cur: unknown = e, hops = 0; cur !== null && cur !== undefined && hops < 5; hops += 1) {
+          const node = cur as { code?: unknown; cause?: unknown };
+          if (isSqlState(node.code)) return node.code;
+          cur = node.cause;
+        }
+        // Last resort: the sanitized message embeds `sqlstate=NNNNN`.
+        return /sqlstate=([0-9A-Z]{5})/.exec(String(e))?.[1] ?? 'unknown';
+      });
+
+    // All seven PRD types are accepted; NULL is legal ("not stated", never guessed — TASK-002/ADR-019).
+    for (const t of ['market_research', 'competitor_research', 'customer_segment_analysis', 'business_model_comparison', 'business_plan_generation', 'landing_page_copy', 'internal_product_requirements']) {
+      expect(await mk({ type: t })).toBeTruthy();
+    }
+    expect(await mk({ type: null })).toBeTruthy();
+    // An unknown type is refused by the CHECK — 23514, not merely "something threw" (the set is closed deliberately,
+    // CDR-040 §8-G2).
+    expect(await sqlStateOf(mk({ type: 'vibes_research' }))).toBe('23514');
+
+    // priority is a RANK: any non-negative integer, or null. Negative is refused; there is no upper bound to invent.
+    const ranked = await mk({ priority: 0 });
+    expect(ranked).toBeTruthy();
+    expect(await mk({ priority: 999 })).toBeTruthy();
+    expect(await sqlStateOf(mk({ priority: -1 }))).toBe('23514');
+
+    // INSERT-ONLY: the app role may still flip `state`, but neither planning column (CDR-040 §8-G9 — widening the
+    // pinned (state, updated_at) grant to make J-10's "adjust priorities" reachable is deliberately out of scope).
+    // 42501 exactly: the COLUMN GRANT must be what refuses these. A 23514 here would mean the write was allowed and
+    // only the value rejected, and a 22P02 would mean the value never type-checked — either would pass a bare
+    // `.rejects` while the grant was quietly wide open.
+    for (const set of [sql`priority = 1`, sql`task_type = 'market_research'`]) {
+      expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`update tasks set ${set} where id = ${ranked}::uuid`.execute(k)))).toBe('42501');
+    }
+    expect((await sql<{ priority: number | null }>`select priority from tasks where id = ${ranked}::uuid`.execute(su.kysely)).rows[0]?.priority).toBe(0);
   });
 });

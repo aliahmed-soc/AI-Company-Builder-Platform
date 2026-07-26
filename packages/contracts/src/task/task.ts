@@ -131,6 +131,13 @@ export interface TaskDTO {
   readonly title: string;
   readonly description: string | null;
   readonly milestoneId: string | null;
+  /**
+   * The planned type (ACBP-P4-003; PLAN-001). `null` means NOT STATED — surfaced as explicitly missing rather than
+   * guessed (TASK-002/ADR-019). Manually created tasks carry none.
+   */
+  readonly taskType: string | null;
+  /** The planning RANK (0 = first), or null when the task was not produced by planning. Not a scale. */
+  readonly priority: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

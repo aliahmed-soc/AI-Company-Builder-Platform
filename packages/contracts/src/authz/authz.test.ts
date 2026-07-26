@@ -66,6 +66,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'roadmap:generate': ['owner', 'viewer'],
   'roadmap:read': ['owner', 'viewer'],
   'roadmap:edit': ['owner'],
+  // Task planning (ACBP-P4-003; CDR-040; PLAN-001/002): generate-class member action; drafts are not board work.
+  'task:generate': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

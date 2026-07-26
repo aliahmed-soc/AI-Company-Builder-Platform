@@ -127,6 +127,17 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Goal | C | goal_id | belongs to Roadmap | active→achieved/dropped | V | — | With company | roadmap versions | MVP |
 | Roadmap | C | roadmap_id, version | has Goals/Milestones; from Decision | versioned | V | — | With company | ROAD-002 versions | MVP |
 | Milestone | C | milestone_id | belongs to Roadmap; Tasks trace to it | planned→reached/dropped | V | — | With company | — | MVP |
+<!-- IMPLEMENTED (ACBP-P4-003; CDR-040): migration 0027 adds two ADDITIVE columns to the Task row below, both required
+     by PLAN-001 ("3+ prioritized tasks …; each has type and description"): `task_type` (a closed CHECK over the seven
+     PRD "initial task types", NULLABLE — a missing type renders as explicitly missing per TASK-002 rather than being
+     guessed) and `priority` (a non-negative integer RANK, NOT a scale — an invented high/medium/low would be the fake
+     precision ADR-019 forbids, the same reasoning as §7-G6's ordinals-not-dates). BOTH ARE INSERT-ONLY: the
+     column-level UPDATE grant stays exactly `(state, updated_at)`, so J-10's "adjust priorities" is deliberately not
+     reachable yet rather than widening a grant the adversarial catalog pins (CDR-040 §8-G9).
+     Planning mints tasks in `draft` — the PREVIEW state (PLAN-002 "intent and effect are previewed before task
+     creation"): a draft is NOT on the board and writes NO audit (CDR-033 §4), and confirming is the existing
+     `draft→planned` transition that emits `task.created`. The STRAT-005 phase boundary is enforced at generation
+     (CDR-037 §5 deferred it here): only the approved phase's milestones are plannable, re-checked server-side. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task run | C | run_id, task_id, attempt | has Worker run, Tool calls, Usage events | queued→running→succeeded/failed/cancelled | A | — | With company | run trace | MVP |

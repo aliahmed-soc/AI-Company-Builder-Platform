@@ -96,3 +96,60 @@ the requirement docs).
 Started immediately after the window-3 report, without pausing, per the standing directive.
 Opening state: main = `766b674`, migrations end 0025, tree clean. Active: ACBP-P4-001 on
 `p4-001-goals-roadmap-milestones` at `199f303`, awaiting review re-verification then finalization.
+
+### Window 4 report — ended 2026-07-26 ~09:10 +03:00 (~16h elapsed)
+
+Longer than 8h of wall-clock because the window spanned an interruption; work was continuous across it and the tree
+was left clean and pushed at every boundary.
+
+**Tickets finalized this window (3), each with exact-main CI green zero-skip:**
+
+| Ticket | Squash | PR | exact-main CI |
+| --- | --- | --- | --- |
+| ACBP-P3-004 selection, edit, combine, phase-limited approval | `50bbaa8` | #36 | green zero-skip, 1665/1665 |
+| ACBP-P3-005 immutable decision records | `766b674` | #37 | green zero-skip, 1695/1695 |
+| ACBP-P4-001 goals, roadmap and milestones | `00a580d` | #39 | green zero-skip, 1755/1755 (154 files) |
+
+Plus the one-time housekeeping commit `c645e8e` (`.gitattributes`, `* text=auto eol=lf`).
+
+Phase 3 → 5/7. Phase 4 → 2/7. 53 tickets Done. Migrations end **0026** on main.
+
+**In progress at the boundary: ACBP-P4-003** (task generation + chat steering) on `p4-003-task-generation`, draft
+PR #40, CDR-040, migration 0027. Head `ed4be0c`, pushed, tree clean, hosted CI running on that exact SHA. All code and
+docs complete; both independent review passes applied. Remaining: exact-head CI green zero-skip → mark PR ready →
+squash-merge → exact-main CI green zero-skip → delete branch.
+
+**Disk: E: 107.34 GB free** (C: 15.64 GB). Far above the 3 GB threshold — no cleanup performed or needed. This is a
+large improvement on window 3's 0.97 GB; the owner appears to have freed space between windows.
+
+**Three defects worth the owner's attention — all caught by review, not by me:**
+
+1. **P3-005 MEDIUM-2 (design gap).** CDR-038 said the planning gate keys off a non-reject decision, but nothing on the
+   decision recorded its mode. The obvious P4-001 predicate would therefore have let a **rejection unlock planning**.
+   Fixed with an immutable `mode` snapshot column + closed CHECK before P4-001 was built on top of it.
+2. **P4-001 H1.** `editRoadmap` reached a roadmap INSERT with no planning gate — a rejection could be side-stepped by
+   revising instead of regenerating. Fixed by applying the same `classifyPlanningGate`; ratified as CDR-039 §7-G9.
+3. **P4-003 second pass, 2 High.** My own first-round fix for a partial-commit hazard used a thrown sentinel error
+   that **could never be caught** (`withAccountTransaction` re-wraps thrown errors, so the `instanceof` check was
+   always false), and the test I added to prove it never reached the code path at all. Both are now fixed by removing
+   the hazard rather than recovering from it: every milestone ordinal is resolved before the first insert, so there is
+   nothing to roll back. The review-coverage doc records both, including that the first fix was wrong.
+
+Two of my own process mistakes were also caught only by review and are now prevention rules in persistent memory:
+UTF-8 mojibake from PowerShell 5.1 `Get-Content -Raw` (36 files, P3-004), and a backlog CSV regex that matched
+mid-line and wrongly flipped two other tickets to Done (P3-005).
+
+**Standing owner gates — untouched, as instructed.** P2-011, P7-006, P5-001, P5-003, P6-001, P6-007. Not attempted,
+not asked about.
+
+**Nothing needs the owner.** No new owner gate reached; no product-semantics question went unanswered by canon after a
+thorough search of the roadmap decision logs and CDRs.
+
+---
+
+## Window 5 — 2026-07-26 (started 09:10 +03:00)
+
+Started immediately after the window-4 report, without pausing, per the standing directive.
+Opening state: main = `00a580d`, migrations end 0026 on main (0027 on the branch), tree clean.
+Active: ACBP-P4-003 on `p4-003-task-generation` at `ed4be0c`, pushed, hosted CI in flight on that exact SHA.
+Plan: finalize P4-003, then re-read the backlog and take the next Ready, unblocked ticket without stopping.

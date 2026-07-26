@@ -512,6 +512,14 @@ export interface TasksTable {
   title: ColumnType<string, string, never>;
   description: ColumnType<string | null, string | null | undefined, never>;
   milestone_id: ColumnType<string | null, string | null | undefined, never>;
+  /**
+   * The planned task's type (ACBP-P4-003; PLAN-001 "each has type and description"). NULL = not stated, rendered as
+   * explicitly missing rather than guessed (TASK-002/ADR-019). INSERT-ONLY — the column UPDATE grant stays
+   * `(state, updated_at)`.
+   */
+  task_type: ColumnType<string | null, string | null | undefined, never>;
+  /** The planning RANK (0 = first). Not a scale — an invented high/medium/low is fake precision (CDR-040 §8-G1). */
+  priority: ColumnType<number | null, number | null | undefined, never>;
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;

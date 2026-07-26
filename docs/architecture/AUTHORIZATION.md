@@ -203,6 +203,16 @@ trusted core/use-case seam:
   its authorization check BEFORE input validation, so an unauthorized caller learns only `forbidden`. DISTINCT closed
   actions, deny-by-default; not granted to an account owner without company membership nor via forged provider claims.
   See `CDR-039`.
+- **P4-003** (task generation + chat steering) adds `task:generate`, `owner|viewer` — the generation-class precedent,
+  covering both autonomous planning and steering since both spend metered model budget. The tasks it mints are
+  **drafts**, which are not on the board and write no audit; CONFIRMING a draft reuses the existing `task:create` via
+  `planTask`, so no new confirm authority is introduced. Generation is additionally GATED on the company's latest
+  decision being NON-reject (reusing `classifyPlanningGate`) **and** on a current roadmap existing, and is further
+  restricted by the **STRAT-005 phase boundary**: only the approved phase's milestones are plannable, re-checked
+  server-side at persist time so an out-of-scope task is refused rather than silently re-pointed. Steering validates
+  its request only AFTER the authorization check, so an unauthorized caller learns only `forbidden`. DISTINCT closed
+  action, deny-by-default; not granted to an account owner without company membership nor via forged provider claims.
+  See `CDR-040`.
 
 ## What P1-007 does NOT do (later tickets)
 

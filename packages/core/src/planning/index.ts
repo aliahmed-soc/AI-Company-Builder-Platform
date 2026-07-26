@@ -8,5 +8,14 @@ export type {
   RoadmapReadParams,
   LatestRoadmapResult,
 } from './roadmap-generation.js';
+export { generateTasks, steerTaskPlanning, milestonesInPhaseScope, formatMilestonesForPlanning } from './task-generation.js';
+export type {
+  GenerateTasksParams,
+  SteerTaskPlanningParams,
+  TaskPlanningDeps,
+  TaskPlanningOptions,
+  GenerateTasksResult,
+  SteerTaskPlanningResult,
+} from './task-generation.js';
 export { editRoadmap } from './roadmap-edit.js';
 export type { EditRoadmapParams, RoadmapEditDeps, RoadmapEditOptions, EditRoadmapResult } from './roadmap-edit.js';
