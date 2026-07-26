@@ -9,6 +9,24 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-003 task generation + chat steering — CORE DONE / IN REVIEW (4th autonomous window).**
+  Branch `p4-003-task-generation` (from main `00a580d`, after P4-001 merged), draft PR **#40**, CDR-040.
+  `generateTasks` (PLAN-001: 3+ prioritized, typed, milestone-traced tasks or an honest partial) and
+  `steerTaskPlanning` (PLAN-002: THREE distinct successful answers — tasks + interpreted intent, a clarifying
+  question, or an honest refusal; none reported as a failure). **The preview is the `draft` state**, canon-native per
+  diagrams/06 + WORKFLOW §4 + CDR-033 §4 (not on the board, no audit); confirming is the existing `planTask`
+  transition, so NO new audit event. **STRAT-005 is enforced here** — the boundary CDR-037 §5 recorded as a flag and
+  deferred to this ticket: only the approved phase's milestones are shown to the model, and every ordinal is
+  re-resolved server-side at persist so an out-of-scope task is refused, never re-pointed. Gate reuses
+  `classifyPlanningGate` + requires a current roadmap; both re-verified in the persist tx (`stale_decision` /
+  `stale_roadmap`). Migration **0027** is ALTER-only: `tasks.task_type` (closed CHECK, nullable) + `tasks.priority`
+  (integer RANK, no invented scale) — both INSERT-ONLY, the `(state, updated_at)` grant untouched.
+  Commits: contracts `7fe3c4b` → migration 0027 `65e83be` → both core use cases `8ebbb64`.
+  Local: full unit 1055 passed / 0 failed; planning real-PG 38 discovered (local PG down → **skipped, not green**;
+  hosted CI is the evidence); recursive typecheck/lint/secrets/boundaries clean; 0 mojibake.
+  Independent review next, then exact-head CI zero-skip → squash-merge → exact-main CI zero-skip → delete branch.
+  Migrations end **0027**.
+- **ACBP-P4-001 goals, roadmap and milestones — DONE** (squash `00a580d`, PR #39; exact-main CI green zero-skip 1755/1755; branch deleted). Phase 4 2/7.
 - **ACBP-P4-001 goals, roadmap and milestones — CORE DONE / IN REVIEW (3rd 8-hour autonomous window).**
   Branch `p4-001-goals-roadmap-milestones` (from main `766b674`, after P3-005 merged), draft PR **#39**, CDR-039.
   Turns the DECIDED strategy into a plan (ROAD-001) that is versioned and editable (ROAD-002). The planning GATE is the

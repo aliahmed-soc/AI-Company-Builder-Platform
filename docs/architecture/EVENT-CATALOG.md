@@ -115,6 +115,13 @@ Retention default: activity-projected events with company data; audit-relevant e
      re-plan of a non-draft task is an illegal transition, rejected with no audit — TASK-001). The other task.*
      events (queued/started/completed/failed/cancelled/waiting_*) are registered by the P5/P6 tickets that
      implement their transitions; no generic transition audit exists yet. Activity fan-out is DEFERRED. -->
+<!-- ACBP-P4-003 (CDR-040 §7/§8-G5) registers NO NEW EVENT. Planning and chat steering mint tasks in `draft`, which is
+     the PREVIEW state — not on the board and deliberately unaudited (CDR-033 §4) — so the durable trace is
+     `task.created` firing per CONFIRMED task via the existing `draft→planned` transition, plus the automatic gateway
+     usage event for the metered model call. A planning-run event would need an AUDITED_OPERATIONS entry with no canon
+     behind it; EVENT-CATALOG registers none, and P4-006 owns the run/snapshot linkage (PLAN-004). The P4-003 backlog
+     row's Audit = "roadmap.generated audited" is inherited boilerplate: that event is P4-001's, is subject-typed
+     `roadmap`, and its metadata is already fixed. -->
 | task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id (created: {has_milestone} only, P4-002), (run_id, attempt on started) | audited | with company |
 | task.waiting_for_input / task.waiting_for_approval | Coordinator | Decision Room, notification | task_id, blocking_ref (question/approval id) | audited | with company |
 | task.completed | Coordinator | activity, usage, documents | task_id, run_id, artifact_refs[] (**required — no artifactless completion without explicit no-artifact rationale, TASK-005**) | audited | with company |
