@@ -326,7 +326,8 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
         select id, mode, outcome, task_count, tasks_missing_rationale, milestones_in_scope, memory_items_considered, phase_scope, roadmap_version from planning_runs where company_id = ${w.companyA1}::uuid order by created_at, id`.execute(owner.kysely)
       ).rows;
     const inputsFor = async (runId: string) => (await sql<{ kind: string; ref_id: string }>`select kind, ref_id from planning_run_inputs where run_id = ${runId}::uuid order by kind, ref_id`.execute(owner.kysely)).rows;
-    const runAudits = async () => (await sql<{ subject_id: string; payload: Record<string, unknown> }>`select subject_id, payload from audit_events where name = 'planning.run_recorded' and company_id = ${w.companyA1}::uuid order by created_at`.execute(owner.kysely)).rows;
+    // `audit_events` stamps `occurred_at`, not `created_at` — the audit trail records when the event HAPPENED.
+    const runAudits = async () => (await sql<{ subject_id: string; payload: Record<string, unknown> }>`select subject_id, payload from audit_events where name = 'planning.run_recorded' and company_id = ${w.companyA1}::uuid order by occurred_at, event_id`.execute(owner.kysely)).rows;
     const seedMemory = (content: string, sourceRef: string, type = 'user_fact', sourceType = 'interview_answer') =>
       sql`insert into memory_items (account_id, company_id, type, content, source_type, source_ref, confirmation_state, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${type}, ${content}, ${sourceType}, ${sourceRef}, 'accepted', ${w.aOwner}::uuid)`.execute(owner.kysely);
 
