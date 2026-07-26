@@ -7,6 +7,8 @@ export {
   listTasks,
   toTaskDTO,
 } from './task-management.js';
+export { getTaskBoard, buildTaskBoard } from './task-board.js';
+export type { GetTaskBoardParams, GetTaskBoardResult, TaskBoardOptions } from './task-board.js';
 export type {
   TaskOptions,
   CreateTaskParams,

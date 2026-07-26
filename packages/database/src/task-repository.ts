@@ -108,4 +108,15 @@ export class TaskRepository {
   listDependencies(taskId: string): Promise<TaskDependencyRow[]> {
     return this.#db.selectFrom('task_dependencies').selectAll().where('task_id', '=', taskId).orderBy('id', 'asc').execute();
   }
+
+  /**
+   * EVERY dependency edge in the company (RLS-confined), for whole-board rendering (ACBP-P4-004).
+   *
+   * One query rather than `listDependencies` per task: a board with N tasks would otherwise issue N round trips, and
+   * — worse — a task whose edges were fetched separately could be rendered against a different snapshot than its
+   * prerequisites, showing "blocked" and "ready" states that never coexisted.
+   */
+  listAllDependencies(companyId: string): Promise<TaskDependencyRow[]> {
+    return this.#db.selectFrom('task_dependencies').selectAll().where('company_id', '=', companyId).orderBy('id', 'asc').execute();
+  }
 }

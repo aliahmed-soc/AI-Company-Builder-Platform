@@ -9,7 +9,7 @@
 // So this module is a PROJECTION from the internal machine onto the observed buckets. It defines no state, no
 // transition and no storage: inventing a `recurring` or `rejected` state to make the wording literally true would
 // fabricate a mechanism the evidence never observed (CDR-042 §2).
-import type { TaskState } from './task.js';
+import type { TaskState, TaskDTO } from './task.js';
 
 /**
  * The board's buckets, in the order the reference product showed them, then the two this platform must add to stay
@@ -110,6 +110,40 @@ export function placeOnBoard(state: unknown): BoardPlacement {
  */
 export function isDependencyBlocked(prerequisiteStates: readonly unknown[]): boolean {
   return prerequisiteStates.some((s) => s !== 'completed');
+}
+
+/** One task as the board shows it: the redacted task plus its dependency edges and the DERIVED blocked indicator. */
+export interface BoardTaskDTO {
+  readonly task: TaskDTO;
+  /** Prerequisites — this task depends on these. */
+  readonly dependsOnTaskIds: readonly string[];
+  /** Dependents — these wait on this task. Surfaced so an owner can see the cost of a stuck task. */
+  readonly blocksTaskIds: readonly string[];
+  readonly dependencyBlocked: boolean;
+}
+
+export interface BoardBucketDTO {
+  readonly bucket: TaskBoardBucket;
+  readonly availability: 'available' | 'not_in_this_version';
+  readonly tasks: readonly BoardTaskDTO[];
+}
+
+export interface TaskBoardDTO {
+  /** Every bucket, always — including the unavailable ones, which state why they are empty. */
+  readonly buckets: readonly BoardBucketDTO[];
+  readonly counts: BoardCounts;
+  /**
+   * Drafts held OFF the board (CDR-033 §4). Counted rather than hidden: an owner who generated a plan and sees an
+   * empty board deserves to know the drafts exist and are awaiting confirmation.
+   */
+  readonly draftsOffBoard: number;
+  /**
+   * Tasks whose state this version could not classify. Should always be 0; surfaced so that if it is ever non-zero
+   * the board says so instead of quietly showing fewer tasks than the company has.
+   */
+  readonly unplaceable: number;
+  /** True when the task list was truncated by `limit` — the board is a page, and says so rather than implying totality. */
+  readonly truncated: boolean;
 }
 
 /** A zero count for every bucket, so a bucket is never simply absent from a rendered board. */
