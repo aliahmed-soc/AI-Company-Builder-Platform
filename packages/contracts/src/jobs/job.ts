@@ -37,6 +37,17 @@ export function isJobState(value: unknown): value is JobState {
   return typeof value === 'string' && (JOB_STATES as readonly string[]).includes(value);
 }
 
+/**
+ * States a job never leaves. A job in one of these has had its fate settled and must not accept further lifecycle
+ * writes — in particular a failed attempt, which would otherwise increment `attempts` past the cap and emit another
+ * terminal audit event every time a confused runner asked (found in ACBP-P5-001c review pass 1).
+ */
+export const JOB_TERMINAL_STATES = ['succeeded', 'failed', 'dead_letter', 'cancelled'] as const satisfies readonly JobState[];
+
+export function isTerminalJobState(value: unknown): boolean {
+  return typeof value === 'string' && (JOB_TERMINAL_STATES as readonly string[]).includes(value);
+}
+
 /** Mirrors the `jobs_kind_len` CHECK, so nothing can be valid here and rejected by the database. */
 export const JOB_KIND_MAX = 100;
 /** Mirrors the `jobs_idempotency_len` CHECK. */

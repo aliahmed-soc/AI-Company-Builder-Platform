@@ -10,7 +10,7 @@
 // function returning a CLOSED outcome, and the recording is a single guarded statement — there is no point at which a
 // caller holds a counter and decides for itself (CDR-052 §3-G1).
 import { JobRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type JobRow } from '@acbp/database';
-import { classifyRetryOutcome, DEFAULT_RETRY_POLICY, jobDeadLettered, type RetryPolicy, type JobFailureReason } from '@acbp/contracts';
+import { classifyRetryOutcome, DEFAULT_RETRY_POLICY, isTerminalJobState, jobDeadLettered, type RetryPolicy, type JobFailureReason } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -41,7 +41,9 @@ export type RecordJobFailureResult =
   // The guarded update matched nothing: the job left `running` between our read and our write — an owner cancelled
   // it, or another worker already decided. Reporting this rather than retrying is the point; a job whose fate someone
   // else settled must not be dragged back into the queue.
-  | { readonly status: 'state_changed' };
+  | { readonly status: 'state_changed' }
+  // The job already reached a terminal state. Reported, and NOTHING is written - not the counter, not an audit row.
+  | { readonly status: 'already_terminal'; readonly state: string };
 
 /**
  * Record a failed attempt and decide what happens next.
@@ -62,6 +64,12 @@ export async function recordJobFailure(client: DatabaseClient, params: RecordJob
       const jobs = new JobRepository(scope.db);
       const job = await jobs.findById(params.jobId);
       if (job === undefined) return { status: 'not_found' };
+
+      // A job whose fate is already settled accepts NOTHING further. Found in review pass 1: without this, the
+      // guard below (which matches on the job's CURRENT state) happily matched a dead-lettered job, incremented
+      // `attempts` past the cap, and emitted ANOTHER `job.dead_lettered` audit row - unbounded, once per call.
+      // A confused runner in a loop would inflate the counter and pollute the run trail indefinitely.
+      if (isTerminalJobState(job.state)) return { status: 'already_terminal', state: job.state };
 
       // `attempts` counts completed attempts; the one that just failed is not yet counted, so the decision is made on
       // what the count WILL be. Getting this off by one is the difference between honouring the cap and exceeding it.

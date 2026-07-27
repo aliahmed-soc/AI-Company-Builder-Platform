@@ -63,7 +63,12 @@ export type RetryOutcome =
   | { readonly outcome: 'retry_scheduled'; readonly nextAttempt: number; readonly delayMs: number }
   // Terminal and VISIBLE. There is deliberately no third variant: a closed union of exactly two is what makes
   // "never silently retried" a property of the type rather than of the caller's discipline (§3-G1).
-  | { readonly outcome: 'dead_lettered'; readonly reason: JobFailureReason };
+  //
+  // It carries NO reason, which review pass 2 corrected. This function decides retry-vs-stop; it does not know WHY
+  // the attempt failed, and a placeholder ttempts_exhausted here contradicted the caller's real cause, which is
+  // what actually gets persisted. That the cap was reached is already recorded by ttempts == maxAttempts — a
+  // second, weaker statement of the same fact is not information, it is a chance for two records to disagree.
+  | { readonly outcome: 'dead_lettered' };
 
 /**
  * Decide what happens after a failed attempt. FAILS CLOSED in every ambiguous case.
@@ -76,9 +81,9 @@ export type RetryOutcome =
  * has already failed, while the failure mode of guessing "stop" is a job a human can see and re-queue.
  */
 export function classifyRetryOutcome(attemptsSoFar: number, policy: RetryPolicy = DEFAULT_RETRY_POLICY): RetryOutcome {
-  if (!isBoundedPolicy(policy)) return { outcome: 'dead_lettered', reason: 'attempts_exhausted' };
-  if (!Number.isInteger(attemptsSoFar) || attemptsSoFar < 0) return { outcome: 'dead_lettered', reason: 'attempts_exhausted' };
-  if (attemptsSoFar >= policy.maxAttempts) return { outcome: 'dead_lettered', reason: 'attempts_exhausted' };
+  if (!isBoundedPolicy(policy)) return { outcome: 'dead_lettered' };
+  if (!Number.isInteger(attemptsSoFar) || attemptsSoFar < 0) return { outcome: 'dead_lettered' };
+  if (attemptsSoFar >= policy.maxAttempts) return { outcome: 'dead_lettered' };
   const nextAttempt = attemptsSoFar + 1;
   return { outcome: 'retry_scheduled', nextAttempt, delayMs: nextBackoffMs(nextAttempt, policy) };
 }

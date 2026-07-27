@@ -89,7 +89,9 @@ describe.skipIf(!hasTestDatabase)('bounded retry + dead-letter (real PostgreSQL,
     const row = (await jobRows())[0];
     expect(row?.state).toBe('dead_letter');
     expect(row?.attempts).toBe(POLICY.maxAttempts);
-    expect(row?.failure_reason).toBe('attempts_exhausted');
+    // The CALLER's cause, not a placeholder: that the cap was reached is already recorded by attempts == maxAttempts,
+    // and what a human in the blocked queue needs is WHY it kept failing (review pass 2).
+    expect(row?.failure_reason).toBe('provider_error');
   });
 
   test('a dead-lettered job is NEVER retried again, however many times the runner asks', async () => {
@@ -103,14 +105,18 @@ describe.skipIf(!hasTestDatabase)('bounded retry + dead-letter (real PostgreSQL,
 
     for (let i = 0; i < 5; i += 1) {
       const again = await recordJobFailure(product, { ...base(), jobId, reason: 'timeout' }, { retryPolicy: POLICY });
-      // Either it reports the terminal state or it reports that someone else settled it — never a new retry.
-      expect(['dead_lettered', 'state_changed']).toContain(again.status);
+      expect(again).toEqual({ status: 'already_terminal', state: 'dead_letter' });
     }
     const row = (await jobRows())[0];
     expect(row?.state).toBe('dead_letter');
-    // The attempt counter must not have crept past the cap by re-asking.
-    expect(row?.attempts).toBeLessThanOrEqual(POLICY.maxAttempts + 5);
+    // EXACTLY the cap. This assertion is the review-pass-1 regression guard: it originally read
+    // `toBeLessThanOrEqual(maxAttempts + 5)`, which accommodated a real bug instead of catching it — the guarded
+    // update matched the job's own `dead_letter` state, so every extra call bumped the counter and wrote another
+    // terminal audit row. Weakening an assertion to fit observed behaviour is how a defect becomes the spec.
+    expect(row?.attempts).toBe(POLICY.maxAttempts);
     expect((await jobRows()).filter((j) => j.state === 'queued')).toHaveLength(0);
+    // And exactly ONE dead-letter event, however many times the runner asked.
+    expect(await auditFor('job.dead_lettered')).toHaveLength(1);
   });
 
   test('the dead-letter is AUDITED, with a category and no payload', async () => {
@@ -122,7 +128,7 @@ describe.skipIf(!hasTestDatabase)('bounded retry + dead-letter (real PostgreSQL,
     expect(events).toHaveLength(1);
     expect(events[0]?.subject_id).toBe(jobId);
     expect(events[0]?.outcome).toBe('blocked');
-    expect(events[0]?.payload).toEqual({ kind: 'understanding.generate', attempts: POLICY.maxAttempts, reason: 'attempts_exhausted' });
+    expect(events[0]?.payload).toEqual({ kind: 'understanding.generate', attempts: POLICY.maxAttempts, reason: 'provider_error' });
   });
 
   test('a RETRY is not audited as a dead-letter — only the terminal stop is', async () => {
@@ -140,7 +146,7 @@ describe.skipIf(!hasTestDatabase)('bounded retry + dead-letter (real PostgreSQL,
     }
     const blocked = ok(await listBlockedJobs(product, { ...base() }));
     expect(blocked.jobs).toHaveLength(1);
-    expect(blocked.jobs[0]).toEqual({ id: jobId, kind: 'understanding.generate', attempts: POLICY.maxAttempts, failureReason: 'attempts_exhausted' });
+    expect(blocked.jobs[0]).toEqual({ id: jobId, kind: 'understanding.generate', attempts: POLICY.maxAttempts, failureReason: 'invalid_payload' });
     // The payload carries caller-chosen references and is not a reviewed surface.
     expect(JSON.stringify(blocked.jobs[0])).not.toContain('payload');
   });

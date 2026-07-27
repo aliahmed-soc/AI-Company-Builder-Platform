@@ -113,7 +113,13 @@ describe('failure reasons', () => {
     }
   });
 
-  test('include the attempt-cap category, since that is the one this sub-scope creates', () => {
+  test('include the attempt-cap category, for a caller with no more specific cause', () => {
     expect(isJobFailureReason('attempts_exhausted')).toBe(true);
+  });
+
+  test('the DECISION carries no reason - it decides retry-vs-stop and does not know why the attempt failed', () => {
+    // Review pass 2: a placeholder reason here contradicted the caller's real cause, which is what gets persisted.
+    const r = classifyRetryOutcome(POLICY.maxAttempts, POLICY);
+    expect(r).toEqual({ outcome: 'dead_lettered' });
   });
 });
