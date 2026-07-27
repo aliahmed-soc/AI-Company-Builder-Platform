@@ -32,6 +32,24 @@ describe('companyObjectKey — every key is company-scoped by construction (CDR-
     if (a.ok && b.ok) expect(keyString(a.value)).not.toBe(keyString(b.value));
   });
 
+  test('company-id CASE cannot fork the keyspace — the same company is one keyspace (second review pass)', () => {
+    // The UUID test is case-insensitive and PostgreSQL renders `uuid` lowercase, so an id can legitimately reach
+    // this function in either case. Without normalisation that would create two disjoint keyspaces for one company:
+    // objects written via one form would be invisible AND unverifiable via the other. Fails closed rather than
+    // leaking, but a company losing sight of its own documents is not an acceptable failure either.
+    const upper = COMPANY_A.toUpperCase();
+    const lower = COMPANY_A.toLowerCase();
+    const a = companyObjectKey(upper, ['documents', 'x.md']);
+    const b = companyObjectKey(lower, ['documents', 'x.md']);
+    expect(a.ok && b.ok).toBe(true);
+    if (a.ok && b.ok) expect(keyString(a.value)).toBe(keyString(b.value));
+    // …and verification agrees in both directions, whichever case the caller happens to hold.
+    if (a.ok) {
+      expect(verifyKeyBelongsToCompany(keyString(a.value), upper)).toBe(true);
+      expect(verifyKeyBelongsToCompany(keyString(a.value), lower)).toBe(true);
+    }
+  });
+
   test('an invalid company id is refused — the prefix cannot be built from junk', () => {
     for (const bad of ['', '   ', '../..', 'company', 'not-a-uuid/../x']) {
       expect(companyObjectKey(bad, ['x']).ok, `companyId=${JSON.stringify(bad)}`).toBe(false);

@@ -14,7 +14,7 @@
 12. **Operational implications:** Storage lifecycle rules; export-job monitoring.
 13. **Reversal cost:** Low-Medium.
 14. **Scale trigger:** None foreseen for MVP scale.
-15. **Open questions:** AOQ-03 (storage provider).
+15. **Open questions:** ~~AOQ-03 (storage provider)~~ — **RESOLVED 2026-07-27** by the owner decision recorded in docs/implementation/config-decisions/CDR-048-object-storage-provider.md: S3-compatible storage, one bucket per environment, `company_id`-scoped keys, no public bucket access, reads via short-lived signed URLs. The protocol class and topology are fixed; the concrete VENDOR is still unnamed, which blocks the subprocessor register row and any residency claim (see docs/architecture/SUBPROCESSOR-REGISTER.md) but blocks no engineering, since the contract is provider-neutral.
 16. **Owner approval:**
 
 ```text

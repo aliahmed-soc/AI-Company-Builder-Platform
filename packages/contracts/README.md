@@ -64,6 +64,7 @@ imports are blocked.
   company; internal authz/membership stay product-owned. Webhooks arrive as neutral `IdentityEvent`s;
   a provider deletion event does not itself authorize product-data deletion.
 - **Storage** (`ObjectStorage`) — put/get/delete/head by an opaque `ObjectKey`. No vendor bucket/URL/SDK
+- **Storage keys** (`companyObjectKey`/`verifyKeyBelongsToCompany`, ACBP-P0-005) — company-scoped keys derived from a `company_id`; traversal REFUSED, not sanitised; ownership re-verified at use. `SignedUrlIssuer` issues short-lived read URLs (`SIGNED_URL_MAX_TTL_SECONDS`); there is no public read path.
   types, no public-by-default access, no presigned abstraction (deferred). Tenant ownership is the
   caller's explicit responsibility (no auto cross-tenant addressing). **P0-005 remains Blocked — no
   provider is selected.**

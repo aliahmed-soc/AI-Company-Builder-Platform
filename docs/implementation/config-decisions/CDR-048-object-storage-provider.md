@@ -33,15 +33,27 @@ model.
 The owner asked for cross-tenant access to be **structurally impossible, not just policy**. A prefix convention that
 callers are trusted to follow is policy. Three things make it structural:
 
-- **G1 — a storage key can only be CONSTRUCTED from a company scope.** `ObjectKey` is a branded type with no public
-  constructor; the only way to obtain one is `companyObjectKey(scope, parts)`, which always emits
-  `company/{companyId}/…`. A caller cannot hand-assemble a string and pass it off as a key, because the type system
-  will not accept it.
+- **G1 — the SAFE constructor is the only way to derive a tenant key.** `companyObjectKey(companyId, parts)` always
+  emits `company/{companyId}/…`, and the branded `ObjectKey` type means a bare string will not type-check where a key
+  is expected.
+  **Corrected during the first review pass — G1 alone is NOT "structurally impossible", and this CDR originally
+  overclaimed it.** ACBP-P0-019's pre-existing `toObjectKey(string): ObjectKey` is an *unchecked* cast, kept
+  deliberately for platform-owned objects that have no tenant. It cannot be removed without breaking that case, so
+  anyone can still mint a branded key from an arbitrary string. G1 is therefore a strong convention plus a
+  type-level nudge — it stops accidents, not a determined caller. **G3 is the actual enforcement**, which is exactly
+  why it exists and why the two are not redundant. Saying otherwise would have been the kind of security claim that
+  reads as stronger than the code.
 - **G2 — the derivation REJECTS anything that could escape the prefix**, rather than sanitising it quietly. Empty
   segments, `.`/`..`, leading or embedded slashes and backslashes, percent-encoded traversal (`%2e%2e`, `%2f`), NUL
   and control characters, and absolute-looking inputs are all refused as `invalid_segment`. Sanitising is the wrong
   behaviour here: silently rewriting `../other-company/secret` into something adjacent produces a key the caller did
   not ask for, and the caller is the one who knows whether that is acceptable.
+- **G2b — the company id is CANONICALISED to lowercase before it becomes a prefix.** *Found in the second review
+  pass.* The UUID check is case-insensitive and PostgreSQL renders `uuid` lowercase, so an id can legitimately reach
+  the derivation in either case. Without normalisation, `AAAA…` and `aaaa…` — the same company — produce two
+  **disjoint keyspaces**: objects written through one form are invisible *and* unverifiable through the other. It
+  fails closed rather than leaking, but a company silently losing sight of its own documents because an id arrived
+  from a different code path is not an acceptable failure either.
 - **G3 — signing RE-VERIFIES ownership at issue time.** A key arriving from anywhere other than the current
   derivation — a database row, an export manifest, a retry payload — is checked against the requesting company's
   prefix before any URL is produced. G1 protects construction; G3 protects *use*, and the two failure modes are
@@ -78,7 +90,14 @@ callers are trusted to follow is policy. Three things make it structural:
 ## 7. Slice plan
 
 1. CDR-048 + branch + draft PR.
-2. The storage contract in `@acbp/contracts`: `ObjectKey`, `companyObjectKey`, `verifyKeyBelongsToCompany`, the
-   signed-URL request/TTL clamp, and the provider-neutral `ObjectStoragePort`. Exhaustive escape tests (§3-G2).
+2. The storage contract in `@acbp/contracts`: `companyObjectKey`, `verifyKeyBelongsToCompany`, the TTL clamp, and
+   `SignedUrlIssuer`. Exhaustive escape tests (§3-G2).
+   *Corrected during the first review pass:* this originally said "the provider-neutral `ObjectStoragePort`", and the
+   first draft built one. **ACBP-P0-019 had already built the transport port** (`adapters/storage-provider.ts`), and
+   its own header records that it deferred exactly two things until a provider was chosen — "no presigned-URL
+   abstraction" and "this contract never derives cross-tenant keys". Those two *are* this ticket. A parallel port
+   collided on export and, worse, would have meant two storage ports that could disagree about when a tenant
+   boundary is crossed. The shipped work EXTENDS P0-019: same `ObjectKey` brand, transport port untouched, only the
+   two deferred pieces added.
 3. Docs: ADR-016 open question resolved, DATA-ARCHITECTURE, subprocessor register note, backlog Done.
 4. TWO independent review passes + finalization.

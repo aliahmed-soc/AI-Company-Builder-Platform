@@ -120,7 +120,7 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      (CDR-039 §7-G4) — progress belongs in a later append-only event table, not in-place mutation.
      Migration 0026 also adds the `tasks.milestone_id → milestones` FK (ON DELETE SET NULL) that makes
      "Tasks trace to it" enforceable — the P4-002 review flagged its absence for this ticket. Roadmap CONTENT stays in
-     Postgres: ADR-016 object storage is blocked on the provider selection (ACBP-P0-005). Task GENERATION is P4-003
+     Postgres. (ADR-016 object storage was blocked on the provider selection; ACBP-P0-005 resolved it on 2026-07-27 — CDR-048. Roadmap content still lives in Postgres: the artifact/document MODEL is ACBP-P5-011, which P0-005 gates.) Task GENERATION is P4-003
      (CDR-039 §7-G3). No new SECURITY DEFINER / role / BYPASSRLS. -->
 
 <!-- IMPLEMENTED (ACBP-P4-006; CDR-041; PLAN-004): migration 0028 adds `planning_runs` + `planning_run_inputs` —

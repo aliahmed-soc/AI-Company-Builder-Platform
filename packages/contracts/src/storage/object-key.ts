@@ -53,9 +53,17 @@ function isSafeSegment(segment: string): boolean {
   return true;
 }
 
-/** The prefix every one of a company's objects lives under. Always ends in `/` so it is a true path boundary. */
+/**
+ * The prefix every one of a company's objects lives under. Always ends in `/` so it is a true path boundary.
+ *
+ * The id is LOWERCASED first. Found in the second review pass: the UUID test is case-insensitive, so without this
+ * `AAAA…` and `aaaa…` — the *same* company, and indistinguishable to PostgreSQL, which renders `uuid` lowercase —
+ * would produce two DISJOINT keyspaces. Objects written under one form would be invisible and unverifiable under
+ * the other. It fails closed rather than leaking, but a company silently losing sight of its own documents because
+ * an id arrived from a different code path is not an acceptable failure either.
+ */
 export function companyPrefix(companyId: string): string {
-  return `${ROOT}/${companyId}/`;
+  return `${ROOT}/${companyId.toLowerCase()}/`;
 }
 
 /**
