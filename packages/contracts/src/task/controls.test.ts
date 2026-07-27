@@ -1,7 +1,7 @@
 // @acbp/contracts — task control-availability tests (ACBP-P4-005; CDR-043; TASK-002/TASK-008).
 import { describe, test, expect } from 'vitest';
 import { TASK_STATES } from './task.js';
-import { TASK_CONTROLS, isTaskControl, controlAvailability, availableControls } from './controls.js';
+import { TASK_CONTROLS, isTaskControl, controlAvailability, availableControls, buildTaskDetail } from './controls.js';
 
 const forState = (state: string) => Object.fromEntries(controlAvailability(state).map((c) => [c.control, c]));
 
@@ -92,5 +92,58 @@ describe('availableControls', () => {
         .map((v) => v.control);
       expect(availableControls(state)).toEqual(detailed);
     }
+  });
+});
+
+describe('buildTaskDetail (CDR-043 §4-G7/G8 — TASK-002 detail view)', () => {
+  const base = {
+    taskId: 't_1',
+    companyId: 'co_1',
+    state: 'completed' as const,
+    phase: 'completed' as const,
+    title: 'Interview five prospects',
+    description: null,
+    milestoneId: null,
+    taskType: null,
+    priority: null,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-02T00:00:00.000Z',
+  };
+
+  test('MISSING FIELDS STAY MISSING — nothing is defaulted into existence (TASK-002 failure clause)', () => {
+    // The whole failure clause is "missing fields render explicitly as missing". A placeholder here would be the
+    // difference between "no type was stated" and "the type is general" — the fabrication ADR-019 forbids.
+    const d = buildTaskDetail(base, { rationale: null, repeatedFromTaskId: null });
+    expect(d.taskType).toBeNull();
+    expect(d.description).toBeNull();
+    expect(d.milestoneId).toBeNull();
+    expect(d.priority).toBeNull();
+    expect(d.rationale).toBeNull();
+    expect(d.repeatedFromTaskId).toBeNull();
+  });
+
+  test('carries the fields TASK-002 names — type, creation time, structured description', () => {
+    const d = buildTaskDetail({ ...base, taskType: 'market_research', description: 'Talk to five people.' }, { rationale: 'Fastest way to learn.', repeatedFromTaskId: 't_0' });
+    expect(d.taskType).toBe('market_research');
+    expect(d.createdAt).toBe('2026-07-01T00:00:00.000Z');
+    expect(d.description).toBe('Talk to five people.');
+    expect(d.rationale).toBe('Fastest way to learn.');
+    expect(d.repeatedFromTaskId).toBe('t_0');
+  });
+
+  test('controls are DERIVED from the state on every read, and agree with controlAvailability exactly', () => {
+    // Derived, never stored: a stored availability set goes stale the moment the task changes state, which is
+    // precisely when the owner is most likely to be looking at it.
+    for (const state of TASK_STATES) {
+      const d = buildTaskDetail({ ...base, state }, { rationale: null, repeatedFromTaskId: null });
+      expect(d.controls).toEqual(controlAvailability(state));
+    }
+  });
+
+  test('a running task’s detail explains why delete is unavailable rather than omitting the control', () => {
+    const d = buildTaskDetail({ ...base, state: 'running' }, { rationale: null, repeatedFromTaskId: null });
+    const del = d.controls.find((c) => c.control === 'delete');
+    expect(del).toEqual({ control: 'delete', available: false, reason: 'cancel_first' });
+    expect(d.controls).toHaveLength(TASK_CONTROLS.length);
   });
 });

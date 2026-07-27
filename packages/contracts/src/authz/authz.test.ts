@@ -53,6 +53,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Task model (ACBP-P4-002; CDR-033): create/plan + read = any active company member.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
+  // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create — canon says company-scoped, not owner-only.
+  'task:delete': ['owner', 'viewer'],
   // Strategy option generation (ACBP-P3-001; CDR-034): generate/request-another + read = any active company member.
   'strategy:generate': ['owner', 'viewer'],
   'strategy:read': ['owner', 'viewer'],

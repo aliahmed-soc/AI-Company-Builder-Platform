@@ -187,14 +187,17 @@ export interface GetTaskParams {
 }
 export type GetTaskResult = { readonly status: 'ok'; readonly task: TaskDTO } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
 
-/** Read a single task as the redacted DTO (owner+viewer, `task:read`). RLS-confined — a foreign task is `not_found`. */
+/**
+ * Read a single task as the redacted DTO (owner+viewer, `task:read`). RLS-confined — a foreign task is `not_found`,
+ * and so is a DELETED one (ACBP-P4-005 G9): the row survives for the audit trail, but to the product it is gone.
+ */
 export async function getTask(client: DatabaseClient, params: GetTaskParams, options: TaskOptions = {}): Promise<GetTaskResult> {
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<GetTaskResult> => {
       if (checkAuthorization(role, 'task:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
-      const row = await new TaskRepository(scope.db).findById(params.taskId);
+      const row = await new TaskRepository(scope.db).findLive(params.taskId);
       return row === undefined ? { status: 'not_found' } : { status: 'ok', task: toTaskDTO(row) };
     },
     opts(options),

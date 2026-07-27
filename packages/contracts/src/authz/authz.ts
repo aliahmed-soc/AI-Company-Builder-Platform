@@ -99,6 +99,11 @@ export const AUTHZ_ACTIONS = [
   // gate owned by a later ticket (TASK-004/P6), NOT part of this create grant. `task:depend` folds into `task:create`.
   'task:create',
   'task:read',
+  // Task deletion (ACBP-P4-005; CDR-043 §4-G1; TASK-008). Its own action rather than folded into `task:create`,
+  // because it is the only task control that removes work from view — a named action makes a future owner-only
+  // tightening a one-line policy change instead of a refactor. REPEAT is deliberately NOT here: it mints a task,
+  // which is exactly what `task:create` already authorizes (the `task:depend` folding precedent).
+  'task:delete',
   // Strategy option generation (ACBP-P3-001; CDR-034 §4; STRAT-001/002). `strategy:generate` covers generation +
   // request-another; `strategy:read` lists the options. Both owner|viewer (any active member drives the flow, like
   // understanding:generate). The owner-only SELECTION gate is STRAT-003/P3-004's separate action.
@@ -210,6 +215,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // RUN trigger (planned→queued) is a later ticket's separate action.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
+  // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create. Canon scopes TASK-008 to "Company-scoped"
+  // and says nothing about role, so restricting it to the owner would invent a requirement — and a member who may
+  // create work should be able to withdraw it. The deletion is append-only and audited, so nothing is destroyed.
+  'task:delete': ['owner', 'viewer'],
   // Strategy generation is a member action (like understanding:generate); owner-only selection is P3-004's action.
   'strategy:generate': ['owner', 'viewer'],
   'strategy:read': ['owner', 'viewer'],

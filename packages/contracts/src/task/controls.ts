@@ -10,7 +10,7 @@
 // repeat links lineage", and `raw-audit/04-task-and-agent-system.md` lists task rejection under "Controls not
 // exercised" while recording the observed detail controls as Delete, Repeat and (for Todo) Run now. Building it would
 // mean inventing a state transition and a user-facing control from one word in a summary field.
-import { isTaskState, type TaskState } from './task.js';
+import { isTaskState, type TaskDTO, type TaskState } from './task.js';
 
 /** The controls this ticket defines. `run_now` is TASK-004 (needs the credit preflight) and is NOT here. */
 export const TASK_CONTROLS = ['repeat', 'delete'] as const;
@@ -75,4 +75,34 @@ export function availableControls(state: unknown): readonly TaskControl[] {
   return controlAvailability(state)
     .filter((v) => v.available)
     .map((v) => v.control);
+}
+
+/**
+ * The DETAIL view of one task (CDR-043 §4-G7/G8; TASK-002).
+ *
+ * TASK-002 asks for "type, creation time, structured description, and controls appropriate to its state", and its
+ * failure clause is "missing fields render explicitly as MISSING". So this extends {@link TaskDTO} additively and
+ * defaults NOTHING: `taskType`, `description`, `milestoneId`, `priority` and `rationale` stay `null` when unknown
+ * rather than acquiring a placeholder — the difference between "no type was stated" and "the type is general"
+ * (ADR-019).
+ */
+export interface TaskDetailDTO extends TaskDTO {
+  /** Why planning chose this task, or `null` when the model gave none (ACBP-P4-006). "Not recorded", never invented. */
+  readonly rationale: string | null;
+  /** The task this one was repeated FROM (TASK-008 lineage), or `null` when it is not a repeat. */
+  readonly repeatedFromTaskId: string | null;
+  /** Every control's verdict for this state, with a reason whenever one is unavailable. Total over TASK_CONTROLS. */
+  readonly controls: readonly ControlVerdict[];
+}
+
+/**
+ * Assemble the detail view. `controls` is DERIVED from the task's own state here, never stored and never passed in:
+ * a persisted availability set goes stale the moment the task changes state, which is precisely when the owner is
+ * most likely to be looking at it (the `isFullyExplained` / `isDependencyBlocked` precedent).
+ *
+ * The extra fields are taken as an explicit second argument rather than spread from a wider row, so adding a column
+ * to `tasks` can never silently widen what the detail view exposes.
+ */
+export function buildTaskDetail(task: TaskDTO, extra: { readonly rationale: string | null; readonly repeatedFromTaskId: string | null }): TaskDetailDTO {
+  return { ...task, rationale: extra.rationale, repeatedFromTaskId: extra.repeatedFromTaskId, controls: controlAvailability(task.state) };
 }

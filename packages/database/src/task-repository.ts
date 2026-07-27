@@ -135,9 +135,9 @@ export class TaskRepository {
     return Number(r.numUpdatedRows);
   }
 
-  /** The company's tasks (RLS-confined), newest first, bounded. */
+  /** The company's non-deleted tasks (RLS-confined), newest first, bounded (ACBP-P4-005 G9). */
   list(options: ListTasksOptions): Promise<TaskRow[]> {
-    return this.#db.selectFrom('tasks').selectAll().orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+    return this.#db.selectFrom('tasks').selectAll().where(NOT_DELETED).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
   }
 
   /**
@@ -181,13 +181,19 @@ export class TaskRepository {
       .execute();
   }
 
-  /** How many DRAFT tasks the company holds (RLS-confined). Counted, not paged: the board reports them off-board. */
+  /**
+   * How many DRAFT tasks the company holds (RLS-confined). Counted, not paged: the board reports them off-board.
+   *
+   * Deleted drafts are excluded (ACBP-P4-005 G9). Counting them would tell the owner that preview work exists which
+   * they can no longer reach from anywhere — a number that cannot be acted on is worse than no number.
+   */
   async countDrafts(companyId: string): Promise<number> {
     const row = await this.#db
       .selectFrom('tasks')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('company_id', '=', companyId)
       .where('state', '=', 'draft')
+      .where(NOT_DELETED)
       .executeTakeFirst();
     return Number(row?.n ?? 0);
   }
@@ -222,6 +228,11 @@ export class TaskRepository {
    * Without this, a truncated board reports almost every dependent as blocked: `list` is newest-first, so
    * prerequisites are by construction older than their dependents and are the FIRST rows dropped. Failing closed on a
    * prerequisite we simply did not fetch is safe but wrong often enough to make the indicator useless.
+   *
+   * DELETED prerequisites are deliberately NOT excluded here (ACBP-P4-005). This resolves a task's real state, and a
+   * deleted prerequisite's last state is the honest answer: one deleted while `completed` genuinely did unblock its
+   * dependent, and one deleted while `planned` genuinely blocks it forever. Filtering them out would collapse both
+   * into "unresolvable → blocked", turning a satisfied dependency into a permanent false block.
    */
   findStatesByIds(taskIds: readonly string[]): Promise<{ id: string; state: string }[]> {
     if (taskIds.length === 0) return Promise.resolve([]);
