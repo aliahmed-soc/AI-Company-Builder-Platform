@@ -30,6 +30,8 @@ export interface NewUsageEventInput {
   readonly outputTokens: number;
   readonly estimatedCostMicros: number;
   readonly fallbackUsed: boolean;
+  /** WHY the fallover happened (ACBP-P5-009). Null unless fallbackUsed -- a reason never appears without one. */
+  readonly fallbackReason: string | null;
   readonly latencyMs: number;
   readonly correlationId: string | null;
 }
@@ -65,7 +67,7 @@ export class UsageEventRepository {
         input_tokens: input.inputTokens,
         output_tokens: input.outputTokens,
         estimated_cost_micros: input.estimatedCostMicros,
-        fallback_used: input.fallbackUsed,
+        fallback_used: input.fallbackUsed, fallback_reason: input.fallbackReason,
         latency_ms: input.latencyMs,
         correlation_id: input.correlationId,
       })

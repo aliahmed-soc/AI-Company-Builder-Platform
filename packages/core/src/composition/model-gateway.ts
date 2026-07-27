@@ -44,6 +44,8 @@ async function writeUsageEvent(client: DatabaseClient, event: NewModelCallUsageE
         taskClass: event.taskClass,
         outcome: event.outcome,
         errorCategory: event.errorCategory ?? null,
+        // ACBP-P5-009: null unless the call fell over. The DB CHECK refuses a reason without a fallover.
+        fallbackReason: event.fallbackReason ?? null,
         inputTokens: event.inputTokens,
         outputTokens: event.outputTokens,
         estimatedCostMicros: event.estimatedCostMicros,

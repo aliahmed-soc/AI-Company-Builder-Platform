@@ -280,10 +280,15 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
   // over to the secondary provider (quality-bearing generation is ineligible — no silent fallback, ADR-019).
   let usedProvider = deps.primary;
   let fallbackUsed = false;
+  // WHY the fallover happened (ACBP-P5-009; NFR-019). Captured from the PRIMARY's terminal category at the moment
+  // the decision is taken — after the fallback runs, `run.attempt` describes the secondary, so the trigger would be
+  // unrecoverable. `fallbackUsed` alone answers *whether*; canon asks for the reason.
+  let fallbackReason: ModelErrorCategory | undefined;
   let run = await runProvider(deps.primary, request, messages, cfg, deps);
   let usage = run.usage; // tokens consumed on the primary (incl. its retries/re-asks)
   if (run.attempt.kind === 'error' && isRetryableModelError(run.attempt.category) && isFallbackEligible(request.taskClass) && deps.fallback !== undefined) {
     fallbackUsed = true;
+    fallbackReason = run.attempt.category;
     usedProvider = deps.fallback;
     run = await runProvider(deps.fallback, request, messages, cfg, deps);
     usage = addUsage(usage, run.usage); // total = primary + fallback consumption
@@ -313,6 +318,8 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
     outputTokens: usage.outputTokens,
     estimatedCostMicros,
     fallbackUsed,
+    // Present exactly when the fallover happened, so the pair can never contradict itself (CDR-047 §3-G3).
+    ...(fallbackReason !== undefined ? { fallbackReason } : {}),
     latencyMs,
     ...(correlationId !== undefined ? { correlationId } : {}),
   };
