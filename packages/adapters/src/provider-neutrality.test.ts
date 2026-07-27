@@ -87,10 +87,20 @@ describe('provider-neutrality of adapter contracts', () => {
     }
   });
 
-  test('storage blocker: ACBP-P0-005 remains Blocked (no object-storage provider selected)', () => {
+  test('storage decision: ACBP-P0-005 is resolved, and the contract surface stays vendor-neutral', () => {
+    // ACBP-P0-005 was Blocked until 2026-07-27, when the owner selected S3-compatible storage (CDR-048). This guard
+    // originally asserted `Blocked` and FAILED the moment that status changed — which is precisely what it was for:
+    // it forces whoever resolves the blocker to come here and state what replaced it, rather than letting the
+    // status drift while a stale assertion keeps passing.
+    //
+    // What replaces it is the property that actually mattered all along. "Blocked" was only ever a proxy for
+    // "no vendor has leaked into the neutral contract surface", and that must hold *more* strongly now a provider
+    // class is chosen, not less — the temptation to reach for an SDK arrives exactly when the decision is made.
+    // The FORBIDDEN_SPECIFIERS sweep above (which includes `@aws-sdk` and `cloudflare`) is that check, and it
+    // covers the storage contract like every other.
     const csv = readFileSync(resolve(REPO, 'docs', 'implementation', 'BACKLOG.csv'), 'utf8');
     const row = csv.split('\n').find((l) => l.startsWith('ACBP-P0-005,'));
     expect(row).toBeDefined();
-    expect(row?.trimEnd().endsWith(',Blocked')).toBe(true);
+    expect(row?.trimEnd().endsWith(',Done')).toBe(true);
   });
 });

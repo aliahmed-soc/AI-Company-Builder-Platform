@@ -20,4 +20,6 @@ export * from './context/index.js';
 export * from './task/index.js';
 export * from './strategy/index.js';
 export * from './planning/index.js';
+// Object storage: company-scoped keys + the provider-neutral port (ACBP-P0-005; CDR-048; ADR-016).
+export * from './storage/index.js';
 
