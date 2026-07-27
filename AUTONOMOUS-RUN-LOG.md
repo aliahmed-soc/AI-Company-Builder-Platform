@@ -624,3 +624,67 @@ boundary are all fully specified.
 
 **Not stopping overall.** P5-003b and P5-003c both consume this set, so all three sub-scopes wait on it. I am
 proceeding to **ACBP-P5-001b** (checkpoints and resume), which needs no owner input.
+## Window 10 — 2026-07-27, ACBP-P5-001b + P5-003a
+
+**Real clock at report time: 2026-07-27 19:02:53.** **Disk, both drives, same moment:** C: **19.40 GB** free
+(down ~2.6 GB across the window — CI/build temp; still far above the 3 GB threshold), E: **104.88 GB** free. No
+cleanup needed.
+
+### Owner input this window
+
+1. **The four-class risk set was approved AS-IS to unblock P5-003b/c**, with an explicit instruction to record it as
+   an owner-approved-by-default choice to revisit rather than a deliberated decision. Done: `CDR-051 §0` is a
+   dedicated section stating what is provisional (the 3-vs-4 split of canon's single "external" notion), what is not
+   (the ordering, and unclassified⇒most-restrictive), and **when it stops being cheap to change** — once P6-001 policy
+   rows and APPR-005 expiry defaults key off the values. The same warning heads `risk-class.ts`.
+2. **PRs #50 and #51 must NOT be merged or finalized.** Untouched. `main` is still `b9f101b`.
+
+### Built
+
+| Sub-scope | Branch / PR | Exact-head CI |
+| --- | --- | --- |
+| **P5-001b** checkpoints and resume | `p5-001b-checkpoints-and-resume`, PR **#51** (stacked on a) | GREEN zero-skip **2082/2082** at `22bba6b` |
+| **P5-003a** tool registry + risk classes | `p5-003a-tool-registry-risk-classes`, PR **#52** | GREEN zero-skip **2020/2020** at `18c856c` |
+
+**P5-001b** — the centrepiece is a real kill-and-resume: a plan runs, a step crashes mid-flight, the job resumes, and
+the completed step is asserted not to have run again. The failure excluded is double execution, not a wasteful
+restart, so the checkpoint shares the step's transaction — proven by a companion test where a step writes and *then*
+throws, leaving neither the write nor a checkpoint. Review pass 1 found two: `runJobStep` was authorizing with
+`job:enqueue` (scheduling and executing are different capabilities — added `job:execute` on the `task:delete`
+precedent), and a comment claimed a rollback "discards the effect", which is true only of TRANSACTIONAL work and
+would have become false the moment P5-003 lets a step make an HTTP call.
+
+**P5-003a** — the registry is GLOBAL and **SELECT-only for the app role**: there is no runtime write path at all,
+which is the structural half of *"trust-critical determinations come from the tool registry"*. `risk_class` is
+nullable on purpose, because TOOL-001's "unclassified" has to be representable or the requirement is untestable, and
+`resolveRiskClass` never throws — refusing would be a denial of service on the whole registry, so a broken row
+dispatches under the strictest gate instead.
+
+### The mistake worth recording: "the reset-list sweep" is not one list
+
+P5-003a's first CI run failed **73 test files**. I had correctly kept `tool_definitions` out of the tenancy catalog
+(it is global config, so it rightly has no RLS and rightly is not in `TENANT_TABLES`) — and then wrongly concluded
+it did not belong in the reset lists either. Those are different lists: `ALL_TABLES` and the per-suite lists are the
+**drop/reset** set and must name every migrated table regardless of tenancy. Omitting it meant the table survived
+`resetSchema`, the next `CREATE TABLE` collided, the migration aborted, and every downstream suite ran against a
+database with no tables — which is why the visible error was *"expected [tool_definitions, …4] to include users"*
+rather than anything about tools.
+
+**The first fix was also incomplete**, and that is the more useful half of the lesson: I patched by text-anchoring on
+one list's phrasing, which covered 33 files and silently missed six that write the list differently. Re-done by
+ENUMERATING every file containing a drop list and then asserting none was left short. A text-anchored replace covers
+only the shape you happened to anchor on.
+
+### Migration ordering — a real constraint the owner should know about
+
+P5-003a's migration is **0033**, because 0031 and 0032 belong to P5-001a and P5-001b. Kysely refuses to run a
+migration that sorts before an already-executed one, so **#52 must merge after #50 and #51**. If the owner prefers a
+different order, 0033 renumbers to 0031 with no other change.
+
+### State
+
+`main` untouched at `b9f101b`. Three branches pushed, trees clean, all three CI-green on their exact heads:
+#50 (P5-001a), #51 (P5-001b), #52 (P5-003a). Remaining on b and P5-003a: review pass 2 and docs.
+
+Next: **P5-003b** (the dispatcher chokepoint). Note for that sub-scope — canon says a tool call *"belongs to a run"*,
+and no run entity exists yet, so the call/run linkage needs deciding there; flagged now rather than discovered late.

@@ -808,6 +808,23 @@ export interface JobCheckpointsTable {
   output: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
+
+/**
+ * Tool registry (ACBP-P5-003a; CDR-051; TOOL-001). GLOBAL — no `company_id`, no RLS: a tool is platform
+ * configuration, not tenant data. The app role holds SELECT ONLY, so every column is `never` on both insert and
+ * update — nothing in the product runtime can register or reclassify a tool.
+ */
+export interface ToolDefinitionsTable {
+  id: ColumnType<string, never, never>;
+  tool_id: ColumnType<string, never, never>;
+  version: ColumnType<number, never, never>;
+  /** NULLABLE on purpose — TOOL-001's "unclassified" must be representable (CDR-051 §4). */
+  risk_class: ColumnType<string | null, never, never>;
+  description: ColumnType<string, never, never>;
+  status: ColumnType<string, never, never>;
+  created_at: ColumnType<Date, never, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -847,6 +864,7 @@ export interface DatabaseSchema {
   task_deletions: TaskDeletionsTable;
   jobs: JobsTable;
   job_checkpoints: JobCheckpointsTable;
+  tool_definitions: ToolDefinitionsTable;
 }
 
 // Repository-facing row shapes.
@@ -931,4 +949,5 @@ export type JobCheckpointRow = Selectable<JobCheckpointsTable>;
 export type NewJobCheckpoint = Insertable<JobCheckpointsTable>;
 export type NewJob = Insertable<JobsTable>;
 export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
+export type ToolDefinitionRow = Selectable<ToolDefinitionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;
