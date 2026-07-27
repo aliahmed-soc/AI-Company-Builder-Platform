@@ -316,3 +316,162 @@ unchanged from the start of the window, so the build/test churn is not accumulat
 Continuing without pause, per the standing directive. Plan: finish ACBP-P5-009 (real-PG proof of 0030, the sweep,
 docs, two review passes, finalization). That ticket is the last unblocked non-gated item in the backlog — when it
 merges, every remaining ticket sits behind a standing owner gate, which is true stop condition #1.
+---
+
+# STOPPED — NEEDS OWNER
+
+**2026-07-27 11:49:02 +03:00.** Window 8 ends here, and no window 9 is started.
+
+**Reason: true stop condition #1.** Every Ready, unblocked, non-gated ticket in the backlog is Done. The only
+remaining tickets whose dependencies are all satisfied are the standing owner gates themselves.
+
+Final state: **61 of 101 Done**. Migrations end **0030**. `main` at `55f4c4e`, exact-main CI green **zero-skip
+1964/1964**. Working tree clean, no open branches, no draft PRs left behind.
+
+**ACBP-P5-009 merged** (squash `55f4c4e`, PR #47) as the last item of legitimate autonomous work, exactly as
+predicted at the end of window 7.
+
+Disk at stop: **C: 21.66 GB free · E: 104.87 GB free.** Neither near the 3 GB line; no cleanup needed.
+
+## 1. Every remaining ticket, grouped by the gate that blocks it
+
+Computed transitively over the dependency graph, not eyeballed. A ticket appears under every gate it is blocked by.
+
+### ACBP-P5-001 — Durable job runner and checkpoints · blocks **24** (largest)
+
+`P5-002` workflow coordinator · `P5-005` worker runtime · `P5-006` research worker · `P5-007` strategy worker ·
+`P5-008` document worker · `P5-011` document/artifact storage · `P5-012` revision workflow · `P5-013` failure detail
+and visible retries · `P5-014` run preflight and credit ledger · `P5-015` Slice E integration · `P6-009` account usage
+rollups · `P6-010` limits and alerts · `P6-011` idempotency and replay hardening · `P6-012` Slice F integration ·
+`P7-001` export · `P7-003` operational dashboards · `P7-004` alerting tiers · `P7-005` runbooks · `P7-007` security
+test pass · `P7-008` failure-injection pass · `P7-009` E2E MVP suite · `P7-010` release gate · `P7-011` closed-beta
+readiness · `P7-012` final model-evaluation gate.
+
+### ACBP-P6-001 — Deterministic policy engine · blocks **16**
+
+`P6-002` dispatcher enforcement · `P6-003` approval engine and inbox · `P6-004` payload binding/expiry/revocation ·
+`P6-005` approval invalidation on edit · `P6-006` autonomy levels 1–2 · `P6-008` Decision Room · `P6-010` ·
+`P6-012` · `P7-003` · `P7-004` · `P7-005` · `P7-007` · `P7-008` · `P7-009` · `P7-010` · `P7-011`.
+
+### ACBP-P5-003 — Tool registry and dispatcher core · blocks **13**
+
+`P5-004` worker definitions registry · `P5-005` · `P5-006` · `P5-007` · `P5-008` · `P5-011` · `P5-012` · `P5-015` ·
+`P7-001` · `P7-009` · `P7-010` · `P7-011` · `P7-012`.
+
+### ACBP-P0-005 — Decide object-storage provider · blocks **8**
+
+`P5-011` · `P5-012` · `P5-015` · `P7-001` · `P7-009` · `P7-010` · `P7-011` · `P7-012`.
+
+### ACBP-P6-007 — Emergency stop and resume review · blocks **7**
+
+`P6-012` · `P7-002` deactivation flows · `P7-007` · `P7-008` · `P7-009` · `P7-010` · `P7-011`.
+
+### ACBP-P2-011 — Discovery model-evaluation suite · blocks **2**
+
+`P3-006` strategy evaluation area · `P7-012` final model-evaluation gate.
+
+### ACBP-P7-006 — Staging validation and restore drill · blocks **2**
+
+`P7-010` release-gate execution · `P7-011` closed-beta readiness.
+
+### Ranked by leverage
+
+1. **P5-001 (24)** — unblocks the entire execution chain. Nothing in Phase 5, 6 or 7 moves without it.
+2. **P6-001 (16)** — but it sits behind P5-003, which sits behind P5-001. Not independently startable.
+3. **P5-003 (13)** — behind P5-001.
+4. **P0-005 (8)** — **independently decidable right now**; needs no other gate.
+5. **P6-007 (7)** — behind P6-002 → P6-001 → P5-003 → P5-001.
+6. **P2-011 (2)** — independently decidable; needs paid model access.
+7. **P7-006 (2)** — independently decidable; needs live infrastructure.
+
+**The single highest-value unlock is P5-001.** It is the root of the only long chain, and three of the other six
+gates sit behind it. P0-005 is the best *parallel* unlock — it is a pure decision, blocks 8 tickets, and depends on
+nothing.
+
+## 2. Proposed DoR splits for the four owner-conditioned tickets
+
+All four are **T-shirt L** and all four carry `Definition of Ready: Ready (owner-conditioned DoR split review
+2026-07-18)`. Below is a concrete proposed split for each — something to approve or edit, not a blank page. Each
+sub-scope is drawn from the ticket's own Acceptance criteria and Requirement IDs, and each is independently
+reviewable and independently shippable behind the next.
+
+### ACBP-P5-001 → three sub-tickets
+
+Objective: *Postgres-backed jobs (library per ADR-008); checkpoints; tenant-stamped; dead-letter.*
+Acceptance: *"Kill-and-resume green; context-stripped job refused."* Trust-critical #3.
+
+| Proposed | Scope | Acceptance clause it owns |
+|---|---|---|
+| **P5-001a — job store + tenant stamping** | The job row model and migration; every job carries account+company; a job submitted with no tenant context is REFUSED, not defaulted. Invariant 3 chokepoint. | *"context-stripped job refused"* (trust-critical #3) |
+| **P5-001b — checkpoints and resume** | Checkpoint records; crash mid-job resumes from the last checkpoint rather than restarting or double-executing. | *"kill-and-resume green"* (NFR-005) |
+| **P5-001c — dead-letter and bounded retry** | Retry cap per NFR-007; exhausted jobs land in a dead-letter state that is visible and never silently retried; workflows README. | *"cap = dead-letter"* |
+
+*Why here:* (a) is a security invariant that is fully testable with no durability machinery — it is the piece most
+worth reviewing alone, and it is the one whose failure is silent. (b) is the durability property and needs a
+kill-harness. (c) is terminal-failure policy. Shipping (a) first also means every later job write is tenant-stamped
+by construction rather than retrofitted.
+
+### ACBP-P5-003 → three sub-tickets
+
+Objective: *Registry (risk classes) + dispatcher: allowlist deny-by-default, 100% call records, idempotency keys,
+injection boundary.* Acceptance: *"Non-allowlisted denied; every call recorded; injection corpus zero executions."*
+Invariants 4/17.
+
+| Proposed | Scope | Acceptance clause it owns |
+|---|---|---|
+| **P5-003a — tool registry + risk classes** | Tool definitions, the closed risk-class set, and *unclassified ⇒ most restrictive*. Data + contract only; nothing dispatches. | classification correctness |
+| **P5-003b — the dispatcher chokepoint** | Deny-by-default allowlist; 100% call records; tenant-stamped calls; idempotency keys. The single chokepoint (invariant 4). | *"non-allowlisted denied; every call recorded"* |
+| **P5-003c — injection boundary + fail-closed hooks** | The injection corpus with zero executions; policy/approval hooks stubbed **fail-closed** for gated classes (invariant 17). | *"injection corpus zero executions"*; *"gate outage = fail closed"* |
+
+*Why here:* (b) is the security property the whole ticket exists for and deserves an undiluted review. (a) is inert
+data that (b) consumes. (c) is the adversarial surface and carries its own corpus — reviewing it alongside the
+chokepoint implementation makes both harder to judge.
+
+### ACBP-P6-001 → three sub-tickets
+
+Objective: *Versioned rules; allow/require_approval/deny; evaluation records; most-restrictive-wins; fail closed.*
+Acceptance: *"Same inputs same decision; forbidden beats approval; unavailability denies."*
+
+| Proposed | Scope | Acceptance clause it owns |
+|---|---|---|
+| **P6-001a — policy model + versioning + evaluation records** | Versioned policy rows; append-only evaluation records (POL-006). Storage and immutability only. | evaluations append-only |
+| **P6-001b — the decision function** | `allow / require_approval / deny`; most-restrictive-wins; determinism. A **pure function** — exhaustively testable with no I/O. | *"same inputs same decision; forbidden beats approval"* |
+| **P6-001c — fail-closed integration + cap checks** | Engine unreachable ⇒ deny; cap checks read ledger counters. | *"unavailability denies"* |
+
+*Why here:* the determinism acceptance clause lives **entirely** in (b), and (b) needs no database at all — the same
+shape as `controlAvailability` and `placeOnBoard`, which were both far easier to review and to trust as pure
+functions. Separating it means the most security-critical logic is reviewed without storage noise around it.
+
+### ACBP-P6-007 → three sub-tickets
+
+Objective: *All seven stop scopes; ≤5s halt; held-work queue; review-to-resume; fail-closed controller.*
+Acceptance: *"All scopes halt ≤5s (timed); resume requires review."* Trust-critical #9/#10.
+
+| Proposed | Scope | Acceptance clause it owns |
+|---|---|---|
+| **P6-007a — stop-state model + the seven scopes** | Stop states; scope-correct halting semantics; a scope never halts more or less than it names. | scope correctness |
+| **P6-007b — timed halt ≤5s + held-work queue** | The measured guarantee and the drill harness that measures it; work held rather than dropped. | *"all scopes halt ≤5s (timed)"* (trust-critical #9) |
+| **P6-007c — review-to-resume safety** | Resume requires review; **nothing auto-fires on resume**; expired approvals are not resurrected. | *"resume requires review"* (trust-critical #10) |
+
+*Why here:* (b) is a *timing* guarantee and needs measurement infrastructure that has nothing to do with the resume
+path; (c) is a distinct trust-critical concern about what happens *after* a stop, and is where the subtle failure
+lives (silently resurrecting expired approvals). Reviewing them together would let a weak (c) hide behind a
+convincing (b).
+
+## 3. The three non-split gates, and what each needs from you
+
+- **ACBP-P0-005 — object-storage provider.** A decision, not a build. Blocks 8 tickets, depends on nothing, and is
+  the best parallel unlock. ADR-016 is already blocked on it, so roadmap/document content stays in Postgres until it
+  lands.
+- **ACBP-P2-011 — discovery model-evaluation suite.** Needs paid model access. Note that the *platform* is ready for
+  it: the gateway is provider-neutral, and P5-009 deliberately deferred the concrete Sonnet adapter to this gate.
+- **ACBP-P7-006 — staging validation and restore drill.** Needs live infrastructure (P0-003/P0-004 region and plans
+  are Done, so the decisions exist; the environment does not).
+
+## 4. What I did NOT do, deliberately
+
+- No gated ticket was started, re-attempted, or partially explored.
+- No busywork was manufactured — no speculative refactors, no coverage-padding, no docs written to look busy.
+- No window 9 was started, because starting one would only have produced idle churn.
+
+Everything is committed and pushed. Picking any gate above and unblocking it is enough to resume.
