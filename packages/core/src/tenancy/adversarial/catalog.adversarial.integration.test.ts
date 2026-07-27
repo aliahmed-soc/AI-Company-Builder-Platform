@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -83,6 +83,10 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // so rewriting it would defeat the requirement — SELECT+INSERT only, like every other immutable planning table.
   planning_runs: ['INSERT', 'SELECT'],
   planning_run_inputs: ['INSERT', 'SELECT'],
+  // Task deletion (ACBP-P4-005; CDR-043; TASK-008): deletion is a RECORDED FACT, not an erasure. `tasks` deliberately
+  // still has NO DELETE grant and its UPDATE stays pinned to (state, updated_at) — asserted separately — so the record
+  // of what an owner discarded cannot itself be edited or removed. SELECT+INSERT only.
+  task_deletions: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -200,7 +204,10 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect([...tasks].sort()).toEqual(['state', 'updated_at']);
     // ACBP-P4-003 added `task_type` and `priority` — both INSERT-ONLY. They must NOT appear here: widening the column
     // grant to make J-10's "adjust priorities" reachable is deliberately out of scope (CDR-040 §8-G9).
-    for (const forbidden of ['id', 'account_id', 'company_id', 'title', 'description', 'milestone_id', 'task_type', 'priority', 'created_at', 'created_by_user_id']) {
+    // ACBP-P4-005 added `repeated_from_task_id` (TASK-008 lineage) — also INSERT-ONLY, and `rationale` (P4-006). The
+    // whole point of CDR-043 §3 was NOT widening this grant to implement deletion: the ticket uses an append-only
+    // `task_deletions` table precisely so this assertion stays `['state', 'updated_at']`.
+    for (const forbidden of ['id', 'account_id', 'company_id', 'title', 'description', 'milestone_id', 'task_type', 'priority', 'rationale', 'repeated_from_task_id', 'created_at', 'created_by_user_id']) {
       expect(tasks).not.toContain(forbidden);
     }
     // task_dependencies is append-only — no column-level UPDATE grants at all.
@@ -218,6 +225,9 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     for (const t of ['roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs']) {
       expect(byTable.get(t) ?? []).toEqual([]);
     }
+    // Task deletions (ACBP-P4-005): the record of what an owner discarded is immutable — no column UPDATE grant, so
+    // `state_at_delete`/`reason` cannot be rewritten after the fact.
+    expect(byTable.get('task_deletions') ?? []).toEqual([]);
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {

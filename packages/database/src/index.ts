@@ -65,7 +65,7 @@ export type { UnderstandingExecutor, NewUnderstandingDocumentInput, NewUnderstan
 export { UnderstandingReviewRepository } from './understanding-review-repository.js';
 export type { UnderstandingReviewExecutor, NewUnderstandingItemReviewInput, NewUnderstandingConfirmationEventInput } from './understanding-review-repository.js';
 export { TaskRepository } from './task-repository.js';
-export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, ListTasksOptions } from './task-repository.js';
+export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, NewTaskDeletionInput, ListTasksOptions } from './task-repository.js';
 export { StrategyRepository } from './strategy-repository.js';
 export type { StrategyExecutor, NewStrategyGenerationInput, NewStrategyOptionInput, NewStrategyRecommendationInput, NewStrategySelectionInput, NewDecisionInput, ListStrategyGenerationsOptions } from './strategy-repository.js';
 export { PlanningRepository, CLOSED_TASK_STATES } from './planning-repository.js';
@@ -196,6 +196,9 @@ export type {
   PlanningRunInputsTable,
   PlanningRunInputRow,
   NewPlanningRunInput,
+  TaskDeletionsTable,
+  TaskDeletionRow,
+  NewTaskDeletion,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

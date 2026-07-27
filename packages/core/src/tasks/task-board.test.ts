@@ -19,6 +19,7 @@ const row = (id: string, state: string, over: Partial<TaskRow> = {}): TaskRow =>
   task_type: null,
   priority: null,
   rationale: null,
+  repeated_from_task_id: null,
   created_by_user_id: 'u',
   created_at: new Date('2026-01-01T00:00:00Z'),
   updated_at: new Date('2026-01-01T00:00:00Z'),
