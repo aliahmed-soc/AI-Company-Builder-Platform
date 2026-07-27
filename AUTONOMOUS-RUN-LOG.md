@@ -688,3 +688,75 @@ different order, 0033 renumbers to 0031 with no other change.
 
 Next: **P5-003b** (the dispatcher chokepoint). Note for that sub-scope — canon says a tool call *"belongs to a run"*,
 and no run entity exists yet, so the call/run linkage needs deciding there; flagged now rather than discovered late.
+
+---
+
+## Window 11 — 2026-07-28, the owner-authorized merge sequence
+
+**Real clock at report time: 2026-07-28 01:15:27.** **Disk, both drives, same moment:** C: **14.45 GB** free (down
+~5 GB across the window — CI/build temp; still well above the 3 GB threshold), E: **104.89 GB** free. No cleanup.
+
+### All three merged, in the exact order the owner specified
+
+| # | Ticket | Merge commit | exact-head CI | exact-main CI |
+| --- | --- | --- | --- | --- |
+| #50 | P5-001a job store + tenant stamping | `ff845fd` | 2053/2053 zero-skip | **2053/2053 zero-skip** |
+| #53 | P5-001b checkpoints and resume | `b36f5a8` | 2084/2084 zero-skip | **2084/2084 zero-skip** |
+| #52 | P5-003a tool registry + risk classes | `5381389` | 2117/2117 zero-skip | **2117/2117 zero-skip** |
+
+Full sequence on each — backlog, ready, squash-merge, exact-main CI, delete branch — with the exact-main check run
+**between** each, never skipped. All three branches deleted local and remote. `main` = `5381389`, migrations end
+**0033**. No open PRs remain from this work.
+
+**#51 had to be replaced by #53.** GitHub auto-closes a PR when its base branch is deleted, and a closed PR whose base
+no longer exists can be neither reopened nor retargeted. Same branch, rebased onto main, new PR.
+
+### The reset-list guard — the substantive addition this window
+
+The owner asked for it after the same table fell out of the schema-reset lists **three times, by three different
+mechanisms**: never added; a text-anchored fix that covered only one list shape (33 files, silently missing six); and
+a rebase in which the incoming files, having gained `jobs` and `job_checkpoints`, won every hunk — no conflict, no
+type error, no lint warning.
+
+`tools/check-reset-lists.mjs` derives the required set from `DatabaseSchema` and asserts every reset list is a
+superset. **Static** — no database — so it runs in `check:static` and fails in seconds locally rather than minutes
+into hosted CI, naming the exact files and tables. It **fails loudly on finding no reset lists at all** rather than
+passing vacuously over zero files, which is the one failure mode that would make every future omission invisible.
+Five self-tests reproduce both real regression shapes and were confirmed failing before the fix and passing after.
+Verified running green in both exact-head and exact-main CI.
+
+The root confusion, worth stating because it is easy to repeat: the **tenancy catalog** and the **drop/reset lists**
+are different lists with different rules. `tool_definitions` is correctly absent from `TENANT_TABLES` (global config,
+no RLS) and must be in every reset list (it is migrated). Reasoning "not a tenant table" answered the first question
+and was then wrongly applied to the second.
+
+### Review passes run before merging, not after
+
+Both P5-001b and P5-003a still owed passes when the merge was authorized. Running them first was the right reading of
+"non-negotiable regardless of pace", and each found real defects:
+
+- **P5-001b pass 2** — same-transaction checkpoints had no deterministic order (`created_at` is *transaction* time, so
+  simultaneous writes tie); and `getResumeState` **threw** on a malformed plan where every sibling read returns a
+  typed status.
+- **P5-003a pass 1, HIGH** — `riskRank` was a **gate bypass**. Typed `RiskClass` so it looked safe, but types erase at
+  runtime and a bare `indexOf` returns **-1** for anything unrecognised — *below* `informational`. The one function
+  expressing "how restrictive is this" would have reported the least restrictive rank possible for an unclassified
+  value, and it is exported precisely so P6-001 can compare against a policy threshold.
+- **P5-003a pass 2** — the drift guard was one-directional (a value added to the CHECK alone would pass); now reads
+  `pg_get_constraintdef` and asserts set equality. Plus a unique constraint whose name described the wrong columns.
+
+### A mistake worth recording
+
+I resolved three rebase conflicts with a regex sweep over the conflict markers. It corrupted `schema.ts` — spliced two
+interfaces into one broken declaration and mangled an escape sequence inside a doc comment. Typecheck caught it;
+reading would not have. **Regex does not understand the structure it is editing**, and conflict resolution is exactly
+where that matters. Repaired by restoring from main and re-applying with ordinary edits.
+
+### Risk classes — recorded as the owner directed
+
+The four-class set is approved **by default** to unblock P5-003b/c, and `CDR-051 §0` is a dedicated section saying so:
+what is provisional (splitting canon's single "external" notion), what is not (the ordering; unclassified ⇒ most
+restrictive), and **when it stops being cheap to change** — once P6-001 policy rows and APPR-005 expiry defaults key
+off the values. The same warning heads `risk-class.ts`, where an engineer will actually meet it.
+
+Next: **P5-003b**, the dispatcher chokepoint.
