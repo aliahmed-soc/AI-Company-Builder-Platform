@@ -14,5 +14,8 @@ export * from './tenancy/threat-inventory.js';
 export * from './tenancy/slice-a-journey.js';
 export * from './tenancy/slice-b-journey.js';
 // ACBP-P4-007 / CDR-044 — the Slice D (planned work) journey, shared by `pnpm demo:slice-d` and the CI suite.
+// ACBP-P3-007 / CDR-045 — the Slice C (strategy selection) journey, shared by `pnpm demo:slice-c` and the CI suite.
+export { runSliceCJourney } from './tenancy/slice-c-journey.js';
+export type { SliceCOps, SliceCJourneyDeps, SliceCFakeBehavior, SliceCGateway, SliceCValidator, FailingAuditWriter } from './tenancy/slice-c-journey.js';
 export { runSliceDJourney } from './tenancy/slice-d-journey.js';
 export type { SliceDOps, SliceDJourneyDeps, SliceDFakeBehavior, SliceDGateway, SliceDValidator, SliceDBoard, SliceDDetail } from './tenancy/slice-d-journey.js';
