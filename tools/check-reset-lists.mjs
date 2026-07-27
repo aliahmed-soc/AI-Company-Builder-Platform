@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+// ACBP — schema-reset-list completeness check.
+//
+// WHY THIS EXISTS. Integration suites drop every table and re-run the migrations to start from a known schema. If a
+// newly migrated table is missing from one of those drop lists, it SURVIVES the reset, the next `CREATE TABLE`
+// collides, the migration batch aborts, and every suite after it runs against a database with no tables at all. The
+// visible failure is then somewhere else entirely — "expected [...] to include 'users'" — which sends you looking in
+// the wrong place.
+//
+// This happened twice on ACBP-P5-003a, by two different routes. The first time the table was simply never added. The
+// second time a rebase silently dropped it from all 41 lists, because the incoming versions of those files had gained
+// other tables and won every hunk. Neither route produced a conflict, a type error, or a lint warning; both produced
+// a red CI run whose message pointed elsewhere.
+//
+// The guard is deliberately STATIC: no database, no migrations, no network. It runs in `check:static`, so the failure
+// arrives in seconds on a laptop instead of minutes into a hosted CI run — and it names the exact files and tables.
+//
+// SOURCE OF TRUTH is `DatabaseSchema` in packages/database/src/schema.ts: Kysely is generic over that interface, so a
+// table the product can query is a table registered there. Parsing migrations instead would mean modelling creates,
+// drops and renames across the whole history to know what is live now.
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+const ROOT = process.cwd();
+const SCHEMA_FILE = join(ROOT, 'packages', 'database', 'src', 'schema.ts');
+
+/**
+ * Every table registered in `DatabaseSchema` — the set a reset list must be able to drop.
+ *
+ * Migration bookkeeping (`kysely_migration`, `kysely_migration_lock`, `_acbp_migration_probe`) needs no handling
+ * here: it is never registered in `DatabaseSchema`, so it never lands in `required`. Most lists drop it anyway, and
+ * they are free to.
+ */
+function migratedTables() {
+  const src = readFileSync(SCHEMA_FILE, 'utf8');
+  const start = src.indexOf('export interface DatabaseSchema {');
+  if (start === -1) throw new Error('check-reset-lists: could not find `export interface DatabaseSchema` in schema.ts');
+  const end = src.indexOf('\n}', start);
+  if (end === -1) throw new Error('check-reset-lists: DatabaseSchema interface is unterminated');
+  const body = src.slice(start, end);
+  const names = [];
+  // `  table_name: SomeTable;` — comments and blank lines are skipped by the shape of the pattern.
+  for (const line of body.split('\n')) {
+    const m = /^\s{2}([a-z_][a-z0-9_]*)\s*:\s*[A-Za-z]/.exec(line);
+    if (m) names.push(m[1]);
+  }
+  if (names.length === 0) throw new Error('check-reset-lists: parsed zero tables from DatabaseSchema — the parser is broken, not the lists');
+  return names;
+}
+
+/** Walk for .ts files, skipping build output and dependencies. */
+function walk(dir, out = []) {
+  for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === 'dist' || entry === '.next' || entry === '.git' || entry === 'coverage') continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) walk(full, out);
+    else if (entry.endsWith('.ts')) out.push(full);
+  }
+  return out;
+}
+
+/**
+ * A file participates if it names the migration lock table inside a quoted string — the marker every drop list
+ * carries. `migrator.ts` mentions it only in prose, which is why the check requires the QUOTED form.
+ */
+function isResetListFile(src) {
+  return /'kysely_migration_lock'|"kysely_migration_lock"/.test(src);
+}
+
+function main() {
+  const required = migratedTables();
+  const files = [join(ROOT, 'packages'), join(ROOT, 'apps'), join(ROOT, 'tools')]
+    .filter((d) => {
+      try {
+        return statSync(d).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .flatMap((d) => walk(d));
+
+  const problems = [];
+  let checked = 0;
+  for (const file of files) {
+    const src = readFileSync(file, 'utf8');
+    if (!isResetListFile(src)) continue;
+    checked += 1;
+    const missing = required.filter((t) => !new RegExp(`['"]${t}['"]`).test(src));
+    if (missing.length > 0) problems.push({ file: relative(ROOT, file).replace(/\\/g, '/'), missing });
+  }
+
+  if (checked === 0) {
+    console.error('✖ reset-list check FAILED — found no reset lists at all. The marker changed; fix this check, do not delete it.');
+    process.exit(1);
+  }
+  if (problems.length > 0) {
+    console.error(`✖ reset-list check FAILED — ${problems.length} list(s) do not drop every migrated table.`);
+    console.error('  A table missing here SURVIVES the reset, so the next CREATE TABLE collides and the whole');
+    console.error('  migration batch aborts — every later suite then runs against an empty database.');
+    for (const p of problems) console.error(`  ${p.file}\n    missing: ${p.missing.join(', ')}`);
+    process.exit(1);
+  }
+  console.log(`✔ reset-list check passed (${checked} reset lists each drop all ${required.length} migrated tables).`);
+}
+
+main();

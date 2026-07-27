@@ -58,6 +58,22 @@ describe.skipIf(!hasTestDatabase)('tool registry (real PostgreSQL) — ACBP-P5-0
     expect(rows.map((r) => r.risk_class).sort()).toEqual([...RISK_CLASSES].sort());
   });
 
+  test('the CHECK contains EXACTLY the contract set — drift is impossible in BOTH directions (review pass 2)', async () => {
+    // The test above proves the CHECK accepts every contract class. On its own that is one-directional: a fifth value
+    // added to the CHECK and not to the contract would sail through it, and a value in the CHECK that no contract code
+    // knows about is precisely a class that dispatches without a rank. So read the constraint's own definition and
+    // compare the literal sets. CDR-051 §0 says this set is provisional and expected to be revisited, which makes a
+    // two-way guard worth more here than almost anywhere else.
+    const r = await sql<{ def: string }>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conname = 'tool_definitions_risk_class_valid'
+    `.execute(owner.kysely);
+    const def = r.rows[0]?.def ?? '';
+    expect(def).not.toBe('');
+    const inCheck = [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort();
+    expect(inCheck).toEqual([...RISK_CLASSES].sort());
+  });
+
   test('the CHECK REFUSES a class outside the set, including canon\'s ungrouped "external"', async () => {
     for (const bad of ['external', 'harmless', 'INFORMATIONAL', 'informational ']) {
       await expect(register(`bad_${bad.trim()}`, 1, bad)).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);

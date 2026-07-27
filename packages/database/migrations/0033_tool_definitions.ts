@@ -31,7 +31,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     // A tool is REVISED by registering a new version, never by editing a row — "class changes audited"
     // (DATA-ARCHITECTURE). This unique is what makes that structural rather than a convention.
-    .addUniqueConstraint('tool_definitions_id_version_uq', ['tool_id', 'version'])
+    .addUniqueConstraint('tool_definitions_tool_version_uq', ['tool_id', 'version'])
     // Mirrors RISK_CLASSES in @acbp/contracts EXACTLY. A real-PostgreSQL test asserts the two sets agree, so the
     // database and the contract cannot drift — which matters more than usual here, since CDR-051 §0 records that this
     // set is provisional and expected to be revisited.

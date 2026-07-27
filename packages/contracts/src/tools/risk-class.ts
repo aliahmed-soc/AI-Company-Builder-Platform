@@ -36,11 +36,17 @@ export function isRiskClass(value: unknown): value is RiskClass {
  * Position in the ordering. Higher = more restrictive.
  *
  * Exported as a comparable number because P6-001 will compare a tool's class against a policy threshold and APPR-005
- * will key expiry defaults to it. Leaving the order implicit in array position would make every consumer re-derive
- * it, and re-derivations disagree.
+ * will key expiry defaults to it. Leaving the order implicit in array position would make every consumer re-derive it,
+ * and re-derivations disagree.
+ *
+ * TAKES `unknown` AND RESOLVES, which is not defensive clutter — it closes a gate bypass found in review. Typed as
+ * `RiskClass` it looked safe, but TypeScript types are erased at runtime: a cast (`row.risk_class as RiskClass`, the
+ * obvious thing to write at a database boundary) or any JavaScript caller could pass an unclassified value, and a bare
+ * `indexOf` returns **-1** for it — BELOW `informational`, i.e. the least restrictive rank possible. The one function
+ * here that could inverted the ordering this module exists to enforce.
  */
-export function riskRank(riskClass: RiskClass): number {
-  return RISK_CLASSES.indexOf(riskClass);
+export function riskRank(value: unknown): number {
+  return RISK_CLASSES.indexOf(resolveRiskClass(value));
 }
 
 /**

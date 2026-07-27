@@ -69,6 +69,24 @@ describe('resolveRiskClass — TOOL-001\'s "unclassified = most restrictive"', (
   });
 });
 
+describe('riskRank — total, and never ranks an unknown value below a real one (review pass 1)', () => {
+  test('an unclassified value ranks as the MOST restrictive, never -1', () => {
+    // The bypass this closes: typed `RiskClass`, `indexOf` returns -1 for anything unrecognised — BELOW
+    // `informational`. A cast at a database boundary (`row.risk_class as RiskClass`) is the obvious thing to write,
+    // and it would have silently produced the least restrictive rank possible for a broken registry row.
+    for (const bad of [undefined, null, '', 'external', 'nonsense', 42, {}]) {
+      expect(riskRank(bad)).toBe(riskRank(MOST_RESTRICTIVE_RISK_CLASS));
+      expect(riskRank(bad)).toBeGreaterThan(riskRank('informational'));
+    }
+  });
+
+  test('rank is never negative for any input at all', () => {
+    for (const value of [...RISK_CLASSES, undefined, null, 'junk', -1, Symbol('s')]) {
+      expect(riskRank(value)).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
 describe('isAtLeastAsRestrictiveAs — the comparison policy will key off', () => {
   test('a class is at least as restrictive as itself', () => {
     for (const c of RISK_CLASSES) expect(isAtLeastAsRestrictiveAs(c, c)).toBe(true);
