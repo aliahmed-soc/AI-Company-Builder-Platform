@@ -50,6 +50,7 @@ const ssl = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
 export type AdversarialDatabaseClient = DatabaseClient;
 
 export const ALL_TABLES = [
+  'jobs',
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',
   'task_deletions',

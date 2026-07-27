@@ -70,6 +70,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'roadmap:edit': ['owner'],
   // Task planning (ACBP-P4-003; CDR-040; PLAN-001/002): generate-class member action; drafts are not board work.
   'task:generate': ['owner', 'viewer'],
+  // Durable job enqueue (ACBP-P5-001a; CDR-049): OWNER-only, the deliberately tighter of the two readings.
+  'job:enqueue': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

@@ -222,6 +222,18 @@ trusted core/use-case seam:
   its request only AFTER the authorization check, so an unauthorized caller learns only `forbidden`. DISTINCT closed
   action, deny-by-default; not granted to an account owner without company membership nor via forged provider claims.
   See `CDR-040`.
+- **P5-001a** (durable job enqueue) adds `job:enqueue`, **`owner` only**. Canon does not settle the role here the way
+  STRAT-003 settles selection, so this takes the SAFER REVERSIBLE reading the charter requires: widening later is
+  additive and breaks nothing, whereas discovering after the fact that viewers have been scheduling background
+  execution is not recoverable. It is also different in KIND from the generate-class member actions — those spend
+  budget inside the request that authorized them, while a job runs later, on its own, after the authorizing session is
+  gone, which is why it gets its own action rather than folding into an existing grant.
+  ORDERING NOTE: `enqueueJob` checks TENANT CONTEXT before authorization, and everything else after. That is not an
+  exception to the no-oracle rule but a consequence of it — the tenancy check reports only on the shape of ids the
+  caller themselves supplied and discloses no platform state, whereas `invalid_kind` or `payload_too_large` would, so
+  those stay behind the authz check. Putting tenancy after it was a real defect found in review: `runInCompanyScope`
+  denies a blank company id itself, which made the trust-critical "context-stripped job refused" outcome
+  indistinguishable from an ordinary `forbidden`. See `CDR-049`.
 
 ## What P1-007 does NOT do (later tickets)
 
