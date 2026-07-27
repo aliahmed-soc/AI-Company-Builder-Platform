@@ -68,8 +68,13 @@ The sequence, each step naming the requirement it evidences:
 | 9 | a dependency edge is added and the board reports it | **TASK-001** |
 | 10 | the board places every task in a bucket, drafts counted off-board | **TASK-001** |
 | 11 | task detail exposes type/created/description + state-appropriate controls | TASK-002 |
-| 12 | repeat and delete behave per state; delete is audited | TASK-008 |
-| 13 | the audit trail is verified end to end | "Trail verified" |
+| 12 | delete requires confirmation, is audited, and removes the task from view | TASK-008 |
+| 13 | repeat re-queues a NEW linked task, only from a finished one | TASK-008 |
+| 14 | the audit trail is verified end to end | "Trail verified" |
+
+Fourteen recorded verdicts. Delete and repeat are asserted **separately** rather than as one "controls" step: a
+repeat that works while a delete silently does nothing is not one outcome, and a single verdict covering both would
+report the pair as healthy whenever either half happened to pass.
 
 ## 4. "Rationale / dependency / status inspectable" is the acceptance criterion, so it is asserted, not narrated
 

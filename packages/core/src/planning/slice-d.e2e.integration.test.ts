@@ -61,9 +61,11 @@ describe.skipIf(!hasTestDatabase)('Slice D — planned work E2E (real PostgreSQL
     const { steps } = await runSliceDJourney({ product, owner, userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1, ops: OPS, makeGateway });
     const failures = steps.filter((s) => !s.ok).map((s) => `[${s.requirement}] ${s.step} — ${s.detail}`);
     expect(failures, failures.join('\n')).toHaveLength(0);
-    // The journey must actually have run its full sequence — a bail() returns early, so a short `steps` array is the
-    // signature of a silently truncated run rather than a pass.
-    expect(steps.length).toBe(12);
+    // The journey must actually have run its full sequence — `bail()` returns early, so a short `steps` array is the
+    // signature of a silently truncated run rather than a pass. Fourteen recorded verdicts: the thirteen rows of
+    // CDR-044 §3 with the controls row contributing two (delete and repeat are asserted separately, because a repeat
+    // that works while a delete silently does nothing is not one outcome).
+    expect(steps.length).toBe(14);
     expect(steps.every((s) => s.ok)).toBe(true);
   }, 120_000);
 });
