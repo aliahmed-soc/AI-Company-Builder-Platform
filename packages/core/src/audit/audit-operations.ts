@@ -44,6 +44,7 @@ import {
   roadmapEdited,
   planningRunRecorded,
   jobEnqueued,
+  jobDeadLettered,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -99,6 +100,8 @@ export const AUDITED_OPERATIONS = {
   'planning.run_record': 'planning.run_recorded',
   // Durable jobs (ACBP-P5-001a; CDR-049 §4; ADR-008 "Run trail audited") — a job entered the store.
   'job.enqueue': 'job.enqueued',
+  // Dead-letter (ACBP-P5-001c; CDR-052; NFR-007) - the retry cap was reached and the job stopped.
+  'job.dead_letter': 'job.dead_lettered',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -117,7 +120,7 @@ export type TaskAuditedOperation = 'task.plan' | 'task.repeat' | 'task.delete';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
 export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
-export type JobAuditedOperation = 'job.enqueue';
+export type JobAuditedOperation = 'job.enqueue' | 'job.dead_letter';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -130,7 +133,7 @@ export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['tas
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
 export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
-export const JOB_AUDITED_OPERATION_IDS: readonly JobAuditedOperation[] = ['job.enqueue'];
+export const JOB_AUDITED_OPERATION_IDS: readonly JobAuditedOperation[] = ['job.enqueue', 'job.dead_letter'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
@@ -223,6 +226,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => planningRunRecorded({ runId: subjectId, mode: 'autonomous', outcome: 'ok', taskCount: 3, tasksMissingRationale: 0, memoryItemsConsidered: 0, milestonesInScope: 1 });
     case 'job.enqueue':
       return (subjectId) => jobEnqueued({ jobId: subjectId, kind: 'understanding.generate', deduplicated: false });
+    case 'job.dead_letter':
+      return (subjectId) => jobDeadLettered({ jobId: subjectId, kind: 'understanding.generate', attempts: 3, reason: 'attempts_exhausted' });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

@@ -151,6 +151,10 @@ export const AUDIT_EVENTS = {
   // not a reviewed surface. `deduplicated` records that an idempotency key matched an existing job, which is the one
   // enqueue outcome that produces no new row and would otherwise be invisible in the trail.
   'job.enqueued': { schemaVersion: 1, subjectType: 'job' },
+  // Dead-letter (ACBP-P5-001c; CDR-052; NFR-007). AUDITED in-tx with the terminal transition: a job that stopped
+  // retrying and vanished from the run trail is exactly the case someone needs explained. Bounded metadata
+  // {kind, attempts, reason} - the reason is a CLOSED category, never provider exception text, and never the payload.
+  'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -502,6 +506,14 @@ export function taskDeleted(input: { readonly taskId: string; readonly stateAtDe
  */
 export function jobEnqueued(input: { readonly jobId: string; readonly kind: string; readonly deduplicated: boolean }): AuditEvent {
   return makeEvent('job.enqueued', input.jobId, 'success', { kind: input.kind, deduplicated: input.deduplicated });
+}
+
+/**
+ * A durable job exhausted its retry cap and was dead-lettered (ACBP-P5-001c; NFR-007). Subject = the job id.
+ * ttempts is the count that was reached, so the record shows the cap was honoured rather than merely claimed.
+ */
+export function jobDeadLettered(input: { readonly jobId: string; readonly kind: string; readonly attempts: number; readonly reason: string }): AuditEvent {
+  return makeEvent('job.dead_lettered', input.jobId, 'blocked', { kind: input.kind, attempts: input.attempts, reason: input.reason });
 }
 
 /**
