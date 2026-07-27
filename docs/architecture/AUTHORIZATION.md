@@ -234,6 +234,13 @@ trusted core/use-case seam:
   those stay behind the authz check. Putting tenancy after it was a real defect found in review: `runInCompanyScope`
   denies a blank company id itself, which made the trust-critical "context-stripped job refused" outcome
   indistinguishable from an ordinary `forbidden`. See `CDR-049`.
+- **P5-001b** (durable job step execution) adds `job:execute`, **`owner` only**. Its own action rather than folded into
+  `job:enqueue`, on the `task:delete` precedent: scheduling work and executing it are different capabilities, and a
+  named action makes it a one-line policy change to grant execution to a worker identity that may never enqueue —
+  which is exactly what P5-002 will need. See `CDR-050`.
+- **P5-003a** (tool registry) adds NO authz action. The registry is global platform configuration with a SELECT-only
+  grant and no runtime write path at all, so there is nothing for a membership role to be authorized to do. See
+  `CDR-051`.
 
 ## What P1-007 does NOT do (later tickets)
 

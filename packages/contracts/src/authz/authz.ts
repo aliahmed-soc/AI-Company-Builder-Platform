@@ -131,6 +131,11 @@ export const AUTHZ_ACTIONS = [
   // grant: enqueueing schedules work that will run LATER, outside the request that authorized it, and an action that
   // outlives its caller deserves a name of its own so tightening or widening it is a one-line policy change.
   'job:enqueue',
+  // Running a durable job STEP (ACBP-P5-001b; CDR-050). Its own action rather than folded into `job:enqueue`, on the
+  // `task:delete` precedent: scheduling work and executing it are different capabilities, and a named action makes a
+  // future tightening — or granting it to a worker identity that may execute but never enqueue — a one-line policy
+  // change instead of a refactor.
+  'job:execute',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -246,6 +251,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // the generate-class member actions in kind — those spend budget INSIDE the request that authorized them, while a
   // job runs later, on its own, after the authorizing session is gone.
   'job:enqueue': ['owner'],
+  // Step execution (ACBP-P5-001b) is owner-only for the same reason as enqueue, and by the same safer-reversible
+  // reading. When P5-002 introduces a worker identity, THAT is what should hold this action — which is precisely the
+  // change a separate action makes cheap.
+  'job:execute': ['owner'],
 };
 
 /**

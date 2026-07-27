@@ -67,7 +67,7 @@ export type { UnderstandingReviewExecutor, NewUnderstandingItemReviewInput, NewU
 export { TaskRepository } from './task-repository.js';
 export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, NewTaskDeletionInput, ListTasksOptions } from './task-repository.js';
 export { JobRepository } from './job-repository.js';
-export type { JobExecutor, NewJobInput } from './job-repository.js';
+export type { JobExecutor, NewJobInput, NewJobCheckpointInput } from './job-repository.js';
 export { StrategyRepository } from './strategy-repository.js';
 export type { StrategyExecutor, NewStrategyGenerationInput, NewStrategyOptionInput, NewStrategyRecommendationInput, NewStrategySelectionInput, NewDecisionInput, ListStrategyGenerationsOptions } from './strategy-repository.js';
 export { PlanningRepository, CLOSED_TASK_STATES } from './planning-repository.js';
@@ -202,6 +202,9 @@ export type {
   TaskDeletionRow,
   JobsTable,
   JobRow,
+  JobCheckpointsTable,
+  JobCheckpointRow,
+  NewJobCheckpoint,
   NewJob,
   NewTaskDeletion,
 } from './schema.js';

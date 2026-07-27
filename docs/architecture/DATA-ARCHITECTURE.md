@@ -213,6 +213,7 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |
 | Task run | C | run_id, task_id, attempt | has Worker run, Tool calls, Usage events | queued→running→succeeded/failed/cancelled | A | — | With company | run trace | MVP |
+| Job checkpoint | C | checkpoint_id, UNIQUE(job_id, step_name) | records that a job STEP completed | recorded (terminal) | **I** | step output: references, never secrets | With company | - | MVP |
 | Durable job | C | job_id, UNIQUE(company_id, idempotency_key) partial | the unit the runner picks up | queued→running→succeeded/failed/dead_letter/cancelled | M (state, attempts) | references only, never secrets | With company | job.enqueued | MVP |
 | Worker definition | G | worker_id, version | allowlists Tools; referenced by runs | draft→active→retired | V | — | Permanent | version changes | MVP |
 | Worker run | C | worker_run_id | 1:1 task run execution segment | started→completed/failed | A | — | With company | worker.* | MVP |
