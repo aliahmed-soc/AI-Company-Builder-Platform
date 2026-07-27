@@ -85,7 +85,11 @@ Execution and the coordinator (P5-002/P5-005). No new authz action, no HTTP rout
 ## 7. Slice plan
 
 1. CDR-047 + branch + draft PR.
-2. Contracts + migration: the `fallback_reason` column (nullable, closed category set, CHECK-paired with
-   `fallback_used`), the usage-event field, and the reset-list/catalog sweep.
+2. Contracts + migration: the `fallback_reason` column (nullable, closed category set, CHECK-constrained against
+   `fallback_used`) and the usage-event field.
+   *Corrected during the first review pass:* this slice originally also listed "the reset-list/catalog sweep". No
+   sweep is needed — `fallback_reason` is a COLUMN on the existing `usage_events` table, not a new table, so no
+   reset list gains an entry and the catalog's table set is unchanged. Overstating the work would have made the
+   plan look incomplete when it was finished.
 3. Gateway: record the triggering category; the silent-fallback negative suite (§4-G5/G6/G7).
 4. Docs + TWO independent review passes + finalization, including the deferred-adapter note (§5-G8).

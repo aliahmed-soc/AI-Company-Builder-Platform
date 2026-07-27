@@ -103,6 +103,38 @@ describe('silent-fallback negatives (ACBP-P5-009; NFR-019; trust-critical #19)',
     expect(JSON.stringify(event)).not.toContain('SECRET');
   });
 
+  test('when the FALLBACK ALSO FAILS, the reason still names what triggered the fallover', async () => {
+    // Review-pass gap: nothing covered both providers failing, which is the case an on-call engineer actually hits
+    // during a broad outage. The two fields must stay distinct — `fallbackReason` is why we LEFT the primary, and
+    // `errorCategory` is how the call finally died. Collapsing them would lose the fact that a fallover was even
+    // attempted, which is the difference between "one provider is down" and "both are".
+    const p = failingProvider('primary');
+    const secondaryDown = new FakeModelProvider({ behavior: { kind: 'fail', error: 'rate_limited' } });
+    const events: NewModelCallUsageEvent[] = [];
+    const deps: ModelGatewayDeps = {
+      primary: p.resolved,
+      fallback: { name: 'secondary', modelId: toModelId('secondary-model'), modelVersion: 'v1', provider: secondaryDown },
+      recordUsage: async (e) => {
+        await Promise.resolve();
+        events.push(e);
+      },
+      estimateCost,
+      sleep: async () => {
+        await Promise.resolve();
+      },
+      config: { maxRetries: 0, maxReask: 0, backoffBaseMs: 1 },
+    };
+
+    const r = await callModel(deps, requestFor('interactive'));
+    expect(r.outcome).toBe('error');
+    expect(r.fallbackUsed).toBe(true);
+    expect(events).toHaveLength(1);
+    // Why we left the primary…
+    expect(events[0]!.fallbackReason).toBe('provider_unavailable');
+    // …and how the call finally died, on the secondary. Different facts, both kept.
+    expect(events[0]!.errorCategory).toBe('rate_limited');
+  });
+
   test('a call that never fell over records NO reason — the pair cannot contradict itself', async () => {
     // Mirrors the database CHECK: a reason must never appear without a fallover. A row claiming it did not fall back
     // while naming why it did is worse than no row, because it looks authoritative.
