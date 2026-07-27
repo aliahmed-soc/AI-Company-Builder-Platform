@@ -9,6 +9,30 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P3-007 Slice C integration: strategy selection — CORE DONE / FINALIZING (6th autonomous window).**
+  Branch `p3-007-slice-c-strategy-selection` (from main `a214c4d`, after P4-007 merged), draft PR **#45**, CDR-045.
+  The **M3 milestone exit**: confirmed understanding → three distinct options → advisory comparison → owner selection
+  → immutable decision, ten steps, plus BOTH negatives the backlog names by hand. No new product behaviour.
+  **The load-bearing step is #4:** the journey asserts the advisory recommendation has NOT auto-selected anything,
+  after the comparison and before the owner acts. STRAT-003 is that the OWNER selects; without it the whole slice
+  would pass on a system that quietly selected for them. It pairs with step 6 (the same field non-null after the
+  owner acts), which is what stops step 4 passing vacuously.
+  **Negatives:** near-duplicate options must COLLAPSE and say so on four channels (count, `insufficient_distinct`,
+  non-empty `fewerReason`, `status = fewer_than_three`) — counting alone passes on a generation that returned two
+  while calling itself complete. And a failing in-tx audit writer must leave NO decision row, with a CONTROL run
+  proving the audit writer was the only difference.
+  Commits: CDR `c8e934b` → journey + suite `4ec4df1` → usage outcome `d11ded2` → demo + doc `bc3cfa4` → review
+  passes + finalization.
+  **Both review passes returned FAIL.** Pass 1 HIGH: "usage verified" was asserted as `>= 5`, a floor — the exact
+  failure this ticket's own CDR §5-G10 forbids two sections earlier; now exactly 5, the known call count. Pass 2:
+  the 16 option fields were hand-listed instead of imported from the contract — the same defect class CDR-045 §2-G5
+  exists to prevent, **and the identical duplication in the Slice D journey was fixed too** rather than shipping a
+  flaw the ledger documents. See `docs/implementation/P3-007-REVIEW-COVERAGE.md`.
+  **Only ONE CI round-trip lost, against P4-007's three** — the static field-name audit ran before the first push,
+  which was that ticket's recorded lesson.
+  Exact-head CI green zero-skip **1947/1947** at `d11ded2`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch. **Phase 3 complete.**
+- **ACBP-P4-007 Slice D integration: planned work — DONE** (squash `a214c4d`, PR #44; exact-main CI green zero-skip 1946/1946; branch deleted). **Phase 4 complete (7/7).**
 - **ACBP-P4-007 Slice D integration: planned work — CORE DONE / FINALIZING (6th autonomous window).**
   Branch `p4-007-slice-d-planned-work` (from main `d517203`, after P4-005 merged), draft PR **#44**, CDR-044.
   The **M4 milestone exit**: confirmed understanding → strategy → selection → decision → roadmap → tasks → board →

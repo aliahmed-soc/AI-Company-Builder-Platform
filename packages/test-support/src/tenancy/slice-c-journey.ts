@@ -12,6 +12,7 @@
 // *optional* field in a structural subset leaving the real DTO assignable, so the compiler passed while the journey
 // read `undefined`.
 import type { DatabaseClient } from '@acbp/database';
+import { STRATEGY_OPTION_FIELDS } from '@acbp/contracts';
 import type { StrategyDecisionRequest, StrategyGenerationDTO, DecisionDTO } from '@acbp/contracts';
 import { sql } from 'kysely';
 import type { JourneyStep } from './slice-a-journey.js';
@@ -73,7 +74,13 @@ const UNDERSTANDING_OUTPUT = JSON.stringify({
   ],
 });
 
-const OPTION_FIELDS = ['description', 'customer', 'offer', 'business_model', 'scope', 'benefits', 'risks', 'cost_range', 'effort', 'time_to_validate', 'time_to_launch', 'required_resources', 'key_assumptions', 'validation_method', 'success_metrics', 'confidence'] as const;
+/**
+ * The 16 fields come from the CONTRACT, never a local copy. A hand-listed set drifts silently the moment a field is
+ * added: the fixture would build an option missing it, STRAT-001 validation would reject the whole generation, and
+ * the failure would point at the journey rather than at the drift. Same class of defect as the field-name errors
+ * that cost P4-007 three CI round-trips (CDR-045 §2-G5).
+ */
+const OPTION_FIELDS = STRATEGY_OPTION_FIELDS;
 
 /** A COMPLETE 16-field option — STRAT-001's standard. An incomplete one is rejected, so the fixture must be whole. */
 function option(customer: string, offer: string, model: string): Record<string, string> {
@@ -165,6 +172,11 @@ export async function runSliceCJourney(deps: SliceCJourneyDeps): Promise<{ reado
   // ── 4. …and it has NOT selected anything (CDR-045 §3-G6) ───────────────────────────────────────────────
   // The failure worth proving absent: a recommendation that quietly becomes a selection. Without this step the whole
   // slice would pass on a system that auto-selected for the owner, which is exactly what STRAT-003 forbids.
+  //
+  // This step and step 6 are a PAIR and must stay one. On its own, `selection === null` also passes if the read never
+  // populates `selection` at all — a vacuous success. Step 6 asserts the same field is NON-null once the owner has
+  // acted, which is what proves the field works and therefore that the null here meant something. Removing either
+  // leaves the other unable to distinguish "nothing selected" from "nothing reported".
   const beforeSelect = await ops.getLatestStrategyGeneration(product, ids);
   if (beforeSelect.status !== 'ok' || beforeSelect.generation === undefined || beforeSelect.generation === null) return bail('recommendation has not auto-selected', 'STRAT-003', `read expected ok with a generation, got ${beforeSelect.status}`);
   if (beforeSelect.generation.selection !== null) return bail('recommendation has not auto-selected', 'STRAT-003', `a selection exists BEFORE the owner acted: ${JSON.stringify(beforeSelect.generation.selection)}`);
@@ -218,7 +230,14 @@ export async function runSliceCJourney(deps: SliceCJourneyDeps): Promise<{ reado
   if (!blocked) return bail('record-failure-blocks negative', 'ADR-015', 'a failing audit write did NOT block the decision — it returned normally');
   const decisionsAfter = await countDecisions(owner, negativeCompanyId);
   if (decisionsAfter !== decisionsBefore) return bail('record-failure-blocks negative', 'ADR-015', `the decision survived a failed audit write (${decisionsBefore} → ${decisionsAfter}) — audit-or-nothing was not atomic`);
-  record('NEGATIVE: a failed audit write BLOCKS the decision entirely', 'ADR-015 / STRAT-006', true, `rejected, and the decision count is unchanged at ${decisionsAfter} — no decision without its trail`);
+
+  // CONTROL: the same call with a WORKING writer must now succeed. Without this, the negative is satisfied by any
+  // throw — a broken precondition, a wrong id, a typo — and would keep passing long after it stopped testing
+  // audit-or-nothing at all. Proving the only difference was the audit writer is what makes the negative mean
+  // something.
+  const control = await ops.recordDecision(product, { ...negIds, generationId: collapsedGen.generationId, selectionId: negSelected.selection.selectionId, rationale: 'the control run' }, {});
+  if (control.status !== 'ok') return bail('record-failure-blocks negative', 'ADR-015', `the CONTROL run also failed (${control.status}) — the block above cannot be attributed to the audit writer`);
+  record('NEGATIVE: a failed audit write BLOCKS the decision entirely', 'ADR-015 / STRAT-006', true, `rejected with the decision count unchanged at ${decisionsBefore}; the same call with a working writer then succeeded — so the audit failure, and nothing else, caused the block`);
 
   // ── 9. usage verified (§5-G10) ─────────────────────────────────────────────────────────────────────────
   // Per CALL, not a total: a bare `count > 0` passes when one call meters twice and another not at all. Four gateway
@@ -232,7 +251,12 @@ export async function runSliceCJourney(deps: SliceCJourneyDeps): Promise<{ reado
   // nothing, which is how this read zero rows on its first CI run.
   const successRows = usage.rows.filter((r) => r.outcome === 'ok');
   const metered = successRows.reduce((sum, r) => sum + r.n, 0);
-  if (metered < 5) return bail('usage verified', 'Usage verified', `expected one metered success per model call (≥5), got ${metered} across ${usage.rows.length} group(s)`);
+  // EXACTLY the number of model calls the journey made — two understandings, two generations, one recommendation.
+  // A `>=` floor was the first attempt and it is the very failure §5-G10 condemns: it passes when one call meters
+  // twice and another not at all. The call count is known, so the assertion can be exact, and exact is the only
+  // version that means "one ledger row per call".
+  const EXPECTED_MODEL_CALLS = 5;
+  if (metered !== EXPECTED_MODEL_CALLS) return bail('usage verified', 'Usage verified', `expected exactly one metered row per model call (${EXPECTED_MODEL_CALLS}), got ${metered} across ${usage.rows.length} group(s)`);
   if (successRows.some((r) => r.model === null || r.provider === null)) return bail('usage verified', 'Usage verified', 'a metered call recorded no model/provider — the ledger cannot be reconciled');
   if (successRows.some((r) => r.kind !== 'model_call')) return bail('usage verified', 'Usage verified', `unexpected usage kind(s): ${successRows.map((r) => r.kind).join(', ')}`);
   record('usage verified — every model call left a metered ledger row', 'Usage verified', true, `${metered} successful model_call rows, each carrying its provider + model`);
@@ -246,7 +270,10 @@ export async function runSliceCJourney(deps: SliceCJourneyDeps): Promise<{ reado
 
   // No payload may carry content. Searched for the exact strings the journey WROTE, so a fixture rename cannot make
   // this vacuously pass.
-  const payloads = await sql<{ blob: string }>`select coalesce(payload::text, '') || coalesce(subject_id::text, '') || name as blob from audit_events where company_id = ${companyId}::uuid`.execute(owner.kysely);
+  // Scanned across the WHOLE ACCOUNT, not just the happy-path company: the claim is "no payload carries content",
+  // and the negative company's events are payloads too. Narrowing to one company would let a leak on the other side
+  // pass unseen.
+  const payloads = await sql<{ blob: string }>`select coalesce(payload::text, '') || coalesce(subject_id::text, '') || name as blob from audit_events where account_id = ${accountId}::uuid`.execute(owner.kysely);
   const forbidden = ['small veterinary clinics', 'scheduling software', 'Fastest route to a paying clinic.', 'Reaches a paying customer fastest', 'Sells scheduling software'];
   const leaked = forbidden.filter((needle) => payloads.rows.some((r) => r.blob.includes(needle)));
   if (leaked.length > 0) return bail('audit payloads carry no content', 'Trail verified', `content leaked into audit payloads: ${leaked.join(' | ')}`);

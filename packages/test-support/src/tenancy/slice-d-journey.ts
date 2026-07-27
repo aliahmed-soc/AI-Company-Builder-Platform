@@ -16,6 +16,7 @@ import type { DatabaseClient } from '@acbp/database';
 // compiler therefore could not catch `optionOrdinal` where the contract says `selectedOrdinal` — CI did, three
 // minutes into a real-PostgreSQL run. @acbp/contracts is zero-dep and already a test-support dependency, so there is
 // no reason to hand-roll a looser shape here.
+import { STRATEGY_OPTION_FIELDS } from '@acbp/contracts';
 import type { StrategyDecisionRequest, TaskBoardDTO, TaskDetailDTO } from '@acbp/contracts';
 import { sql } from 'kysely';
 import type { JourneyStep } from './slice-a-journey.js';
@@ -97,7 +98,12 @@ const UNDERSTANDING_OUTPUT = JSON.stringify({
   ],
 });
 
-const OPTION_FIELDS = ['description', 'customer', 'offer', 'business_model', 'scope', 'benefits', 'risks', 'cost_range', 'effort', 'time_to_validate', 'time_to_launch', 'required_resources', 'key_assumptions', 'validation_method', 'success_metrics', 'confidence'] as const;
+/**
+ * From the CONTRACT, not a local copy (adopted from CDR-045 §2-G5 during P3-007's second review pass). A hand-listed
+ * set drifts silently the moment a field is added, and the resulting failure points at the journey rather than at
+ * the drift.
+ */
+const OPTION_FIELDS = STRATEGY_OPTION_FIELDS;
 
 /** A complete 16-field option. Distinct on customer/offer/business_model — the axes P3-002 dedupes on. */
 function option(customer: string, offer: string, model: string): Record<string, string> {
