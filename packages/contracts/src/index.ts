@@ -25,3 +25,5 @@ export * from './storage/index.js';
 // Durable jobs: the closed kind set + the typed enqueue refusal (ACBP-P5-001a; CDR-049; ADR-008).
 export * from './jobs/index.js';
 
+// Tool registry: the ordered risk-class set + unclassified-is-most-restrictive (ACBP-P5-003a; CDR-051).
+export * from './tools/index.js';

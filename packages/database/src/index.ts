@@ -206,6 +206,8 @@ export type {
   JobCheckpointRow,
   NewJobCheckpoint,
   NewJob,
+  ToolDefinitionsTable,
+  ToolDefinitionRow,
   NewTaskDeletion,
 } from './schema.js';
 
