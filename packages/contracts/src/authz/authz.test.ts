@@ -72,6 +72,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'task:generate': ['owner', 'viewer'],
   // Durable job enqueue (ACBP-P5-001a; CDR-049): OWNER-only, the deliberately tighter of the two readings.
   'job:enqueue': ['owner'],
+  // Step execution (ACBP-P5-001b; CDR-050): owner-only, same reading as enqueue.
+  'job:execute': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

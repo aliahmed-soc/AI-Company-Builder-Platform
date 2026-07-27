@@ -62,15 +62,15 @@ export type RunJobStepResult =
  * The pre-check and the write are BOTH needed and neither is redundant. The pre-check avoids paying for work already
  * done — the common case after a crash. The `ON CONFLICT DO NOTHING` write is what makes it CORRECT: between the
  * pre-check and the insert another worker may complete the same step, and only the database can settle that. If the
- * insert finds the row already there, this transaction rolls back, so the step's effect is discarded along with it and
- * the winner's effect is the only one that survives.
+ * insert finds the row already there, this transaction aborts, so the step's DATABASE effects are discarded and the
+ * winner's are the only ones that survive (see the note at the throw for what an abort does NOT undo).
  */
 export async function runJobStep(client: DatabaseClient, params: RunJobStepParams, options: CheckpointOptions = {}): Promise<RunJobStepResult> {
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<RunJobStepResult> => {
-      if (checkAuthorization(role, 'job:enqueue', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+      if (checkAuthorization(role, 'job:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
 
       const jobs = new JobRepository(scope.db);
       // RLS-confined: another company's job is `job_not_found`, never a step run against a foreign job.
@@ -101,9 +101,15 @@ export async function runJobStep(client: DatabaseClient, params: RunJobStepParam
         output: normalized,
       });
       if (checkpoint === undefined) {
-        // Someone else checkpointed this step between our read and our write. Throwing rolls this transaction back,
-        // WHICH IS THE POINT: our step's effect is discarded, leaving exactly one execution — theirs. Returning `ok`
-        // here would commit a second effect for a step the store says ran once.
+        // Someone else checkpointed this step between our read and our write. Throwing aborts this transaction, which
+        // is the point: our step's DATABASE effects are discarded, leaving one surviving execution — theirs.
+        // Returning `ok` would commit a second set of effects for a step the store says ran once.
+        //
+        // BE PRECISE ABOUT WHAT THIS UNDOES. A transaction abort reverses transactional work and nothing else. A step
+        // that made an HTTP call, spent model budget, or touched anything outside this database has ALREADY done so,
+        // and no rollback recovers that. Today every step is transactional, so the guarantee is complete; it stops
+        // being complete the moment a step can act externally, which is exactly why external effects are routed
+        // through the P5-003 dispatcher with an idempotency key (NFR-006) rather than left to this rollback.
         throw new DuplicateStepExecutionError(params.stepName);
       }
       return { status: 'ok', output: checkpoint.output };
@@ -158,7 +164,7 @@ export async function getResumeState(client: DatabaseClient, params: GetResumeSt
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<GetResumeStateResult> => {
-      if (checkAuthorization(role, 'job:enqueue', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+      if (checkAuthorization(role, 'job:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const jobs = new JobRepository(scope.db);
       const job = await jobs.findById(params.jobId);
       if (job === undefined) return { status: 'job_not_found' };
