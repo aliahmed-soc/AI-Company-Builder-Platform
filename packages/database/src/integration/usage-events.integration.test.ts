@@ -115,6 +115,40 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into usage_events (account_id, company_id, provider, model, task_class, outcome, input_tokens, output_tokens, estimated_cost_micros, fallback_used, latency_ms) values (${accountB}::uuid, ${companyB1}::uuid, 'fake', 'm@1', 'interactive', 'ok', 1, 1, 0, false, 1)`.execute(k))).rejects.toThrow();
   });
 
+  // ── ACBP-P5-009 / CDR-047 — the fallback REASON (migration 0030) ─────────────────────────────────────────
+  test('fallback_reason: the closed category set, and a reason NEVER without a fallover', async () => {
+    const insertWith = (fallbackUsed: boolean, reason: string | null) =>
+      asApp(scope(accountA, companyA1), (k) =>
+        sql`insert into usage_events (account_id, company_id, provider, model, task_class, outcome, input_tokens, output_tokens, estimated_cost_micros, fallback_used, fallback_reason, latency_ms) values (${accountA}::uuid, ${companyA1}::uuid, 'fake', 'm@1', 'interactive', 'ok', 1, 1, 0, ${fallbackUsed}, ${reason}, 1)`.execute(k),
+      );
+
+    // A real fallover carrying its normalized reason — the row this column exists for.
+    await expect(insertWith(true, 'provider_unavailable')).resolves.toBeDefined();
+    await expect(insertWith(true, 'timeout')).resolves.toBeDefined();
+    // No fallover, no reason.
+    await expect(insertWith(false, null)).resolves.toBeDefined();
+
+    // THE CONTRADICTORY STATE: claiming no fallover while naming why it fell back. Worse than no record, because it
+    // reads as authoritative. Refused by the CHECK.
+    await expect(insertWith(false, 'timeout')).rejects.toThrow();
+
+    // Raw provider text can never reach a ledger retained for the billing lifetime — only the closed set.
+    await expect(insertWith(true, 'anthropic returned 529 overloaded')).rejects.toThrow();
+    await expect(insertWith(true, 'not_a_category')).rejects.toThrow();
+  });
+
+  test('fallback_reason: legacy rows with fallback_used and NO reason remain insertable (migration safety)', async () => {
+    // Deliberate asymmetry, recorded in 0030. The symmetric constraint — every fallover carries a reason — would
+    // have failed `ADD CONSTRAINT` against rows written before the migration, which have `fallback_used = true` and
+    // no reason. It would have passed in CI, where the schema is rebuilt each run, and broken the first real
+    // deployment carrying history. The forward guarantee is the gateway's job, and its own tests pin it.
+    await expect(
+      asApp(scope(accountA, companyA1), (k) =>
+        sql`insert into usage_events (account_id, company_id, provider, model, task_class, outcome, input_tokens, output_tokens, estimated_cost_micros, fallback_used, latency_ms) values (${accountA}::uuid, ${companyA1}::uuid, 'fake', 'm@1', 'interactive', 'ok', 1, 1, 0, true, 1)`.execute(k),
+      ),
+    ).resolves.toBeDefined();
+  });
+
   test('APPEND-ONLY: no UPDATE and no DELETE grant (both refused for the app role)', async () => {
     const id = await insertEvent(accountA, companyA1);
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update usage_events set outcome = 'error' where id = ${id}::uuid`.execute(k))).rejects.toThrow();

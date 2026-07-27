@@ -251,3 +251,68 @@ unreachable — so its `Done` row is not requirement coverage.
 
 Continuing without pause, per the standing directive. Plan: finish ACBP-P4-005 (Slice 1 contracts → migration 0029 →
 core use cases → docs + two review passes → finalization), then re-read the backlog and take the next Ready ticket.
+
+### Window 7 end-of-window report
+
+**Real clock: window started 2026-07-27 01:59:51 +03:00; 8-hour mark 09:59:51 +03:00.**
+**This report was written at 2026-07-27 09:24:43 +03:00** — deliberately ahead of the mark so the log is not being edited
+at the boundary itself. Work continued to the mark; anything after this timestamp is recorded in window 8.
+
+**Four tickets merged, all with exact-main CI green and ZERO skips. Two phases completed.**
+
+| Ticket | Squash | Exact-main CI | Note |
+|---|---|---|---|
+| ACBP-P4-005 task detail and controls | `d517203` | 1945/1945 | branch deleted |
+| ACBP-P4-007 Slice D integration | `a214c4d` | 1946/1946 | **Phase 4 complete (7/7)** |
+| ACBP-P3-007 Slice C integration | `ebbd8f1` | 1947/1947 | **Phase 3 complete** |
+| ACBP-P5-010 structured-output hardening | `8239cc3` | 1954/1954 | branch deleted |
+
+Backlog **60 of 101 Done**. Migrations end **0030**.
+
+#### In progress at the boundary — ACBP-P5-009, branch `p5-009-gateway-v2-fallback`, draft PR #47
+
+Slices 1–3 committed and pushed, tree clean, exact-head CI green (1954/1954) on the last pushed head that CI has
+seen. Remaining: real-PG proof of migration 0030, the reset-list/catalog sweep for the new column, docs, and the two
+review passes.
+
+#### THE THING THE OWNER MOST NEEDS TO KNOW
+
+**ACBP-P5-009 is the last remaining ticket that is both dependency-satisfied and not a standing owner gate.**
+Computed over the whole backlog, not eyeballed: every other not-Done ticket is either one of the standing gates
+(P0-005, P2-011, P5-001, P5-003, P6-001, P6-007, P7-006) or transitively blocked behind one.
+
+So when P5-009 finishes, **stop condition #1 is reached** and autonomous work has nothing left it may legitimately
+take. The gates that unblock the most downstream work are **P5-001** (durable job runner — unblocks P5-002 and the
+whole execution chain through Phases 5 and 6) and **P0-005** (object storage — unblocks P5-011 → P7-001).
+
+#### Findings worth the owner's attention
+
+- **P4-005: "delete" could not be a `DELETE`.** `tasks` has no DELETE grant and its column UPDATE is pinned to
+  `(state, updated_at)`. TASK-008 requires the delete be *audited*, so granting DELETE would destroy the evidence the
+  requirement demands. Deletion became an append-only fact, and the catalog suite now asserts the **unchanged**
+  grants in the same commit that added the feature.
+- **P4-005 pass 2 found a race pass 1 had approved:** `deleteTask` was a check-then-insert, so a task read as
+  `queued` that started running in the window was still deleted — precisely TASK-008's failure clause. Fixed with the
+  state guard inside an `INSERT ... SELECT`.
+- **P5-010 and P5-009 were both largely ALREADY IMPLEMENTED** by P2-003. Checked before building, per the standing
+  rule. P5-010 became a conformance suite rather than a rebuild; P5-009's genuine gaps were only the fallback
+  *reason* and the silent-fallback negatives.
+- **A migration-safety catch on 0030:** the natural constraint (a reason exactly when `fallback_used`) would have
+  passed in CI, where the schema is rebuilt each run, and **failed on the first real deployment carrying history** —
+  rows predating the migration have `fallback_used = true` and no reason. Shipped one-directional instead.
+- **Process:** P4-007 lost three CI round-trips to hand-rolled types that were allowed to be wrong about a field
+  name (an *optional* field left the real DTO assignable, so the compiler stayed silent). Recorded, and P3-007 then
+  lost one. The two newest suites are local unit tests and cost zero.
+
+#### Disk (both drives, measured at the boundary)
+
+**C: 22.22 GB free · E: 104.87 GB free.** Neither below the 3 GB line; no cleanup performed or needed. C: is
+unchanged from the start of the window, so the build/test churn is not accumulating.
+
+---
+
+## Window 8 — 2026-07-27 (starts at the 09:59:51 +03:00 mark)
+
+Continuing without pause, per the standing directive. Plan: finish ACBP-P5-009 (real-PG proof of 0030, the sweep,
+docs, two review passes, finalization). That ticket is the last unblocked non-gated item in the backlog — when it
+merges, every remaining ticket sits behind a standing owner gate, which is true stop condition #1.

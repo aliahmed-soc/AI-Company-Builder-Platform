@@ -201,6 +201,21 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Activity event | C | event_id | projection feeding the feed | recorded | **A** | redacted content | With company | is activity | MVP |
 | Audit event | C/A/G | audit_id, correlation_id | references any object | recorded | **A** (immutable, invariant 11) | actor, context (redacted) | AOQ retention (≥ product data) | is the audit | MVP |
 | Usage event | C | usage_event_id | links run/tool call/model call | recorded | **A** (invariant 9) | — | ≥ billing retention | reconciliation | MVP |
+<!-- EXTENDED (ACBP-P5-009; CDR-047; NFR-019): migration 0030 adds `usage_events.fallback_reason` — ALTER-only,
+     nullable, no grant change (the table keeps its append-only SELECT+INSERT, invariant 9).
+     `fallback_used` already answered WHETHER a call fell over to the secondary provider; canon asks for the REASON,
+     and the difference is operational: an engineer looking at a degraded answer needs to know the primary TIMED OUT
+     versus was RATE-LIMITED versus was UNAVAILABLE, because those imply different responses. A boolean collapses
+     them into "something happened". The value is the NORMALIZED `ModelErrorCategory` — never raw provider text,
+     which would put an unbounded vendor string into a ledger retained for the billing lifetime — and it is the
+     PRIMARY's terminal category, captured at the moment the fallover decision is taken (afterwards the run describes
+     the secondary, so the trigger would be unrecoverable). When BOTH providers fail, `fallback_reason` and
+     `error_category` therefore hold DIFFERENT values: why we left, and how it finally died.
+     The CHECK is deliberately ONE-DIRECTIONAL — a reason never appears without a fallover (the contradictory state,
+     which would read as authoritative), but a fallover without a reason is permitted. The symmetric constraint could
+     not be added: rows written before 0030 carry `fallback_used = true` and no reason, so `ADD CONSTRAINT` would
+     have passed in CI (schema rebuilt each run) and failed on the first real deployment carrying history. The
+     forward guarantee is the gateway's, pinned by its own tests. -->
 <!-- IMPLEMENTED for MODEL CALLS (ACBP-P2-003; CDR-026 §6): table `usage_events` (migration 0017) — company-owned,
      dual-keyed FORCE RLS, APPEND-ONLY (SELECT+INSERT grants only; NO update/delete grant, NO update policy —
      invariant 9). v1 `kind = 'model_call'`; `estimated_cost_micros` is integer micro-units (never a float);

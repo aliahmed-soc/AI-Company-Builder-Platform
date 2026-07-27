@@ -424,6 +424,12 @@ export interface UsageEventsTable {
   output_tokens: ColumnType<number, number, never>;
   estimated_cost_micros: ColumnType<number, number, never>;
   fallback_used: ColumnType<boolean, boolean, never>;
+  /**
+   * WHY the call fell over to the secondary provider (ACBP-P5-009; NFR-019). The normalized category, never raw
+   * provider text. A reason never appears without a fallover (DB CHECK); the converse is guaranteed by the writer
+   * rather than the schema, because rows predating migration 0030 carry `fallback_used = true` with no reason.
+   */
+  fallback_reason: ColumnType<string | null, string | null | undefined, never>;
   latency_ms: ColumnType<number, number, never>;
   correlation_id: ColumnType<string | null, string | null | undefined, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;

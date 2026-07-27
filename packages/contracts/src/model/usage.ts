@@ -34,6 +34,18 @@ export interface NewModelCallUsageEvent {
   /** Provider-cost estimate in integer micro-units (ADR-013 estimate lane — not billable credits). */
   readonly estimatedCostMicros: number;
   readonly fallbackUsed: boolean;
+  /**
+   * WHY the call fell over to the secondary provider (ACBP-P5-009; NFR-019). Present exactly when `fallbackUsed`
+   * is true, absent otherwise — the pair can never contradict itself.
+   *
+   * `fallbackUsed` alone answers *whether*, and canon asks for the **reason**. The difference is operational: an
+   * engineer looking at a degraded answer needs to know the primary timed out versus was rate-limited versus was
+   * unavailable, because those imply different responses. A boolean collapses all of them into "something happened".
+   *
+   * It is the NORMALIZED category from the closed set — never raw provider text, which would put an unbounded
+   * vendor string into a ledger retained for the billing lifetime.
+   */
+  readonly fallbackReason?: ModelErrorCategory;
   readonly latencyMs: number;
   readonly correlationId?: string;
 }
