@@ -18,6 +18,7 @@ import {
   companyPaused,
   companyResumed,
   interviewStarted,
+  jobEnqueued,
   memoryItemCreated,
   memoryItemSuperseded,
   memoryItemDeleted,
@@ -91,6 +92,8 @@ describe('event-name registry (deny unregistered)', () => {
     ].concat([
       // Interview session lifecycle (ACBP-P2-001; CDR-022 §4) — exactly one audit-only session event.
       'interview.started',
+      // Durable job enqueue (ACBP-P5-001a; CDR-049 §4) — the first entry in a job's run trail.
+      'job.enqueued',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
@@ -253,6 +256,19 @@ describe('typed factories', () => {
 
   test('interviewStarted rejects an empty subject id (no session, no event)', () => {
     expect(() => interviewStarted({ sessionId: '' })).toThrow();
+  });
+
+  test('jobEnqueued carries only {kind, deduplicated} — never the payload or the tenant ids', () => {
+    const ev = jobEnqueued({ jobId: 'job_1', kind: 'understanding.generate', deduplicated: false });
+    expect(ev).toEqual({ name: 'job.enqueued', schemaVersion: 1, subjectType: 'job', subjectId: 'job_1', outcome: 'success', metadata: { kind: 'understanding.generate', deduplicated: false } });
+    expect(Object.isFrozen(ev.metadata)).toBe(true);
+    // The payload carries caller-chosen references and is not a reviewed surface; the tenant ids belong to the
+    // account-scoped audit row itself, and copying them into a payload is how the two drift apart.
+    expect(Object.keys(ev.metadata).sort()).toEqual(['deduplicated', 'kind']);
+  });
+
+  test('jobEnqueued rejects an empty subject id (no job, no event)', () => {
+    expect(() => jobEnqueued({ jobId: '', kind: 'understanding.generate', deduplicated: false })).toThrow();
   });
 
   test('memoryItemCreated carries only bounded {item_type, source_type} — never content or source_ref', () => {

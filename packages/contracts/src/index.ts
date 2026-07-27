@@ -22,4 +22,6 @@ export * from './strategy/index.js';
 export * from './planning/index.js';
 // Object storage: company-scoped keys + the provider-neutral port (ACBP-P0-005; CDR-048; ADR-016).
 export * from './storage/index.js';
+// Durable jobs: the closed kind set + the typed enqueue refusal (ACBP-P5-001a; CDR-049; ADR-008).
+export * from './jobs/index.js';
 

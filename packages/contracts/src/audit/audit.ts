@@ -145,6 +145,12 @@ export const AUDIT_EVENTS = {
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
   // Decision record (decision.recorded, STRAT-006) is P3-005's separate event.
   'strategy.selected': { schemaVersion: 1, subjectType: 'strategy_selection' },
+  // Durable job enqueue (ACBP-P5-001a; CDR-049 §4; ADR-008 "Run trail audited"). AUDITED in-tx with the `jobs` row
+  // (ADR-015 audit-or-nothing), so a job cannot exist without the record of who scheduled it. Subject = the job id;
+  // bounded metadata {kind, deduplicated} — NEVER the payload, which carries references chosen by the caller and is
+  // not a reviewed surface. `deduplicated` records that an idempotency key matched an existing job, which is the one
+  // enqueue outcome that produces no new row and would otherwise be invisible in the trail.
+  'job.enqueued': { schemaVersion: 1, subjectType: 'job' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -485,6 +491,17 @@ export function taskRepeated(input: { readonly newTaskId: string; readonly sourc
  */
 export function taskDeleted(input: { readonly taskId: string; readonly stateAtDelete: string; readonly hasReason: boolean }): AuditEvent {
   return makeEvent('task.deleted', input.taskId, 'success', { state_at_delete: input.stateAtDelete, has_reason: input.hasReason });
+}
+
+/**
+ * A durable job was enqueued (ACBP-P5-001a; CDR-049 §4). Subject = the job id.
+ *
+ * The tenant ids are deliberately NOT in the metadata: the audit row is itself account-scoped and written in the
+ * caller's company scope, so repeating them would add nothing and invite the habit of copying tenancy into payloads,
+ * where it can drift from the row it claims to describe.
+ */
+export function jobEnqueued(input: { readonly jobId: string; readonly kind: string; readonly deduplicated: boolean }): AuditEvent {
+  return makeEvent('job.enqueued', input.jobId, 'success', { kind: input.kind, deduplicated: input.deduplicated });
 }
 
 /**

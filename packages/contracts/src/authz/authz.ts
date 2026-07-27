@@ -127,6 +127,10 @@ export const AUTHZ_ACTIONS = [
   // Task planning (ACBP-P4-003; CDR-040; PLAN-001/002) — autonomous generation AND chat steering, both of which spend
   // metered model budget. Confirming a previewed draft reuses task:create (the existing planTask path).
   'task:generate',
+  // Durable job enqueue (ACBP-P5-001a; CDR-049 §4). Its own action rather than folded into an existing generate-class
+  // grant: enqueueing schedules work that will run LATER, outside the request that authorized it, and an action that
+  // outlives its caller deserves a name of its own so tightening or widening it is a one-line policy change.
+  'job:enqueue',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -235,6 +239,13 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'roadmap:edit': ['owner'],
   // Task planning is a member action (the generate-class precedent); the tasks it mints are DRAFTS, not board work.
   'task:generate': ['owner', 'viewer'],
+  // Durable job enqueue (ACBP-P5-001a; CDR-049 §4) is OWNER-ONLY, deliberately the tighter of the two readings.
+  // Canon does not settle the role for P5-001 the way it settles STRAT-003, so this picks the SAFER REVERSIBLE
+  // interpretation the charter calls for: widening later is additive and breaks nothing, whereas discovering that
+  // viewers have been scheduling background execution is not recoverable after the fact. Enqueue also differs from
+  // the generate-class member actions in kind — those spend budget INSIDE the request that authorized them, while a
+  // job runs later, on its own, after the authorizing session is gone.
+  'job:enqueue': ['owner'],
 };
 
 /**

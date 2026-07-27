@@ -765,6 +765,31 @@ export interface TaskDeletionsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Durable jobs (ACBP-P5-001a; CDR-049; ADR-008). Company-owned, dual-keyed FORCE RLS. WE own this table — ADR-008's
+ * owner amendment makes "job tables remain standard SQL (exit path)" binding, so a runner library may poll it but
+ * may not own its DDL. Tenant context is MANDATORY (invariant 3): `account_id`/`company_id` are NOT NULL and
+ * immutable to the app role, and the dual-keyed WITH CHECK refuses a foreign pair that NOT NULL cannot see.
+ */
+export interface JobsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** What work this represents. The CLOSED set is validated in the use case, so a new kind is not a migration. */
+  kind: ColumnType<string, string, never>;
+  /** queued · running · succeeded · failed · dead_letter · cancelled. Mutable via the column-scoped grant. */
+  state: ColumnType<string, string | undefined, string>;
+  /** References, NEVER secrets (ADR-008 §11). Bounded by CHECK. */
+  payload: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, never>;
+  /** Attempt counter. P5-001c owns the cap; the column is declared now so b/c extend rather than reshape. */
+  attempts: ColumnType<number, number | undefined, number>;
+  /** Unique per company WHEN PRESENT — the same logical job enqueued twice is one row (TASK-009/NFR-006). */
+  idempotency_key: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -802,6 +827,7 @@ export interface DatabaseSchema {
   planning_runs: PlanningRunsTable;
   planning_run_inputs: PlanningRunInputsTable;
   task_deletions: TaskDeletionsTable;
+  jobs: JobsTable;
 }
 
 // Repository-facing row shapes.
@@ -881,5 +907,7 @@ export type PlanningRunRow = Selectable<PlanningRunsTable>;
 export type NewPlanningRun = Insertable<PlanningRunsTable>;
 export type PlanningRunInputRow = Selectable<PlanningRunInputsTable>;
 export type NewPlanningRunInput = Insertable<PlanningRunInputsTable>;
+export type JobRow = Selectable<JobsTable>;
+export type NewJob = Insertable<JobsTable>;
 export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

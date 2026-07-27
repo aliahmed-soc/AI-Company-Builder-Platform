@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -87,6 +87,9 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // still has NO DELETE grant and its UPDATE stays pinned to (state, updated_at) — asserted separately — so the record
   // of what an owner discarded cannot itself be edited or removed. SELECT+INSERT only.
   task_deletions: ['INSERT', 'SELECT'],
+  // Durable jobs (ACBP-P5-001a; CDR-049 §4): SELECT + INSERT + a column-scoped UPDATE (asserted below). NO DELETE
+  // (§4-G5) — job history is the run trail, so a failed job cannot be erased by the code that failed it.
+  jobs: ['INSERT', 'SELECT', 'UPDATE'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -228,6 +231,16 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // Task deletions (ACBP-P4-005): the record of what an owner discarded is immutable — no column UPDATE grant, so
     // `state_at_delete`/`reason` cannot be rewritten after the fact.
     expect(byTable.get('task_deletions') ?? []).toEqual([]);
+    // Durable jobs (ACBP-P5-001a; CDR-049 §4-G3): the runner may advance lifecycle state and count attempts, and
+    // NOTHING else. `account_id`/`company_id` being absent here is the structural half of "context is stamped at
+    // enqueue and never moves" — a job cannot be re-pointed at another tenant after the fact, even by code holding
+    // a valid session for that tenant. `kind`/`payload` are likewise immutable, so the work cannot be swapped
+    // between enqueue and execution.
+    const jobs = byTable.get('jobs') ?? [];
+    expect([...jobs].sort()).toEqual(['attempts', 'state', 'updated_at']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'kind', 'payload', 'idempotency_key', 'created_at', 'created_by_user_id']) {
+      expect(jobs).not.toContain(forbidden);
+    }
   });
 
   test(threatTitle('AUDIT-APPEND-ONLY', 'audit_events + activity_events'), async () => {
