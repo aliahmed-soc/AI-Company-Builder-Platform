@@ -9,6 +9,37 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-005 task detail and controls — CORE DONE / FINALIZING (6th autonomous window).**
+  Branch `p4-005-task-detail-and-controls` (from main `0a9aa08`, after P4-004 merged), draft PR **#43**, CDR-043.
+  TASK-002's detail view + TASK-008's repeat/delete controls. Migration **0029** adds `task_deletions` (company-owned,
+  dual-keyed FORCE RLS, SELECT+INSERT only, `UNIQUE(task_id)`) and `tasks.repeated_from_task_id` (nullable,
+  tenant-pinned composite FK, INSERT-ONLY).
+  **Load-bearing reading #1 (CDR-043 §2): there is NO task "reject" control, and this ticket does not invent one.**
+  The backlog Objective says "repeat/delete/reject", but no requirement defines task rejection anywhere — the `reject`
+  verb belongs to UNDER-003, STRAT-003 and APPR-007, all different objects; the same row's Acceptance criteria say
+  only "Controls behave per state; repeat links lineage"; and the audit lists task rejection under "Controls not
+  exercised". This **corrects CDR-042 §3-G3**: the board's `rejected` bucket is not "pending P4-005", it is
+  unreachable because nothing defines it.
+  **Load-bearing reading #2 (CDR-043 §3): delete cannot be a `DELETE`.** `tasks` has no DELETE grant and its column
+  UPDATE is pinned to `(state, updated_at)`, which the adversarial catalog pins. TASK-008 requires the delete be
+  AUDITED, so granting DELETE would destroy the evidence the requirement demands. Deletion is therefore an append-only
+  FACT in a separate table, the `task_review_flags` precedent — and the catalog suite now asserts the UNCHANGED `tasks`
+  grants in the same commit that adds the feature.
+  Deleted tasks vanish from get/detail/list/board and the off-board draft COUNT via one shared `NOT_DELETED`
+  predicate; `findStatesByIds` deliberately does not filter them, because a prerequisite deleted while `completed`
+  really did unblock its dependent.
+  One new authz action, `task:delete` (`owner|viewer` — canon says company-scoped, not owner-only); repeat adds none
+  (it mints a task, which `task:create` already authorizes).
+  Commits: CDR `d987dcf` → contracts `c402da4` → migration + repo `4c5f3d9` → core `8e4ecda` → docs + review fixes.
+  **Both review passes returned FAIL.** Pass 1's HIGH: `planTask`/`addTaskDependency` still read through `findById`,
+  so a DELETED draft could be planned onto the board and emit a `task.created` audit for a task no board read would
+  ever show. Pass 2's HIGH was a **race pass 1 had read and approved**: `deleteTask` was a check-then-insert, so a
+  task read as `queued` that started running in the window was still deleted — precisely TASK-008's failure clause.
+  Fixed structurally, with the state guard inside the `INSERT ... SELECT`. See
+  `docs/implementation/P4-005-REVIEW-COVERAGE.md`.
+  Exact-head CI green zero-skip **1942/1942** at `8e4ecda` (slices 1–3); re-run pending on the review-fix head.
+  Next: exact-head CI on the final head → squash-merge → exact-main CI zero-skip → delete branch.
+- **ACBP-P4-004 task dependencies and board — DONE** (squash `0a9aa08`, PR #42; branch deleted). Phase 4 5/7.
 - **ACBP-P4-004 task dependencies and board — CORE DONE / IN REVIEW.**
   Branch `p4-004-task-dependencies-and-board` (from main `b8dc466`, after P4-006 merged), draft PR **#42**, CDR-042.
   TASK-001's **views**: the six-bucket board plus visible dependencies. A pure READ — no state, no transition, no

@@ -525,6 +525,11 @@ export interface TasksTable {
    * like `task_type`/`priority`: the column UPDATE grant stays exactly `(state, updated_at)`.
    */
   rationale: ColumnType<string | null, string | null | undefined, never>;
+  /**
+   * TASK-008 lineage: the task this one was repeated FROM (ACBP-P4-005). NULL for anything that is not a repeat.
+   * INSERT-ONLY for the same reason as the three above.
+   */
+  repeated_from_task_id: ColumnType<string | null, string | null | undefined, never>;
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -737,6 +742,23 @@ export interface PlanningRunInputsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
+/**
+ * Task deletions (ACBP-P4-005; TASK-008). IMMUTABLE append-only: `tasks` has no DELETE grant, so a deletion is a
+ * RECORDED FACT rather than an erasure — which is also what keeps the audit trail TASK-008 demands intact.
+ * `UNIQUE(task_id)` makes a repeat delete the same fact rather than a second one.
+ */
+export interface TaskDeletionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  task_id: ColumnType<string, string, never>;
+  /** The state the task held when removed — the only place that distinction survives once reads filter it out. */
+  state_at_delete: ColumnType<string, string, never>;
+  reason: ColumnType<string | null, string | null, never>;
+  deleted_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -773,6 +795,7 @@ export interface DatabaseSchema {
   task_review_flags: TaskReviewFlagsTable;
   planning_runs: PlanningRunsTable;
   planning_run_inputs: PlanningRunInputsTable;
+  task_deletions: TaskDeletionsTable;
 }
 
 // Repository-facing row shapes.
@@ -852,3 +875,5 @@ export type PlanningRunRow = Selectable<PlanningRunsTable>;
 export type NewPlanningRun = Insertable<PlanningRunsTable>;
 export type PlanningRunInputRow = Selectable<PlanningRunInputsTable>;
 export type NewPlanningRunInput = Insertable<PlanningRunInputsTable>;
+export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
+export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

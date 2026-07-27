@@ -198,3 +198,56 @@ own fixes rather than in the original code:
 3. Pass 2 — two pass-1 fixes, each correct alone, combined to produce an invalid `('failed', null)` pair that the new
    shape CHECK rejects, destroying the run record on the gateway-failure-during-staleness path while the other fix's
    error swallow hid it. Pass 1 could not have found this: it reviewed a tree where neither change existed.
+
+---
+
+## WINDOW CLOCK RESET — new window started 2026-07-27 01:59:51 +03:00
+
+Real system-clock read. **Supersedes** the previous 16:30:58 start and its 00:30:58 boundary. Next boundary:
+**2026-07-27 09:59:51 +03:00**, verified by checking the clock at each report rather than inferred from work done.
+
+**Disk at window start: E: 105.16 GB free** (the drive this repo lives on) — far above the 3 GB threshold, no cleanup
+performed. **Note for the owner: C: is at 3.65 GB**, only just above the line. The repo and `node_modules` are on E:,
+but the pnpm/npm temp paths and this session's scratchpad are on C:, so C: is the one that would actually break a
+build first. Not cleaned (it is above the threshold), but it is the number to watch.
+
+### State carried into this window
+
+- main = `0a9aa08` (ACBP-P4-004 merged; exact-main CI green zero-skip 161/161 files, 1894/1894 tests; branch deleted).
+- **57 tickets Done. Phase 4 → 5/7. Migrations end 0028.**
+- Active: **ACBP-P4-005** (task detail and controls, TASK-002/TASK-008) on `p4-005-task-detail-and-controls`, draft
+  PR **#43**, CDR-043 committed (`d987dcf`). Tree clean and pushed. Slice 1 (contracts) next.
+- **ACBP-P0-005** ("Decide object-storage provider", Type: Decision) remains treated as an OWNER GATE — selecting a
+  provider is an architecture decision changing provider strategy. It keeps appearing in Ready scans and keeps being
+  skipped.
+
+### Work completed in the previous window (16:30:58 → 01:59:51)
+
+| Ticket | Squash | PR | exact-main CI |
+| --- | --- | --- | --- |
+| ACBP-P4-004 task dependencies and board views | `0a9aa08` | #42 | green zero-skip, 1894/1894 |
+
+P4-004 ran two independent review passes, **both FAIL**, and four of the ten most serious findings were defects in my
+own review fixes rather than the original code:
+
+1. Pass 1 HIGH-2 — the page limit was applied to an UNFILTERED newest-first query, so a planning run's drafts would
+   have rendered **every board bucket empty** while planned and running work existed. Every fixture had ≤2 drafts, so
+   nothing caught it.
+2. Pass 1 HIGH-3 — prerequisites are older than their dependents, so truncation dropped them first and every
+   dependent read as blocked on any large board.
+3. Pass 1 MEDIUM-6 — my own CDR claimed a compile-exhaustive switch that was not: `switch (state as TaskState)` never
+   narrows, so a twelfth state would have compiled clean into `unplaceable`.
+4. Pass 2 HIGH — my pass-1 fix filtered prerequisites BEFORE the blocked derivation, turning fail-CLOSED into
+   fail-OPEN: work reported ready while its input did not exist. Reachable with no race at all.
+5. Pass 2 MEDIUM-3 — the test named "still BLOCKS — fail closed" supplied a state, so it passed on
+   `queued !== 'completed'` and never exercised the path. That is what let #4 through.
+
+Also recorded on that ticket: **TASK-001 is NOT fully satisfied** by P4-004 — `recurring` and `rejected` stay
+unreachable — so its `Done` row is not requirement coverage.
+
+---
+
+## Window 7 — 2026-07-27 (started 01:59:51 +03:00)
+
+Continuing without pause, per the standing directive. Plan: finish ACBP-P4-005 (Slice 1 contracts → migration 0029 →
+core use cases → docs + two review passes → finalization), then re-read the backlog and take the next Ready ticket.

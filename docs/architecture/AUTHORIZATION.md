@@ -166,6 +166,15 @@ trusted core/use-case seam:
   owner/operator gate and belongs to a later ticket (TASK-004/P6), NOT to either action here. DISTINCT closed actions,
   deny-by-default; not granted to an account owner without company membership nor via forged provider claims. See
   `CDR-033`.
+- **P4-005** (task detail + controls) adds ONE action, `task:delete`, `owner|viewer`. Canon scopes TASK-008 to
+  "Company-scoped" and says nothing about role, so restricting deletion to the owner would invent a requirement — and
+  a member who may create work should be able to withdraw it. The deletion is append-only and audited, so nothing is
+  destroyed by the grant. It is a DISTINCT action rather than folded into `task:create` precisely because it is the
+  only task control that removes work from view: naming it makes a future owner-only tightening a one-line policy
+  change instead of a refactor. REPEAT deliberately adds no action — it mints a task, which is exactly what
+  `task:create` already authorizes (the `task:depend` folding precedent). The DETAIL read reuses `task:read`.
+  Beyond the role check, `deleteTask` requires an explicit `confirmed: true` parameter (TASK-008 "with confirmation"),
+  checked BEFORE the task is read so an unconfirmed call cannot be used as an existence oracle. See `CDR-043`.
 - **P3-001** (strategy option generation) adds `strategy:generate` and `strategy:read`, both `owner|viewer` company
   members. Strategy generation is a member action driving the discovery→understanding→strategy flow (like
   `understanding:generate`); `strategy:generate` also covers request-another. Generation is additionally GATED at the

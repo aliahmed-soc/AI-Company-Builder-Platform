@@ -5,11 +5,21 @@
 // case writes the task/state change + its audit event in ONE transaction. Kysely parameterized queries only; no raw
 // SQL interpolation. The only mutation on `tasks` is a column-scoped `state`/`updated_at` update (identity/provenance
 // columns are immutable to the app role); `task_dependencies` is append-only (no update/delete).
-import type { Kysely } from 'kysely';
+import type { ExpressionBuilder, ExpressionWrapper, Kysely, SqlBool } from 'kysely';
 import { sql } from 'kysely';
-import type { DatabaseSchema, TaskRow, TaskDependencyRow } from './schema.js';
+import type { DatabaseSchema, TaskRow, TaskDependencyRow, TaskDeletionRow } from './schema.js';
 
 export type TaskExecutor = Kysely<DatabaseSchema>;
+
+/**
+ * "This task has not been deleted" (ACBP-P4-005). `tasks` carries no DELETE grant, so a deleted task's row survives
+ * and every product read has to exclude it explicitly — a NOT EXISTS against the append-only `task_deletions` record.
+ *
+ * Shared rather than repeated per query: an exclusion that some reads apply and others forget is exactly how a task
+ * the owner discarded reappears on one screen but not another. RLS still confines both sides to the caller's company.
+ */
+const NOT_DELETED = (eb: ExpressionBuilder<DatabaseSchema, 'tasks'>): ExpressionWrapper<DatabaseSchema, 'tasks', SqlBool> =>
+  eb.not(eb.exists(eb.selectFrom('task_deletions').select('task_deletions.id').whereRef('task_deletions.task_id', '=', 'tasks.id')));
 
 /** The fields a caller supplies to create a task (identity/state are server-set; a task is minted in `draft`). */
 export interface NewTaskInput {
@@ -24,6 +34,8 @@ export interface NewTaskInput {
   readonly priority?: number | null;
   /** ACBP-P4-006 (PLAN-004): why this task was chosen, or null when the model gave none ("not recorded"). */
   readonly rationale?: string | null;
+  /** ACBP-P4-005 (TASK-008): the task this one was repeated FROM, or null/absent when it is not a repeat. */
+  readonly repeatedFromTaskId?: string | null;
   readonly createdByUserId: string;
 }
 
@@ -32,6 +44,18 @@ export interface NewTaskDependencyInput {
   readonly companyId: string;
   readonly taskId: string;
   readonly dependsOnTaskId: string;
+}
+
+/** The fields recorded when an owner deletes a task (ACBP-P4-005; TASK-008). Append-only — nothing is erased. */
+export interface NewTaskDeletionInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly taskId: string;
+  /** The state the task held at the moment of deletion — the only place that fact survives once reads filter it out. */
+  readonly stateAtDelete: string;
+  /** The owner's optional note. Stored here, NEVER in the audit payload (which records only `has_reason`). */
+  readonly reason: string | null;
+  readonly deletedByUserId: string;
 }
 
 export interface ListTasksOptions {
@@ -48,7 +72,7 @@ export class TaskRepository {
   insert(input: NewTaskInput): Promise<TaskRow> {
     return this.#db
       .insertInto('tasks')
-      .values({ account_id: input.accountId, company_id: input.companyId, state: 'draft', title: input.title, description: input.description, milestone_id: input.milestoneId, task_type: input.taskType ?? null, priority: input.priority ?? null, rationale: input.rationale ?? null, created_by_user_id: input.createdByUserId })
+      .values({ account_id: input.accountId, company_id: input.companyId, state: 'draft', title: input.title, description: input.description, milestone_id: input.milestoneId, task_type: input.taskType ?? null, priority: input.priority ?? null, rationale: input.rationale ?? null, repeated_from_task_id: input.repeatedFromTaskId ?? null, created_by_user_id: input.createdByUserId })
       .returningAll()
       .executeTakeFirstOrThrow();
   }
@@ -70,9 +94,64 @@ export class TaskRepository {
     return n;
   }
 
-  /** A single task by id (RLS-confined; undefined when absent/invisible). */
+  /** A single task by id (RLS-confined; undefined when absent/invisible). Includes deleted tasks — see `findLive`. */
   findById(id: string): Promise<TaskRow | undefined> {
     return this.#db.selectFrom('tasks').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  /**
+   * A single NON-DELETED task (ACBP-P4-005). `tasks` has no DELETE grant, so a deleted task's row survives; every
+   * product read must exclude it explicitly or the owner would keep seeing work they discarded.
+   *
+   * `findById` deliberately still returns deleted rows, but NO product read may use it: it exists for callers that
+   * genuinely want the raw row regardless of deletion state (diagnostics, and the deletion record's own back-reference).
+   * Every use case that answers a user question reads through `findLive`.
+   */
+  findLive(id: string): Promise<TaskRow | undefined> {
+    return this.#db.selectFrom('tasks').selectAll().where('id', '=', id).where(NOT_DELETED).executeTakeFirst();
+  }
+
+  /**
+   * Insert the append-only deletion record, GUARDED by the task's current state (optimistic, race-safe).
+   *
+   * The guard is the `where state = stateAtDelete` inside the INSERT ... SELECT, and it is load-bearing rather than
+   * defensive. Without it the use case is a check-then-insert: it reads `queued` (deletable), and if the task starts
+   * running in that window the unguarded insert still succeeds — deleting a RUNNING task, which is precisely what
+   * TASK-008's failure clause forbids. Doing the check and the write in ONE statement closes that window at the
+   * database, the same idiom `updateState` uses for transitions.
+   *
+   * `ON CONFLICT (task_id) DO NOTHING` additionally makes a concurrent duplicate delete a graceful no-op rather than
+   * a UNIQUE-violation throw. Returns `undefined` for BOTH misses — the state moved, or someone else deleted it
+   * first — so the caller re-reads to tell them apart.
+   */
+  insertDeletion(input: NewTaskDeletionInput): Promise<TaskDeletionRow | undefined> {
+    return this.#db
+      .insertInto('task_deletions')
+      .columns(['account_id', 'company_id', 'task_id', 'state_at_delete', 'reason', 'deleted_by_user_id'])
+      .expression((eb) =>
+        eb
+          .selectFrom('tasks')
+          .select([
+            // Explicit casts: in an INSERT ... SELECT, PostgreSQL resolves the SELECT list's types on its own, so a
+            // bare parameter would fail with "could not determine data type". Still fully parameterized.
+            sql<string>`${input.accountId}::uuid`.as('account_id'),
+            sql<string>`${input.companyId}::uuid`.as('company_id'),
+            sql<string>`${input.taskId}::uuid`.as('task_id'),
+            sql<string>`${input.stateAtDelete}::text`.as('state_at_delete'),
+            sql<string | null>`${input.reason}::text`.as('reason'),
+            sql<string>`${input.deletedByUserId}::uuid`.as('deleted_by_user_id'),
+          ])
+          .where('tasks.id', '=', input.taskId)
+          .where('tasks.state', '=', input.stateAtDelete),
+      )
+      .onConflict((oc) => oc.column('task_id').doNothing())
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /** The deletion record for a task, when it has one (RLS-confined). */
+  findDeletion(taskId: string): Promise<TaskDeletionRow | undefined> {
+    return this.#db.selectFrom('task_deletions').selectAll().where('task_id', '=', taskId).executeTakeFirst();
   }
 
   /**
@@ -85,9 +164,9 @@ export class TaskRepository {
     return Number(r.numUpdatedRows);
   }
 
-  /** The company's tasks (RLS-confined), newest first, bounded. */
+  /** The company's non-deleted tasks (RLS-confined), newest first, bounded (ACBP-P4-005 G9). */
   list(options: ListTasksOptions): Promise<TaskRow[]> {
-    return this.#db.selectFrom('tasks').selectAll().orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+    return this.#db.selectFrom('tasks').selectAll().where(NOT_DELETED).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
   }
 
   /**
@@ -118,16 +197,32 @@ export class TaskRepository {
    * arriving through the pagination door. The limit must bound BOARD rows to mean anything.
    */
   listBoardPage(options: ListTasksOptions): Promise<TaskRow[]> {
-    return this.#db.selectFrom('tasks').selectAll().where('state', '!=', 'draft').orderBy('created_at', 'desc').orderBy('id', 'desc').limit(options.limit).execute();
+    return this.#db
+      .selectFrom('tasks')
+      .selectAll()
+      .where('state', '!=', 'draft')
+      // Deleted tasks are gone from the board (ACBP-P4-005; CDR-043 §4-G9). Excluded in the QUERY so they never
+      // consume page budget — the same reasoning that keeps drafts out.
+      .where(NOT_DELETED)
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(options.limit)
+      .execute();
   }
 
-  /** How many DRAFT tasks the company holds (RLS-confined). Counted, not paged: the board reports them off-board. */
+  /**
+   * How many DRAFT tasks the company holds (RLS-confined). Counted, not paged: the board reports them off-board.
+   *
+   * Deleted drafts are excluded (ACBP-P4-005 G9). Counting them would tell the owner that preview work exists which
+   * they can no longer reach from anywhere — a number that cannot be acted on is worse than no number.
+   */
   async countDrafts(companyId: string): Promise<number> {
     const row = await this.#db
       .selectFrom('tasks')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('company_id', '=', companyId)
       .where('state', '=', 'draft')
+      .where(NOT_DELETED)
       .executeTakeFirst();
     return Number(row?.n ?? 0);
   }
@@ -162,6 +257,11 @@ export class TaskRepository {
    * Without this, a truncated board reports almost every dependent as blocked: `list` is newest-first, so
    * prerequisites are by construction older than their dependents and are the FIRST rows dropped. Failing closed on a
    * prerequisite we simply did not fetch is safe but wrong often enough to make the indicator useless.
+   *
+   * DELETED prerequisites are deliberately NOT excluded here (ACBP-P4-005). This resolves a task's real state, and a
+   * deleted prerequisite's last state is the honest answer: one deleted while `completed` genuinely did unblock its
+   * dependent, and one deleted while `planned` genuinely blocks it forever. Filtering them out would collapse both
+   * into "unresolvable → blocked", turning a satisfied dependency into a permanent false block.
    */
   findStatesByIds(taskIds: readonly string[]): Promise<{ id: string; state: string }[]> {
     if (taskIds.length === 0) return Promise.resolve([]);

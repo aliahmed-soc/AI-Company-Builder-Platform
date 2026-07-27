@@ -35,6 +35,8 @@ import {
   understandingCorrected,
   contextConflictFlagged,
   taskCreated,
+  taskRepeated,
+  taskDeleted,
   strategyGenerated,
   strategySelected,
   decisionRecorded,
@@ -80,6 +82,9 @@ export const AUDITED_OPERATIONS = {
   'context.flag-conflict': 'context.conflict_flagged',
   // Task model (ACBP-P4-002; CDR-033 §4) — a task appeared on the board (draft→planned).
   'task.plan': 'task.created',
+  // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "Controls audited").
+  'task.repeat': 'task.repeated',
+  'task.delete': 'task.deleted',
   // Strategy option generation (ACBP-P3-001; CDR-034 §4) — options were generated from a confirmed understanding.
   'strategy.generate': 'strategy.generated',
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4) — select/edit/combine/reject.
@@ -105,7 +110,7 @@ export type InterviewAuditedOperation = 'interview.start';
 export type MemoryAuditedOperation = 'memory.create' | 'memory.supersede' | 'memory.delete';
 export type UnderstandingAuditedOperation = 'understanding.generate' | 'understanding.review-decision' | 'understanding.confirm' | 'understanding.correct';
 export type ContextAuditedOperation = 'context.flag-conflict';
-export type TaskAuditedOperation = 'task.plan';
+export type TaskAuditedOperation = 'task.plan' | 'task.repeat' | 'task.delete';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
 export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
@@ -117,7 +122,7 @@ export const INTERVIEW_AUDITED_OPERATION_IDS: readonly InterviewAuditedOperation
 export const MEMORY_AUDITED_OPERATION_IDS: readonly MemoryAuditedOperation[] = ['memory.create', 'memory.supersede', 'memory.delete'];
 export const UNDERSTANDING_AUDITED_OPERATION_IDS: readonly UnderstandingAuditedOperation[] = ['understanding.generate', 'understanding.review-decision', 'understanding.confirm', 'understanding.correct'];
 export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] = ['context.flag-conflict'];
-export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan'];
+export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan', 'task.repeat', 'task.delete'];
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
 export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
@@ -195,6 +200,10 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => contextConflictFlagged({ itemId: subjectId, confirmedCount: 1, assumptionCount: 1 });
     case 'task.plan':
       return (subjectId) => taskCreated({ taskId: subjectId, hasMilestone: false });
+    case 'task.repeat':
+      return (subjectId) => taskRepeated({ newTaskId: subjectId, sourceTaskId: subjectId, sourceState: 'completed' });
+    case 'task.delete':
+      return (subjectId) => taskDeleted({ taskId: subjectId, stateAtDelete: 'planned', hasReason: false });
     case 'strategy.generate':
       return (subjectId) => strategyGenerated({ generationId: subjectId, understandingVersion: 1, optionCount: 3, similarityCheckResult: 'pending' });
     case 'strategy.select':
