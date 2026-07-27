@@ -9,6 +9,29 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-010 structured-output validation hardening — CORE DONE / FINALIZING (6th autonomous window).**
+  Branch `p5-010-structured-output-hardening` (from main `ebbd8f1`, after P3-007 merged), draft PR **#46**, CDR-046.
+  **The load-bearing finding came before any code: the MECHANISM ALREADY EXISTS.** Every mechanical clause of the
+  Objective — schema-first validation, the terminal `invalid_output` category, the clamped re-ask bound, usage
+  accumulated across attempts, no partial-accept path — is already implemented by P2-003/CDR-026, verified clause by
+  clause. So the ticket delivers the CONFORMANCE SUITE the backlog actually names ("Invalid-output tests",
+  "Validation suite") and nothing else: a second validation path would be two behaviours that can disagree.
+  Seven properties pinned as BEHAVIOUR, in a **unit** suite that runs locally in ~1s (`callModel` takes provider,
+  usage sink, cost estimator and validator by injection) — which is why both drafting errors were caught before the
+  first push, including one where the test expected 4 calls for `maxReask: 3` and got 2 **because the platform clamps
+  re-ask to one**; asserting `N+1` for arbitrary N would have been asserting the ABSENCE of the cap.
+  **The acceptance criterion is honestly HALF met and says so.** "Invalid output cannot complete a task" names task
+  completion, driven by execution (P5-002/P5-005, not built). Delivered: the gateway never hands a caller an
+  unvalidated value (necessary). Not delivered: that a task cannot reach `completed` on one (sufficient) — the
+  backlog itself files this as "trust-critical #18 **groundwork**", and the record says groundwork, not covered.
+  **Both review passes returned FAIL** (Medium only, consistent with a ticket that adds no behaviour): the platform
+  cap was hardcoded in a second place rather than derived from `MAX_REASK_ATTEMPTS`; the CDR listed six properties
+  while the suite pinned seven; and the two request fixtures were written side by side so they could drift, when the
+  opt-in test's whole meaning is that they differ in exactly one way. See
+  `docs/implementation/P5-010-REVIEW-COVERAGE.md`.
+  Exact-head CI green zero-skip **1954/1954** at `08e1018`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch.
+- **ACBP-P3-007 Slice C integration: strategy selection — DONE** (squash `ebbd8f1`, PR #45; exact-main CI green zero-skip 1947/1947; branch deleted). **Phase 3 complete.**
 - **ACBP-P3-007 Slice C integration: strategy selection — CORE DONE / FINALIZING (6th autonomous window).**
   Branch `p3-007-slice-c-strategy-selection` (from main `a214c4d`, after P4-007 merged), draft PR **#45**, CDR-045.
   The **M3 milestone exit**: confirmed understanding → three distinct options → advisory comparison → owner selection
