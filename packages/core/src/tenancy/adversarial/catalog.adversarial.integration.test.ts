@@ -247,7 +247,11 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // be rewritten to say a step did not run.
     expect(byTable.get('job_checkpoints') ?? []).toEqual([]);
     const jobs = byTable.get('jobs') ?? [];
-    expect([...jobs].sort()).toEqual(['attempts', 'state', 'updated_at']);
+    // ACBP-P5-001c EXTENDED this set with `failure_reason` — the dead-letter transition has to be recordable. The
+    // extension is deliberate and narrow: it adds one outcome column and leaves the forbidden list below untouched,
+    // so tenancy, kind and payload remain immutable to the app role. This assertion failing on the addition is the
+    // catalog working — a grant may only widen when someone updates this line on purpose.
+    expect([...jobs].sort()).toEqual(['attempts', 'failure_reason', 'state', 'updated_at']);
     for (const forbidden of ['id', 'account_id', 'company_id', 'kind', 'payload', 'idempotency_key', 'created_at', 'created_by_user_id']) {
       expect(jobs).not.toContain(forbidden);
     }

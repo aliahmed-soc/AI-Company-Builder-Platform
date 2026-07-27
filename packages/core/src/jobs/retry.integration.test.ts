@@ -147,8 +147,11 @@ describe.skipIf(!hasTestDatabase)('bounded retry + dead-letter (real PostgreSQL,
     const blocked = ok(await listBlockedJobs(product, { ...base() }));
     expect(blocked.jobs).toHaveLength(1);
     expect(blocked.jobs[0]).toEqual({ id: jobId, kind: 'understanding.generate', attempts: POLICY.maxAttempts, failureReason: 'invalid_payload' });
-    // The payload carries caller-chosen references and is not a reviewed surface.
-    expect(JSON.stringify(blocked.jobs[0])).not.toContain('payload');
+    // The payload carries caller-chosen references and is not a reviewed surface, so the DTO must not carry it.
+    // Asserted on the KEY SET, not a substring of the serialised DTO: the first version of this used
+    // `not.toContain('payload')`, which failed the moment a legitimate failure reason (`invalid_payload`) happened to
+    // contain that substring. A substring check over serialised data collides with the data.
+    expect(Object.keys(blocked.jobs[0] ?? {}).sort()).toEqual(['attempts', 'failureReason', 'id', 'kind']);
   });
 
   test('a healthy job is NOT in the blocked queue — the queue means blocked, not merely failed once', async () => {
