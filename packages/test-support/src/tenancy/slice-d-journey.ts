@@ -16,7 +16,7 @@ import type { DatabaseClient } from '@acbp/database';
 // compiler therefore could not catch `optionOrdinal` where the contract says `selectedOrdinal` — CI did, three
 // minutes into a real-PostgreSQL run. @acbp/contracts is zero-dep and already a test-support dependency, so there is
 // no reason to hand-roll a looser shape here.
-import type { StrategyDecisionRequest } from '@acbp/contracts';
+import type { StrategyDecisionRequest, TaskBoardDTO, TaskDetailDTO } from '@acbp/contracts';
 import { sql } from 'kysely';
 import type { JourneyStep } from './slice-a-journey.js';
 
@@ -53,23 +53,17 @@ export interface SliceDOps {
   deleteTask(c: DatabaseClient, p: Ids & { taskId: string; confirmed: boolean; reason?: string | null }): Promise<Status<{ taskId: string; stateAtDelete: string }>>;
 }
 
-/** The board shape the journey inspects (a structural subset of TaskBoardDTO). */
-export interface SliceDBoard {
-  readonly buckets: ReadonlyArray<{ readonly bucket: string; readonly availability: string; readonly tasks: ReadonlyArray<{ readonly task: { readonly taskId: string; readonly state: string }; readonly blockedByDependency?: boolean }> }>;
-  readonly draftsOffBoard: number;
-  readonly unplaceable: number;
-}
-
-/** The detail shape the journey inspects (a structural subset of TaskDetailDTO). */
-export interface SliceDDetail {
-  readonly taskId: string;
-  readonly state: string;
-  readonly taskType: string | null;
-  readonly createdAt: string;
-  readonly description: string | null;
-  readonly rationale: string | null;
-  readonly controls: ReadonlyArray<{ readonly control: string; readonly available: boolean; readonly reason: string | null }>;
-}
+/**
+ * The board and detail shapes are the REAL contract DTOs, not hand-rolled structural subsets.
+ *
+ * Both were subsets first, and both hid a field-name error the compiler then could not see: an OPTIONAL
+ * `blockedByDependency?: boolean` type-checked perfectly while the contract calls it `dependencyBlocked`, so the
+ * journey's blocked-dependency assertion read `undefined` for every task and the step failed only in CI, against a
+ * real database, several minutes in. A subset that is allowed to be wrong about a name is not a cheaper version of
+ * the type — it is a silent one.
+ */
+export type SliceDBoard = TaskBoardDTO;
+export type SliceDDetail = TaskDetailDTO;
 
 export interface SliceDJourneyDeps {
   /** Restricted `acbp_app` product connection — every use case runs through this (CDR-044 §2-G3). */
@@ -232,7 +226,7 @@ export async function runSliceDJourney(deps: SliceDJourneyDeps): Promise<{ reado
   const placed = board1.board.buckets.flatMap((b) => b.tasks);
   if (board1.board.unplaceable !== 0) return bail('board places every task', 'TASK-001', `${board1.board.unplaceable} task(s) landed in NO bucket — invisible work`);
   if (placed.length !== confirmedIds.length) return bail('board places every task', 'TASK-001', `expected ${confirmedIds.length} on-board tasks, got ${placed.length}`);
-  const blocked = placed.filter((t) => t.blockedByDependency === true).map((t) => t.task.taskId);
+  const blocked = placed.filter((t) => t.dependencyBlocked).map((t) => t.task.taskId);
   if (!blocked.includes(second)) return bail('dependency is inspectable on the board', 'TASK-001', `${second} depends on an incomplete task but is not reported blocked`);
   record('board places every task; status + dependency inspectable', 'TASK-001', true, `${placed.length} placed, 0 unplaceable, ${board1.board.draftsOffBoard} draft(s) off-board, ${blocked.length} blocked by a dependency`);
 
