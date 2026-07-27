@@ -230,7 +230,30 @@ describe.skipIf(!hasTestDatabase)('job checkpoints + resume (real PostgreSQL, re
     });
   });
 
-  test('a viewer cannot run a step or read resume state — `job:enqueue` is owner-only', async () => {
+  test('an uncheckpointable PLAN is reported as a typed status, not thrown (review pass 2)', async () => {
+    const jobId = await newJob();
+    // Two steps sharing a name would mark each other complete, so the plan is refused. It must come back as a status
+    // a caller can act on — a read that throws on caller-supplied input surfaces as an opaque 500 instead.
+    expect(await getResumeState(product, { ...base(), jobId, plan: ['a', 'b', 'a'] })).toEqual({ status: 'invalid_plan', reason: 'duplicate_step' });
+    expect(await getResumeState(product, { ...base(), jobId, plan: ['a', '  '] })).toEqual({ status: 'invalid_plan', reason: 'blank_step' });
+  });
+
+  test('checkpoints written in ONE transaction read back in a deterministic order (review pass 2)', async () => {
+    // `created_at` defaults to now(), which is TRANSACTION start time, so same-transaction checkpoints share it
+    // exactly. Without the step_name tiebreak the order is whatever the planner happened to return.
+    const jobId = await newJob();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
+      sql`insert into job_checkpoints (account_id, company_id, job_id, step_name)
+          values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${jobId}::uuid, 'zulu'),
+                 (${w.accountA}::uuid, ${w.companyA1}::uuid, ${jobId}::uuid, 'alpha')`.execute(db),
+    );
+    const first = ok(await getResumeState(product, { ...base(), jobId, plan: ['alpha', 'zulu'] }));
+    const second = ok(await getResumeState(product, { ...base(), jobId, plan: ['alpha', 'zulu'] }));
+    expect(first.completedSteps).toEqual(['alpha', 'zulu']);
+    expect(second.completedSteps).toEqual(first.completedSteps);
+  });
+
+  test('a viewer cannot run a step or read resume state — `job:execute` is owner-only', async () => {
     const jobId = await newJob();
     let ran = false;
     const asViewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };

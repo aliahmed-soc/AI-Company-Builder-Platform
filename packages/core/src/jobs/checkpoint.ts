@@ -10,7 +10,7 @@
 // leaves a window in which the effect landed and the record did not — the exact state a resume must interpret, and
 // the one it cannot interpret correctly.
 import { JobRepository, type DatabaseClient, type JobCheckpointRow } from '@acbp/database';
-import { remainingSteps, planProgress, type PlanProgress } from '@acbp/contracts';
+import { remainingSteps, planProgress, InvalidPlanError, type PlanProgress, type PlanFailure } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -153,7 +153,12 @@ export type GetResumeStateResult =
       readonly outputs: Readonly<Record<string, Record<string, unknown>>>;
     }
   | { readonly status: 'forbidden' }
-  | { readonly status: 'job_not_found' };
+  | { readonly status: 'job_not_found' }
+  // The PLAN itself cannot be checkpointed — a duplicate or blank step name. Found in review pass 2: `remainingSteps`
+  // throws on this (correctly, since an uncheckpointable plan is a call-site bug), but a READ that throws on
+  // caller-supplied input while every sibling read returns a typed status is an inconsistency, and it would surface
+  // as an opaque 500 rather than something a caller can act on.
+  | { readonly status: 'invalid_plan'; readonly reason: PlanFailure };
 
 /**
  * What still has to run. Pure arithmetic over the plan and the stored inventory (`remainingSteps`), so the resume rule
@@ -171,10 +176,20 @@ export async function getResumeState(client: DatabaseClient, params: GetResumeSt
 
       const checkpoints = await jobs.listCheckpoints(params.jobId);
       const completed = checkpoints.map((c) => c.step_name);
+      // The plan is validated ONCE here and the result reused, rather than letting each of the three calls below
+      // throw independently — they would all throw for the same reason, and catching at three sites invites one of
+      // them being missed later.
+      let remaining: string[];
+      try {
+        remaining = remainingSteps(params.plan, completed);
+      } catch (error) {
+        if (error instanceof InvalidPlanError) return { status: 'invalid_plan', reason: error.reason };
+        throw error;
+      }
       return {
         status: 'ok',
         completedSteps: completed,
-        remainingSteps: remainingSteps(params.plan, completed),
+        remainingSteps: remaining,
         progress: planProgress(params.plan, completed),
         outputs: toOutputMap(checkpoints),
       };

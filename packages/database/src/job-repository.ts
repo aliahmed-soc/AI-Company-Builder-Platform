@@ -106,8 +106,15 @@ export class JobRepository {
       .executeTakeFirst();
   }
 
-  /** Every checkpoint for a job, oldest first. RLS confines this to the caller's company. */
+  /**
+   * Every checkpoint for a job, oldest first. RLS confines this to the caller's company.
+   *
+   * `step_name` is the TIEBREAK, and it is not decoration: `created_at` defaults to `now()`, which in PostgreSQL is
+   * TRANSACTION start time — so two steps checkpointed in one transaction carry the identical timestamp and their
+   * relative order would otherwise be whatever the planner returned. `completedSteps` is surfaced to callers, so an
+   * arbitrary order there is both a flaky-test source and a confusing read.
+   */
   listCheckpoints(jobId: string): Promise<JobCheckpointRow[]> {
-    return this.#db.selectFrom('job_checkpoints').selectAll().where('job_id', '=', jobId).orderBy('created_at', 'asc').execute();
+    return this.#db.selectFrom('job_checkpoints').selectAll().where('job_id', '=', jobId).orderBy('created_at', 'asc').orderBy('step_name', 'asc').execute();
   }
 }
