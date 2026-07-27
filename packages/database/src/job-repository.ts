@@ -6,6 +6,7 @@
 //
 // The app role holds SELECT + INSERT + a column-scoped `UPDATE(state, updated_at, attempts)`. Nothing here writes
 // `account_id`/`company_id`/`kind`/`payload` after insert, and nothing could: the grant does not permit it.
+import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 import type { DatabaseSchema, JobRow, JobCheckpointRow } from './schema.js';
 
@@ -31,6 +32,17 @@ export interface NewJobCheckpointInput {
   readonly stepName: string;
   /** What the step produced for a later step. References, NEVER secrets. Absent/null for most steps. */
   readonly output?: Record<string, unknown> | null;
+}
+
+/** What a caller supplies to record the outcome of a failed attempt (ACBP-P5-001c). */
+export interface RecordAttemptOutcomeInput {
+  readonly jobId: string;
+  /** The state the job must currently be in. A mismatch means someone else decided its fate first. */
+  readonly expectedState: string;
+  /** Where it goes next - queued for a scheduled retry, dead_letter when the cap is reached. */
+  readonly nextState: string;
+  /** CLOSED category. Only meaningful on the dead-letter transition; the DB CHECK enforces that pairing. */
+  readonly failureReason?: string | null;
 }
 
 export class JobRepository {
@@ -75,6 +87,40 @@ export class JobRepository {
 
   findById(id: string): Promise<JobRow | undefined> {
     return this.#db.selectFrom('jobs').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  // ── retry / dead-letter (ACBP-P5-001c; CDR-052) ──────────────────────────────────────────────────────────
+
+  /**
+   * Record a failed attempt: bump `attempts` and set the next state, in ONE statement.
+   *
+   * The increment is done IN SQL (`attempts + 1`) rather than by reading, adding one and writing back. Two workers
+   * that both read `attempts = 2` would both write `3`, and the job would get one extra attempt for every concurrent
+   * failure — a cap that leaks under exactly the load that makes retries matter. Doing it in the statement makes the
+   * database the arbiter.
+   *
+   * GUARDED on the expected current state so a job that moved on (cancelled by an owner, already dead-lettered) is
+   * not dragged back. Returns undefined when the guard did not match, which the caller must treat as "someone else
+   * decided this job's fate", never as success.
+   */
+  recordAttemptOutcome(input: RecordAttemptOutcomeInput): Promise<JobRow | undefined> {
+    return this.#db
+      .updateTable('jobs')
+      .set({
+        state: input.nextState,
+        attempts: sql<number>`attempts + 1`,
+        failure_reason: input.failureReason ?? null,
+        updated_at: sql<Date>`now()`,
+      })
+      .where('id', '=', input.jobId)
+      .where('state', '=', input.expectedState)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /** The Decision Room blocked queue: dead-lettered jobs for this company, newest first. RLS-confined. */
+  listDeadLettered(limit: number): Promise<JobRow[]> {
+    return this.#db.selectFrom('jobs').selectAll().where('state', '=', 'dead_letter').orderBy('updated_at', 'desc').limit(limit).execute();
   }
 
   // ── checkpoints (ACBP-P5-001b; CDR-050) ──────────────────────────────────────────────────────────────────

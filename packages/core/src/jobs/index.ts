@@ -3,3 +3,5 @@ export { enqueueJob } from './enqueue-job.js';
 export type { EnqueueJobParams, EnqueueJobOptions, EnqueueJobResult, EnqueuedJob } from './enqueue-job.js';
 export { runJobStep, getResumeState, DuplicateStepExecutionError } from './checkpoint.js';
 export type { RunJobStepParams, RunJobStepResult, GetResumeStateParams, GetResumeStateResult, JobStep, JobStepContext, CheckpointOptions } from './checkpoint.js';
+export { recordJobFailure, listBlockedJobs } from './retry.js';
+export type { RecordJobFailureParams, RecordJobFailureResult, ListBlockedJobsParams, ListBlockedJobsResult, BlockedJobDTO, RetryOptions } from './retry.js';

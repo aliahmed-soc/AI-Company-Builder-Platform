@@ -94,6 +94,7 @@ describe('event-name registry (deny unregistered)', () => {
       'interview.started',
       // Durable job enqueue (ACBP-P5-001a; CDR-049 §4) — the first entry in a job's run trail.
       'job.enqueued',
+      'job.dead_lettered',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.

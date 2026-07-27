@@ -783,6 +783,11 @@ export interface JobsTable {
   payload: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, never>;
   /** Attempt counter. P5-001c owns the cap; the column is declared now so b/c extend rather than reshape. */
   attempts: ColumnType<number, number | undefined, number>;
+  /**
+   * Why a dead-lettered job failed (ACBP-P5-001c). CLOSED category, never provider text. Nullable, and its CHECK is
+   * one-directional: a reason implies dead_letter, but history without one stays legal.
+   */
+  failure_reason: ColumnType<string | null, never, string | null>;
   /** Unique per company WHEN PRESENT — the same logical job enqueued twice is one row (TASK-009/NFR-006). */
   idempotency_key: ColumnType<string | null, string | null | undefined, never>;
   created_by_user_id: ColumnType<string, string, never>;
