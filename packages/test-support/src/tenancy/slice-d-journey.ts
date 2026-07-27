@@ -283,7 +283,7 @@ export async function runSliceDJourney(deps: SliceDJourneyDeps): Promise<{ reado
 
   // No payload may carry content. Checked against the strings the journey ACTUALLY wrote, so a rename here cannot make
   // the check vacuously pass.
-  const payloads = await sql<{ blob: string }>`select coalesce(metadata::text, '') || coalesce(subject_id::text, '') as blob from audit_events where company_id = ${companyId}::uuid`.execute(owner.kysely);
+  const payloads = await sql<{ blob: string }>`select coalesce(payload::text, '') || coalesce(subject_id::text, '') || name as blob from audit_events where company_id = ${companyId}::uuid`.execute(owner.kysely);
   const forbidden = ['Interview ten clinics', 'Map competing schedulers', 'Draft the pricing page', 'Superseded by the newer plan.', 'small veterinary clinics', 'Sells scheduling software'];
   const leaked = forbidden.filter((needle) => payloads.rows.some((r) => r.blob.includes(needle)));
   if (leaked.length > 0) return bail('audit payloads carry no content', 'Trail verified', `content leaked into audit metadata: ${leaked.join(' | ')}`);

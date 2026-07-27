@@ -84,8 +84,11 @@ The sequence, each step naming the requirement it evidences:
 
 - **G9 — the audit assertion is on the SET of events the journey should have produced, in order**, not on a count.
   A count passes when the right number of wrong events fire. The expected names are
-  `strategy.generated` → `strategy.selected` → `decision.recorded` → `roadmap.generated` → `task.planned`(×n) →
-  `task.created`(×n) → `task.repeated` → `task.deleted`.
+  `understanding.confirmed` → `strategy.generated` → `strategy.selected` → `decision.recorded` →
+  `roadmap.generated` → `task.created`(×n) → `task.deleted` → `task.repeated`.
+  (An earlier draft of this line also listed `task.planned`. **No such event is registered** — confirming a draft
+  emits `task.created`, which is CDR-033 §4's deliberate choice: a draft is not on the board, so the event that
+  matters is the one marking its arrival there. The journey asserts the registered names only.)
 - **G10 — no event payload may carry content.** The journey asserts the absence of the company name, the task titles
   and the deletion reason text from every audit row it produced — the same check Slice B makes for interview content.
 
