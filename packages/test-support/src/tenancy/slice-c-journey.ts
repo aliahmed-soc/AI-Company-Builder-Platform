@@ -227,7 +227,10 @@ export async function runSliceCJourney(deps: SliceCJourneyDeps): Promise<{ reado
     select count(*)::int as n, kind, outcome, max(model) as model, max(provider) as provider
     from usage_events where account_id = ${accountId}::uuid group by kind, outcome
   `.execute(owner.kysely);
-  const successRows = usage.rows.filter((r) => r.outcome === 'success');
+  // `ok`, not `success`: usage_events uses ('ok' | 'error') while audit_events uses ('success' | 'denied' | 'blocked').
+  // The two vocabularies are deliberately different and easy to conflate — asserting the wrong one silently matches
+  // nothing, which is how this read zero rows on its first CI run.
+  const successRows = usage.rows.filter((r) => r.outcome === 'ok');
   const metered = successRows.reduce((sum, r) => sum + r.n, 0);
   if (metered < 5) return bail('usage verified', 'Usage verified', `expected one metered success per model call (≥5), got ${metered} across ${usage.rows.length} group(s)`);
   if (successRows.some((r) => r.model === null || r.provider === null)) return bail('usage verified', 'Usage verified', 'a metered call recorded no model/provider — the ledger cannot be reconciled');
