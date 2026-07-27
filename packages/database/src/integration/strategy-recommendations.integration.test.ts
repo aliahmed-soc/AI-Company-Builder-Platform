@@ -60,7 +60,7 @@ describe.skipIf(!hasTestDatabase)('strategy_recommendations (real PostgreSQL, re
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of [...ALL, '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of [...ALL, '_acbp_migration_probe', 'tool_definitions', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     expect((await migrateToLatest(su)).error).toBeUndefined();

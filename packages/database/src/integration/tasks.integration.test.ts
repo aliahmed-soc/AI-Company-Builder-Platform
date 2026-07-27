@@ -81,7 +81,7 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of [...ALL, '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of [...ALL, '_acbp_migration_probe', 'tool_definitions', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
