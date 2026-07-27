@@ -12,6 +12,11 @@
 // (that would be a workspace-graph cycle). Both callers may import core and supply the real functions, keeping the
 // shared journey cycle-free and the demo drift-free.
 import type { DatabaseClient } from '@acbp/database';
+// The decision request is typed against the REAL contract rather than `unknown`. It was `unknown` first, and the
+// compiler therefore could not catch `optionOrdinal` where the contract says `selectedOrdinal` — CI did, three
+// minutes into a real-PostgreSQL run. @acbp/contracts is zero-dep and already a test-support dependency, so there is
+// no reason to hand-roll a looser shape here.
+import type { StrategyDecisionRequest } from '@acbp/contracts';
 import { sql } from 'kysely';
 import type { JourneyStep } from './slice-a-journey.js';
 
@@ -35,7 +40,7 @@ export interface SliceDOps {
   generateUnderstanding(c: DatabaseClient, p: Ids, o: { gateway: SliceDGateway }): Promise<Status<{ document: { documentId: string; version: number } }>>;
   confirmUnderstanding(c: DatabaseClient, p: Ids & { expectedVersion: number }): Promise<Status>;
   generateStrategyOptions(c: DatabaseClient, p: Ids, d: { gateway: SliceDGateway }): Promise<Status<{ generation: { generationId: string; options: ReadonlyArray<{ optionId: string; ordinal: number }> } }>>;
-  recordStrategyDecision(c: DatabaseClient, p: Ids & { generationId: string; request: unknown }, d: object): Promise<Status<{ selection: { selectionId: string } }>>;
+  recordStrategyDecision(c: DatabaseClient, p: Ids & { generationId: string; request: StrategyDecisionRequest }, d: object): Promise<Status<{ selection: { selectionId: string } }>>;
   recordDecision(c: DatabaseClient, p: Ids & { generationId: string; selectionId: string; rationale?: unknown }, d: object): Promise<Status<{ decision: { decisionId: string } }>>;
   generateRoadmap(c: DatabaseClient, p: Ids, d: { gateway: SliceDGateway }): Promise<Status<{ roadmap: { roadmapId: string; version: number; goals: ReadonlyArray<unknown>; milestones: ReadonlyArray<{ milestoneId: string; ordinal: number }> } }>>;
   generateTasks(c: DatabaseClient, p: Ids, d: { gateway: SliceDGateway }): Promise<Status<{ tasks: ReadonlyArray<{ taskId: string }>; runId?: string }>>;
@@ -173,7 +178,7 @@ export async function runSliceDJourney(deps: SliceDJourneyDeps): Promise<{ reado
   record('strategy options generated, distinct', 'STRAT-001/002', true, `${optionCount} options survived the distinctness check`);
 
   // ── 3. owner selection, phase-limited ──────────────────────────────────────────────────────────────────
-  const selection = await ops.recordStrategyDecision(product, { ...ids, generationId: strategy.generation.generationId, request: { mode: 'select', optionOrdinal: 0, phaseScope: 'first_phase' } }, {});
+  const selection = await ops.recordStrategyDecision(product, { ...ids, generationId: strategy.generation.generationId, request: { mode: 'select', selectedOrdinal: 0, phaseScope: 'first_phase' } }, {});
   if (selection.status !== 'ok' || selection.selection === undefined) return bail('owner selects an option', 'STRAT-003/005', `expected ok, got ${selection.status}`);
   record('owner selects a phase-limited option', 'STRAT-003/005', true, 'mode=select, phase_scope=first_phase — approval is bounded to the first phase');
 
