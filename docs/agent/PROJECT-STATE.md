@@ -9,6 +9,30 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P4-007 Slice D integration: planned work — CORE DONE / FINALIZING (6th autonomous window).**
+  Branch `p4-007-slice-d-planned-work` (from main `d517203`, after P4-005 merged), draft PR **#44**, CDR-044.
+  The **M4 milestone exit**: confirmed understanding → strategy → selection → decision → roadmap → tasks → board →
+  detail → controls, fourteen steps each naming the requirement it evidences. Builds NO new product behaviour —
+  no migration, no authz action, no audit event, no route, no UI.
+  **The shape (CDR-044 §2, the CDR-031 precedent):** `runSliceDJourney` is implemented ONCE in `@acbp/test-support`
+  and driven by both the CI suite and `pnpm demo:slice-d`, so the demo can never drift from the guarantee. The use
+  cases are INJECTED (test-support importing core would be a workspace-graph cycle) and the structural `SliceDOps`
+  is satisfied by the real functions with **no cast**.
+  Everything runs on the restricted `acbp_app` connection under FORCE RLS; the owner connection may only inspect
+  evidence or set up a precondition the product cannot yet reach (G3, refined in review).
+  Commits: CDR `4e5a727` → journey + suite `0d4137c` → request typing `5869dda` → real DTOs `e1f047b` →
+  payload column `da5efbc` → step count `722799a` → demo + doc `48aaded` → review passes `ae04902`.
+  **Both review passes returned FAIL.** Pass 1: the journey mutated product state on the OWNER connection under a
+  rule that said inspection-only — resolved by stating the real rule rather than letting the code diverge; plus a
+  dead `listTasks` injection. Pass 2: "status inspectable" was asserted as "placed somewhere", which passes on a
+  board that buckets every task WRONGLY — now asserts `planned` tasks appear in `to_do` specifically.
+  **Process finding worth more than the bugs:** three CI failures were each one field name, two sharing a root cause
+  — a hand-rolled structural subset allowed to be wrong. An OPTIONAL `blockedByDependency?: boolean` left the real
+  `TaskBoardDTO` assignable, so the compiler was satisfied while the filter read `undefined`. The shapes are now
+  aliases of the real contract DTOs. See `docs/implementation/P4-007-REVIEW-COVERAGE.md`.
+  Exact-head CI green zero-skip **1946/1946** at `ae04902`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch. **Phase 4 complete (7/7).**
+- **ACBP-P4-005 task detail and controls — DONE** (squash `d517203`, PR #43; exact-main CI green zero-skip 1945/1945; branch deleted). Phase 4 6/7.
 - **ACBP-P4-005 task detail and controls — CORE DONE / FINALIZING (6th autonomous window).**
   Branch `p4-005-task-detail-and-controls` (from main `0a9aa08`, after P4-004 merged), draft PR **#43**, CDR-043.
   TASK-002's detail view + TASK-008's repeat/delete controls. Migration **0029** adds `task_deletions` (company-owned,
