@@ -561,3 +561,66 @@ one of those is a separate gate, so the sub-scope stops here rather than self-me
 
 Continuing to **P5-001b** (checkpoints and resume) would build on an unmerged branch. I am proceeding to the next
 independent unblocked work instead, and will return to b/c when a is merged.
+
+---
+
+## FLAG — ACBP-P5-003a stopped, one product-semantics question canon does not answer
+
+Raised under the owner's 2026-07-27 instruction: *"flag anything in these four where you have even minor doubt rather
+than proceeding past it."* This is not a minor doubt — it is P5-003a's entire deliverable.
+
+**The question: what is the closed set of tool risk classes, and in what order?**
+
+P5-003a's ratified scope is *"tool definitions, the closed risk-class set, and unclassified => most restrictive"*.
+Two accepted requirements depend on that set existing:
+
+- **TOOL-001** — *"Risk class mandatory; unclassified = most restrictive"*
+- **APPR-001** — *"Class drives defaults"*
+
+Both presuppose an **ordered** set: "most restrictive" is meaningless without one. After a thorough search, canon
+names classes only **by example, never as an enumeration**:
+
+| Source | What it says |
+|---|---|
+| AI-AND-WORKER-ARCHITECTURE.md:41 | MVP workers run *"informational / internal-reversible risk classes only"* |
+| AI-AND-WORKER-ARCHITECTURE.md:37 | `web_research` is *"read-only, informational class"* |
+| WORKFLOW-STATE-MACHINES.md:75 | *"e.g., informational class at L2"* |
+| TECHNICAL-ARCHITECTURE-v1.md:153, EVENT-CATALOG.md:179, ENGINEERING-STANDARDS.md:19 | *"external risk classes"* / *"external-effect"* — treated as ONE undifferentiated group |
+| ADR-012 | *"declared side-effect class and risk class"* — names the concept, not the values |
+
+So canon settles two class names and one unsplit group, and never states the order. diagrams/07,
+COMPONENT-CATALOG, APPROVAL-AND-POLICY-ARCHITECTURE and the ADRs add nothing further.
+
+**Why I will not simply pick a set.** These names become the platform's authorization vocabulary. They are the input
+to the P6-001 policy decision function, they drive APPR-005 approval expiry defaults, and they decide which calls
+require idempotency keys (NFR-006). Inventing them here means every one of those later tickets inherits a vocabulary
+no one approved — the definition of silently inventing a requirement, which the charter forbids. It is also not a
+safely reversible guess: renaming a risk class after policies reference it is a data migration across trust-critical
+tables.
+
+### Proposed set, so you have something to approve or edit rather than a blank page
+
+Ordered least to most restrictive. Every name below is either canon's own word or a split of canon's "external" group.
+
+| # | Proposed class | Meaning | Canon basis | Consequences it would drive |
+|---|---|---|---|---|
+| 1 | `informational` | Reads only; changes nothing anywhere. `web_research`, `memory_read`. | Canon's own term | Never approval-gated; no idempotency key |
+| 2 | `internal_reversible` | Writes only inside the platform, and the write can be undone. `artifact_write`. | Canon's own term | Not approval-gated by default; policy-evaluated |
+| 3 | `external_reversible` | Visible outside the platform but retractable (e.g. an unpublished draft). | **A split of canon's "external"** | Approval-gated; idempotency key REQUIRED |
+| 4 | `external_irreversible` | Leaves the platform and cannot be taken back — sends, payments, deploys, deletions. | **A split of canon's "external"**, matching the PRD-lineage "irreversible, legally binding, paid, externally visible" language | Always approval-gated; idempotency key REQUIRED; receipt REQUIRED for a success claim (invariant 20) |
+
+**Unclassified maps to #4**, the most restrictive — that is TOOL-001 stated directly.
+
+**The one place I am genuinely guessing is the 3/4 split.** Canon has a single "external" notion. Splitting it is
+defensible (retractable and unretractable external effects deserve different approval defaults) but it is an addition,
+not a reading. **A three-class set — `informational`, `internal_reversible`, `external` — is equally consistent
+with canon and simpler**, and MVP is structurally zero-external-actions either way, so nothing in the MVP exercises
+the difference. I lean to the four-class set because collapsing it later is easy and splitting it later is a migration
+across policy rows, but this is your call, not mine.
+
+**What unblocks P5-003a:** name the set and its order (approve one of the two above, or state your own). Nothing else
+about P5-003 is unclear — the dispatcher chokepoint, deny-by-default allowlist, 100% call records and injection
+boundary are all fully specified.
+
+**Not stopping overall.** P5-003b and P5-003c both consume this set, so all three sub-scopes wait on it. I am
+proceeding to **ACBP-P5-001b** (checkpoints and resume), which needs no owner input.
