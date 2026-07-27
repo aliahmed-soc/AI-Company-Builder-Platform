@@ -9,7 +9,7 @@
 // database is involved and the whole thing runs locally. That matters — the properties below are the ones a future
 // change is most likely to break, and a test that only runs in CI is a test that gets discovered late.
 import { describe, test, expect } from 'vitest';
-import { toModelId, type ModelGatewayRequest, type NewModelCallUsageEvent } from '@acbp/contracts';
+import { toModelId, MAX_REASK_ATTEMPTS, type ModelGatewayRequest, type NewModelCallUsageEvent } from '@acbp/contracts';
 import { FakeModelProvider } from '@acbp/adapters';
 import { callModel, type ModelGatewayDeps, type ResolvedProvider } from './model-gateway.js';
 
@@ -62,22 +62,16 @@ function harness(over: { maxReask?: number; maxRetries?: number; recordUsage?: (
   return { deps, fake, events };
 }
 
-/** A well-formed gateway request. `extraction` is a structured-output class, which is the case under test. */
-const request: ModelGatewayRequest = {
-  taskClass: 'extraction',
-  timeoutClass: 'interactive',
-  templateRef: 'test.template@1',
-  contextParts: [{ role: 'user', content: 'go' }],
-  outputSchemaRef: SCHEMA_REF,
-  companyId: '00000000-0000-0000-0000-0000000000c0',
-  accountId: '00000000-0000-0000-0000-0000000000a0',
-};
 /**
- * The same request with NO schema ref — validation must not apply.
+ * The free-text request is the BASE and the structured one is derived from it, rather than the two being written out
+ * side by side. Written separately they can drift — and the drift would be invisible, because the whole point of the
+ * opt-in test is that it differs from `request` in exactly one way. Deriving makes "exactly one way" structural.
  *
- * The key is OMITTED rather than set to `undefined`: the repo runs `exactOptionalPropertyTypes`, under which those
- * are different things, and "the caller supplied no schema" is the case under test. Spreading an explicit
- * `undefined` would not even compile, which is the setting doing its job.
+ * The schema key is ADDED rather than set to `undefined` on a copy: the repo runs `exactOptionalPropertyTypes`,
+ * under which absent and `undefined` are different things, and "the caller supplied no schema" is the case under
+ * test. Spreading an explicit `undefined` does not compile, which is that setting doing its job.
+ *
+ * `extraction` is a structured-output task class, which is the case this suite is about.
  */
 const freeTextRequest: ModelGatewayRequest = {
   taskClass: 'extraction',
@@ -87,6 +81,8 @@ const freeTextRequest: ModelGatewayRequest = {
   companyId: '00000000-0000-0000-0000-0000000000c0',
   accountId: '00000000-0000-0000-0000-0000000000a0',
 };
+/** The same call, now asking for a validated structured output. */
+const request: ModelGatewayRequest = { ...freeTextRequest, outputSchemaRef: SCHEMA_REF };
 
 describe('structured-output conformance (ACBP-P5-010; NFR-007) — the guarantees P2-003 already implements', () => {
   test('an invalid output is RE-ASKED, not retried — the two budgets are not interchangeable', async () => {
@@ -104,7 +100,7 @@ describe('structured-output conformance (ACBP-P5-010; NFR-007) — the guarantee
     // is inside that cap. Asserting `N + 1` for an arbitrary N would be asserting the ABSENCE of the cap — which is
     // the opposite of NFR-007, and is how the first draft of this test failed: it expected 4 calls for maxReask=3
     // and got 2, because the clamp was doing its job.
-    for (const n of [0, 1]) {
+    for (let n = 0; n <= MAX_REASK_ATTEMPTS; n += 1) {
       const { deps, fake } = harness({ maxReask: n, maxRetries: 0 });
       await callModel(deps, request);
       expect(fake.callCount, `maxReask=${n}`).toBe(n + 1);
@@ -114,10 +110,12 @@ describe('structured-output conformance (ACBP-P5-010; NFR-007) — the guarantee
   test('a caller CANNOT unbound the re-ask budget through configuration (NFR-007: no unlimited retries)', async () => {
     // The bound is a platform guarantee, not a caller's choice. A huge value clamps to the platform maximum, and a
     // negative one clamps to zero rather than wrapping into an unbounded loop.
-    // 10_000 must NOT mean 10_001 calls. It clamps to the platform maximum of one re-ask ⇒ two calls total.
+    // 10_000 must NOT mean 10_001 calls. It clamps to the platform maximum ⇒ MAX_REASK_ATTEMPTS + 1 calls total.
+    // DERIVED from the exported constant, not hardcoded: writing `2` here would encode the cap in a second place, so
+    // a deliberate change to it would fail this test with no pointer to what actually moved.
     const huge = harness({ maxReask: 10_000, maxRetries: 0 });
     await callModel(huge.deps, request);
-    expect(huge.fake.callCount).toBe(2);
+    expect(huge.fake.callCount).toBe(MAX_REASK_ATTEMPTS + 1);
 
     const negative = harness({ maxReask: -5, maxRetries: 0 });
     await callModel(negative.deps, request);

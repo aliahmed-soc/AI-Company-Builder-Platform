@@ -56,7 +56,12 @@ Each of these is a property that would silently regress and that nothing current
    succeeded first time. A re-asked bad output really cost tokens, and an unmetered re-ask is a free retry the ledger
    cannot see.
 6. **Metering stays fail-closed on the invalid path** — a metering-write failure must abort rather than yield
-   un-metered usage, exactly as on the success path.
+   un-metered usage, exactly as on the success path. Otherwise the cheapest way to hide usage would be to make the
+   call fail.
+7. **Validation is OPT-IN** — a call with no `outputSchemaRef` returns the raw output and is never failed as
+   `invalid_output`. *Added during the first review pass:* the suite pinned this and §3 did not list it, so the CDR
+   under-described its own deliverable. It guards the other direction, and without it a change that made validation
+   unconditional would pass every one of the six above while breaking every free-text caller.
 
 ## 4. "Invalid output cannot complete a task" is GROUNDWORK, and this CDR says so plainly
 
