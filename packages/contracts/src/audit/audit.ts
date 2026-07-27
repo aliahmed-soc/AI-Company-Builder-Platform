@@ -154,6 +154,13 @@ export const AUDIT_EVENTS = {
   // Dead-letter (ACBP-P5-001c; CDR-052; NFR-007). AUDITED in-tx with the terminal transition: a job that stopped
   // retrying and vanished from the run trail is exactly the case someone needs explained. Bounded metadata
   // {kind, attempts, reason} - the reason is a CLOSED category, never provider exception text, and never the payload.
+  // Task runs (ACBP-P5-002; CDR-053; EVENT-CATALOG). Three RUN-DRIVEN task transitions, audited in-tx with the run
+  // state change ("Transitions audited"). 	ask.completed is DELIBERATELY NOT here: canon requires artifact_refs[]
+  // on it ("no artifactless completion", TASK-005), and a run succeeding is not the same fact as a task completing -
+  // the task completes when its artifact is persisted, which belongs to the ticket that owns artifacts.
+  'task.started': { schemaVersion: 1, subjectType: 'task' },
+  'task.failed': { schemaVersion: 1, subjectType: 'task' },
+  'task.cancelled': { schemaVersion: 1, subjectType: 'task' },
   'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
 } as const;
 
@@ -506,6 +513,34 @@ export function taskDeleted(input: { readonly taskId: string; readonly stateAtDe
  */
 export function jobEnqueued(input: { readonly jobId: string; readonly kind: string; readonly deduplicated: boolean }): AuditEvent {
   return makeEvent('job.enqueued', input.jobId, 'success', { kind: input.kind, deduplicated: input.deduplicated });
+}
+
+/**
+ * A run began (ACBP-P5-002). Subject = the TASK, per EVENT-CATALOG, with the run and attempt as metadata: a reader
+ * asking "what happened to this task" wants one thread, not one per attempt.
+ */
+export function taskStarted(input: { readonly taskId: string; readonly runId: string; readonly attempt: number }): AuditEvent {
+  return makeEvent('task.started', input.taskId, 'success', { run_id: input.runId, attempt: input.attempt });
+}
+
+/**
+ * A run failed (ACBP-P5-002; TASK-006 "no blank failures" - which means a CATEGORY, never a stack trace).
+ *
+ * EVENT-CATALOG also lists etry_state; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
+ * schema version 2 rather than being guessed at here.
+ */
+export function taskFailed(input: { readonly taskId: string; readonly runId: string; readonly attempt: number; readonly failureCategory: string }): AuditEvent {
+  return makeEvent('task.failed', input.taskId, 'blocked', { run_id: input.runId, attempt: input.attempt, failure_category: input.failureCategory });
+}
+
+/**
+ * A run was cancelled (ACBP-P5-002; TASK-007). phase is canon's own distinction - queued cancels instantly,
+ * unning is a bounded safe-stop - and it is the field that makes the two operations distinguishable after the
+ * fact. EVENT-CATALOG lists cancelled_by; that is the SERVER-STAMPED audit actor, and copying it into the payload
+ * would let the two disagree.
+ */
+export function taskCancelled(input: { readonly taskId: string; readonly runId: string; readonly phase: string }): AuditEvent {
+  return makeEvent('task.cancelled', input.taskId, 'success', { run_id: input.runId, phase: input.phase });
 }
 
 /**

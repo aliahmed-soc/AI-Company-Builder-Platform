@@ -45,6 +45,9 @@ import {
   planningRunRecorded,
   jobEnqueued,
   jobDeadLettered,
+  taskStarted,
+  taskFailed,
+  taskCancelled,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -102,6 +105,10 @@ export const AUDITED_OPERATIONS = {
   'job.enqueue': 'job.enqueued',
   // Dead-letter (ACBP-P5-001c; CDR-052; NFR-007) - the retry cap was reached and the job stopped.
   'job.dead_letter': 'job.dead_lettered',
+  // Task runs (ACBP-P5-002; CDR-053) - the run-driven task transitions the coordinator writes.
+  'run.start': 'task.started',
+  'run.fail': 'task.failed',
+  'run.cancel': 'task.cancelled',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -121,6 +128,7 @@ export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
 export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
 export type JobAuditedOperation = 'job.enqueue' | 'job.dead_letter';
+export type RunAuditedOperation = 'run.start' | 'run.fail' | 'run.cancel';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -134,10 +142,11 @@ export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[]
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
 export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
 export const JOB_AUDITED_OPERATION_IDS: readonly JobAuditedOperation[] = ['job.enqueue', 'job.dead_letter'];
+export const RUN_AUDITED_OPERATION_IDS: readonly RunAuditedOperation[] = ['run.start', 'run.fail', 'run.cancel'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -228,6 +237,12 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => jobEnqueued({ jobId: subjectId, kind: 'understanding.generate', deduplicated: false });
     case 'job.dead_letter':
       return (subjectId) => jobDeadLettered({ jobId: subjectId, kind: 'understanding.generate', attempts: 3, reason: 'attempts_exhausted' });
+    case 'run.start':
+      return (subjectId) => taskStarted({ taskId: subjectId, runId: subjectId, attempt: 1 });
+    case 'run.fail':
+      return (subjectId) => taskFailed({ taskId: subjectId, runId: subjectId, attempt: 1, failureCategory: 'worker_lost' });
+    case 'run.cancel':
+      return (subjectId) => taskCancelled({ taskId: subjectId, runId: subjectId, phase: 'queued' });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

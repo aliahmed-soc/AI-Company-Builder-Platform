@@ -74,6 +74,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'job:enqueue': ['owner'],
   // Step execution (ACBP-P5-001b; CDR-050): owner-only, same reading as enqueue.
   'job:execute': ['owner'],
+  // Task runs (ACBP-P5-002; CDR-053): execute is the worker's, cancel is the owner's. Both owner-only today.
+  'run:execute': ['owner'],
+  'run:cancel': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

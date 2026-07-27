@@ -136,6 +136,11 @@ export const AUTHZ_ACTIONS = [
   // future tightening — or granting it to a worker identity that may execute but never enqueue — a one-line policy
   // change instead of a refactor.
   'job:execute',
+  // Task runs (ACBP-P5-002; CDR-053). TWO actions, split on the P5-001b precedent and for a sharper reason: a WORKER
+  // must be able to start, heartbeat and finish a run, and must NEVER be able to cancel one - cancellation is the
+  // owner's decision (API-CONTRACTS: run control is 'Owner/operator'). One action could not express that.
+  'run:execute',
+  'run:cancel',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -255,6 +260,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // reading. When P5-002 introduces a worker identity, THAT is what should hold this action — which is precisely the
   // change a separate action makes cheap.
   'job:execute': ['owner'],
+  // Task runs (ACBP-P5-002; CDR-053). Both owner-only today. When P5-002's worker identity lands, run:execute is
+  // what it receives - and run:cancel is precisely what it must not: cancelling is the owner's decision, and a
+  // worker able to cancel its own run could hide work it had been told to stop.
+  'run:execute': ['owner'],
+  'run:cancel': ['owner'],
 };
 
 /**

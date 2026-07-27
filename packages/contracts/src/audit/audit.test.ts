@@ -95,6 +95,10 @@ describe('event-name registry (deny unregistered)', () => {
       // Durable job enqueue (ACBP-P5-001a; CDR-049 §4) — the first entry in a job's run trail.
       'job.enqueued',
       'job.dead_lettered',
+      // Task runs (ACBP-P5-002; CDR-053) - the three RUN-DRIVEN task transitions.
+      'task.started',
+      'task.failed',
+      'task.cancelled',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
