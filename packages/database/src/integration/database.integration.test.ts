@@ -163,6 +163,8 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     expect(names).toContain('activity_events');
     // `usage_events` now exists (ACBP-P2-003, migration 0017 — the model-gateway usage ledger).
     expect(names).toContain('usage_events');
+    // `tool_definitions` now exists (ACBP-P5-003a, migration 0033 - GLOBAL, not tenant-scoped).
+    expect(names).toContain('tool_definitions');
     // `understanding_documents` + `understanding_items` now exist (ACBP-P2-008, migration 0019).
     expect(names).toContain('understanding_documents');
     expect(names).toContain('understanding_items');
