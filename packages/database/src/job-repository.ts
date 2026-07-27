@@ -7,7 +7,7 @@
 // The app role holds SELECT + INSERT + a column-scoped `UPDATE(state, updated_at, attempts)`. Nothing here writes
 // `account_id`/`company_id`/`kind`/`payload` after insert, and nothing could: the grant does not permit it.
 import type { Kysely } from 'kysely';
-import type { DatabaseSchema, JobRow } from './schema.js';
+import type { DatabaseSchema, JobRow, JobCheckpointRow } from './schema.js';
 
 export type JobExecutor = Kysely<DatabaseSchema>;
 
@@ -21,6 +21,16 @@ export interface NewJobInput {
   /** Absent/null when the job is not deduplicable; unique per company when present (TASK-009/NFR-006). */
   readonly idempotencyKey?: string | null;
   readonly createdByUserId: string;
+}
+
+/** What a caller supplies to record a completed step (ACBP-P5-001b). Identity and time are server-set. */
+export interface NewJobCheckpointInput {
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly jobId: string;
+  readonly stepName: string;
+  /** What the step produced for a later step. References, NEVER secrets. Absent/null for most steps. */
+  readonly output?: Record<string, unknown> | null;
 }
 
 export class JobRepository {
@@ -65,5 +75,39 @@ export class JobRepository {
 
   findById(id: string): Promise<JobRow | undefined> {
     return this.#db.selectFrom('jobs').selectAll().where('id', '=', id).executeTakeFirst();
+  }
+
+  // ── checkpoints (ACBP-P5-001b; CDR-050) ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Record that a step COMPLETED. Called in the SAME transaction as the step's effect (CDR-050 §3-G5), so a crash can
+   * never leave the effect landed and the record missing — which is the case that would cause a re-run to execute it
+   * twice.
+   *
+   * `ON CONFLICT (job_id, step_name) DO NOTHING` makes a duplicate completion the SAME FACT rather than a second row,
+   * so the race between two workers that both believe they own the step resolves at the database instead of in a
+   * check-then-insert that would itself race. Scoped to the exact constraint, never a blanket 23505.
+   *
+   * Returns the row when this call created it, and `undefined` when it was already there — which is the caller's
+   * signal that someone else completed the step first.
+   */
+  insertCheckpoint(input: NewJobCheckpointInput): Promise<JobCheckpointRow | undefined> {
+    return this.#db
+      .insertInto('job_checkpoints')
+      .values({
+        account_id: input.accountId,
+        company_id: input.companyId,
+        job_id: input.jobId,
+        step_name: input.stepName,
+        output: input.output ?? null,
+      })
+      .onConflict((oc) => oc.columns(['job_id', 'step_name']).doNothing())
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /** Every checkpoint for a job, oldest first. RLS confines this to the caller's company. */
+  listCheckpoints(jobId: string): Promise<JobCheckpointRow[]> {
+    return this.#db.selectFrom('job_checkpoints').selectAll().where('job_id', '=', jobId).orderBy('created_at', 'asc').execute();
   }
 }

@@ -790,6 +790,24 @@ export interface JobsTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/**
+ * Job checkpoints (ACBP-P5-001b; CDR-050; NFR-005). APPEND-ONLY: a checkpoint records that a STEP COMPLETED, so its
+ * PRESENCE is what makes re-execution unnecessary — every column is 
+ever on update, matching the SELECT+INSERT
+ * grant. Written in the SAME transaction as the step's effect, so a crash can never leave the effect landed and the
+ * record missing (CDR-050 §3-G5).
+ */
+export interface JobCheckpointsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  job_id: ColumnType<string, string, never>;
+  /** The completed step. Bounded, but NOT a closed DB set — steps belong to job kinds (the jobs.kind precedent). */
+  step_name: ColumnType<string, string, never>;
+  /** What the step produced for a later step. References, NEVER secrets (ADR-008 §11). */
+  output: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -828,6 +846,7 @@ export interface DatabaseSchema {
   planning_run_inputs: PlanningRunInputsTable;
   task_deletions: TaskDeletionsTable;
   jobs: JobsTable;
+  job_checkpoints: JobCheckpointsTable;
 }
 
 // Repository-facing row shapes.
@@ -908,6 +927,8 @@ export type NewPlanningRun = Insertable<PlanningRunsTable>;
 export type PlanningRunInputRow = Selectable<PlanningRunInputsTable>;
 export type NewPlanningRunInput = Insertable<PlanningRunInputsTable>;
 export type JobRow = Selectable<JobsTable>;
+export type JobCheckpointRow = Selectable<JobCheckpointsTable>;
+export type NewJobCheckpoint = Insertable<JobCheckpointsTable>;
 export type NewJob = Insertable<JobsTable>;
 export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

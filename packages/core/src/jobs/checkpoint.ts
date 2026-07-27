@@ -1,0 +1,195 @@
+// @acbp/core — checkpoints and resume (ACBP-P5-001b; CDR-050; ADR-008; NFR-005).
+//
+// Two use cases:
+//   - runJobStep   — execute a step ONCE, recording the checkpoint in the SAME transaction as its effect;
+//   - getResumeState — what still has to run, computed as the plan minus the checkpoint inventory.
+//
+// THE FAILURE THIS EXCLUDES IS DOUBLE EXECUTION, not a wasteful restart. A step whose effect already landed running a
+// second time after a crash spends budget twice and, once external tools exist (P5-003), repeats an external effect.
+// That is why the checkpoint and the effect share one transaction (CDR-050 §3-G5): a checkpoint written afterwards
+// leaves a window in which the effect landed and the record did not — the exact state a resume must interpret, and
+// the one it cannot interpret correctly.
+import { JobRepository, type DatabaseClient, type JobCheckpointRow } from '@acbp/database';
+import { remainingSteps, planProgress, type PlanProgress } from '@acbp/contracts';
+import { runInCompanyScope } from '../company/company-context-resolver.js';
+import { checkAuthorization } from '../authz/authz-service.js';
+import type { Logger } from '@acbp/observability';
+import type { Transaction } from 'kysely';
+import type { DatabaseSchema } from '@acbp/database';
+
+export interface CheckpointOptions {
+  readonly correlationId?: string;
+  readonly logger?: Logger;
+}
+
+/**
+ * What a step's body receives. Deliberately given the SAME transaction the checkpoint is written in, so a step that
+ * writes to the database is atomic with the record that it ran. A step that throws rolls both back, and the step has
+ * then genuinely not run — which is what makes re-running it correct rather than a double execution.
+ */
+export interface JobStepContext {
+  readonly db: Transaction<DatabaseSchema>;
+  readonly jobId: string;
+  readonly stepName: string;
+  /** Outputs of previously completed steps, keyed by step name. Only steps that recorded one appear. */
+  readonly previousOutputs: Readonly<Record<string, Record<string, unknown>>>;
+}
+
+/** A step returns what a later step needs, or nothing. References, NEVER secrets (ADR-008 §11). */
+export type JobStep = (ctx: JobStepContext) => Promise<Record<string, unknown> | void>;
+
+export interface RunJobStepParams {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly jobId: string;
+  readonly stepName: string;
+  readonly step: JobStep;
+}
+
+export type RunJobStepResult =
+  | { readonly status: 'ok'; readonly output: Record<string, unknown> | null }
+  // ALREADY DONE — the step has a checkpoint, so its effect landed and it was NOT run again. This is a success from
+  // the caller's point of view and the single most important outcome in this file: it is what "kill-and-resume green"
+  // actually means.
+  | { readonly status: 'already_completed'; readonly output: Record<string, unknown> | null }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'job_not_found' };
+
+/**
+ * Run one step of a job exactly once.
+ *
+ * The pre-check and the write are BOTH needed and neither is redundant. The pre-check avoids paying for work already
+ * done — the common case after a crash. The `ON CONFLICT DO NOTHING` write is what makes it CORRECT: between the
+ * pre-check and the insert another worker may complete the same step, and only the database can settle that. If the
+ * insert finds the row already there, this transaction rolls back, so the step's effect is discarded along with it and
+ * the winner's effect is the only one that survives.
+ */
+export async function runJobStep(client: DatabaseClient, params: RunJobStepParams, options: CheckpointOptions = {}): Promise<RunJobStepResult> {
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<RunJobStepResult> => {
+      if (checkAuthorization(role, 'job:enqueue', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+
+      const jobs = new JobRepository(scope.db);
+      // RLS-confined: another company's job is `job_not_found`, never a step run against a foreign job.
+      const job = await jobs.findById(params.jobId);
+      if (job === undefined) return { status: 'job_not_found' };
+
+      const existing = await jobs.listCheckpoints(params.jobId);
+      const done = existing.find((c) => c.step_name === params.stepName);
+      if (done !== undefined) {
+        // Not an error, and emphatically not a re-run. The step's effect is already in the database.
+        options.logger?.info('job.step_already_completed', { metadata: { companyId: params.companyId, stepName: params.stepName } });
+        return { status: 'already_completed', output: done.output };
+      }
+
+      const output = await params.step({
+        db: scope.db,
+        jobId: params.jobId,
+        stepName: params.stepName,
+        previousOutputs: toOutputMap(existing),
+      });
+      const normalized = output === undefined || output === null ? null : output;
+
+      const checkpoint = await jobs.insertCheckpoint({
+        accountId: scope.tenant.accountId,
+        companyId: scope.tenant.companyId,
+        jobId: params.jobId,
+        stepName: params.stepName,
+        output: normalized,
+      });
+      if (checkpoint === undefined) {
+        // Someone else checkpointed this step between our read and our write. Throwing rolls this transaction back,
+        // WHICH IS THE POINT: our step's effect is discarded, leaving exactly one execution — theirs. Returning `ok`
+        // here would commit a second effect for a step the store says ran once.
+        throw new DuplicateStepExecutionError(params.stepName);
+      }
+      return { status: 'ok', output: checkpoint.output };
+    },
+    opts(options),
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
+
+/**
+ * Thrown when a concurrent worker checkpointed the same step first. Its purpose is to ABORT the transaction, so the
+ * losing worker's effect never commits. A caller that sees this should re-read the plan rather than retry blindly:
+ * the step is done.
+ */
+export class DuplicateStepExecutionError extends Error {
+  readonly stepName: string;
+  constructor(stepName: string) {
+    super(`job step already completed concurrently: ${stepName}`);
+    this.name = 'DuplicateStepExecutionError';
+    this.stepName = stepName;
+  }
+}
+
+// ── resume ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+export interface GetResumeStateParams {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly jobId: string;
+  /** The ordered plan. Supplied by the caller, not stored — see CDR-050 §2-G3 on why there is no cursor. */
+  readonly plan: readonly string[];
+}
+
+export type GetResumeStateResult =
+  | {
+      readonly status: 'ok';
+      readonly completedSteps: readonly string[];
+      readonly remainingSteps: readonly string[];
+      readonly progress: PlanProgress;
+      readonly outputs: Readonly<Record<string, Record<string, unknown>>>;
+    }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'job_not_found' };
+
+/**
+ * What still has to run. Pure arithmetic over the plan and the stored inventory (`remainingSteps`), so the resume rule
+ * is testable exhaustively without a database and cannot drift between the two call sites.
+ */
+export async function getResumeState(client: DatabaseClient, params: GetResumeStateParams, options: CheckpointOptions = {}): Promise<GetResumeStateResult> {
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<GetResumeStateResult> => {
+      if (checkAuthorization(role, 'job:enqueue', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+      const jobs = new JobRepository(scope.db);
+      const job = await jobs.findById(params.jobId);
+      if (job === undefined) return { status: 'job_not_found' };
+
+      const checkpoints = await jobs.listCheckpoints(params.jobId);
+      const completed = checkpoints.map((c) => c.step_name);
+      return {
+        status: 'ok',
+        completedSteps: completed,
+        remainingSteps: remainingSteps(params.plan, completed),
+        progress: planProgress(params.plan, completed),
+        outputs: toOutputMap(checkpoints),
+      };
+    },
+    opts(options),
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
+
+/** Step outputs by step name. Steps that recorded nothing are ABSENT rather than present-and-empty. */
+function toOutputMap(checkpoints: readonly JobCheckpointRow[]): Readonly<Record<string, Record<string, unknown>>> {
+  const map: Record<string, Record<string, unknown>> = {};
+  for (const c of checkpoints) {
+    if (c.output !== null) map[c.step_name] = c.output;
+  }
+  return map;
+}
+
+function opts(options: CheckpointOptions): { correlationId?: string; logger?: Logger } {
+  const o: { correlationId?: string; logger?: Logger } = {};
+  if (options.correlationId !== undefined) o.correlationId = options.correlationId;
+  if (options.logger !== undefined) o.logger = options.logger;
+  return o;
+}
