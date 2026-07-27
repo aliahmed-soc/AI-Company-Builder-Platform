@@ -69,7 +69,9 @@ export interface StartRunParams extends ScopeParams {
 export type StartRunResult =
   | { readonly status: 'ok'; readonly run: RunDTO }
   | { readonly status: 'forbidden' }
-  | { readonly status: 'attempt_taken' };
+  | { readonly status: 'attempt_taken' }
+  | { readonly status: 'invalid_attempt' }
+  | { readonly status: 'task_not_found' };
 
 /**
  * Claim an attempt and put it straight into `running`.
@@ -86,7 +88,15 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<StartRunResult> => {
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+      // Both of these would otherwise surface as raw constraint errors — the `attempt >= 1` CHECK and the composite
+      // task FK — which reach a caller as an opaque 500 instead of something actionable (review pass 1).
+      if (!Number.isInteger(params.attempt) || params.attempt < 1) return { status: 'invalid_attempt' };
       const runs = new TaskRunRepository(scope.db);
+
+      // RLS-confined, so a task in another company reads as absent: a foreign task is `task_not_found`, never a run
+      // claimed against someone else's work.
+      const task = await scope.db.selectFrom('tasks').select('tasks.id').where('tasks.id', '=', params.taskId).executeTakeFirst();
+      if (task === undefined) return { status: 'task_not_found' };
 
       const claimed = await runs.claimAttempt({
         accountId: scope.tenant.accountId,
@@ -99,9 +109,11 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
       if (claimed === undefined) return { status: 'attempt_taken' };
 
       const started = await runs.transition({ runId: claimed.id, expectedState: 'queued', nextState: 'running', startedAt: now });
-      // Unreachable in practice — we created the row in this transaction — but returning `ok` on a failed transition
-      // would report a running run that is still queued.
-      if (started === undefined) return { status: 'attempt_taken' };
+      // GENUINELY unreachable: we created this row moments ago in this same transaction, so nothing else can have
+      // moved it. Throwing rather than returning `attempt_taken` (review pass 1) — that status would be a false
+      // statement about a row that exists in `queued`, and a wrong answer to an impossible question is worse than a
+      // loud failure. The throw rolls back the claim, leaving no half-started run.
+      if (started === undefined) throw new Error('task run claimed but could not be started — invariant violated');
 
       await audit(scope, taskStarted({ taskId: params.taskId, runId: claimed.id, attempt: params.attempt }), auditCtx(options));
       return { status: 'ok', run: toRunDTO(started) };
@@ -256,15 +268,29 @@ export async function cancelRun(client: DatabaseClient, params: CancelRunParams,
 
       if (kind.kind === 'immediate') {
         const cancelled = await runs.transition({ runId: params.runId, expectedState: 'queued', nextState: 'cancelled', endedAt: now });
-        if (cancelled === undefined) return { status: 'already_terminal', state: current.state };
-        await audit(scope, taskCancelled({ taskId: cancelled.task_id, runId: cancelled.id, phase: 'queued' }), auditCtx(options));
-        return { status: 'cancelled', run: toRunDTO(cancelled) };
+        if (cancelled !== undefined) {
+          await audit(scope, taskCancelled({ taskId: cancelled.task_id, runId: cancelled.id, phase: 'queued' }), auditCtx(options));
+          return { status: 'cancelled', run: toRunDTO(cancelled) };
+        }
+        // The guard missed: the run was picked up between our read and our write. Found in review pass 1 — the
+        // previous code reported `already_terminal` here, which is a LIE about a running run, and the worst possible
+        // one: an owner is told their cancellation landed while the work carries on. Re-read and answer honestly.
+        const afterRace = await runs.findById(params.runId);
+        if (afterRace === undefined) return { status: 'not_found' };
+        if (classifyCancellation(afterRace.state).kind !== 'safe_stop_requested') {
+          return { status: 'already_terminal', state: afterRace.state };
+        }
+        // It is running now, so the owner's request becomes a safe-stop — which is what they would have got had they
+        // asked a moment later, and is what they actually want: the work stopped.
       }
 
       // Running: record the request durably. The run stays `running` until the worker halts and reports — anything
       // else would claim the work had stopped before it actually had.
       const requested = await runs.requestStop(params.runId);
-      if (requested === undefined) return { status: 'already_terminal', state: current.state };
+      if (requested === undefined) {
+        const latest = await runs.findById(params.runId);
+        return latest === undefined ? { status: 'not_found' } : { status: 'already_terminal', state: latest.state };
+      }
       await audit(scope, taskCancelled({ taskId: requested.task_id, runId: requested.id, phase: 'running_safe_stop' }), auditCtx(options));
       return { status: 'stop_requested', run: toRunDTO(requested) };
     },

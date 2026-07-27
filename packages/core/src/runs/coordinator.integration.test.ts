@@ -65,6 +65,32 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
     return (r as { status: 'ok'; task: { taskId: string } }).task.taskId;
   }
 
+  /** Claim an attempt WITHOUT starting it: a genuinely queued run, which is what a coordinator produces before pickup. */
+  async function queuedRun(taskId: string, attempt: number): Promise<string> {
+    const claimed = await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
+      new TaskRunRepository(db).claimAttempt({ accountId: w.accountA, companyId: w.companyA1, taskId, attempt }),
+    );
+    expect(claimed?.state).toBe('queued');
+    return claimed?.id ?? '';
+  }
+
+  /**
+   * Block until some backend is waiting on a lock held by `pid`.
+   *
+   * This is what makes the race test DETERMINISTIC rather than timing-dependent, and it THROWS if nothing ever blocks
+   * — so the test can never quietly degrade into proving the ordinary running-cancel path instead of the race.
+   */
+  async function waitForBlockedBy(pid: number): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const r = await sql<{ n: number }>`
+        select count(*)::int as n from pg_locks l where not l.granted and ${pid}::int = any (pg_blocking_pids(l.pid))
+      `.execute(owner.kysely);
+      if ((r.rows[0]?.n ?? 0) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('nothing ever blocked on the held lock — the race was not reproduced');
+  }
+
   // ── the happy path ────────────────────────────────────────────────────────────────────────────────────────
   test('a run starts, heartbeats and succeeds, stamped with the caller\'s tenancy', async () => {
     const taskId = await newTask();
@@ -99,13 +125,8 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
   // ── ACCEPTANCE 1: "cancel queued instant" ─────────────────────────────────────────────────────────────────
   test('CANCEL QUEUED IS INSTANT — the run is terminal immediately, with no worker consulted', async () => {
     const taskId = await newTask();
-    // Claim without starting: a genuinely queued run, which is what a coordinator produces before pickup.
-    const claimed = await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
-      new TaskRunRepository(db).claimAttempt({ accountId: w.accountA, companyId: w.companyA1, taskId, attempt: 1 }),
-    );
-    expect(claimed?.state).toBe('queued');
-
-    const r = await cancelRun(product, { ...base(), runId: claimed?.id ?? '' });
+    const runId = await queuedRun(taskId, 1);
+    const r = await cancelRun(product, { ...base(), runId });
     expect(r.status).toBe('cancelled');
     const row = (await runRows())[0];
     expect(row?.state).toBe('cancelled');
@@ -183,13 +204,81 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
     expect((await runRows())[0]?.state).toBe('failed');
   });
 
+  // ── review pass 1 findings ────────────────────────────────────────────────────────────────────────────────
+  test('cancelling a queued run that STARTS mid-race becomes a safe-stop, never a false "already terminal"', async () => {
+    // The pass-1 HIGH, reproduced as a REAL interleaving rather than asserted about. Previously the guarded
+    // queued→cancelled UPDATE would miss and the caller was told `already_terminal` — a lie about a RUNNING run, and
+    // the worst kind: the owner believes their cancellation landed while the work carries on.
+    //
+    // The interleaving is made deterministic with a row lock instead of a sleep. A held-open transaction moves the run
+    // to `running` WITHOUT committing, so under READ COMMITTED `cancelRun`'s read still sees `queued` while its
+    // guarded UPDATE blocks on the lock. Committing then releases it, PostgreSQL re-checks the predicate against the
+    // new row version, and the guard misses — exactly the race, every time.
+    const taskId = await newTask();
+    const runId = await queuedRun(taskId, 1);
+
+    const pickup = await owner.kysely.startTransaction().execute();
+    let cancelling: Promise<Awaited<ReturnType<typeof cancelRun>>> | undefined;
+    try {
+      await pickup.updateTable('task_runs').set({ state: 'running', started_at: new Date() }).where('id', '=', runId).execute();
+      const pid = (await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(pickup)).rows[0]?.pid ?? 0;
+      cancelling = cancelRun(product, { ...base(), runId });
+      await waitForBlockedBy(pid);
+    } finally {
+      await pickup.commit().execute();
+    }
+
+    const r = await cancelling;
+    // Honest: the owner is told the stop was REQUESTED of a live run, not that it was already over.
+    expect(r?.status).toBe('stop_requested');
+    const row = (await runRows())[0];
+    expect(row?.state).toBe('running');
+    expect(row?.stop_requested_at).not.toBeNull();
+    // And the event records the phase that actually happened.
+    expect((await auditFor('task.cancelled'))[0]?.payload).toMatchObject({ phase: 'running_safe_stop' });
+  });
+
+  test('startRun REFUSES a bad attempt number with a typed status, not a constraint error', async () => {
+    const taskId = await newTask();
+    for (const attempt of [0, -1, 1.5, Number.NaN]) {
+      expect((await startRun(product, { ...base(), taskId, attempt })).status).toBe('invalid_attempt');
+    }
+    expect(await runRows()).toHaveLength(0);
+  });
+
+  test('startRun on a FOREIGN or absent task is task_not_found, not an opaque FK error', async () => {
+    const taskId = await newTask();
+    // Company B cannot start a run against company A's task — and learns nothing about whether it exists.
+    const foreign = await startRun(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, taskId, attempt: 1 });
+    expect(foreign.status).toBe('task_not_found');
+    const absent = await startRun(product, { ...base(), taskId: '00000000-0000-4000-8000-000000000000', attempt: 1 });
+    expect(absent.status).toBe('task_not_found');
+    expect(await runRows()).toHaveLength(0);
+  });
+
+  test('startRun REFUSES a bad attempt number with a typed status, not a constraint error', async () => {
+    const taskId = await newTask();
+    for (const attempt of [0, -1, 1.5, Number.NaN]) {
+      expect((await startRun(product, { ...base(), taskId, attempt })).status).toBe('invalid_attempt');
+    }
+    expect(await runRows()).toHaveLength(0);
+  });
+
+  test('startRun on a FOREIGN or absent task is task_not_found, not an opaque FK error', async () => {
+    const taskId = await newTask();
+    // Company B cannot start a run against company A's task — and learns nothing about whether it exists.
+    const foreign = await startRun(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, taskId, attempt: 1 });
+    expect(foreign.status).toBe('task_not_found');
+    const absent = await startRun(product, { ...base(), taskId: '00000000-0000-4000-8000-000000000000', attempt: 1 });
+    expect(absent.status).toBe('task_not_found');
+    expect(await runRows()).toHaveLength(0);
+  });
+
   // ── the state machine and the store ───────────────────────────────────────────────────────────────────────
   test('a QUEUED run cannot succeed — it never ran, so it has no outcome to report', async () => {
     const taskId = await newTask();
-    const claimed = await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
-      new TaskRunRepository(db).claimAttempt({ accountId: w.accountA, companyId: w.companyA1, taskId, attempt: 1 }),
-    );
-    expect((await succeedRun(product, { ...base(), runId: claimed?.id ?? '' })).status).toBe('not_running');
+    const runId = await queuedRun(taskId, 1);
+    expect((await succeedRun(product, { ...base(), runId })).status).toBe('not_running');
   });
 
   test('a terminal run stays terminal — nothing reopens a finished attempt', async () => {
