@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, TaskRepository, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -348,6 +348,29 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
     expect((await sql<{ n: number }>`select count(*)::int as n from task_deletions where task_id = ${t}::uuid`.execute(su.kysely)).rows[0]?.n).toBe(0);
     await sql`delete from companies where id = ${co}::uuid`.execute(su.kysely);
     expect((await sql<{ n: number }>`select count(*)::int as n from task_deletions where company_id = ${co}::uuid`.execute(su.kysely)).rows[0]?.n).toBe(0);
+  });
+
+  test('the deletion insert is GUARDED by the task state — a task that moved is not deleted', async () => {
+    // Second-review-pass finding on the use case: read-state → decide → write is a check-then-insert. If the task
+    // leaves `queued` in that window the unguarded write still lands, deleting a RUNNING task — exactly TASK-008's
+    // failure clause. The guard is a `where state = <state read>` inside the INSERT ... SELECT.
+    //
+    // Exercised at the repository, which is the only place the interleaving is reachable deterministically: passing a
+    // `stateAtDelete` that no longer matches the row IS the race, without needing two live transactions.
+    const t = await insertTask(accountA, companyA1, { state: 'queued' });
+    const wrote = await asApp(scope(accountA, companyA1), (k) =>
+      new TaskRepository(k).insertDeletion({ accountId: accountA, companyId: companyA1, taskId: t, stateAtDelete: 'running', reason: null, deletedByUserId: userU }),
+    );
+    // The row is `queued`, the guard expected `running` — nothing is written, and no error is raised either.
+    expect(wrote).toBeUndefined();
+    expect((await sql<{ n: number }>`select count(*)::int as n from task_deletions where task_id = ${t}::uuid`.execute(su.kysely)).rows[0]?.n).toBe(0);
+
+    // …and the matching state DOES write, so the guard is not simply refusing everything.
+    const ok = await asApp(scope(accountA, companyA1), (k) =>
+      new TaskRepository(k).insertDeletion({ accountId: accountA, companyId: companyA1, taskId: t, stateAtDelete: 'queued', reason: null, deletedByUserId: userU }),
+    );
+    expect(ok?.task_id).toBe(t);
+    expect(ok?.state_at_delete).toBe('queued');
   });
 
   test('catalog after 0029: task_deletions FORCE RLS + SELECT/INSERT only, and `tasks` grants are UNCHANGED', async () => {

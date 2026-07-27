@@ -116,7 +116,10 @@ export async function planTask(client: DatabaseClient, params: PlanTaskParams, o
     async (scope, role): Promise<PlanTaskResult> => {
       if (checkAuthorization(role, 'task:create', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const tasks = new TaskRepository(scope.db);
-      const task = await tasks.findById(params.taskId);
+      // findLive: a DELETED draft must not be confirmable onto the board (ACBP-P4-005 G9). It would succeed, emit a
+      // `task.created` audit event, and then be filtered out of every board read — an audit trail claiming a task was
+      // put on the board when it can never appear there.
+      const task = await tasks.findLive(params.taskId);
       if (task === undefined) return { status: 'not_found' };
       const from: TaskState = isTaskState(task.state) ? task.state : 'draft';
       if (!isLegalTaskTransition(from, to)) return { status: 'illegal_transition', from, to };
@@ -162,9 +165,11 @@ export async function addTaskDependency(client: DatabaseClient, params: AddDepen
       if (checkAuthorization(role, 'task:create', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       if (params.taskId === params.dependsOnTaskId) return { status: 'invalid' };
       const tasks = new TaskRepository(scope.db);
-      // Both endpoints must be visible in THIS company scope (RLS-confined findById).
-      if ((await tasks.findById(params.taskId)) === undefined) return { status: 'not_found' };
-      if ((await tasks.findById(params.dependsOnTaskId)) === undefined) return { status: 'not_found' };
+      // Both endpoints must be visible AND NOT DELETED in THIS company scope (RLS-confined findLive). A new edge
+      // pointing at a discarded task would either block its dependent forever or quietly resolve as satisfied
+      // (ACBP-P4-005 G9) — neither is something the caller can have meant.
+      if ((await tasks.findLive(params.taskId)) === undefined) return { status: 'not_found' };
+      if ((await tasks.findLive(params.dependsOnTaskId)) === undefined) return { status: 'not_found' };
 
       // Race-safe: the DB's ON CONFLICT DO NOTHING (not a check-then-insert) is the single source of duplicate truth —
       // a concurrent identical edge returns undefined here rather than throwing a UNIQUE violation.

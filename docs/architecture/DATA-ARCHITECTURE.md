@@ -158,8 +158,31 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      creation"): a draft is NOT on the board and writes NO audit (CDR-033 §4), and confirming is the existing
      `draft→planned` transition that emits `task.created`. The STRAT-005 phase boundary is enforced at generation
      (CDR-037 §5 deferred it here): only the approved phase's milestones are plannable, re-checked server-side. -->
+<!-- IMPLEMENTED (ACBP-P4-005; CDR-043; TASK-002/TASK-008): migration 0029 adds `task_deletions` plus an ADDITIVE
+     `tasks.repeated_from_task_id`.
+     DELETION IS A RECORDED FACT, NOT AN ERASURE. TASK-008 requires that a delete be AUDITED, and `tasks` grants the
+     app role SELECT + INSERT + a column UPDATE pinned to exactly `(state, updated_at)` — no DELETE, with the
+     adversarial catalog pinning that set. Granting DELETE would destroy the very trail the requirement demands, and
+     adding `deleted_at` would mean widening a grant the tenant-isolation suite pins (CDR-043 §3 weighed all three).
+     So `task_deletions` is a separate company-owned, dual-keyed FORCE RLS table, SELECT+INSERT only — the same shape
+     CDR-039 chose for `task_review_flags`, for the same reason. `UNIQUE(task_id)` makes a repeat delete the SAME fact
+     rather than a second row, letting the use case be idempotent at the database instead of via a check-then-insert
+     that would race. `state_at_delete` is retained because once reads filter the task out it is the only place the
+     difference between discarding a completed task and a queued one survives; the optional `reason` is bounded and
+     stays OUT of the audit payload (which records only `has_reason`).
+     `repeated_from_task_id` is TASK-008's lineage link ("repeat creates a linked new task"): nullable, INSERT-ONLY
+     (the `(state, updated_at)` grant is again untouched), CHECKed against self-reference, and `ON DELETE SET NULL`
+     rather than CASCADE — losing the source must not delete the repeat, which is live work the owner queued.
+     Both new FKs are TENANT-PINNED composites (RI checks always bypass RLS), for which 0029 additively adds
+     `(id, company_id)` UNIQUE to `tasks`.
+     Every product read excludes deleted tasks — get, detail, list, the board, and the off-board draft COUNT (§4-G9).
+     `findStatesByIds` deliberately does not: a prerequisite deleted while `completed` genuinely did unblock its
+     dependent, and filtering it out would turn that into a permanent false block.
+     There is NO task "reject" control (CDR-043 §2): no requirement defines task rejection, so TASK-001's `Rejected`
+     bucket stays declared-but-unreachable rather than merely pending. No new SECURITY DEFINER / role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
+| Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |
 | Task run | C | run_id, task_id, attempt | has Worker run, Tool calls, Usage events | queued→running→succeeded/failed/cancelled | A | — | With company | run trace | MVP |
 | Worker definition | G | worker_id, version | allowlists Tools; referenced by runs | draft→active→retired | V | — | Permanent | version changes | MVP |
 | Worker run | C | worker_run_id | 1:1 task run execution segment | started→completed/failed | A | — | With company | worker.* | MVP |

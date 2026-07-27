@@ -103,18 +103,47 @@ export class TaskRepository {
    * A single NON-DELETED task (ACBP-P4-005). `tasks` has no DELETE grant, so a deleted task's row survives; every
    * product read must exclude it explicitly or the owner would keep seeing work they discarded.
    *
-   * `findById` deliberately still returns deleted rows: the delete use case itself needs to read one to know it is
-   * already gone, and a caller that wants the raw row should have to say so.
+   * `findById` deliberately still returns deleted rows, but NO product read may use it: it exists for callers that
+   * genuinely want the raw row regardless of deletion state (diagnostics, and the deletion record's own back-reference).
+   * Every use case that answers a user question reads through `findLive`.
    */
   findLive(id: string): Promise<TaskRow | undefined> {
     return this.#db.selectFrom('tasks').selectAll().where('id', '=', id).where(NOT_DELETED).executeTakeFirst();
   }
 
-  /** Insert the append-only deletion record. `ON CONFLICT DO NOTHING` makes a repeat delete the SAME fact. */
+  /**
+   * Insert the append-only deletion record, GUARDED by the task's current state (optimistic, race-safe).
+   *
+   * The guard is the `where state = stateAtDelete` inside the INSERT ... SELECT, and it is load-bearing rather than
+   * defensive. Without it the use case is a check-then-insert: it reads `queued` (deletable), and if the task starts
+   * running in that window the unguarded insert still succeeds — deleting a RUNNING task, which is precisely what
+   * TASK-008's failure clause forbids. Doing the check and the write in ONE statement closes that window at the
+   * database, the same idiom `updateState` uses for transitions.
+   *
+   * `ON CONFLICT (task_id) DO NOTHING` additionally makes a concurrent duplicate delete a graceful no-op rather than
+   * a UNIQUE-violation throw. Returns `undefined` for BOTH misses — the state moved, or someone else deleted it
+   * first — so the caller re-reads to tell them apart.
+   */
   insertDeletion(input: NewTaskDeletionInput): Promise<TaskDeletionRow | undefined> {
     return this.#db
       .insertInto('task_deletions')
-      .values({ account_id: input.accountId, company_id: input.companyId, task_id: input.taskId, state_at_delete: input.stateAtDelete, reason: input.reason, deleted_by_user_id: input.deletedByUserId })
+      .columns(['account_id', 'company_id', 'task_id', 'state_at_delete', 'reason', 'deleted_by_user_id'])
+      .expression((eb) =>
+        eb
+          .selectFrom('tasks')
+          .select([
+            // Explicit casts: in an INSERT ... SELECT, PostgreSQL resolves the SELECT list's types on its own, so a
+            // bare parameter would fail with "could not determine data type". Still fully parameterized.
+            sql<string>`${input.accountId}::uuid`.as('account_id'),
+            sql<string>`${input.companyId}::uuid`.as('company_id'),
+            sql<string>`${input.taskId}::uuid`.as('task_id'),
+            sql<string>`${input.stateAtDelete}::text`.as('state_at_delete'),
+            sql<string | null>`${input.reason}::text`.as('reason'),
+            sql<string>`${input.deletedByUserId}::uuid`.as('deleted_by_user_id'),
+          ])
+          .where('tasks.id', '=', input.taskId)
+          .where('tasks.state', '=', input.stateAtDelete),
+      )
       .onConflict((oc) => oc.column('task_id').doNothing())
       .returningAll()
       .executeTakeFirst();

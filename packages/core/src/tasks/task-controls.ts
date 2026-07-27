@@ -12,7 +12,7 @@
 import { TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRow } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
-import { buildTaskDetail, controlAvailability, taskRepeated, taskDeleted, isTaskState, type TaskDetailDTO, type TaskDTO, type TaskState } from '@acbp/contracts';
+import { buildTaskDetail, controlAvailability, taskRepeated, taskDeleted, isTaskState, type ControlUnavailableReason, type TaskDetailDTO, type TaskDTO, type TaskState } from '@acbp/contracts';
 import { toTaskDTO, type TaskOptions } from './task-management.js';
 import type { Logger } from '@acbp/observability';
 
@@ -65,7 +65,9 @@ export type RepeatTaskResult =
   | { readonly status: 'ok'; readonly task: TaskDTO; readonly sourceTaskId: string }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
-  | { readonly status: 'unavailable'; readonly reason: string };
+  // The CLOSED reason union, not a bare string: a caller rendering "why not" must be able to switch exhaustively,
+  // and an open string would make this an unreviewable message surface.
+  | { readonly status: 'unavailable'; readonly reason: ControlUnavailableReason };
 
 /**
  * TASK-008's repeat: "re-queued as a NEW task" (owner+viewer, `task:create` — repeat mints a task, which is exactly
@@ -144,7 +146,9 @@ export type DeleteTaskResult =
   | { readonly status: 'not_found' }
   | { readonly status: 'confirmation_required' }
   | { readonly status: 'invalid' }
-  | { readonly status: 'unavailable'; readonly reason: string };
+  // The CLOSED reason union, not a bare string: a caller rendering "why not" must be able to switch exhaustively,
+  // and an open string would make this an unreviewable message surface.
+  | { readonly status: 'unavailable'; readonly reason: ControlUnavailableReason };
 
 /**
  * TASK-008's delete: confirmed, refused while in-flight, and audited (owner+viewer, `task:delete`).
@@ -186,10 +190,19 @@ export async function deleteTask(client: DatabaseClient, params: DeleteTaskParam
         reason,
         deletedByUserId: params.userId,
       });
-      // Lost the race to a concurrent delete. The task IS deleted, just not by this call — reporting `not_found`
-      // rather than `ok` keeps the result honest about which call recorded the fact, and avoids a second audit event
-      // claiming a deletion that never happened.
-      if (record === undefined) return { status: 'not_found' };
+      // The guarded insert wrote nothing. Two different things can cause that, and they need different answers, so
+      // re-read rather than guessing: either someone else deleted the task first (already gone), or it CHANGED STATE
+      // in the window between the read above and the write — the queued→running case G2 exists to refuse. Reporting
+      // `ok` here would claim a deletion that never happened and emit an audit event to match.
+      if (record === undefined) {
+        if ((await tasks.findDeletion(params.taskId)) !== undefined) return { status: 'not_found' };
+        const now = await tasks.findLive(params.taskId);
+        if (now === undefined) return { status: 'not_found' };
+        const recheck = controlAvailability(now.state).find((v) => v.control === 'delete');
+        // It moved. If the new state still permits deletion the caller may simply retry; `cancel_first` is the honest
+        // default because a state change out from under a delete means the task started moving.
+        return { status: 'unavailable', reason: recheck?.available === false ? recheck.reason ?? 'cancel_first' : 'cancel_first' };
+      }
 
       // Audit-or-nothing (ADR-015). `has_reason` is a BOOLEAN: whether the owner explained themselves is useful, the
       // free text they wrote is theirs and stays out of the audit payload entirely.

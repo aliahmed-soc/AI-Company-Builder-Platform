@@ -141,8 +141,21 @@ Retention default: activity-projected events with company data; audit-relevant e
      satisfied by P4-002's transition enforcement plus `task.created`; this ticket delivers the VISIBLE half.
      Note for future work: the six PRD buckets are TABS observed in the reference product, not persisted states —
      `raw-audit/evidence/task-states.csv` records four of them as empty tabs. `recurring` and `rejected` are declared
-     but unreachable in this version (PLAN-003/TASK-003 are Post-MVP; the reject control is P4-005), and HELD is a
-     bucket this platform adds so a stalled task cannot read as progressing. -->
+     but unreachable in this version (PLAN-003/TASK-003 are Post-MVP), and HELD is a bucket this platform adds so a
+     stalled task cannot read as progressing.
+     CORRECTED by ACBP-P4-005 (CDR-043 §2): this note previously said the `rejected` bucket was pending "the reject
+     control is P4-005". It is not pending — NO REQUIREMENT DEFINES TASK REJECTION AT ALL. The backlog Objective's
+     "reject" is shorthand contradicted by its own Acceptance criteria; the `reject` verb belongs to UNDER-003,
+     STRAT-003 and APPR-007, all different objects; and the audit lists task rejection under "Controls not exercised".
+     The bucket is therefore declared-but-unreachable indefinitely, not merely awaiting a ticket. -->
+<!-- IMPLEMENTED (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "delete ... is audited"): two events, both durable
+     `audit_events` rows written in the SAME transaction as their effect (ADR-015 audit-or-nothing), SCALARS ONLY.
+     `task.repeated` takes the NEW task as its subject with `{source_task_id, source_state}` in metadata, so lineage
+     reads forward from either end. `task.deleted` records `{state_at_delete, has_reason}` — WHAT was lost, since once
+     reads exclude the task that is the only surviving signal, and `has_reason` as a BOOLEAN so the owner's free-text
+     reason stays out of the audit payload entirely. No titles, no descriptions, no reason text in either. -->
+| task.repeated | Task | activity | new task_id (subject), {source_task_id, source_state} | audited | with company |
+| task.deleted | Task | activity | task_id, {state_at_delete, has_reason} — never the reason text | audited | with company |
 | task.created / task.queued / task.started | Task / Coordinator | activity, Decision Room | task_id (created: {has_milestone} only, P4-002), (run_id, attempt on started) | audited | with company |
 | task.waiting_for_input / task.waiting_for_approval | Coordinator | Decision Room, notification | task_id, blocking_ref (question/approval id) | audited | with company |
 | task.completed | Coordinator | activity, usage, documents | task_id, run_id, artifact_refs[] (**required — no artifactless completion without explicit no-artifact rationale, TASK-005**) | audited | with company |

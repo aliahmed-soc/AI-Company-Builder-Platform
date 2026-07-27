@@ -91,6 +91,19 @@ So deletion is a **recorded fact, not an erasure**. The task row survives; reads
 - **G10 — two new audit events**, `task.repeated` and `task.deleted`, scalars only (no titles, no descriptions).
   "Controls audited" is the backlog's own requirement. Four coordinated `AUDITED_OPERATIONS` edits each.
 - **G11 — no HTTP route, no UI** (CDR-026 §0); no new role, no new SECURITY DEFINER, no BYPASSRLS.
+- **G12 — ONE new authz action, `task:delete`, `owner|viewer`.** Decided during Slice 3, recorded here.
+  - *Why owner|viewer, not owner-only.* The backlog row's Data-scope is "Company-scoped" and TASK-008 says nothing
+    about role, so an owner-only gate would be an invented requirement. The sibling task actions (`task:create`,
+    `task:read`) are both `owner|viewer`, and a member who may create work should be able to withdraw it. Deletion is
+    append-only and audited, so the grant destroys nothing.
+  - *Why a distinct action rather than folding into `task:create`.* Delete is the only task control that removes work
+    from view. Naming it makes a future owner-only tightening a one-line policy change; folding it in would make that
+    a refactor. This is the reversible direction.
+  - *Why REPEAT adds no action.* It mints a task, which is exactly what `task:create` authorizes — the same reasoning
+    that folded `task:depend` into `task:create` (CDR-033 §4). Inventing `task:repeat` would add a policy surface with
+    no distinct policy behind it.
+  - The DETAIL read reuses `task:read`. Confirmation (G3) is checked BEFORE the task is read, so an unconfirmed delete
+    cannot serve as an existence oracle for task ids.
 
 ## 5. Storage — migration 0029
 

@@ -14,7 +14,7 @@ import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { TASK_CONTROLS } from '@acbp/contracts';
-import { createTask, planTask, getTask, listTasks, getTaskDetail, repeatTask, deleteTask, getTaskBoard, TASK_DELETE_REASON_MAX } from './index.js';
+import { createTask, planTask, addTaskDependency, getTask, listTasks, getTaskDetail, repeatTask, deleteTask, getTaskBoard, TASK_DELETE_REASON_MAX } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
@@ -259,6 +259,28 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
     // …while the evidence survives underneath.
     expect((await sql<{ n: number }>`select count(*)::int as n from tasks`.execute(owner.kysely)).rows[0]?.n).toBe(3);
     expect(await deletions()).toHaveLength(2);
+  });
+
+  test('a deleted DRAFT cannot be confirmed onto the board, and writes no task.created', async () => {
+    // Review-pass finding: planTask read through findById, so a deleted draft could still be planned — succeeding,
+    // emitting `task.created`, and then being filtered out of every board read. An audit trail claiming a task was
+    // put on the board when it can never appear there is worse than no trail.
+    const id = await taskInState('draft');
+    expect((await deleteTask(product, { ...base(), taskId: id, confirmed: true })).status).toBe('ok');
+    expect((await planTask(product, { ...base(), taskId: id })).status).toBe('not_found');
+    expect(await auditFor('task.created')).toHaveLength(0);
+    expect(await stateOf(id)).toBe('draft'); // untouched
+  });
+
+  test('a deleted task cannot become either end of a NEW dependency edge', async () => {
+    // An edge pointing at a discarded task either blocks its dependent forever or quietly resolves as satisfied —
+    // neither is something the caller can have meant.
+    const live = await taskInState('planned');
+    const gone = await taskInState('planned');
+    expect((await deleteTask(product, { ...base(), taskId: gone, confirmed: true })).status).toBe('ok');
+    expect((await addTaskDependency(product, { ...base(), taskId: live, dependsOnTaskId: gone })).status).toBe('not_found');
+    expect((await addTaskDependency(product, { ...base(), taskId: gone, dependsOnTaskId: live })).status).toBe('not_found');
+    expect((await sql<{ n: number }>`select count(*)::int as n from task_dependencies`.execute(owner.kysely)).rows[0]?.n).toBe(0);
   });
 
   // ── authorization + isolation ──────────────────────────────────────────────────────────────────────────
