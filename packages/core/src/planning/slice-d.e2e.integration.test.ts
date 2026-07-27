@@ -16,13 +16,13 @@ import { createModelGateway, understandingOutputValidator, strategyOutputValidat
 import { generateUnderstanding, confirmUnderstanding } from '../understanding/index.js';
 import { generateStrategyOptions, recordStrategyDecision, recordDecision } from '../strategy/index.js';
 import { generateRoadmap, generateTasks } from './index.js';
-import { listTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask } from '../tasks/index.js';
+import { planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask } from '../tasks/index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 const estimateCost = ({ inputTokens, outputTokens }: { inputTokens: number; outputTokens: number }): number => inputTokens + outputTokens;
 
 /** The injected @acbp/core use cases (names match SliceDOps exactly). */
-const OPS: SliceDOps = { generateUnderstanding, confirmUnderstanding, generateStrategyOptions, recordStrategyDecision, recordDecision, generateRoadmap, generateTasks, listTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask };
+const OPS: SliceDOps = { generateUnderstanding, confirmUnderstanding, generateStrategyOptions, recordStrategyDecision, recordDecision, generateRoadmap, generateTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask };
 
 describe.skipIf(!hasTestDatabase)('Slice D — planned work E2E (real PostgreSQL, restricted role) — ACBP-P4-007/CDR-044', () => {
   let owner: DatabaseClient;

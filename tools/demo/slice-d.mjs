@@ -29,12 +29,12 @@ const {
   generateUnderstanding, confirmUnderstanding,
   generateStrategyOptions, recordStrategyDecision, recordDecision,
   generateRoadmap, generateTasks,
-  listTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask,
+  planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask,
 } = core;
 
 // The injected @acbp/core use cases (names match SliceDOps) + the fake-provider gateway factory. Same wiring as the
 // CI suite, so the demo can never drift from the guarantee.
-const OPS = { generateUnderstanding, confirmUnderstanding, generateStrategyOptions, recordStrategyDecision, recordDecision, generateRoadmap, generateTasks, listTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask };
+const OPS = { generateUnderstanding, confirmUnderstanding, generateStrategyOptions, recordStrategyDecision, recordDecision, generateRoadmap, generateTasks, planTask, addTaskDependency, getTaskBoard, getTaskDetail, repeatTask, deleteTask };
 const estimateCost = ({ inputTokens, outputTokens }) => inputTokens + outputTokens;
 
 // `taskPlan` is a FACTORY over the roadmap's milestone count — a task naming a milestone ordinal that does not exist

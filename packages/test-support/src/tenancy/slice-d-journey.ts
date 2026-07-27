@@ -44,7 +44,6 @@ export interface SliceDOps {
   recordDecision(c: DatabaseClient, p: Ids & { generationId: string; selectionId: string; rationale?: unknown }, d: object): Promise<Status<{ decision: { decisionId: string } }>>;
   generateRoadmap(c: DatabaseClient, p: Ids, d: { gateway: SliceDGateway }): Promise<Status<{ roadmap: { roadmapId: string; version: number; goals: ReadonlyArray<unknown>; milestones: ReadonlyArray<{ milestoneId: string; ordinal: number }> } }>>;
   generateTasks(c: DatabaseClient, p: Ids, d: { gateway: SliceDGateway }): Promise<Status<{ tasks: ReadonlyArray<{ taskId: string }>; runId?: string }>>;
-  listTasks(c: DatabaseClient, p: Ids): Promise<Status<{ tasks: ReadonlyArray<{ taskId: string; state: string; title: string }> }>>;
   planTask(c: DatabaseClient, p: Ids & { taskId: string }): Promise<Status<{ task: { state: string } }>>;
   addTaskDependency(c: DatabaseClient, p: Ids & { taskId: string; dependsOnTaskId: string }): Promise<Status<{ dependencyId: string }>>;
   getTaskBoard(c: DatabaseClient, p: Ids): Promise<Status<{ board: SliceDBoard }>>;
@@ -228,7 +227,16 @@ export async function runSliceDJourney(deps: SliceDJourneyDeps): Promise<{ reado
   if (placed.length !== confirmedIds.length) return bail('board places every task', 'TASK-001', `expected ${confirmedIds.length} on-board tasks, got ${placed.length}`);
   const blocked = placed.filter((t) => t.dependencyBlocked).map((t) => t.task.taskId);
   if (!blocked.includes(second)) return bail('dependency is inspectable on the board', 'TASK-001', `${second} depends on an incomplete task but is not reported blocked`);
-  record('board places every task; status + dependency inspectable', 'TASK-001', true, `${placed.length} placed, 0 unplaceable, ${board1.board.draftsOffBoard} draft(s) off-board, ${blocked.length} blocked by a dependency`);
+
+  // STATUS, not merely presence. Second review pass: asserting only that every task landed *somewhere* would pass on
+  // a board that bucketed all of them wrongly — which is precisely the failure "status inspectable" exists to catch.
+  // Confirmed tasks are `planned`, and CDR-042 maps planned/queued to `to_do` ("work accepted and awaiting a start").
+  const toDo = board1.board.buckets.find((b) => b.bucket === 'to_do');
+  const toDoIds = (toDo?.tasks ?? []).map((t) => t.task.taskId);
+  const misfiled = confirmedIds.filter((id) => !toDoIds.includes(id));
+  if (misfiled.length > 0) return bail('status is inspectable on the board', 'TASK-001', `planned task(s) not in the to_do bucket: ${misfiled.join(', ')}`);
+  if (placed.some((t) => t.task.state !== 'planned')) return bail('status is inspectable on the board', 'TASK-001', 'a board task reported a state other than the planned one just confirmed');
+  record('board places every task; status + dependency inspectable', 'TASK-001', true, `${placed.length} placed (all ${toDoIds.length} in to_do), 0 unplaceable, ${board1.board.draftsOffBoard} draft(s) off-board, ${blocked.length} blocked by a dependency`);
 
   // ── 11. detail: rationale inspectable, AND an absent one renders as absent (G7/G8) ──────────────────────
   const details: SliceDDetail[] = [];
@@ -268,6 +276,11 @@ export async function runSliceDJourney(deps: SliceDJourneyDeps): Promise<{ reado
   // REPEAT: only a finished task may be repeated, and the repeat is a NEW linked draft.
   const finished = confirmedIds.find((id) => id !== target.taskId);
   if (finished === undefined) return bail('repeat', 'TASK-008', 'no second task to repeat');
+  // PRECONDITION SETUP on the owner connection, not a demonstration (CDR-044 §2-G3). Repeat requires a FINISHED task,
+  // and nothing in this phase can finish one: the terminal transitions are driven by execution, which is Phase 5. The
+  // alternative — skipping repeat until P5 lands — would leave TASK-008's other half unproven for two whole phases.
+  // The distinction the rule cares about is preserved: the owner connection sets up a state the product cannot yet
+  // reach, and the guarantee itself (repeat mints a NEW linked draft) is then proven through the product use case.
   await sql`update tasks set state = 'failed' where id = ${finished}::uuid`.execute(owner.kysely);
   const repeated = await ops.repeatTask(product, { ...ids, taskId: finished });
   if (repeated.status !== 'ok' || repeated.task === undefined) return bail('repeat', 'TASK-008', `expected ok, got ${repeated.status}`);

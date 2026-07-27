@@ -34,8 +34,16 @@ for both an "E2E set" and a "Run demo script" verification procedure, so they mu
   test-support importing `@acbp/core` would be a workspace-graph cycle. Both callers may import core and pass the real
   functions (CDR-031's reasoning, unchanged).
 - **G3 — everything runs through the RESTRICTED `acbp_app` connection under FORCE RLS.** The owner/fixture connection
-  is used for evidence inspection only, never to prove a guarantee — otherwise the journey would prove that a
-  superuser can do things, which is not the claim.
+  may do exactly two things, and never a third:
+  1. **inspect evidence** (the planning-run rows, the audit trail);
+  2. **set up a precondition the product genuinely cannot reach yet**, marked as such at the site.
+  It may never demonstrate a product behaviour — otherwise the journey would prove that a superuser can do things,
+  which is not the claim.
+  *Refined during the first review pass,* which caught the journey moving a task to `failed` on the owner connection
+  under a rule that said "inspection only". The move is legitimate and necessary — repeat requires a FINISHED task
+  and the terminal transitions are driven by execution, which is Phase 5 — but the rule as first written did not
+  permit it, and the honest resolution is to state the real rule rather than let the code quietly diverge from it.
+  Skipping repeat until P5 would instead leave half of TASK-008 unproven for two phases.
 - **G4 — the only seam is the model PROVIDER edge** (`FakeModelProvider`, CDR-026 §3). No live model, no key, no
   snapshot pin. ACBP-P2-011 is a standing owner gate; this ticket must not approach it.
 
