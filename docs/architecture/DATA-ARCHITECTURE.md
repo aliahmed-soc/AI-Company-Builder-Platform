@@ -180,10 +180,40 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      dependent, and filtering it out would turn that into a permanent false block.
      There is NO task "reject" control (CDR-043 §2): no requirement defines task rejection, so TASK-001's `Rejected`
      bucket stays declared-but-unreachable rather than merely pending. No new SECURITY DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P5-001a; CDR-049; ADR-008; NFR-005/006; invariant 3, trust-critical #3): migration 0031 adds
+     `jobs` — company-owned, dual-keyed FORCE RLS, the same shape as every other tenant table.
+     WE OWN THIS TABLE, and that is the load-bearing decision. The Objective's "library per ADR-008" reads naively as
+     "adopt pg-boss and use its job table", and those libraries manage their own DDL — a table we do not own cannot
+     carry a NOT NULL tenant stamp or dual-keyed RLS. The owner's ADR-008 amendment settles it: "job tables remain
+     standard SQL (exit path)". A runner may later POLL this table; it may not own the schema, and P5-001a therefore
+     takes no library dependency at all.
+     TENANT CONTEXT IS REFUSED, NEVER DEFAULTED, at THREE deliberately redundant layers (CDR-049 §3-G3), because each
+     catches a different mistake: `NOT NULL` on account_id/company_id catches code that forgets the fields; the
+     dual-keyed `WITH CHECK` catches a caller supplying SOMEONE ELSE'S ids (which NOT NULL cannot see, both columns
+     being populated); and `validateJobTenancy` turns both into a typed reason. The third runs BEFORE scope
+     resolution — found in review, because `runInCompanyScope` denies a blank company id itself and would otherwise
+     report the acceptance clause's failure as an ordinary `forbidden`.
+     `company_id` is NOT NULL rather than nullable-for-possible-account-jobs (§3-G4): a nullable column makes "no
+     company" a legal state the moment anything writes NULL, which is exactly the defaulting this table forbids.
+     Grants are SELECT + INSERT + a COLUMN-scoped UPDATE pinned to `(state, updated_at, attempts)` — tenancy, kind and
+     payload are immutable, so a job can be neither re-pointed at another tenant nor have its work swapped between
+     enqueue and execution. NO DELETE (§4-G5): job history is the run trail the "Run trail audited" behaviour depends
+     on, and archival is a later deliberate operation rather than a routine capability.
+     The state set is CLOSED and includes `dead_letter` from the start (§4-G6) even though P5-001c implements reaching
+     it — a state added later by migration is a state the earlier code never handled. `JOB_STATES` in @acbp/contracts
+     mirrors the CHECK, with a real-PostgreSQL test asserting the two agree.
+     Idempotency is per COMPANY via a PARTIAL unique index on `(company_id, idempotency_key)`: a global unique would
+     let one tenant's key collide with — and so reveal the existence of — another's. `ON CONFLICT` must restate that
+     partial predicate; PostgreSQL will not infer a partial index from a bare column list (42P10).
+     `payload` carries REFERENCES, NEVER SECRETS (ADR-008 §11), bounded by CHECK, with the contract bound set
+     deliberately tighter so the contract is the error surface and the CHECK a true backstop.
+     Checkpoints/resume (P5-001b) and retry caps/dead-lettering (P5-001c) are separate sub-scopes. No new SECURITY
+     DEFINER / role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |
 | Task run | C | run_id, task_id, attempt | has Worker run, Tool calls, Usage events | queued→running→succeeded/failed/cancelled | A | — | With company | run trace | MVP |
+| Durable job | C | job_id, UNIQUE(company_id, idempotency_key) partial | the unit the runner picks up | queued→running→succeeded/failed/dead_letter/cancelled | M (state, attempts) | references only, never secrets | With company | job.enqueued | MVP |
 | Worker definition | G | worker_id, version | allowlists Tools; referenced by runs | draft→active→retired | V | — | Permanent | version changes | MVP |
 | Worker run | C | worker_run_id | 1:1 task run execution segment | started→completed/failed | A | — | With company | worker.* | MVP |
 | Tool definition | G | tool_id, version | risk class; referenced by allowlists | active→retired | V | — | Permanent | class changes audited | MVP |

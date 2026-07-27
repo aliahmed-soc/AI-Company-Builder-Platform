@@ -169,10 +169,32 @@ describe.skipIf(!hasTestDatabase)('durable job store + tenant stamping (real Pos
     expect(await jobRows()).toHaveLength(0);
   });
 
-  // ── LAYER 1: NOT NULL, reached BELOW the use case (CDR-049 §3-G3.1) ───────────────────────────────────────
-  test('LAYER 1 — a job row with no company_id cannot physically exist, even from code that bypasses the use case', async () => {
-    // Deliberately NOT through `enqueueJob`: layer 1 exists precisely for code that forgets the field, and code that
-    // forgets the field does not go through the layer that would have caught it.
+  // ── LAYER 1: NOT NULL (CDR-049 §3-G3.1) ──────────────────────────────────────────────────────────────────
+  //
+  // WHICH LAYER FIRES FIRST, and why layer 1 still earns its place. Hosted CI taught this: an insert that OMITS
+  // `company_id` is rejected by RLS, not by NOT NULL. The omitted column defaults to NULL, the policy's
+  // `company_id::text = current_company` evaluates to NULL rather than true, and the row is refused as a policy
+  // violation before any constraint is reached.
+  //
+  // So NOT NULL is not what stops a forgetful caller *under the app role* — layer 2 gets there first. It is the
+  // backstop for every path where RLS does not apply: a superuser migration, a backfill, a future maintenance script,
+  // or a policy someone later loosens. That is precisely the redundancy §3-G3 asks for, and it means layer 1 is
+  // proven structurally (the column cannot be nullable) rather than by a runtime race between two guards.
+  test('LAYER 1 — the tenancy columns are structurally NOT NULL, so no path can write a job without them', async () => {
+    const cols = await sql<{ column_name: string; is_nullable: string }>`
+      select column_name, is_nullable from information_schema.columns
+      where table_schema = 'public' and table_name = 'jobs' and column_name in ('account_id', 'company_id')
+      order by column_name
+    `.execute(owner.kysely);
+    expect(cols.rows).toEqual([
+      { column_name: 'account_id', is_nullable: 'NO' },
+      { column_name: 'company_id', is_nullable: 'NO' },
+    ]);
+  });
+
+  test('a job row with no company_id is refused at runtime, whichever layer reaches it first', async () => {
+    // Deliberately NOT through `enqueueJob`: the DB layers exist precisely for code that skips the use case, and code
+    // that skips it does not pass the layer that would have caught it.
     // The assertion wraps the WHOLE `asRestricted` call, not the inner statement: a failed statement aborts its
     // transaction, so catching it inside would leave the harness committing an aborted transaction and the real
     // failure would surface as a confusing second error.
@@ -180,16 +202,19 @@ describe.skipIf(!hasTestDatabase)('durable job store + tenant stamping (real Pos
       asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
         sql`insert into jobs (account_id, kind, created_by_user_id) values (${w.accountA}::uuid, 'understanding.generate', ${w.aOwner}::uuid)`.execute(db),
       ),
-    ).rejects.toSatisfy((e: unknown) => sqlState(e) === NOT_NULL_VIOLATION);
+      // Both codes are correct answers and which one appears is an ordering detail, not a guarantee. Pinning either
+      // ALONE would make this test fail the day PostgreSQL evaluated them in the other order, while proving nothing
+      // extra — what matters is that the row does not exist.
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === NOT_NULL_VIOLATION || sqlState(e) === INSUFFICIENT_PRIVILEGE);
     expect(await jobRows()).toHaveLength(0);
   });
 
-  test('LAYER 1 — the same holds for account_id', async () => {
+  test('the same holds for account_id', async () => {
     await expect(
       asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
         sql`insert into jobs (company_id, kind, created_by_user_id) values (${w.companyA1}::uuid, 'understanding.generate', ${w.aOwner}::uuid)`.execute(db),
       ),
-    ).rejects.toSatisfy((e: unknown) => sqlState(e) === NOT_NULL_VIOLATION);
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === NOT_NULL_VIOLATION || sqlState(e) === INSUFFICIENT_PRIVILEGE);
     expect(await jobRows()).toHaveLength(0);
   });
 

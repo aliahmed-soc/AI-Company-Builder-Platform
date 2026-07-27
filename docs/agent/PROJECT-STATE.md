@@ -9,6 +9,30 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-001a durable job store + tenant stamping — CORE DONE / IN REVIEW (window 9).**
+  Branch `p5-001a-job-store-tenant-stamping` (from main `223f8e5`), draft PR **#50**, CDR-049. The FIRST of the twelve
+  ratified safety-critical sub-scopes (owner decision 2026-07-27 approving my own 3-way splits for P5-001/003 and
+  P6-001/007).
+  **The load-bearing call was that WE own the job table.** The Objective's "library per ADR-008" reads naively as
+  "adopt pg-boss and use its job table" — a serious mistake, since those libraries own their DDL and a table we do not
+  own cannot carry a `NOT NULL` tenant stamp or dual-keyed RLS. The owner's ADR-008 amendment already settled it
+  ("job tables remain standard SQL (exit path)"), so this needed no owner gate and P5-001a takes **no library
+  dependency at all**. Migration **0031** adds `jobs`; migrations now end 0031.
+  Three deliberately redundant refusal layers (CDR-049 §3-G3), each proven the only way it can be reached: `NOT NULL`
+  via a direct insert that bypasses the use case; the dual-keyed `WITH CHECK` via a FOREIGN pair written from a valid
+  session for another company; and the typed `validateJobTenancy` refusal through `enqueueJob`.
+  **Review pass 1 found a HIGH worth remembering: the acceptance clause's refusal was UNREACHABLE.**
+  `runInCompanyScope` denies a blank company id itself, so a context-stripped enqueue returned `forbidden` —
+  indistinguishable from an authorization failure. The one failure this sub-scope exists to make visible was the one
+  it hid. Fixed by moving ONLY the tenancy check ahead of authorization (it leaks nothing — it reports on the shape of
+  ids the caller supplied), with a regression test driving five context-stripped shapes through a legitimate owner.
+  Pass 1 also caught the row being stamped from caller params rather than `scope.tenant`, and a conflict branch
+  returning a refusal reason that was a lie. Pass 2 added `JOB_STATES` mirroring the CHECK.
+  **Hosted CI found two more, both mine:** PostgreSQL will not infer a PARTIAL unique index from a bare `ON CONFLICT`
+  column list (42P10), and a COLUMN-level UPDATE grant never appears in `role_table_grants` — so the catalog suite's
+  table-level expectation is `INSERT`/`SELECT` with the column grant asserted separately.
+  `job:enqueue` is OWNER-ONLY: canon does not settle the role, so this took the safer reversible reading.
+
 - **ACBP-P5-009 gateway v2: fallback model — CORE DONE / FINALIZING (window 8).**
   Branch `p5-009-gateway-v2-fallback` (from main `8239cc3`, after P5-010 merged), draft PR **#47**, CDR-047.
   **Checked before building, as with P5-010: most of it already existed.** The fallback slot, the fallover on

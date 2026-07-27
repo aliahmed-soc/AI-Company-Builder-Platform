@@ -49,6 +49,14 @@ tenant. Defaulting is worse than crashing, because it succeeds.
      This catches a caller that supplies *someone else's* ids — which `NOT NULL` cannot see.
   3. **A typed refusal in the use case.** Enqueue returns a refusal result rather than throwing an opaque error, so
      the caller is told plainly and the platform can alarm on it.
+- **G3a — which layer fires first, established by hosted CI.** An insert that OMITS `company_id` is refused by RLS,
+  not by `NOT NULL`: the column defaults to NULL, the policy's `company_id::text = current_company` evaluates to NULL
+  rather than true, and the row is rejected as a policy violation before any constraint is reached. This does not make
+  layer 1 redundant — it locates it. `NOT NULL` is the backstop for every path where RLS does **not** apply: a
+  superuser migration, a backfill, a maintenance script, or a policy someone later loosens. It is therefore proven
+  STRUCTURALLY (the column cannot be nullable, asserted against `information_schema.columns`) rather than by a runtime
+  race between two guards, and the runtime test accepts either SQLSTATE because which one appears is an ordering
+  detail rather than a guarantee.
 - **G4 — `company_id` is `NOT NULL`, not nullable-for-future-account-jobs.** A nullable column would let "no company"
   become a legal state the moment anything wrote `NULL`, which is precisely the defaulting this ticket forbids. If an
   account-scoped job type is genuinely needed later (P6-009 usage rollups are the plausible candidate), that is an
@@ -71,6 +79,35 @@ tenant. Defaulting is worse than crashing, because it succeeds.
 - **G6 — the state set is closed and includes `dead_letter` from the start**, even though P5-001c implements
   reaching it. A state added later by migration is a state the earlier code never handled; declaring it now costs
   nothing and means b and c extend behaviour rather than reshape the table.
+
+## 4b. What the two review passes changed (P5-001a)
+
+Recorded here rather than only in the commit, because two of these are reasoning a later reader would otherwise have
+to rediscover.
+
+- **G7 — the tenancy refusal must be checked BEFORE scope resolution.** As first written, `enqueueJob` validated
+  inside `runInCompanyScope`. But that function denies an absent or blank company id *itself*, so a context-stripped
+  enqueue never reached the validator and came back `forbidden` — which is exactly what an authorization failure looks
+  like. The acceptance clause is not merely "no row is written"; it is that the platform can *see* a job arriving with
+  no tenant context. Hiding that inside `forbidden` defeats §3-G3.3 entirely.
+  Only the TENANCY fields moved ahead of authorization, and only because they leak nothing: they report on the shape
+  of ids the caller supplied, never on platform state. `invalid_kind` and `payload_too_large` stay behind the authz
+  check, where a reason would be a genuine oracle. `validateJobTenancy` is therefore split out and `validateJobRequest`
+  delegates to it, so the two can never disagree about what valid tenancy is.
+- **G8 — the row is stamped from `scope.tenant`, not from the caller's params.** They are equal on this call path
+  (membership was verified against exactly those ids), but equal by coincidence of the path rather than by
+  construction — and this is the one sub-scope whose entire subject is that a job's tenancy is a grant, not a claim.
+- **G9 — an unresolvable idempotency conflict is its own status, not a refusal reason.** Reporting
+  `invalid_idempotency_key` for a key that was perfectly valid would send the caller to change it and retry forever.
+  It should be unreachable, which is precisely why it has to stay distinguishable if it ever happens.
+- **G10 — `JOB_STATES` in `@acbp/contracts` mirrors the CHECK**, with a real-PostgreSQL test asserting every declared
+  state is accepted. The migration commits to the closed set for G6's reasons; a contract that stayed silent about it
+  would leave a reader taking an absent list as the answer.
+
+Two further defects were found by hosted CI rather than by reading: PostgreSQL will not infer a **partial** unique
+index from a bare `ON CONFLICT` column list (42P10 — the arbiter must restate the predicate), and a **column-level**
+UPDATE grant never appears in `information_schema.role_table_grants`, so the catalog suite's table-level expectation
+for `jobs` is `INSERT`/`SELECT` with the column grant asserted separately.
 
 ## 5. Out of scope for P5-001a
 
