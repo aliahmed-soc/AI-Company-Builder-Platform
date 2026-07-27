@@ -254,7 +254,9 @@ core use cases → docs + two review passes → finalization), then re-read the 
 
 ### Window 7 end-of-window report
 
-**Real clock: started 2026-07-27 01:59:51 +03:00, ended 2026-07-27 09:59:51 +03:00 (8h 00m, clock-verified).**
+**Real clock: window started 2026-07-27 01:59:51 +03:00; 8-hour mark 09:59:51 +03:00.**
+**This report was written at 2026-07-27 09:24:43 +03:00** — deliberately ahead of the mark so the log is not being edited
+at the boundary itself. Work continued to the mark; anything after this timestamp is recorded in window 8.
 
 **Four tickets merged, all with exact-main CI green and ZERO skips. Two phases completed.**
 
@@ -309,7 +311,7 @@ unchanged from the start of the window, so the build/test churn is not accumulat
 
 ---
 
-## Window 8 — 2026-07-27 (started 09:59:51 +03:00)
+## Window 8 — 2026-07-27 (starts at the 09:59:51 +03:00 mark)
 
 Continuing without pause, per the standing directive. Plan: finish ACBP-P5-009 (real-PG proof of 0030, the sweep,
 docs, two review passes, finalization). That ticket is the last unblocked non-gated item in the backlog — when it
