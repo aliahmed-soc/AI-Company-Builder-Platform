@@ -87,9 +87,11 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // still has NO DELETE grant and its UPDATE stays pinned to (state, updated_at) — asserted separately — so the record
   // of what an owner discarded cannot itself be edited or removed. SELECT+INSERT only.
   task_deletions: ['INSERT', 'SELECT'],
-  // Durable jobs (ACBP-P5-001a; CDR-049 §4): SELECT + INSERT + a column-scoped UPDATE (asserted below). NO DELETE
-  // (§4-G5) — job history is the run trail, so a failed job cannot be erased by the code that failed it.
-  jobs: ['INSERT', 'SELECT', 'UPDATE'],
+  // Durable jobs (ACBP-P5-001a; CDR-049 §4): INSERT/SELECT at the TABLE level. The lifecycle UPDATE is COLUMN-level
+  // (`state`/`updated_at`/`attempts`), and column grants do not appear in `role_table_grants` — the same reason
+  // `provisioning_steps` and `interview_sessions` show no UPDATE here; it is asserted against `column_privileges`
+  // below. NO DELETE (§4-G5): job history is the run trail, so a failed job cannot be erased by the code that failed.
+  jobs: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {

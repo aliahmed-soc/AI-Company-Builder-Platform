@@ -5,7 +5,7 @@
 // ticket excludes is a SUCCESSFUL enqueue against the wrong tenant. Every case below is a caller that would, under a
 // defaulting implementation, get a job that runs somewhere it should not.
 import { describe, test, expect } from 'vitest';
-import { JOB_KINDS, isJobKind, JOB_PAYLOAD_MAX_BYTES, JOB_KIND_MAX, JOB_IDEMPOTENCY_KEY_MAX, validateJobRequest, type JobRequestInput } from './job.js';
+import { JOB_KINDS, isJobKind, JOB_PAYLOAD_MAX_BYTES, JOB_KIND_MAX, JOB_IDEMPOTENCY_KEY_MAX, validateJobRequest, validateJobTenancy, type JobRequestInput } from './job.js';
 
 const ACCOUNT = '11111111-1111-4111-8111-111111111111';
 const COMPANY = '22222222-2222-4222-8222-222222222222';
@@ -26,6 +26,35 @@ describe('job kinds', () => {
   test('every declared kind is within the DB length bound, so no kind can be valid here and rejected by the CHECK', () => {
     for (const kind of JOB_KINDS) expect(kind.length).toBeGreaterThan(0);
     for (const kind of JOB_KINDS) expect(kind.length).toBeLessThanOrEqual(JOB_KIND_MAX);
+  });
+});
+
+describe('validateJobTenancy — the subset that must be answerable before a scope exists', () => {
+  test('accepts a well-formed pair and returns the ids VERBATIM', () => {
+    expect(validateJobTenancy({ accountId: ACCOUNT, companyId: COMPANY })).toEqual({ ok: true, value: { accountId: ACCOUNT, companyId: COMPANY } });
+  });
+
+  test('reports missing and invalid as DIFFERENT reasons — "nobody told us" is not "we were told nonsense"', () => {
+    expect(validateJobTenancy({ companyId: COMPANY })).toEqual({ ok: false, reason: 'missing_account' });
+    expect(validateJobTenancy({ accountId: ACCOUNT })).toEqual({ ok: false, reason: 'missing_company' });
+    expect(validateJobTenancy({ accountId: 'nope', companyId: COMPANY })).toEqual({ ok: false, reason: 'invalid_account' });
+    expect(validateJobTenancy({ accountId: ACCOUNT, companyId: 'system' })).toEqual({ ok: false, reason: 'invalid_company' });
+  });
+
+  test('it needs NOTHING but the two ids — so it can run before authorization without touching platform state', () => {
+    // The property that makes running this ahead of the authz check safe: no kind, no payload, no actor, no database.
+    expect(validateJobTenancy({ accountId: ACCOUNT, companyId: COMPANY }).ok).toBe(true);
+  });
+
+  test('validateJobRequest DELEGATES here, so the two can never disagree about what valid tenancy is', () => {
+    for (const bad of [{ accountId: undefined }, { companyId: undefined }, { accountId: 'x' }, { companyId: 'x' }]) {
+      const full = validateJobRequest(valid(bad));
+      const only = validateJobTenancy(valid(bad));
+      expect(full.ok).toBe(false);
+      expect(only.ok).toBe(false);
+      if (full.ok || only.ok) throw new Error('expected refusals');
+      expect(full.reason).toBe(only.reason);
+    }
   });
 });
 

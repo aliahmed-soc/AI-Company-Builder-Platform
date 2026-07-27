@@ -22,6 +22,21 @@ export function isJobKind(value: unknown): value is JobKind {
   return typeof value === 'string' && (JOB_KINDS as readonly string[]).includes(value);
 }
 
+/**
+ * The CLOSED job lifecycle set, mirroring the `jobs_state_valid` CHECK exactly.
+ *
+ * Declared in full here — including `dead_letter`, which only **P5-001c** ever reaches — for the same reason the
+ * migration declares it up front (CDR-049 §4-G6): a state introduced later is a state the earlier code never handled.
+ * Having the contract lag the database would be worse than either, because a reader would take this list as the
+ * answer to "what states exist" and be wrong. A real-PostgreSQL test asserts the two sets agree.
+ */
+export const JOB_STATES = ['queued', 'running', 'succeeded', 'failed', 'dead_letter', 'cancelled'] as const;
+export type JobState = (typeof JOB_STATES)[number];
+
+export function isJobState(value: unknown): value is JobState {
+  return typeof value === 'string' && (JOB_STATES as readonly string[]).includes(value);
+}
+
 /** Mirrors the `jobs_kind_len` CHECK, so nothing can be valid here and rejected by the database. */
 export const JOB_KIND_MAX = 100;
 /** Mirrors the `jobs_idempotency_len` CHECK. */
@@ -116,6 +131,38 @@ function isPresent(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/** Only the tenancy failures — the subset that must be reportable BEFORE a caller's scope is resolved. */
+export type JobTenancyFailure = Extract<JobRequestFailure, 'missing_account' | 'missing_company' | 'invalid_account' | 'invalid_company'>;
+
+export type JobTenancyResult =
+  | { readonly ok: true; readonly value: { readonly accountId: string; readonly companyId: string } }
+  | { readonly ok: false; readonly reason: JobTenancyFailure };
+
+/**
+ * Validate ONLY the tenant context.
+ *
+ * Split out from {@link validateJobRequest} for a reason found in review: scope resolution denies an absent company
+ * before any use-case validation runs, so a context-stripped enqueue would have been reported as `forbidden` —
+ * indistinguishable from an authorization failure, and therefore not the *typed* refusal the acceptance clause
+ * ("context-stripped job refused") requires. A caller has to be able to see, and the platform has to be able to alarm
+ * on, "a job arrived with no tenant context" as its own fact.
+ *
+ * Safe to run before authorization, unlike the rest of the validation: it reports only on the SHAPE of ids the caller
+ * themselves supplied. It reveals nothing about whether a company exists, who is a member, or any platform state — so
+ * it is not the oracle that `invalid_kind` or `payload_too_large` would be.
+ */
+export function validateJobTenancy(input: JobRequestInput): JobTenancyResult {
+  const accountId: unknown = input.accountId;
+  const companyId: unknown = input.companyId;
+  if (!isPresent(accountId)) return { ok: false, reason: 'missing_account' };
+  if (!isPresent(companyId)) return { ok: false, reason: 'missing_company' };
+  // A UUID check, not a non-empty check: `'system'`, `'null'`, `'0'` and `'default'` are all present and all
+  // non-empty, and every one of them is a sentinel a defaulting implementation might have written.
+  if (!UUID.test(accountId)) return { ok: false, reason: 'invalid_account' };
+  if (!UUID.test(companyId)) return { ok: false, reason: 'invalid_company' };
+  return { ok: true, value: { accountId, companyId } };
+}
+
 /**
  * Validate an enqueue request, or refuse with a typed reason. NEVER repairs, defaults, or truncates.
  *
@@ -125,14 +172,9 @@ function isPresent(value: unknown): value is string {
  * fail a regex.
  */
 export function validateJobRequest(input: JobRequestInput): JobRequestResult {
-  const accountId: unknown = input.accountId;
-  const companyId: unknown = input.companyId;
-  if (!isPresent(accountId)) return { ok: false, reason: 'missing_account' };
-  if (!isPresent(companyId)) return { ok: false, reason: 'missing_company' };
-  // A UUID check, not a non-empty check: `'system'`, `'null'`, `'0'` and `'default'` are all present and all
-  // non-empty, and every one of them is a sentinel a defaulting implementation might have written.
-  if (!UUID.test(accountId)) return { ok: false, reason: 'invalid_account' };
-  if (!UUID.test(companyId)) return { ok: false, reason: 'invalid_company' };
+  const tenancy = validateJobTenancy(input);
+  if (!tenancy.ok) return tenancy;
+  const { accountId, companyId } = tenancy.value;
 
   const kind: unknown = input.kind;
   if (!isJobKind(kind)) return { ok: false, reason: 'invalid_kind' };

@@ -50,7 +50,10 @@ export class JobRepository {
         idempotency_key: input.idempotencyKey ?? null,
         created_by_user_id: input.createdByUserId,
       })
-      .onConflict((oc) => oc.columns(['company_id', 'idempotency_key']).doNothing())
+      // The arbiter WHERE is REQUIRED, not decoration: `jobs_company_idempotency_uq` is a PARTIAL index, and
+      // PostgreSQL will not infer a partial index from a bare column list — it raises 42P10 ("no unique or exclusion
+      // constraint matching the ON CONFLICT specification"). The predicate here must stay identical to the index's.
+      .onConflict((oc) => oc.columns(['company_id', 'idempotency_key']).where('idempotency_key', 'is not', null).doNothing())
       .returningAll()
       .executeTakeFirst();
   }

@@ -14,6 +14,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { JobRepository, type DatabaseClient } from '@acbp/database';
+import { JOB_STATES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -113,11 +114,30 @@ describe.skipIf(!hasTestDatabase)('durable job store + tenant stamping (real Pos
     expect(await auditFor('job.enqueued')).toHaveLength(0);
   });
 
-  test('LAYER 3 — a sentinel company id ("system") is refused, not treated as a platform scope', async () => {
+  test('LAYER 3 — a sentinel company id ("system") is refused as invalid, not treated as a platform scope', async () => {
     const r = await enqueueJob(product, { ...base(), companyId: 'system', kind: 'understanding.generate' });
-    // It never becomes a job. Whether it is reported as a refusal or as forbidden depends on where scope resolution
-    // gives out first, and BOTH are correct answers — what must never happen is a row.
-    expect(r.status === 'refused' || r.status === 'forbidden').toBe(true);
+    expect(r).toEqual({ status: 'refused', reason: 'invalid_company' });
+    expect(await jobRows()).toHaveLength(0);
+  });
+
+  test('LAYER 3 — the tenancy refusal is REACHABLE: it is not swallowed by scope resolution as `forbidden`', async () => {
+    // The regression this pins is the review-pass-1 defect. `runInCompanyScope` denies a blank company id itself, so
+    // with the tenancy check inside the scope every one of these came back `forbidden` — which is exactly what an
+    // authorization failure looks like, making the acceptance clause's refusal invisible.
+    //
+    // Note these run with a LEGITIMATE owner: nothing about the caller is wrong, only the context. If any of these
+    // reports `forbidden`, the platform can no longer tell "a job lost its tenant context" from "someone was not
+    // allowed to enqueue", and the alarm this ticket exists to enable is dead.
+    for (const [companyId, reason] of [
+      [undefined, 'missing_company'],
+      ['', 'missing_company'],
+      ['   ', 'missing_company'],
+      ['null', 'invalid_company'],
+      ['0', 'invalid_company'],
+    ] as const) {
+      const r = await enqueueJob(product, { ...base(), companyId: companyId as unknown as string, kind: 'understanding.generate' });
+      expect(r).toEqual({ status: 'refused', reason });
+    }
     expect(await jobRows()).toHaveLength(0);
   });
 
@@ -130,6 +150,9 @@ describe.skipIf(!hasTestDatabase)('durable job store + tenant stamping (real Pos
   test('LAYER 3 — authorization is decided BEFORE validation, so a non-owner learns nothing about their fields', async () => {
     // A viewer supplying a malformed request gets `forbidden`, not `refused: invalid_kind`. A refusal reason is a
     // small oracle and should only be available to someone entitled to the operation at all.
+    //
+    // TENANCY is the deliberate exception (see the reachability test above): it reports on the shape of ids the
+    // caller supplied and discloses no platform state, so it may — and must — be answered before authorization.
     const r = await enqueueJob(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, kind: 'shell.exec' });
     expect(r).toEqual({ status: 'forbidden' });
   });
@@ -235,12 +258,15 @@ describe.skipIf(!hasTestDatabase)('durable job store + tenant stamping (real Pos
     expect((await jobRows())[0]?.state).toBe('queued');
   });
 
-  test('`dead_letter` is already a legal state, so P5-001c extends behaviour rather than reshaping the table', async () => {
+  test('the contract\'s JOB_STATES and the database CHECK agree — EVERY declared state is accepted', async () => {
+    // The cross-check that keeps the two from drifting. `dead_letter` is in here even though only P5-001c reaches it:
+    // the migration declares it up front (§4-G6) so b/c extend behaviour rather than reshape the table, and this is
+    // what proves the contract's list is the same list rather than a stale copy of it.
     const r = ok(await enqueueJob(product, { ...base(), kind: 'understanding.generate' }));
-    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
-      await sql`update jobs set state = 'dead_letter' where id = ${r.job.id}::uuid`.execute(db);
-    });
-    expect((await jobRows())[0]?.state).toBe('dead_letter');
+    for (const state of JOB_STATES) {
+      await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => sql`update jobs set state = ${state} where id = ${r.job.id}::uuid`.execute(db));
+      expect((await jobRows())[0]?.state).toBe(state);
+    }
   });
 
   // ── idempotency (TASK-009 / NFR-006) ──────────────────────────────────────────────────────────────────────

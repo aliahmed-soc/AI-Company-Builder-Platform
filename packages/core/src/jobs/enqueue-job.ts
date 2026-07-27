@@ -14,7 +14,7 @@
 // Layer 3 does not make 1 and 2 redundant, and the redundancy is deliberate: this layer is bypassed by anything that
 // reaches the repository directly, and the DB layers are the ones that still hold when it is.
 import { JobRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type JobRow } from '@acbp/database';
-import { validateJobRequest, jobEnqueued, type JobKind, type JobRequestFailure } from '@acbp/contracts';
+import { validateJobRequest, validateJobTenancy, jobEnqueued, type JobKind, type JobRequestFailure } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -55,7 +55,13 @@ export type EnqueueJobResult =
   | { readonly status: 'forbidden' }
   // The typed refusal (CDR-049 §3-G3.3). `reason` is the CLOSED contract union — never a message string, so a caller
   // can switch exhaustively and an alarm can key on `missing_company` specifically.
-  | { readonly status: 'refused'; readonly reason: JobRequestFailure };
+  | { readonly status: 'refused'; readonly reason: JobRequestFailure }
+  // The idempotency index conflicted but the conflicting row could not then be read. Its own status rather than a
+  // `refused` reason, because NOTHING about the request was wrong: reporting `invalid_idempotency_key` here would tell
+  // the caller to change a key that was correct, and they would retry forever. Should be unreachable (a conflict
+  // implies a committed row visible to this transaction) — which is exactly why it must be distinguishable if it ever
+  // happens rather than folded into a plausible-sounding neighbour.
+  | { readonly status: 'conflict_unresolved' };
 
 function toEnqueuedJob(row: JobRow, kind: JobKind): EnqueuedJob {
   // `kind` comes from the VALIDATED request rather than the row: the row's column is plain text, and narrowing it
@@ -75,6 +81,23 @@ function toEnqueuedJob(row: JobRow, kind: JobKind): EnqueuedJob {
  */
 export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParams, options: EnqueueJobOptions = {}): Promise<EnqueueJobResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
+
+  // TENANCY IS CHECKED BEFORE THE SCOPE IS RESOLVED. Found in review pass 1: `runInCompanyScope` denies an absent or
+  // blank company id itself, so with this check inside the scope the acceptance clause's refusal was UNREACHABLE — a
+  // context-stripped enqueue came back as `forbidden`, which is what an authorization failure looks like. The one
+  // failure this sub-scope exists to make visible would have been the one failure it hid.
+  //
+  // Only the tenancy fields move ahead of authorization, and only because they leak nothing: they report on the shape
+  // of ids the CALLER supplied, not on platform state. `invalid_kind` and `payload_too_large` stay behind the authz
+  // check, where a refusal reason would be an oracle.
+  const tenancy = validateJobTenancy({ accountId: params.accountId, companyId: params.companyId });
+  if (!tenancy.ok) {
+    // WARN, not INFO: a context-stripped enqueue is a defect upstream, not routine bad input. The reason is a closed
+    // enum, so this carries no caller data.
+    options.logger?.warn('job.enqueue_refused', { metadata: { reason: tenancy.reason } });
+    return { status: 'refused', reason: tenancy.reason };
+  }
+
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
@@ -90,17 +113,20 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
         createdByUserId: params.userId,
       });
       if (!validated.ok) {
-        // Logged at WARN because a context-stripped enqueue is a defect somewhere upstream, not routine input error.
-        // The reason is a closed enum, so this carries no caller data.
         options.logger?.warn('job.enqueue_refused', { metadata: { reason: validated.reason } });
         return { status: 'refused', reason: validated.reason };
       }
       const request = validated.value;
 
       const jobs = new JobRepository(scope.db);
+      // STAMPED FROM THE RESOLVED SCOPE, not from `request`. Both are equal here — `runInCompanyScope` verified
+      // membership against exactly the ids the caller passed — but they are equal by coincidence of this call path,
+      // and this is the one ticket whose entire purpose is that a job's tenancy is not a caller's claim. Reading the
+      // scope means a future caller who supplies ids that differ from the scope they actually hold cannot produce a
+      // row stamped with the claim rather than the grant, without anyone having to notice.
       const inserted = await jobs.insert({
-        accountId: request.accountId,
-        companyId: request.companyId,
+        accountId: scope.tenant.accountId,
+        companyId: scope.tenant.companyId,
         kind: request.kind,
         payload: request.payload,
         idempotencyKey: request.idempotencyKey,
@@ -116,8 +142,8 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
         if (existing === undefined) {
           // The insert wrote nothing AND nothing is there to find. Reporting `ok` would claim a job that does not
           // exist, and callers would wait for work that will never run.
-          options.logger?.warn('job.enqueue_conflict_unresolved', { metadata: { kind: request.kind } });
-          return { status: 'refused', reason: 'invalid_idempotency_key' };
+          options.logger?.error('job.enqueue_conflict_unresolved', { metadata: { kind: request.kind } });
+          return { status: 'conflict_unresolved' };
         }
         // Audited even though no row was created: an enqueue attempt that collapsed into an existing job is exactly
         // the event a run trail would otherwise be missing, and the caller was told `ok`.
