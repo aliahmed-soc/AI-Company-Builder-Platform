@@ -475,3 +475,89 @@ convincing (b).
 - No window 9 was started, because starting one would only have produced idle churn.
 
 Everything is committed and pushed. Picking any gate above and unblocking it is enough to resume.
+
+---
+
+## Window 9 — 2026-07-27, ACBP-P5-001a (durable job store + tenant stamping)
+
+**Real clock:** window resumed on the owner's unblocking decision; this report written at a checked
+**2026-07-27 16:20:24**. **Disk, both drives, checked at the same moment:** C: **22.02 GB** free, E: **104.88 GB**
+free. Both far above the 3 GB threshold, so no cleanup — the owner freed space after the earlier windows flagged it.
+
+### What the owner unblocked, and what it opened
+
+DECISION 1 approved P0-005 (merged last window, `b9f101b`). DECISION 2 ratified my own 3-way splits for **P5-001,
+P5-003, P6-001, P6-007** as the DoR split-review, each sub-scope separately reviewable at the highest bar.
+Re-running dependency reachability after both: **33 tickets reachable**, up from 0. Only P2-011 and P7-006 (and their
+four dependents) remain genuinely blocked, exactly as the owner stated.
+
+### Built: ACBP-P5-001a — the first of the twelve sub-scopes
+
+Branch `p5-001a-job-store-tenant-stamping`, draft PR **#50**, CDR-049. Acceptance clause: *"context-stripped job
+refused"* (trust-critical #3, invariant 3).
+
+**The load-bearing call was that WE own the job table.** The Objective's "library per ADR-008" reads naively as
+"adopt pg-boss and use its job table" — which would have been a serious mistake, because those libraries own their
+DDL and a table we do not own cannot carry a `NOT NULL` tenant stamp or dual-keyed RLS. I did not raise this as a
+gate, because canon already answers it: the owner's own ADR-008 amendment makes "job tables remain standard SQL (exit
+path)" binding, and §13 adds that job semantics are "library-independent design". So P5-001a takes **no library
+dependency at all**, which is what makes it cleanly reviewable alone.
+
+Migration **0031** adds `jobs` (migrations now end 0031): dual-keyed FORCE RLS; tenancy NOT NULL and immutable;
+closed 6-state CHECK with `dead_letter` declared up front so P5-001b/c extend rather than reshape; per-company
+**partial** unique idempotency index; `SELECT`+`INSERT` plus a column-scoped `UPDATE(state, updated_at,
+attempts)`; **no DELETE**, because job history is the run trail. Contracts add closed `JOB_KINDS`/`JOB_STATES`
+and a validator that **refuses and never repairs**. `job:enqueue` is **owner-only** — canon does not settle the
+role, so I took the safer reversible reading. `job.enqueued` is audited in-transaction with `{kind, deduplicated}`
+and nothing else.
+
+### Both review passes returned FAIL. So did CI, twice. All five defects were mine.
+
+**The one worth carrying forward: the acceptance clause's refusal was UNREACHABLE.** `runInCompanyScope` trims and
+denies a blank company id *itself*, before the use-case body runs — so a context-stripped enqueue came back
+`forbidden`, indistinguishable from an authorization failure. "Context-stripped job refused" is not satisfied by
+"no row is written" (that was already true); it requires the failure be **distinguishable**, so a caller is told
+plainly and the platform can alarm on it. The layer built to expose the problem was hiding it. Neither the unit tests
+(which call the validator directly, bypassing the scope) nor any local run (real-PG suites skip here) could reach it —
+**reading found it before CI did.**
+
+Fixed by splitting `validateJobTenancy` out and running **only** it ahead of authorization. That is not a hole in
+the no-oracle rule but a consequence of it: the tenancy check reports on the shape of ids the *caller supplied* and
+discloses no platform state, whereas `invalid_kind` and `payload_too_large` would — and those stay behind the
+authz check, with a test pinning that a viewer sending a bad kind still gets only `forbidden`.
+
+Also pass 1: the row was stamped from caller params rather than `scope.tenant` (equal on this path, but equal by
+coincidence, and this is the one ticket whose whole subject is that tenancy is a grant and not a claim); and the
+unresolvable-conflict branch returned `invalid_idempotency_key` — a reason that would send a caller to change a
+correct key and retry forever. Pass 2: the contract did not mirror the migration's closed state set.
+
+**Found by CI, not by reading** — recorded plainly, because "the reviews were clean" would be a false account:
+`ON CONFLICT` cannot infer a **partial** unique index from a bare column list (42P10); a **column-level** UPDATE
+grant never appears in `role_table_grants`; and **layer 1 was being tested for something layer 2 does** — an insert
+omitting a tenancy column is refused by RLS, not by `NOT NULL`, because the column defaults to NULL and the policy
+predicate evaluates to NULL rather than true. The code was right and the test's claim was not. `NOT NULL` is the
+backstop for paths where RLS does *not* apply (a superuser migration, a backfill, a later-loosened policy), so it is
+now proven **structurally** against `information_schema.columns`, with the runtime test accepting either SQLSTATE.
+That is recorded as CDR-049 §3-G3a rather than quietly patched, because it changes what each layer is *for*.
+
+### Evidence
+
+**Exact-head CI GREEN, zero skips: 2053/2053 across 170 files at `9dfdf13`** (run 30269133135). All three refusal
+layers proven against real PostgreSQL. Local gate all exit 0 throughout.
+
+### State at report time
+
+`main` unchanged at `223f8e5`; branch `p5-001a-job-store-tenant-stamping` at `9dfdf13`, pushed, tree clean,
+draft PR #50 with the full review record in its body. Ledger `docs/implementation/P5-001a-REVIEW.md`.
+
+**P5-001 is NOT marked Done** — that is an owner gate, and b/c are not built. The backlog row reads "In progress
+(split a/b/c ratified by owner 2026-07-27; a in review)".
+
+### Awaiting an owner gate
+
+P5-001a is complete to the completion standard except the steps that are gates by charter: **mark the ticket Done,
+mark PR #50 ready, merge to main, delete the branch after exact-main CI**. Per the owner's finalization protocol every
+one of those is a separate gate, so the sub-scope stops here rather than self-merging.
+
+Continuing to **P5-001b** (checkpoints and resume) would build on an unmerged branch. I am proceeding to the next
+independent unblocked work instead, and will return to b/c when a is merged.
