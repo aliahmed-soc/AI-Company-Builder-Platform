@@ -103,6 +103,37 @@ describe('silent-fallback negatives (ACBP-P5-009; NFR-019; trust-critical #19)',
     expect(JSON.stringify(event)).not.toContain('SECRET');
   });
 
+  test('an ELIGIBLE class does NOT fall over on a NON-RETRYABLE failure — fallover is for infrastructure only', async () => {
+    // Second-review-pass gap. Eligibility is necessary but not sufficient: the trigger must also be a RETRYABLE
+    // infrastructure failure. A structurally-invalid output is deterministic — the same prompt will produce the same
+    // shape from a second model — so falling over would spend a second provider's budget re-running a bad prompt and
+    // then attribute the failure to the wrong model. `isRetryableModelError` excludes `invalid_output`; this pins
+    // that the gateway actually honours it on the fallover path, not only on the retry path.
+    const refusing = new FakeModelProvider({ behavior: { kind: 'fail', error: 'content_refused' } });
+    const healthy = healthyProvider('secondary');
+    const events: NewModelCallUsageEvent[] = [];
+    const deps: ModelGatewayDeps = {
+      primary: { name: 'primary', modelId: toModelId('primary-model'), modelVersion: 'v1', provider: refusing },
+      fallback: healthy.resolved,
+      recordUsage: async (e) => {
+        await Promise.resolve();
+        events.push(e);
+      },
+      estimateCost,
+      sleep: async () => {
+        await Promise.resolve();
+      },
+      config: { maxRetries: 2, maxReask: 0, backoffBaseMs: 1 },
+    };
+
+    const r = await callModel(deps, requestFor('interactive'));
+    expect(r.outcome).toBe('error');
+    expect(r.errorCategory).toBe('content_refused');
+    expect(r.fallbackUsed).toBe(false);
+    expect(healthy.fake.callCount).toBe(0);
+    expect(events[0]!.fallbackReason).toBeUndefined();
+  });
+
   test('when the FALLBACK ALSO FAILS, the reason still names what triggered the fallover', async () => {
     // Review-pass gap: nothing covered both providers failing, which is the case an on-call engineer actually hits
     // during a broad outage. The two fields must stay distinct — `fallbackReason` is why we LEFT the primary, and

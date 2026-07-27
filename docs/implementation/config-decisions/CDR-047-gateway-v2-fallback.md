@@ -62,6 +62,16 @@ unavailable*. Those imply completely different responses, and a boolean collapse
   reason.
 - **G7 — a material decision that fails must fail HONESTLY** — the caller sees the primary's normalized error, not a
   quietly-degraded success. Invariant 20: user-facing status is always truthful.
+- **G8 — eligibility is NECESSARY, not SUFFICIENT: the trigger must also be RETRYABLE.** An eligible class whose
+  primary fails with a terminal category (`invalid_output`, `content_refused`) must NOT fall over. Those failures are
+  deterministic — the same prompt yields the same shape from a second model — so a fallover would spend a second
+  provider's budget re-running a bad prompt and then attribute the failure to the wrong model.
+  *Added during the second review pass:* the suite covered ineligible-class-does-not-fall-over but not
+  eligible-class-on-a-non-retryable-failure, so half the predicate was unpinned.
+- **G9 — when BOTH providers fail, the two facts stay distinct**: `fallback_reason` is why we LEFT the primary,
+  `error_category` is how the call finally died on the secondary. *Added during the first review pass* — this is the
+  case an on-call engineer actually hits during a broad outage, and collapsing the two would lose the fact that a
+  fallover was attempted at all, which is the difference between "one provider is down" and "both are".
 
 ## 5. "Claude Sonnet 4 fallback adapter" — deliberately NOT built here
 

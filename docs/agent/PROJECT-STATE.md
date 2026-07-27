@@ -9,6 +9,29 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-009 gateway v2: fallback model — CORE DONE / FINALIZING (window 8).**
+  Branch `p5-009-gateway-v2-fallback` (from main `8239cc3`, after P5-010 merged), draft PR **#47**, CDR-047.
+  **Checked before building, as with P5-010: most of it already existed.** The fallback slot, the fallover on
+  retryable exhaustion, `isFallbackEligible`, generation's ineligibility, accumulated usage and `fallback_used` all
+  came from P2-003/CDR-026. Two clauses did not: the fallback **reason**, and the **silent-fallback negatives**.
+  Migration **0030** adds `usage_events.fallback_reason` (ALTER-only, nullable, no grant change). The value is the
+  NORMALIZED `ModelErrorCategory`, never provider text, captured from the PRIMARY at the moment the fallover decision
+  is taken — so when both providers fail, `fallback_reason` (why we left) and `error_category` (how it died) hold
+  different values.
+  **A migration-safety decision worth remembering:** the natural symmetric CHECK (a reason exactly when
+  `fallback_used`) would have passed in CI, where the schema is rebuilt each run, and **failed on the first real
+  deployment carrying history** — pre-0030 rows have `fallback_used = true` and no reason. Shipped one-directional,
+  with the asymmetry pinned by its own real-PG test so a later "tightening" fails loudly.
+  **Both review passes returned FAIL**, each finding a missing case in a trust-critical negative suite — the failure
+  mode this ticket is most exposed to, since the deliverable is "prove the thing does not happen". Pass 1: nothing
+  covered BOTH providers failing. Pass 2: nothing covered an ELIGIBLE class failing NON-RETRYABLY, so half the
+  fallover predicate was unpinned. See `docs/implementation/P5-009-REVIEW-COVERAGE.md`.
+  **The named "Claude Sonnet 4 fallback adapter" is DEFERRED** and recorded as such — exercising a live provider
+  needs ACBP-P2-011 (owner gate). The gateway is provider-neutral, so the BEHAVIOUR is fully proven; what is not
+  proven is that a specific vendor SDK conforms, which is what the gate is for.
+  Exact-head CI green zero-skip **1963/1963** at `d7a7b8a`.
+  Next: squash-merge → exact-main CI zero-skip → delete branch.
+- **ACBP-P5-010 structured-output validation hardening — DONE** (squash `8239cc3`, PR #46; exact-main CI green zero-skip 1954/1954; branch deleted).
 - **ACBP-P5-010 structured-output validation hardening — CORE DONE / FINALIZING (6th autonomous window).**
   Branch `p5-010-structured-output-hardening` (from main `ebbd8f1`, after P3-007 merged), draft PR **#46**, CDR-046.
   **The load-bearing finding came before any code: the MECHANISM ALREADY EXISTS.** Every mechanical clause of the
