@@ -807,9 +807,12 @@ export interface JobCheckpointsTable {
   /** What the step produced for a later step. References, NEVER secrets (ADR-008 §11). */
   output: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
- * Tool registry (ACBP-P5-003a; CDR-051; TOOL-001). GLOBAL — no company_id, no RLS: a tool is platform
+}
+
+/**
+ * Tool registry (ACBP-P5-003a; CDR-051; TOOL-001). GLOBAL — no `company_id`, no RLS: a tool is platform
  * configuration, not tenant data. The app role holds SELECT ONLY, so every column is `never` on both insert and
- * update: nothing in the product runtime can register or reclassify a tool.
+ * update — nothing in the product runtime can register or reclassify a tool.
  */
 export interface ToolDefinitionsTable {
   id: ColumnType<string, never, never>;
@@ -821,6 +824,7 @@ export interface ToolDefinitionsTable {
   status: ColumnType<string, never, never>;
   created_at: ColumnType<Date, never, never>;
 }
+
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
