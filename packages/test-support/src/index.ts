@@ -13,3 +13,6 @@ export * from './tenancy/two-tenant-harness.js';
 export * from './tenancy/threat-inventory.js';
 export * from './tenancy/slice-a-journey.js';
 export * from './tenancy/slice-b-journey.js';
+// ACBP-P4-007 / CDR-044 — the Slice D (planned work) journey, shared by `pnpm demo:slice-d` and the CI suite.
+export { runSliceDJourney } from './tenancy/slice-d-journey.js';
+export type { SliceDOps, SliceDJourneyDeps, SliceDFakeBehavior, SliceDGateway, SliceDValidator, SliceDBoard, SliceDDetail } from './tenancy/slice-d-journey.js';
