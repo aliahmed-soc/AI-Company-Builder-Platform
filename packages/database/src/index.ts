@@ -66,6 +66,8 @@ export { UnderstandingReviewRepository } from './understanding-review-repository
 export type { UnderstandingReviewExecutor, NewUnderstandingItemReviewInput, NewUnderstandingConfirmationEventInput } from './understanding-review-repository.js';
 export { TaskRepository } from './task-repository.js';
 export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, NewTaskDeletionInput, ListTasksOptions } from './task-repository.js';
+export { TaskRunRepository } from './task-run-repository.js';
+export type { TaskRunExecutor, NewTaskRunInput, TransitionTaskRunInput } from './task-run-repository.js';
 export { JobRepository } from './job-repository.js';
 export type { JobExecutor, NewJobInput, NewJobCheckpointInput } from './job-repository.js';
 export { StrategyRepository } from './strategy-repository.js';
@@ -208,6 +210,8 @@ export type {
   NewJob,
   ToolDefinitionsTable,
   ToolDefinitionRow,
+  TaskRunsTable,
+  TaskRunRow,
   NewTaskDeletion,
 } from './schema.js';
 

@@ -27,3 +27,5 @@ export * from './jobs/index.js';
 
 // Tool registry: the ordered risk-class set + unclassified-is-most-restrictive (ACBP-P5-003a; CDR-051).
 export * from './tools/index.js';
+// Task runs: the execution-attempt lifecycle, heartbeats and safe-stop (ACBP-P5-002; CDR-053).
+export * from './runs/index.js';
