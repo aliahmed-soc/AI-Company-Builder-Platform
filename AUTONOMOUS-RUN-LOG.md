@@ -4,6 +4,37 @@ Append-only. One entry per autonomous work window. Never overwrite a prior repor
 
 ---
 
+## STANDING INSTRUCTIONS — read before starting any window
+
+These persist across every window and every session, regardless of who prompts, and are not
+superseded by a later instruction to "keep going" or "work through the backlog".
+
+### OWNER STANDING INSTRUCTION — no frontend/UI work without the owner choosing the direction
+
+> No frontend/UI work may begin without the owner personally choosing the UI/UX direction
+> first. If the backlog reaches a point where frontend work is the next Ready item, STOP and
+> flag it — do not pick a design direction, do not build screens, do not scaffold a UI.
+> This is a hard gate, same as P2-011 and P7-006.
+
+Recorded 2026-07-28 (window 13). Practically: a ticket whose deliverable is a screen, a
+component, a layout, a style system, or a design choice is BLOCKED even when its
+dependencies are green and its Definition of Ready says Ready. Backend work that a UI will
+later consume — contracts, use cases, API shapes — is not frontend work and continues
+normally. When in doubt about which side of the line a ticket falls on, stop and ask; the
+cost of asking is a message, and the cost of guessing is a design direction the owner did
+not choose.
+
+### The other hard gates
+
+| Gate | Why |
+| --- | --- |
+| **ACBP-P2-011** | Needs a real paid model account. |
+| **ACBP-P7-006** | Needs real live infrastructure. |
+| **Any frontend/UI work** | The owner chooses the direction first (above). |
+| **Canon's third risk class** (`external` vs `external_reversible`) | Stays flagged in `CDR-051 §0.3` until the owner rules on it separately. Do not resolve it, even though it looks like a small step from the fourth-class correction that was approved. |
+
+---
+
 ## Window 3 — 2026-07-25
 
 **Start:** ~2026-07-25 09:30 +03:00 (resumed mid-window from a compacted session; main = `55438de`)
