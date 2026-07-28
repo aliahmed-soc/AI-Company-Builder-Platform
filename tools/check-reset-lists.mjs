@@ -67,6 +67,35 @@ function isResetListFile(src) {
   return /'kysely_migration_lock'|"kysely_migration_lock"/.test(src);
 }
 
+/**
+ * The candidate table lists in a file: array literals made of quoted strings.
+ *
+ * SCOPING THE CHECK TO THE LISTS IS THE WHOLE POINT, and the first version of this guard got it wrong — it asked
+ * whether the table name appeared ANYWHERE in the file. A file that drops nothing but merely asserts
+ * `expect(names).toContain('task_runs')` satisfied that, which is exactly backwards: the assertion proves the table
+ * exists, and the guard concluded the file could remove it. `database.integration.test.ts` was live in that state.
+ *
+ * The bracket pattern deliberately refuses to match across a nested `[`, so a list is a flat one — which every drop
+ * list is. Spread forms like `[...ALL_TABLES, 'kysely_migration_lock']` are not candidates and do not need to be:
+ * the array they spread is itself a candidate in the same file.
+ */
+function tableLists(src, required) {
+  const lists = [];
+  // Comments are stripped first: the real lists are written one table per line WITH explanatory comments between
+  // them, so a "quoted strings and commas only" test fails on every one of them otherwise. Stripping can at worst
+  // eat a closing bracket and make a list unreadable — which this check reports loudly rather than passing.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:'"])\/\/[^\n]*/g, '$1');
+  for (const [, body] of code.matchAll(/\[([^[\]]*)\]/g)) {
+    // Only quoted strings, commas and whitespace — anything else (an identifier, a call, a spread) means it is not a
+    // plain list. A candidate must also name at least one real table, which is what separates a drop list from an
+    // array of statuses or column names. No size threshold: "best candidate wins" makes one unnecessary.
+    if (!/^[\s,]*(?:(?:'[^']*'|"[^"]*")[\s,]*)+$/.test(body)) continue;
+    const members = [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
+    if (members.some((t) => required.includes(t))) lists.push(members);
+  }
+  return lists;
+}
+
 function main() {
   const required = migratedTables();
   const files = [join(ROOT, 'packages'), join(ROOT, 'apps'), join(ROOT, 'tools')]
@@ -85,8 +114,18 @@ function main() {
     const src = readFileSync(file, 'utf8');
     if (!isResetListFile(src)) continue;
     checked += 1;
-    const missing = required.filter((t) => !new RegExp(`['"]${t}['"]`).test(src));
-    if (missing.length > 0) problems.push({ file: relative(ROOT, file).replace(/\\/g, '/'), missing });
+    const lists = tableLists(src, required);
+    if (lists.length === 0) {
+      // Participates but has no readable list. Fail loudly: a list assembled some other way is a list this check
+      // cannot vouch for, and silently passing it would be the same false negative in a new shape.
+      problems.push({ file: relative(ROOT, file).replace(/\\/g, '/'), missing: ['<no readable table list found>'] });
+      continue;
+    }
+    // A file passes if ANY ONE of its lists can drop everything. Files legitimately hold other lists too — the
+    // tenancy catalog excludes global tables on purpose — so requiring every list to be complete would be wrong.
+    const shortfalls = lists.map((l) => required.filter((t) => !l.includes(t)));
+    const best = shortfalls.reduce((a, b) => (b.length < a.length ? b : a));
+    if (best.length > 0) problems.push({ file: relative(ROOT, file).replace(/\\/g, '/'), missing: best });
   }
 
   if (checked === 0) {

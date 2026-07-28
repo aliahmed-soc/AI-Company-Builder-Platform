@@ -853,6 +853,32 @@ export interface TaskRunsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
+/**
+ * Tool calls (ACBP-P5-003b; CDR-054; TOOL-002/003). The 100%-coverage surface of the enforcement chokepoint —
+ * REFUSED calls have rows here too, because TOOL-001 requires the attempt to be audited.
+ *
+ * `tool_id` is text with NO foreign key on purpose: the commonest refusal is a tool that is not registered, and an FK
+ * would make the record that refusal requires impossible to write. `risk_class` and `external_effect` are SNAPSHOTS
+ * of the gate that was actually applied — re-reading the registry later would misreport a past call.
+ */
+export interface ToolCallsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  run_id: ColumnType<string, string, never>;
+  tool_id: ColumnType<string, string, never>;
+  risk_class: ColumnType<string, string, never>;
+  external_effect: ColumnType<boolean, boolean | undefined, never>;
+  outcome: ColumnType<string, string | undefined, string>;
+  /** CLOSED reason, never engine exception text. Only meaningful on a denied call (enforced by CHECK). */
+  denial_reason: ColumnType<string | null, string | null | undefined, string | null>;
+  /** sha256 hex of a canonical encoding. NEVER the arguments. Immutable after insert. */
+  arguments_digest: ColumnType<string, string, never>;
+  idempotency_key: ColumnType<string | null, string | null | undefined, never>;
+  receipt_ref: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -894,6 +920,7 @@ export interface DatabaseSchema {
   job_checkpoints: JobCheckpointsTable;
   tool_definitions: ToolDefinitionsTable;
   task_runs: TaskRunsTable;
+  tool_calls: ToolCallsTable;
 }
 
 // Repository-facing row shapes.
@@ -980,4 +1007,5 @@ export type NewJob = Insertable<JobsTable>;
 export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
 export type ToolDefinitionRow = Selectable<ToolDefinitionsTable>;
 export type TaskRunRow = Selectable<TaskRunsTable>;
+export type ToolCallRow = Selectable<ToolCallsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

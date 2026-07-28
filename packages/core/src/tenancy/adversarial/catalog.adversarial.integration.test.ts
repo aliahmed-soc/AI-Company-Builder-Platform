@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -100,6 +100,9 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // Task runs (ACBP-P5-002; CDR-053): SELECT + INSERT at the table level; the lifecycle UPDATE is COLUMN-level and
   // is asserted below. NO DELETE - a run is the record that an attempt happened.
   task_runs: ['INSERT', 'SELECT'],
+  // Tool calls (ACBP-P5-003b; CDR-054): SELECT + INSERT at the table level; the outcome UPDATE is COLUMN-level.
+  // NO DELETE - a call record is the evidence the call happened, including the refused ones.
+  tool_calls: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -255,6 +258,14 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect([...runs].sort()).toEqual(['ended_at', 'failure_category', 'last_heartbeat_at', 'started_at', 'state', 'stop_requested_at', 'updated_at']);
     for (const forbidden of ['id', 'account_id', 'company_id', 'task_id', 'attempt', 'created_at']) {
       expect(runs).not.toContain(forbidden);
+    }
+    // Tool calls (ACBP-P5-003b): the outcome columns only. The arguments DIGEST, the risk class the gate applied, the
+    // external-effect flag and the run linkage are all immutable — a call cannot be re-labelled with a gentler class,
+    // have its arguments swapped after the gate passed it, or be re-pointed at a different run.
+    const calls = byTable.get('tool_calls') ?? [];
+    expect([...calls].sort()).toEqual(['denial_reason', 'outcome', 'receipt_ref', 'updated_at']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'run_id', 'tool_id', 'risk_class', 'external_effect', 'arguments_digest', 'idempotency_key', 'created_at']) {
+      expect(calls).not.toContain(forbidden);
     }
     const jobs = byTable.get('jobs') ?? [];
     // ACBP-P5-001c EXTENDED this set with `failure_reason` — the dead-letter transition has to be recordable. The

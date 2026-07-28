@@ -96,6 +96,43 @@ describe('check-reset-lists', () => {
     }
   });
 
+  test('FAILS when the table is only MENTIONED elsewhere in the file, not dropped — the ACBP-P5-003b false negative', () => {
+    // The first version of this checker asked whether the name appeared anywhere in the file. A suite that drops
+    // nothing but merely asserts `expect(names).toContain('widgets')` satisfied it — exactly backwards, since that
+    // assertion proves the table EXISTS and the checker concluded the file could remove it.
+    // `database.integration.test.ts` was live in precisely this state: its drop list omitted `task_runs` while a
+    // `toContain('task_runs')` two hundred lines away kept the guard quiet.
+    const decoy = `const t = ['users', 'kysely_migration', 'kysely_migration_lock'];\nexpect(names).toContain('widgets');`;
+    const root = makeTree([decoy]);
+    try {
+      const r = run(root);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('widgets');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reads a list written one table per line WITH comments between them, as the real ones are', () => {
+    const commented = `const t = [\n  // global config, not tenant data\n  'users',\n  // the widget store\n  'widgets',\n  'kysely_migration_lock',\n];`;
+    const root = makeTree([commented]);
+    try {
+      expect(run(root).code).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores an unrelated array of non-table strings rather than treating it as a broken list', () => {
+    const withNoise = `const states = ['queued', 'running', 'succeeded'];\n${complete}`;
+    const root = makeTree([withNoise]);
+    try {
+      expect(run(root).code).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('does not require bookkeeping tables, which are not product schema', () => {
     const root = makeTree([`const t = ['users', 'widgets', 'kysely_migration_lock'];`]);
     try {

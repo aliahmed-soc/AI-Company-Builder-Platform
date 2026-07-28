@@ -58,6 +58,7 @@ export const ALL_TABLES = [
   'jobs',
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',
+  'tool_calls',
   'task_runs', 'task_deletions',
   'task_dependencies',
   'tasks',
