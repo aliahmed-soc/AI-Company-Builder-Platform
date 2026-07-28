@@ -268,6 +268,27 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      column that is always null pretending to be evidence is worse than none) and `error_category` (canon names it on
      `tool.call_failed` but enumerates no values for tools, and no tool that can fail exists yet). No new SECURITY
      DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P5-004; CDR-056; WORK-001/006; ADR-012; trust-critical #4): migration 0038 adds TWO tables,
+     because they answer to two different owners.
+     `worker_definitions` is GLOBAL platform configuration, versioned `(worker_id, version)`, SELECT-only for the app
+     role — the `tool_definitions` shape, for the same reason. Canon: workers are "versioned configuration + prompts
+     over one shared execution runtime — not independent agent services", so a definition the product could rewrite at
+     runtime would not be a control. It carries canon's own eleven fields (AI-AND-WORKER-ARCHITECTURE §2).
+     THE ALLOWLIST LIVES HERE, which is the point of the ticket: CDR-054 §1-G3 and CDR-055 both deferred where the
+     dispatcher's allowlist comes from, and trust-critical #4 says "allowlists versioned in worker definitions".
+     THE MVP ZERO-EXTERNAL-ACTIONS BOUNDARY is enforced at RESOLUTION, not by a CHECK — `allowed_tools` is a text[]
+     and the classes live in another table, and CHECKs cannot subquery. A definition reaching past
+     `internal_reversible` may exist and can never be USED, which is what canon's "structural, not procedural" needs
+     (§6-G8, found in review). An allowlist naming an unregistered tool fails it too.
+     `company_worker_states` is TENANT data (dual-keyed FORCE RLS), because WORK-006 is per company. Keyed on
+     `worker_id` WITHOUT a version: an owner pauses "the research worker", and pinning to a version would un-pause
+     it the moment a new one was registered. Column-scoped UPDATE of the mutable state only, so a pause cannot be
+     re-pointed at another worker or company after the fact.
+     Budgets (`max_spend_micros`/`max_duration_ms`) carry IOQ-12's INTERIM values (CDR-056 §3) — columns rather than
+     constants precisely so changing one is a data change, not a deploy. NOT owner-ratified.
+     WORK-006's "disable during execution triggers safe-stop" is NOT met yet and is recorded as such (§6): nothing
+     links a run to a worker until P5-005 stamps it, and a nullable unpopulated `worker_id` would be the FK-less hole
+     CDR-049/CDR-052 refused. No new SECURITY DEFINER / role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |

@@ -29,3 +29,5 @@ export * from './jobs/index.js';
 export * from './tools/index.js';
 // Task runs: the execution-attempt lifecycle, heartbeats and safe-stop (ACBP-P5-002; CDR-053).
 export * from './runs/index.js';
+// Worker definitions: versioned configuration and the per-company pause state (ACBP-P5-004; CDR-056).
+export * from './workers/index.js';

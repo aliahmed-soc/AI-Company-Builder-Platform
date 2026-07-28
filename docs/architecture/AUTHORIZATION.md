@@ -246,6 +246,7 @@ trusted core/use-case seam:
 - **P5-003a** (tool registry) adds NO authz action. The registry is global platform configuration with a SELECT-only
   grant and no runtime write path at all, so there is nothing for a membership role to be authorized to do. See
   `CDR-051`.
+- **P5-004** (worker definitions) adds `worker:control`, **`owner` only**. WORK-006 calls it *"granular emergency control"* and puts it beside ADMIN-001: a viewer who could disable the research worker could stop the company's work without being able to start any. The registry LISTING is a member read (`task:read`) on purpose — hiding a pause from viewers would make the control invisible to exactly the people wondering why nothing ran. See `CDR-056`.
 - **P5-003b** (tool dispatcher) adds NO authz action either, and that is a decision rather than an omission. A tool
   call happens INSIDE a run's execution, so it reuses `run:execute` — the capability executing a run already needs.
   Per-tool least privilege is the **allowlist's** job (WORK-005, trust-critical #4), and a second, coarser role gate

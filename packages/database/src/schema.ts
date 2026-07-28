@@ -881,6 +881,49 @@ export interface ToolCallsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
+/**
+ * Worker definitions (ACBP-P5-004; CDR-056; WORK-001; ADR-012). GLOBAL platform configuration, versioned
+ * `(worker_id, version)` — workers are "versioned configuration + prompts over one shared execution runtime", not
+ * services. No tenancy and no RLS; the app role holds SELECT only, so an allowlist is a control rather than a
+ * suggestion. Every column is `never` on insert and update for the same reason.
+ */
+export interface WorkerDefinitionsTable {
+  id: ColumnType<string, never, never>;
+  worker_id: ColumnType<string, never, never>;
+  version: ColumnType<number, never, never>;
+  capabilities: ColumnType<string[], never, never>;
+  /** THE allowlist (WORK-005; invariant 4). Its home. */
+  allowed_tools: ColumnType<string[], never, never>;
+  input_schema_ref: ColumnType<string, never, never>;
+  output_schema_ref: ColumnType<string, never, never>;
+  /** Integer micro-units, matching usage_events. IOQ-12 interim values (CDR-056 section 3). */
+  max_spend_micros: ColumnType<number, never, never>;
+  max_duration_ms: ColumnType<number, never, never>;
+  retry_categories: ColumnType<string[], never, never>;
+  /** NULL = nothing this worker does is approval-gated. Otherwise the LEAST class that requires approval. */
+  approval_threshold_risk_class: ColumnType<string | null, never, never>;
+  model_task_class: ColumnType<string, never, never>;
+  logging_redaction_class: ColumnType<string, never, never>;
+  status: ColumnType<string, never, never>;
+  created_at: ColumnType<Date, never, never>;
+}
+
+/**
+ * Per-company worker state (ACBP-P5-004; CDR-056; WORK-006). Company-owned, dual-keyed FORCE RLS: the platform says
+ * what a worker IS, the company owner says whether it may run HERE. Keyed on `worker_id` WITHOUT a version — an
+ * owner pauses "the research worker", and pinning to a version would un-pause it the moment a new one was registered.
+ */
+export interface CompanyWorkerStatesTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  worker_id: ColumnType<string, string, never>;
+  state: ColumnType<string, string | undefined, string>;
+  reason: ColumnType<string | null, string | null | undefined, string | null>;
+  changed_by_user_id: ColumnType<string, string, string>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -923,6 +966,8 @@ export interface DatabaseSchema {
   tool_definitions: ToolDefinitionsTable;
   task_runs: TaskRunsTable;
   tool_calls: ToolCallsTable;
+  worker_definitions: WorkerDefinitionsTable;
+  company_worker_states: CompanyWorkerStatesTable;
 }
 
 // Repository-facing row shapes.
@@ -1010,4 +1055,6 @@ export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
 export type ToolDefinitionRow = Selectable<ToolDefinitionsTable>;
 export type TaskRunRow = Selectable<TaskRunsTable>;
 export type ToolCallRow = Selectable<ToolCallsTable>;
+export type WorkerDefinitionRow = Selectable<WorkerDefinitionsTable>;
+export type CompanyWorkerStateRow = Selectable<CompanyWorkerStatesTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

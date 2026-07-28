@@ -141,6 +141,10 @@ export const AUTHZ_ACTIONS = [
   // owner's decision (API-CONTRACTS: run control is 'Owner/operator'). One action could not express that.
   'run:execute',
   'run:cancel',
+  // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006). Canon calls it 'granular EMERGENCY control'
+  // and puts it beside ADMIN-001: a viewer who could disable the research worker could stop the company's work
+  // without being able to start any. Owner-only.
+  'worker:control',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -265,6 +269,7 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // worker able to cancel its own run could hide work it had been told to stop.
   'run:execute': ['owner'],
   'run:cancel': ['owner'],
+  'worker:control': ['owner'],
 };
 
 /**
