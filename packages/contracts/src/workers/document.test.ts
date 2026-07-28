@@ -41,6 +41,12 @@ describe('structure — "editable" means sections, not a blob', () => {
     expect(parseDocumentOutput(doc({ sections: [section('  ', 'body')] }))).toMatchObject({ ok: false, reason: 'invalid_section' });
   });
 
+  test('two sections with the SAME heading are refused — "editable" needs addressable sections', () => {
+    // Review pass 2. A revision workflow has to address a section by something, and "the one called Market" stops
+    // identifying anything when there are two. The needs-revision warning names sections by heading too.
+    expect(parseDocumentOutput(doc({ sections: [section('Market', 'a'), section('market ', 'b')] }))).toMatchObject({ ok: false, reason: 'duplicate_heading', index: 1 });
+  });
+
   test('a blank BODY parses — it is a quality problem, not a structural one', () => {
     // The distinction that makes this worker work: an empty section is something the founder can see and fill in, so
     // it flows to the quality check rather than being refused at the door.
@@ -89,7 +95,9 @@ describe('G1/G4 — the quality check finds EMPTINESS, and derives the status', 
   test('placeholder text is emptiness wearing a costume', () => {
     // The failure this check exists for: a document that LOOKS written, section by section, and says nothing. Each
     // of these is a model declining to write while appearing to have written.
-    for (const placeholder of ['TBD', 'tbd', 'TODO', 'To be determined', '[insert market size]', 'N/A', 'Lorem ipsum dolor sit amet', 'xxx', '...']) {
+    // `{{value}}` and `((x))` are here because review pass 1 found the regex did NOT match the mustache form its own
+    // comment offered as an example — the opener consumed one brace and the trailing one had nothing left to match.
+    for (const placeholder of ['TBD', 'tbd', 'TODO', 'To be determined', '[insert market size]', '<describe the offer>', '{{value}}', '((x))', 'N/A', 'Lorem ipsum dolor sit amet', 'xxx', '...']) {
       const parsed = parseDocumentOutput(doc({ sections: [section('Summary', 'Real content here.'), section('Market', placeholder)] }));
       if (!parsed.ok) throw new Error(`setup: ${placeholder}`);
       expect(assessDocumentQuality(parsed.document), placeholder).toMatchObject({ status: 'needs_revision', failingSections: ['Market'] });

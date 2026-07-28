@@ -50,6 +50,7 @@ export type DocumentRefusal =
   | 'no_sections'
   | 'too_many_sections'
   | 'invalid_section'
+  | 'duplicate_heading'
   | 'no_provenance'
   | 'invalid_provenance';
 
@@ -111,11 +112,18 @@ export function parseDocumentOutput(output: unknown): DocumentParse {
   if (rawSections.length > MAX_DOCUMENT_SECTIONS) return fail('too_many_sections', null);
 
   const sections: DocumentSection[] = [];
+  const seenHeadings = new Set<string>();
   for (const [index, entry] of rawSections.entries()) {
     if (typeof entry !== 'object' || entry === null) return fail('invalid_section', index);
     const s = entry as { heading?: unknown; body?: unknown };
     // The HEADING is structural — an unlabelled block cannot be revised in isolation, which defeats "editable".
     if (!present(s.heading, MAX_HEADING_LENGTH)) return fail('invalid_section', index);
+    // AND IT MUST BE UNIQUE. Review pass 2: two sections sharing a heading make section-level revision ambiguous —
+    // P5-012 has to address a section by something, and "the one called Market" stops identifying anything. It also
+    // makes the needs-revision warning ambiguous, since that names failing sections by heading.
+    const key = s.heading.trim().toLowerCase();
+    if (seenHeadings.has(key)) return fail('duplicate_heading', index);
+    seenHeadings.add(key);
     if (typeof s.body !== 'string' || s.body.length > MAX_SECTION_BODY) return fail('invalid_section', index);
     sections.push({ heading: s.heading, body: s.body });
   }
@@ -131,8 +139,21 @@ export function parseDocumentOutput(output: unknown): DocumentParse {
  */
 const PLACEHOLDER_BODIES: readonly string[] = ['tbd', 'todo', 'to be determined', 'to be completed', 'n/a', 'na', 'none', 'unknown', 'placeholder', 'lorem ipsum', 'xxx', '...', '-', '?'];
 
-/** `[insert market size]`, `<describe the offer>`, `{{value}}` — a template slot left unfilled. */
-const UNFILLED_SLOT = /^[[<{(](?:[^\]>})]*)[\]>})]$/;
+// `unknown` IS in that list, and that is a deliberate difference from the strategy worker, where `unknown` is the
+// ADR-019 sentinel meaning "honestly undetermined" and must be ACCEPTED. The two are not in conflict: there, it is a
+// declared value for a named field in a structured comparison; here, it is the entire body of a prose section, which
+// is a section nobody wrote. Same word, different unit — worth stating because a future reader will notice the
+// apparent contradiction.
+
+/**
+ * `[insert market size]`, `<describe the offer>`, `{{value}}` — a template slot left unfilled.
+ *
+ * REPEATED brackets on both ends, which is what makes the mustache form match. Review pass 1 found the first version
+ * — `^[[<{(][^\]>})]*[\]>})]$` — did NOT match `{{value}}`: the opener consumed one `{`, the body ran to the first
+ * `}`, and the trailing `}` had nothing left to match. The comment listed `{{value}}` as an example the whole time,
+ * which is a claim in a doc comment the code did not keep.
+ */
+const UNFILLED_SLOT = /^[[<{(]+[^\]>})]*[\]>})]+$/;
 
 /** A body counts as written if it is neither empty, nor a bare placeholder, nor an unfilled slot. */
 function isWritten(body: string): boolean {
