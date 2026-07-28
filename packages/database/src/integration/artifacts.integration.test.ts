@@ -184,6 +184,11 @@ describe.skipIf(!hasTestDatabase)('artifacts (real PostgreSQL, restricted role) 
       expect(await sqlStateOf(insertArtifact(accountA, companyA1, { key: `company/${companyA1}-evil/artifacts/x/content.md` }))).toBe('23514');
       // No prefix at all.
       expect(await sqlStateOf(insertArtifact(accountA, companyA1, { key: 'artifacts/loose/content.md' }))).toBe('23514');
+      // TRAVERSAL AFTER a correct prefix. Found by review pass 1: this key satisfies a prefix test perfectly, so the
+      // first version of the constraint would have accepted a row addressing another tenant's object while the
+      // comment above it claimed tampered values fail. LIKE does not understand paths.
+      expect(await sqlStateOf(insertArtifact(accountA, companyA1, { key: `company/${companyA1}/../${companyB1}/artifacts/x/content.md` }))).toBe('23514');
+      expect(await sqlStateOf(insertArtifact(accountA, companyA1, { key: `company/${companyA1}/artifacts/../../x/content.md` }))).toBe('23514');
     });
 
     test('the run FK is TENANT-PINNED: provenance cannot cite a run in another company', async () => {

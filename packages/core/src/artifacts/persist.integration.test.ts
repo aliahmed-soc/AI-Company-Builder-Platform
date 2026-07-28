@@ -158,10 +158,19 @@ describe.skipIf(!hasTestDatabase)('persistArtifact (real PostgreSQL + a storage 
   });
 
   describe('tenancy', () => {
-    test('citing a run in ANOTHER company fails, and leaves no row', async () => {
-      // The tenant-pinned composite FK is what refuses this, and it refuses at the DATABASE — referential integrity
-      // always bypasses RLS, so nothing in the policy layer would have caught it.
-      await expect(persist({ runId: runB })).rejects.toThrow();
+    test('citing a run in ANOTHER company refuses, writes no row, AND leaves no orphaned object', async () => {
+      // Review pass 1 changed this from a raw throw to a typed refusal. The composite FK would have refused the row
+      // regardless — referential integrity always bypasses RLS, so the FK is the structural guarantee — but it
+      // refuses at the INSERT, by which point the bytes are already written. The pre-check moves the refusal in
+      // front of the object write, so the third assertion below is the one that would have failed before.
+      expect(await persist({ runId: runB })).toMatchObject({ status: 'run_not_found' });
+      expect(await artifactRowCount()).toBe(0);
+      expect(storage.keys()).toEqual([]);
+    });
+
+    test('an entirely unknown run refuses the same way — no object, no row', async () => {
+      expect(await persist({ runId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' })).toMatchObject({ status: 'run_not_found' });
+      expect(storage.keys()).toEqual([]);
       expect(await artifactRowCount()).toBe(0);
     });
 

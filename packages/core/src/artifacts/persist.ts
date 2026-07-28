@@ -16,7 +16,7 @@
 // and nothing for creation; the fact that becomes visible is `task.completed`, which carries the artifact count and
 // is written by the completion path. Inventing an `artifact.created` event would be inventing a requirement.
 import { createHash } from 'node:crypto';
-import { ArtifactRepository, type ArtifactRow, type DatabaseClient } from '@acbp/database';
+import { ArtifactRepository, TaskRunRepository, type ArtifactRow, type DatabaseClient } from '@acbp/database';
 import {
   artifactObjectKey,
   keyString,
@@ -70,6 +70,8 @@ export type PersistArtifactResult =
   | { readonly status: 'ok'; readonly artifact: ArtifactDTO; readonly deduplicated: boolean }
   | { readonly status: 'forbidden' }
   | { readonly status: 'refused'; readonly reason: ArtifactRefusal | 'key_derivation_failed' }
+  /** The cited run does not exist in this company. Checked BEFORE the write — see the note in `persistArtifact`. */
+  | { readonly status: 'run_not_found' }
   /** The write itself failed. TASK-005: the task fails. */
   | { readonly status: 'storage_failed' }
   /** The write REPORTED success and the object is not really there, or not whole. Also a task failure. */
@@ -126,6 +128,13 @@ export async function persistArtifact(client: DatabaseClient, storage: ObjectSto
     // able to place bytes in a company's prefix even if the row is refused afterwards.
     if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, optionsFor(options)).kind === 'deny') return { status: 'forbidden' };
 
+    // THE RUN IS CHECKED BEFORE THE OBJECT IS WRITTEN. The tenant-pinned composite FK would refuse a cross-company
+    // run anyway, but only at the INSERT — by which point the bytes are already in the bucket, so the caller would
+    // get a raw constraint error and the write would leave an orphan. Review pass 1: a positive read here is both a
+    // typed refusal and one fewer orphaned object. The read is RLS-confined, so "not in this company" and "does not
+    // exist" are correctly the same answer.
+    if ((await new TaskRunRepository(scope.db).findById(params.runId)) === undefined) return { status: 'run_not_found' };
+
     try {
       await storage.put({ key, body: bytes, contentType: CONTENT_TYPES[params.format] });
     } catch {
@@ -162,6 +171,10 @@ export async function persistArtifact(client: DatabaseClient, storage: ObjectSto
     });
     // `deduplicated` reports the one outcome that creates no new row — the same run re-writing the same bytes — which
     // is a SUCCESS the caller may want to distinguish from a first write, and would otherwise leave no trace at all.
+    //
+    // ADVISORY, not authoritative: two concurrent writers of the same bytes can both read `undefined` here and both
+    // report `false`, while the unique index still guarantees exactly one row. That is the correct trade — the flag
+    // is reporting, and tightening it would mean holding a lock across an object write.
     return { status: 'ok', artifact: toDTO(row), deduplicated: before !== undefined };
   }, optionsFor(options));
   // A scope that could not be established is a REFUSAL, never a pass-through: the caller has no membership in this

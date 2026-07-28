@@ -47,9 +47,17 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     // have refused.
     .addCheckConstraint('artifacts_content_hash_shape', sql`content_hash ~ '^[0-9a-f]{64}$'`)
     // PREFIX ISOLATION, ENFORCED BY THE ROW (trust-critical #2). The key must literally begin with this company's
-    // prefix. A derivation bug, a stale key copied from an export, or a tampered value all fail here rather than
-    // silently pointing at another tenant's object.
-    .addCheckConstraint('artifacts_key_is_company_prefixed', sql`object_key like 'company/' || lower(company_id::text) || '/%'`)
+    // prefix, and may not contain `..`.
+    //
+    // THE SECOND CLAUSE IS NOT DECORATION. Review pass 1 caught the first version of this constraint claiming that
+    // "a tampered value fails here" while checking only the prefix — and `company/<id>/../../other/x` satisfies a
+    // prefix test perfectly. LIKE does not understand paths, so without the traversal clause the constraint would
+    // have been a claim STATED and not ENFORCED, which is the failure this table exists to make impossible.
+    //
+    // It remains a BACKSTOP, not the primary defence: `companyObjectKey` refuses unsafe segments at construction and
+    // `verifyKeyBelongsToCompany` re-validates every segment at use. This is the layer that catches a key which
+    // reached an INSERT without passing either.
+    .addCheckConstraint('artifacts_key_is_company_prefixed', sql`object_key like 'company/' || lower(company_id::text) || '/%' and position('..' in object_key) = 0`)
     .addCheckConstraint('artifacts_provenance_present', sql`btrim(worker_id) <> '' and btrim(model_version) <> '' and worker_version >= 1`)
     .addCheckConstraint('artifacts_title_present', sql`btrim(title) <> '' and length(title) <= 500`)
     .execute();
