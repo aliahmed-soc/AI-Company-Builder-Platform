@@ -1120,3 +1120,112 @@ Two decisions in it are worth flagging because both took the safer direction ove
 
 **P5-011 slice 4** — core `persistArtifact` with the no-hollow-success rule and the in-memory adapter, then docs and
 two review passes. After that P5-006/007/008, which it unblocks.
+
+## STOPPED — NEEDS OWNER: CI DOWN (2026-07-28 23:35 +03:00)
+
+Owner halted stack extension. P5-012, P5-015 and all new tickets are NOT started. This entry is the diagnosis, the
+risk, and the exact state to resume from.
+
+### 1. Diagnosis — TWO causes, and I had been conflating them
+
+**I owe a correction first.** I repeatedly reported "~20 pushes produced zero CI runs, therefore CI is blocked by
+billing". That inference was wrong, and it made the situation look worse and more uniform than it is.
+
+**Cause A — BILLING. Real, and ONLY the owner can clear it.**
+
+Hard evidence, job `90288386296` (PR #62, `p5-014`, 13:25:16→13:25:18 UTC, zero steps executed):
+
+> *"The job was not started because recent account payments have failed or your spending limit needs to be increased.
+> Please check the 'Billing & plans' section in your settings"*
+
+Repo Actions config is healthy and is NOT the problem: `{"enabled": true, "allowed_actions": "all"}`. `ci.yml` parses
+and has run green on this repo many times. **This is a GitHub account billing / spending-limit state. Nothing in the
+repository can work around it — it needs the owner in GitHub Settings → Billing & plans.**
+
+**Cause B — NO PULL REQUESTS. Mine, and it is process, not config.**
+
+`.github/workflows/ci.yml` triggers on exactly:
+
+```yaml
+on:
+  pull_request:
+  push:
+    branches: [main]
+```
+
+Of the six branches, **only `p5-014` has a PR** (#62, draft). `p5-013`, `p5-011`, `p5-006`, `p5-007` and `p5-008`
+have none. So for those five, pushes to a feature branch with no PR **correctly produce no workflow run** — that is
+the configuration working as designed, not a failure.
+
+So the honest position is: **the billing block is demonstrated on `p5-014` only.** For the other five branches I had
+no CI evidence of any kind, because I never opened PRs that would have asked for it. "Zero runs across ~20 pushes"
+was not the symptom I described it as.
+
+**Is Cause B fixable by me?** The trigger config is not a bug — it is deliberate and documented in the file's own
+header ("on pull requests and pushes to main"), and it keeps cost down. I am NOT changing it. Opening the five
+missing PRs is the normal path, but it is deferred: the owner said wait, and every run would hit the billing wall
+anyway. **No workflow-config fix applies, so the `if and only if fixable by you` clause does not trigger.**
+
+### 2. Risk if the bottom of the stack is wrong — and a second correction
+
+**My "six-branch stack" was wrong.** Verified topology (`git merge-base --is-ancestor`, all six rooted at current
+`main`):
+
+- **ONE real stack, 4 deep:** `p5-011` → `p5-006` → `p5-007` → `p5-008`
+- **TWO independent branches:** `p5-014` and `p5-013` — neither is under anything, neither carries dependents
+
+**So the owner's question has a better answer than expected: if `p5-014` fails CI, NOTHING above it needs reworking,
+because nothing is above it.** A failure there costs `p5-014` alone.
+
+**The branch that actually carries risk is `p5-011`** — 14 commits, and three branches sit on it. Honest worst case
+if `p5-011` fails once CI runs:
+
+1. Fix `p5-011`, then rebase `p5-006`, `p5-007`, `p5-008` (a further 7, 4 and 3 commits).
+2. The likeliest failure is in migration `0043` itself — its FORCE-RLS policies, the tenant-pinned composite FK, the
+   column-grant catalog. Those are exactly the assertions that have never executed.
+3. **All three workers call `persistArtifact`.** Any change to its result shape ripples into `runResearch`,
+   `runStrategyComparison` and `runDocumentWorker` and their three suites — so a `p5-011` fix is rarely a `p5-011`-only
+   fix.
+4. Worst realistic case: ~28 commits of rebasing plus re-review of the three workers' persistence paths. Their
+   contract-level tests (which DO run locally) would survive; the integration layers would need re-verifying.
+
+**Migration ordering — an ordering constraint, not damage.** `0041`+`0042` (`p5-014`) and `0043` (`p5-011`) do not
+collide. But merging `p5-011` first leaves `0041`/`0042` landing *after* an already-applied `0043`, which the default
+Kysely migrator treats as corrupted on any database that migrated in between. No long-lived database exists yet
+(production is an owner gate and has never been deployed), so today this only constrains merge order:
+**`p5-014` before `p5-011`, or renumber.**
+
+### 3. Exact state — every branch, every unproven suite
+
+| Branch | Ahead of main | New migrations | NEW real-PG tests, never executed | PR |
+| --- | --- | --- | --- | --- |
+| `p5-014-credit-ledger` | 7 | 0041, 0042 | **41** (credit-ledger 20, credit-service 21) | #62 draft |
+| `p5-013-failure-detail` | 8 | — | **26** (task-controls) | none |
+| `p5-011-artifact-storage` | 14 | 0043 | **44** (artifacts 14, persist 15, complete 15) | none |
+| `p5-006-research-worker` | 21 | (inherits 0043) | **16** (research) | none |
+| `p5-007-strategy-worker` | 25 | (inherits 0043) | **13** (comparison) | none |
+| `p5-008-document-worker` | 28 | (inherits 0043) | **12** (document) | none |
+
+**152 new real-PG tests have never run anywhere.** Beyond those, each branch's reset-list sweep touches ~40 existing
+integration files, so the pre-existing real-PG suites are also unverified against the new schema.
+
+What IS proven, on every branch: `pnpm run check` exit 0 — typecheck, lint, secrets, encoding, boundaries,
+reset-lists, boundary tests, and the full vitest run (1500 passed / 0 failed on `p5-008`). Every contract-level test
+runs locally and passes. **No real database has been touched at any point.**
+
+### 4. The resume order, when billing is cleared
+
+Bottom-up, never merging above an unproven layer:
+
+1. `p5-014` — PR #62 already exists; re-run it. Must be green **zero-skip** before anything else.
+2. `p5-013` — independent; open PR, verify, merge.
+3. `p5-011` — open PR, verify green zero-skip, merge. **This is the gate for the three workers.**
+4. `p5-006` → 5. `p5-007` → 6. `p5-008`, each rebased on the merged parent and verified in turn.
+
+`p5-014` and `p5-013` are independent, so they may be verified in either order — but `p5-014` should still merge
+before `p5-011` to keep migration numbers ascending.
+
+### What I am NOT doing
+
+Not starting P5-012, P5-015 or any new ticket. Not opening PRs. Not changing `ci.yml`. Not merging anything. Not
+building anything further on unverified work. **Waiting for the owner.**
