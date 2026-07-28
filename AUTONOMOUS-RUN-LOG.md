@@ -873,3 +873,86 @@ the risk class. Recorded in CDR-051 §0.2 as the thing to do when tools gain dec
 Canon's third class is plain `external`; this set still splits it into `external_reversible`. That split was mine and
 the owner ruled only on the fourth class. Changing an unruled thing under cover of a ruled one is how a decision stops
 being traceable to whoever made it, so it stays flagged in CDR-051 §0.3.
+
+## Window 12 — 2026-07-28, 02:52 → 13:18 +03:00 (real clock, both endpoints)
+
+Ran long: the boundary fell at 10:52 and this report is late, written at 13:18. The overrun was P5-004's finalization
+plus the owner's risk-class correction arriving mid-window; nothing was abandoned and the tree was clean and pushed at
+every merge.
+
+**Disk at close:** C: 14.3 GB free (215.5 used) · E: 104.9 GB free (139.3 used). Both far above the 3 GB threshold, so
+no cleanup. C: is worth watching — it has not moved all window, but it is the smaller margin.
+
+**`main` at close:** `9f6bfcf`. Migrations end **0039**. Tree clean, no stray branches, everything pushed.
+
+### Merged this window — five, each with two review passes and exact-main CI green zero-skip
+
+| # | Ticket | Squash | Exact-main CI |
+| --- | --- | --- | --- |
+| 1 | ACBP-P5-002 workflow coordinator | `f3452fc` | 2201/2201, 0 skips |
+| 2 | ACBP-P5-003b tool dispatcher chokepoint | `c9c4a5e` | 2265/2265, 0 skips |
+| 3 | ACBP-P5-003c injection boundary | `83477a5` | 2294/2294, 0 skips |
+| 4 | ACBP-P5-004 worker definitions registry | `f222ae8` | 2334/2334, 0 skips |
+| 5 | CORRECTION — risk-class canon rename | `9f6bfcf` | 2341/2341, 0 skips |
+
+**ACBP-P5-003 completed** (a `5381389` + b `c9c4a5e` + c `83477a5`). **ACBP-P5-001 and P5-002 already complete.**
+
+### The four findings that mattered
+
+Every one came from a review pass, not from a red test.
+
+1. **P5-002 pass 2 — `startRun` would begin executing a task the owner had DELETED**, and would start an attempt for a
+   task in any state at all. It hid because every test in the suite started runs against `draft` tasks: *the fixtures
+   agreed with the bug.*
+2. **P5-003b pass 1 — a whitespace receipt satisfied the very CHECK TOOL-002 exists to enforce.** The use case tested
+   `trim()`; the database tested only `is null`. The layer meant to hold when something skips the use case was the
+   layer that let it through.
+3. **P5-003c pass 2 — a complete bypass of the injection boundary.** `tool_output` was classified as *trusted*, so a
+   web-fetching tool's output re-entering the context would have laundered injected instructions straight back inside.
+   Every corpus test still passed, because the corpus wraps its own content — the hole was one label away and nothing
+   exercised it.
+4. **P5-004 pass 1 — a guarantee documented and not implemented.** `CDR-056 §2-G4` said the MVP zero-external-actions
+   boundary was enforced *structurally*; I wrote the check, tested it against every class, and called it from nothing.
+   Worse than never claiming it, because the document is what the next person trusts instead of re-checking.
+
+### The recurring shape, now three tickets running
+
+**One-directional drift guards.** P5-003a pass 2, P5-002 pass 2, P5-003b pass 2 — each time, a CHECK proved it
+*accepted* every contract value but could not catch a value the database permits and no contract code can rank. By
+P5-004 the set-equality guards were written at authoring time instead. That is the lesson: *shipping the guard for one
+constraint does not generalize on its own.*
+
+**Resolve-then-compare is safe for the candidate and dangerous for the threshold.** `riskRank` (P5-003a), then
+`requiresApproval` (P5-004), then very nearly `EXTERNAL_EFFECT_CLASSES` during the rename. Same inversion, three
+places.
+
+### The owner's correction, executed
+
+`external_irreversible` → `sensitive_irreversible` (APPR-001). Recorded in full at the head of this log and in
+`CDR-051 §0.2`. Migration **0039** rather than edits to the merged 0033/0036/0038. Proven behaviour-preserving by
+*positional* tests — ranks `[0,1,2,3]`, the full comparison matrix, the MVP ceiling still second — because every gate
+here compares ranks and never strings.
+
+The one place a pure rename would have changed behaviour was TOOL-002's receipt rule, and it is now a tested contract
+(`hasExternalEffect`) rather than a private constant provable only through a database that skips on a laptop.
+
+### Repository hygiene fixed this window
+
+- **A false negative in my own guard.** `check-reset-lists` matched a table name anywhere in the *file*, so a suite that
+  dropped nothing but asserted `toContain('task_runs')` satisfied it — and `database.integration.test.ts` was live in
+  that state. Now scoped to the array literals, with a self-test reproducing it.
+- **Control characters in three committed files**, eaten by PowerShell backtick escapes. The BEL in `audit.ts` had made
+  git classify the blob as **binary**, silently disabling line-ending normalization for it. This recurred a third time
+  mid-window; the rule is now absolute: never put code containing backticks through a PowerShell double-quoted string.
+
+### Still open for the owner — neither blocking
+
+- **IOQ-12 budgets** (0.50 USD-equivalent per run, 10 minutes) ride as documented placeholders per the owner's
+  instruction. Not owner-ratified; `CDR-056 §3`.
+- **Canon's third class** is plain `external`; this set still splits it into `external_reversible`. The owner ruled only
+  on the fourth, and it was deliberately not swept along — `CDR-051 §0.3`.
+
+### Next
+
+**ACBP-P5-005 (worker runtime)** — unblocked by P5-002/003/004, and the ticket that stamps a worker onto a run and so
+closes WORK-006's *"disable during execution triggers safe-stop"*, recorded as unmet in `CDR-056 §6`.
