@@ -9,7 +9,7 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P5-005 worker runtime — CORE DONE / IN REVIEW (window 13).**
+- **ACBP-P5-005 worker runtime — CORE DONE / FINALIZING (window 13).** Exact-head CI on `d10722d` GREEN, 188 files / 2390 tests / **zero skips**.
   Branch `p5-005-worker-runtime` (from main `2f83f3c`), draft PR **#61**, CDR-057, migration **0040**.
   **This closes the clause CDR-056 §6 recorded as UNMET.** WORK-006's *"disable during execution triggers safe-stop"*
   was unmet for a structural reason: nothing linked a task run to the worker executing it, so "this worker's running
