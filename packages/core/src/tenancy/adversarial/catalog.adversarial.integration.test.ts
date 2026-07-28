@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -107,6 +107,11 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // is COLUMN-level. Tenancy and worker_id stay immutable, so a pause cannot be re-pointed after the fact.
   company_worker_states: ['INSERT', 'SELECT'],
   worker_runs: ['INSERT', 'SELECT'],
+  // Artifacts (ACBP-P5-011; CDR-060; TASK-005): SELECT + INSERT and NOTHING ELSE — not even a column-level UPDATE.
+  // An artifact row IS the provenance record for a produced document; editing it would let a later write rewrite
+  // which run, worker or model made something, which is the one thing P5-012's revision lineage must be able to
+  // trust. A superseded artifact is a NEW row, never an edit of the old one.
+  artifacts: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -290,6 +295,10 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     }
     // worker_definitions is GLOBAL platform config with NO write path at all - the tool_definitions precedent.
     expect(byTable.get('worker_definitions') ?? []).toEqual([]);
+    // Artifacts (ACBP-P5-011): NO column UPDATE grant at all. The row carries the provenance of a produced document -
+    // which run, which worker, which model version - and P5-012's revision workflow reads exactly that to know what it
+    // is revising. A single updatable column would make provenance rewritable, so a superseded artifact is a NEW row.
+    expect(byTable.get('artifacts') ?? []).toEqual([]);
 
     const jobs = byTable.get('jobs') ?? [];
     // ACBP-P5-001c EXTENDED this set with `failure_reason` — the dead-letter transition has to be recordable. The
