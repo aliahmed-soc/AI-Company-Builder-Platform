@@ -2,3 +2,4 @@
 export * from './object-key.js';
 export * from './port.js';
 export * from './artifact.js';
+export * from './verification.js';

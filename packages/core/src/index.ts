@@ -22,3 +22,5 @@ export * from './runs/index.js';
 export * from './tools/index.js';
 // The worker registry: versioned definitions and the per-company pause (ACBP-P5-004; CDR-056).
 export * from './workers/index.js';
+// Artifact persistence: the object first, the row only after a read-back proves it landed (ACBP-P5-011; CDR-060).
+export * from './artifacts/index.js';
