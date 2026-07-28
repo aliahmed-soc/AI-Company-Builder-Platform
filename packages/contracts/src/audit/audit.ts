@@ -9,6 +9,8 @@
 // typed factory. The account, actor, event id, and timestamp are bound SERVER-SIDE by the writer from the
 // caller's validated AccountScope — never accepted here — so they cannot be forged through this contract.
 import { validationError } from '../errors.js';
+import type { RunFailureCategory } from '../runs/run.js';
+import type { NextAttempt } from '../runs/failure-detail.js';
 import type { CompanyCreationMode } from '../company/company.js';
 
 /** Actor types (EVENT-CATALOG `actor.type`). `worker` actors can never appear on approval decisions (inv. 5). */
@@ -557,9 +559,15 @@ export function taskFailed(input: {
   readonly taskId: string;
   readonly runId: string;
   readonly attempt: number;
-  readonly failureCategory: string;
-  /** TASK-010 retry visibility: scheduled, exhausted or not_eligible — the value `describeRunFailure` produces. */
-  readonly retryState: string;
+  /**
+   * The CLOSED set, not a bare string. Review pass 1: `describeRunFailure` refuses to echo an unrecognised category,
+   * while this factory would have echoed whatever it was handed — and both keys are allowlisted into the feed
+   * summary, so a caller passing a short provider message would have put it in front of a founder. The asymmetry was
+   * the tell.
+   */
+  readonly failureCategory: RunFailureCategory;
+  /** TASK-010 retry visibility — the value `describeRunFailure` produces, from its closed set. */
+  readonly retryState: NextAttempt;
 }): AuditEvent {
   return makeEvent('task.failed', input.taskId, 'blocked', {
     run_id: input.runId,

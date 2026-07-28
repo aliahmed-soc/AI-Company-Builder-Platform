@@ -13,6 +13,8 @@ import {
   microsecondEpochToIso,
   ACTIVITY_PAGE_SIZE_DEFAULT,
   ACTIVITY_PAGE_SIZE_MAX,
+  ACTIVITY_TYPES_IN_DATABASE_CHECK,
+  activityTypesMatchDatabase,
   type ActivityCursor,
 } from './index.js';
 
@@ -39,9 +41,9 @@ describe('exact temporal serialization', () => {
 
 describe('activity taxonomy (company events only)', () => {
   test('the visible types are exactly the four company events', () => {
-    // WIDENED ONCE, DELIBERATELY: `task.failed` joined the set for ACT-005 (ACBP-P5-013; CDR-059 G6). This assertion
-    // firing on an addition is the guard working — the set is closed, and every member has to be argued for.
-    expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated', 'task.failed']);
+    // The set is CLOSED. P5-013 widened it for ACT-005, then reverted: the contracts set and the database CHECK
+    // had diverged, and the fail-closed projector would have turned that into failures rolling back their own audits.
+    expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated']);
     for (const t of ACTIVITY_TYPES) expect(isActivityType(t)).toBe(true);
   });
   test('account-level / Logger-only / unknown names are NOT projectable', () => {
@@ -168,32 +170,19 @@ describe('activity cursor (opaque base64url; versioned; account+company bound; a
   });
 });
 
-describe('ACT-005 — a failure is visible in the feed (ACBP-P5-013; CDR-059 G6)', () => {
-  test('task.failed IS projectable — the taxonomy is deliberately widened past the four company events', () => {
-    // CDR-016 closed this set at the four company lifecycle events. ACT-005 requires failure visibility with a
-    // "suppression-proof feed record", and a feed that showed everything the system did EXCEPT its failures would be
-    // the specific dishonesty that requirement names. The widening is recorded in CDR-059 G6.
-    expect(isProjectableActivity('task.failed')).toBe(true);
-    expect(ACTIVITY_TYPES).toContain('task.failed');
+describe('ACT-005 is DEFERRED, and the taxonomy matches the database (ACBP-P5-013)', () => {
+  test('task.failed is NOT projectable — the widening was reverted, not completed', () => {
+    // P5-013 added it, then found the widening was half a feature: no migration widened the
+    // activity_events_type_valid CHECK, nothing projects on the failure path, and the projector is FAIL-CLOSED, so
+    // the first correct wiring would have made every run failure roll back its own audit write.
+    expect(isProjectableActivity('task.failed')).toBe(false);
+    expect(ACTIVITY_TYPES).not.toContain('task.failed');
   });
 
-  test('its summary carries the CATEGORY, the ATTEMPT and the RETRY STATE - and nothing else', () => {
-    // Exactly what TASK-006 and TASK-010 require a founder to be able to see, and no more. No run id, no actor, no
-    // free text, and above all no provider message: the category IS the explanation.
-    const summary = activitySummaryFor('task.failed', {
-      failure_category: 'provider_error',
-      attempt: 2,
-      retry_state: 'scheduled',
-      run_id: 'should-be-dropped',
-      provider_message: 'connection reset by peer',
-    });
-    expect(summary).toEqual({ failure_category: 'provider_error', attempt: 2, retry_state: 'scheduled' });
-    expect(Object.keys(summary)).not.toContain('run_id');
-    expect(JSON.stringify(summary)).not.toContain('connection reset');
-  });
-
-  test('a failure is an EXECUTED fact, like every other feed item', () => {
-    // It already happened. Marking it 'proposed' would suggest the founder could still prevent it (ACT-003).
-    expect(executionStateFor('task.failed')).toBe('executed');
+  test('THE CONTRACTS TAXONOMY AND THE DATABASE CHECK PERMIT THE SAME SET', () => {
+    // The guard that makes the divergence impossible to reintroduce silently. If someone widens ACTIVITY_TYPES
+    // without a migration, this fails immediately instead of at the moment a failure tries to project.
+    expect(activityTypesMatchDatabase()).toBe(true);
+    expect([...ACTIVITY_TYPES].sort()).toEqual([...ACTIVITY_TYPES_IN_DATABASE_CHECK].sort());
   });
 });

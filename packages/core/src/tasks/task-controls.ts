@@ -34,11 +34,24 @@ function toTaskDetailDTO(row: TaskRow, latestFailure: RunFailureDetail | null): 
  * be a stale answer to "what is wrong with this task", and TASK-006 is about the founder's current picture.
  * `listForTask` returns newest first (P5-002), and RLS confines it to the caller's company.
  */
-async function latestFailureFor(db: TaskRunExecutor, taskId: string): Promise<RunFailureDetail | null> {
+async function latestFailureFor(db: TaskRunExecutor, taskId: string, taskState: string): Promise<RunFailureDetail | null> {
   const runs = await new TaskRunRepository(db).listForTask(taskId);
   const latest = runs[0];
-  if (latest === undefined) return null;
-  return describeRunFailure({ state: latest.state, failureCategory: latest.failure_category, attempt: latest.attempt });
+  const fromLatest = latest === undefined ? null : describeRunFailure({ state: latest.state, failureCategory: latest.failure_category, attempt: latest.attempt });
+  if (fromLatest !== null) return fromLatest;
+
+  // A FAILED TASK ALWAYS EXPLAINS ITSELF. Review pass 1: nothing ties `tasks.state = 'failed'` to a failed RUN —
+  // `running → failed` is a legal task transition on its own, a task can fail with no run at all, and a later
+  // attempt may be queued or cancelled. Every one of those put a task in the board's `failed` bucket with a blank
+  // explanation, which is the single thing TASK-006 forbids. So the task's own state is the backstop: if it says
+  // failed and no run accounts for it, the cause is genuinely unknown and we say so.
+  if (taskState !== 'failed') return null;
+  const failedRun = runs.find((r) => r.state === 'failed');
+  return describeRunFailure({
+    state: 'failed',
+    failureCategory: failedRun?.failure_category ?? null,
+    attempt: failedRun?.attempt ?? runs[0]?.attempt ?? 1,
+  });
 }
 
 // ── getTaskDetail ────────────────────────────────────────────────────────────────────────────────────────
@@ -66,7 +79,7 @@ export async function getTaskDetail(client: DatabaseClient, params: GetTaskDetai
       const row = await new TaskRepository(scope.db).findLive(params.taskId);
       if (row === undefined) return { status: 'not_found' };
       // TASK-006: the failure a founder needs to see belongs to the RUN, and this is where they look for it.
-      return { status: 'ok', task: toTaskDetailDTO(row, await latestFailureFor(scope.db, params.taskId)) };
+      return { status: 'ok', task: toTaskDetailDTO(row, await latestFailureFor(scope.db, params.taskId, row.state)) };
     },
     opts(options),
   );

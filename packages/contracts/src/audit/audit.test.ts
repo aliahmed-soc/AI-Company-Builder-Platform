@@ -461,8 +461,8 @@ describe('task.failed schema version 2 — retry_state (ACBP-P5-013; the deferra
   test('carries retry_state, and the registry says version 2', () => {
     // P5-002's own docstring: "EVENT-CATALOG also lists retry_state; that is TASK-010 retry VISIBILITY, owned by
     // ACBP-P5-013, and will arrive as schema version 2 rather than being guessed at here." This is that arrival.
-    const ev = taskFailed({ taskId: 't1', runId: 'r1', attempt: 2, failureCategory: 'provider_error', retryState: 'scheduled' });
-    expect(ev.metadata).toMatchObject({ run_id: 'r1', attempt: 2, failure_category: 'provider_error', retry_state: 'scheduled' });
+    const ev = taskFailed({ taskId: 't1', runId: 'r1', attempt: 2, failureCategory: 'provider_error', retryState: 'retry_eligible' });
+    expect(ev.metadata).toMatchObject({ run_id: 'r1', attempt: 2, failure_category: 'provider_error', retry_state: 'retry_eligible' });
     expect(AUDIT_EVENTS['task.failed'].schemaVersion).toBe(2);
     expect(ev.schemaVersion).toBe(2);
   });

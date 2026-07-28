@@ -390,9 +390,30 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
       expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
     });
 
-    test('a task with no runs at all has no failure detail', async () => {
+    test('a NON-FAILED task with no runs has no failure detail', async () => {
       const r = await getTaskDetail(product, { ...base(), taskId: await taskInState('draft') });
       expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
+    });
+
+    test('A FAILED TASK WITH NO RUN AT ALL STILL EXPLAINS ITSELF - the case the first test dodged', async () => {
+      // Review pass 1 caught this precisely: the original test used 'draft', so the task-state/run-state pairing was
+      // never checked for absence. One word - 'failed' - exposes it. A task can reach 'failed' with no run (the
+      // transition is legal on its own), and that put it in the board's failed bucket with a blank explanation.
+      const r = await getTaskDetail(product, { ...base(), taskId: await taskInState('failed') });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('unknown');
+      expect(failure?.summary ?? '').not.toBe('');
+    });
+
+    test('a FAILED task whose latest run is still RUNNING explains itself from the failed attempt', async () => {
+      // attempt 1 failed, attempt 2 is in flight. listForTask orders by attempt desc, so runs[0] is the RUNNING one
+      // and the naive read returned null - a blank failure on a task the board shows as failed.
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', 'provider_error', 1);
+      await sql`insert into task_runs (account_id, company_id, task_id, attempt, state, started_at) values (${w.accountA}, ${w.companyA1}, ${taskId}::uuid, 2, 'running', now())`.execute(owner.kysely);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('provider_error');
     });
   });
 });

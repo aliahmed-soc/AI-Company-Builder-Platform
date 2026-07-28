@@ -18,6 +18,7 @@ import {
   taskFailed,
   taskCancelled,
   describeRunFailure,
+  type NextAttempt,
   workerRunFinished,
   DEFAULT_HEARTBEAT_GRACE_MS,
   type RunFailureCategory,
@@ -234,7 +235,7 @@ async function finish(client: DatabaseClient, params: FinishRunParams, nextState
             taskId: updated.task_id,
             runId: updated.id,
             attempt: updated.attempt,
-            failureCategory: params.failureCategory as string,
+            failureCategory: params.failureCategory as RunFailureCategory,
             retryState: retryStateFor(updated.attempt, params.failureCategory),
           }),
           auditCtx(options),
@@ -407,7 +408,7 @@ export async function reclaimLostRuns(client: DatabaseClient, params: ReclaimLos
  * value the run read shows a founder. Two independent derivations of 'is another attempt coming' would eventually
  * disagree, and the trail is the thing people reach for when they already suspect the screen.
  */
-function retryStateFor(attempt: number, failureCategory: unknown): string {
+function retryStateFor(attempt: number, failureCategory: unknown): NextAttempt {
   return describeRunFailure({ state: 'failed', failureCategory, attempt })?.nextAttempt ?? 'not_eligible';
 }
 

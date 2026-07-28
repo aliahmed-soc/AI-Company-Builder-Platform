@@ -268,7 +268,7 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'run.start':
       return (subjectId) => taskStarted({ taskId: subjectId, runId: subjectId, attempt: 1 });
     case 'run.fail':
-      return (subjectId) => taskFailed({ taskId: subjectId, runId: subjectId, attempt: 1, failureCategory: 'worker_lost', retryState: 'scheduled' });
+      return (subjectId) => taskFailed({ taskId: subjectId, runId: subjectId, attempt: 1, failureCategory: 'worker_lost', retryState: 'retry_eligible' });
     case 'run.cancel':
       return (subjectId) => taskCancelled({ taskId: subjectId, runId: subjectId, phase: 'queued' });
     case 'tool.dispatch':

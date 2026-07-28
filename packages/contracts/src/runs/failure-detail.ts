@@ -36,14 +36,27 @@ export const FAILURE_SUMMARIES: Readonly<Record<ReportedFailureCategory, string>
 /**
  * The categories that are SAFE to retry, per `FAILURE-AND-RECOVERY`'s idempotency column.
  *
- * `timeout` — row 1 calls a model timeout a *"pure call — safe"*. `worker_lost` — row 4 resumes from checkpointed
- * steps, which are idempotent by design. `provider_error` — row 2/3, the call is safe to repeat.
+ * EXACTLY ONE MEMBER, and it is the only unconditional *"safe"* in that table: row 1's model timeout, *"pure call —
+ * safe"*.
  *
- * DELIBERATELY SHORT. Anything not listed is reported unsafe, which is the direction that cannot cause a double
- * execution: `policy_blocked` would hit the same policy, and `internal_error` is by definition a state we did not
- * understand, so we cannot promise repeating it is harmless.
+ * NARROWED after review. The first version also listed `worker_lost` and `provider_error`, and both were more
+ * permissive than canon actually establishes:
+ *
+ * - **`worker_lost`** — row 4's idempotency cell reads *"Checkpointed steps idempotent"*. That is a REQUIREMENT ON A
+ *   DESIGN, conditional on checkpoints existing. There are none in this codebase: `reclaimLostRuns` fails the run
+ *   outright rather than resuming it, so a worker lost mid-step may already have performed a side effect. Canon's
+ *   own global rule is *"non-idempotent actions are never retried without a safe idempotency mechanism"*.
+ * - **`provider_error`** — rows 2 and 3 do say `Safe`, but in THIS codebase `provider_error` is the catch-all the
+ *   worker runtime assigns to any thrown step. That bucket includes row 8, tool/API failure, whose idempotency cell
+ *   reads **`Required`** and whose retry cell reads *"Only idempotent-keyed calls"*. A thrown tool call would have
+ *   been reported safe to retry.
+ *
+ * Nothing consumes this yet, so no double execution could have occurred — but this is precisely the value a future
+ * retry trigger would trust, and a docstring claiming a canon derivation canon does not support is how that trust
+ * gets misplaced. Widening it again needs either real checkpoints or a category split that separates a provider
+ * fault from a thrown tool call.
  */
-export const RETRY_SAFE_CATEGORIES: readonly RunFailureCategory[] = ['timeout', 'worker_lost', 'provider_error'];
+export const RETRY_SAFE_CATEGORIES: readonly RunFailureCategory[] = ['timeout'];
 
 /**
  * Which categories are worth retrying at all.
@@ -53,8 +66,15 @@ export const RETRY_SAFE_CATEGORIES: readonly RunFailureCategory[] = ['timeout', 
  */
 const RETRY_ELIGIBLE_CATEGORIES: readonly ReportedFailureCategory[] = ['timeout', 'worker_lost', 'provider_error'];
 
-/** What happens next. Three real answers, so none of them has to be inferred from a number. */
-export type NextAttempt = 'scheduled' | 'exhausted' | 'not_eligible';
+/**
+ * What happens next. Three real answers, so none has to be inferred from a number.
+ *
+ * `retry_eligible`, NOT `scheduled` — renamed after review. Nothing in this system re-runs a failed task yet: there
+ * is no retry trigger, `startRun` has no production caller, and CDR-059 §4 says so outright. A value named
+ * `scheduled` would have asserted a future event that never happens, which is the exact opposite of G4's own
+ * standard ("honest about the future"). Eligibility is what this can actually know.
+ */
+export type NextAttempt = 'retry_eligible' | 'exhausted' | 'not_eligible';
 
 export interface RunFailureDetail {
   readonly category: ReportedFailureCategory;
@@ -71,10 +91,17 @@ export interface RunFailureInput {
   readonly attempt: unknown;
 }
 
-/** An attempt count from a database column. Degrades to the honest floor of 1 rather than producing nonsense. */
-function usableAttempt(value: unknown, max: number): number {
+/**
+ * An attempt count from a database column. Degrades to the honest floor of 1 rather than producing nonsense.
+ *
+ * NOT CLAMPED to the cap. An earlier version returned `Math.min(value, max)`, so a seventh attempt was reported as
+ * "3 of 3" while the audit event recorded attempt 7 — a wrong number rather than a bounded one, and a disagreement
+ * between the screen and the trail. If the count exceeds the cap that is a fact worth showing, and `nextAttempt`
+ * already reports `exhausted` for it.
+ */
+function usableAttempt(value: unknown): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return 1;
-  return Math.min(value, max);
+  return value;
 }
 
 /**
@@ -95,11 +122,17 @@ export function describeRunFailure(input: RunFailureInput, policy: RetryPolicy =
   // Normalizing it would quietly repair evidence of that; reporting `unknown` says what we actually know.
   const category: ReportedFailureCategory = isRunFailureCategory(input.failureCategory) ? input.failureCategory : 'unknown';
 
-  const attemptsAllowed = Number.isInteger(policy?.maxAttempts) && policy.maxAttempts > 0 ? policy.maxAttempts : DEFAULT_RETRY_POLICY.maxAttempts;
-  const attemptsUsed = usableAttempt(input.attempt, attemptsAllowed);
+  // A MALFORMED POLICY IS EXHAUSTED, not the default. Review pass 1 proved by execution that substituting the
+  // default here made this module fail OPEN while `classifyRetryOutcome` — the function that actually governs
+  // retries — fails CLOSED on the same input: a caller disabling retries with `maxAttempts: 0` was shown
+  // "another attempt is possible" by one and dead-lettered by the other. Two boundaries disagreeing about money-
+  // adjacent behaviour is worse than either answer, and the safe direction is the engine's.
+  const boundedPolicy = Number.isInteger(policy?.maxAttempts) && policy.maxAttempts > 0;
+  const attemptsAllowed = boundedPolicy ? policy.maxAttempts : DEFAULT_RETRY_POLICY.maxAttempts;
+  const attemptsUsed = usableAttempt(input.attempt);
 
   const eligible = RETRY_ELIGIBLE_CATEGORIES.includes(category);
-  const nextAttempt: NextAttempt = !eligible ? 'not_eligible' : attemptsUsed >= attemptsAllowed ? 'exhausted' : 'scheduled';
+  const nextAttempt: NextAttempt = !eligible ? 'not_eligible' : !boundedPolicy || attemptsUsed >= attemptsAllowed ? 'exhausted' : 'retry_eligible';
 
   return {
     category,

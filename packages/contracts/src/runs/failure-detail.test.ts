@@ -35,7 +35,7 @@ describe('describeRunFailure — TOTAL, and never blank (TASK-006)', () => {
       expect(Number.isInteger(d.attemptsUsed)).toBe(true);
       expect(Number.isInteger(d.attemptsAllowed)).toBe(true);
       expect(['safe', 'unsafe']).toContain(d.retrySafety);
-      expect(['scheduled', 'exhausted', 'not_eligible']).toContain(d.nextAttempt);
+      expect(['retry_eligible', 'exhausted', 'not_eligible']).toContain(d.nextAttempt);
     }
   });
 
@@ -86,8 +86,9 @@ describe('retry visibility (TASK-010 — "bounded retries only", and VISIBLY so)
     expect(d.attemptsAllowed).toBe(DEFAULT_RETRY_POLICY.maxAttempts);
   });
 
-  test('a retry-eligible category with attempts left says another IS coming', () => {
-    expect(detail({ failureCategory: 'provider_error', attempt: 1 }).nextAttempt).toBe('scheduled');
+  test('a retry-eligible category with attempts left says RETRY-ELIGIBLE - not that one is scheduled', () => {
+    // Nothing re-runs a failed task yet, so naming this 'scheduled' would assert an event that never happens.
+    expect(detail({ failureCategory: 'provider_error', attempt: 1 }).nextAttempt).toBe('retry_eligible');
   });
 
   test('a retry-eligible category at the cap says EXHAUSTED, not scheduled', () => {
@@ -109,7 +110,7 @@ describe('retry visibility (TASK-010 — "bounded retries only", and VISIBLY so)
     for (const bad of [0, -3, Number.NaN, undefined, null, '2']) {
       const d = detail({ attempt: bad });
       expect(d.attemptsUsed).toBeGreaterThanOrEqual(1);
-      expect(d.attemptsUsed).toBeLessThanOrEqual(d.attemptsAllowed);
+
     }
   });
 });
@@ -119,7 +120,7 @@ describe('retry SAFETY defaults to unsafe (G5)', () => {
     // FAILURE-AND-RECOVERY assigns idempotency per row: a model timeout is a "pure call — safe", a lost worker
     // resumes from checkpointed (idempotent) steps. Anything else is unsafe.
     for (const category of RUN_FAILURE_CATEGORIES) {
-      const expected = RETRY_SAFE_CATEGORIES.includes(category) ? 'safe' : 'unsafe';
+      const expected = (RETRY_SAFE_CATEGORIES as readonly string[]).includes(category) ? 'safe' : 'unsafe';
       expect(detail({ failureCategory: category }).retrySafety).toBe(expected);
     }
   });
@@ -133,5 +134,27 @@ describe('retry SAFETY defaults to unsafe (G5)', () => {
     for (const safe of RETRY_SAFE_CATEGORIES) {
       expect(RUN_FAILURE_CATEGORIES).toContain(safe);
     }
+  });
+});
+
+describe('the honest-future fixes (review pass 1)', () => {
+  test('a MALFORMED policy is EXHAUSTED, matching the retry engine rather than contradicting it', () => {
+    // classifyRetryOutcome dead-letters on maxAttempts 0 or Infinity. This module used to substitute the default and
+    // report a retry as possible - two boundaries disagreeing about the same run.
+    for (const bad of [{ maxAttempts: 0 }, { maxAttempts: Number.POSITIVE_INFINITY }, { maxAttempts: -1 }]) {
+      const d = describeRunFailure({ state: 'failed', failureCategory: 'timeout', attempt: 1 }, bad as never);
+      expect(d?.nextAttempt).toBe('exhausted');
+    }
+  });
+
+  test('an attempt count ABOVE the cap reports the TRUE number, not a clamped one', () => {
+    // '3 of 3' for a seventh attempt is a wrong number, and it disagreed with the attempt the audit event records.
+    const d = describeRunFailure({ state: 'failed', failureCategory: 'timeout', attempt: 7 });
+    expect(d?.attemptsUsed).toBe(7);
+    expect(d?.nextAttempt).toBe('exhausted');
+  });
+
+  test('ONLY timeout is retry-safe - the set is no longer broader than canon establishes', () => {
+    expect([...RETRY_SAFE_CATEGORIES]).toEqual(['timeout']);
   });
 });
