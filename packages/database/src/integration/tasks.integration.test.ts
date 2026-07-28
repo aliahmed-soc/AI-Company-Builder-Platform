@@ -374,14 +374,14 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
   });
 
   test('catalog after 0029: task_deletions FORCE RLS + SELECT/INSERT only, and `tasks` grants are UNCHANGED', async () => {
-    const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'task_runs', 'task_deletions' and relkind = 'r'`.execute(su.kysely);
+    const rls = await sql<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>`select relrowsecurity, relforcerowsecurity from pg_class where relname = 'task_deletions' and relkind = 'r'`.execute(su.kysely);
     expect(rls.rows[0]).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
-    const pols = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = 'task_runs', 'task_deletions' order by cmd`.execute(su.kysely);
+    const pols = await sql<{ cmd: string }>`select cmd from pg_policies where tablename = 'task_deletions' order by cmd`.execute(su.kysely);
     expect(pols.rows.map((p) => p.cmd)).toEqual(['INSERT', 'SELECT']);
-    const gr = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'task_runs', 'task_deletions' order by privilege_type`.execute(su.kysely);
+    const gr = await sql<{ privilege_type: string }>`select distinct privilege_type from information_schema.role_table_grants where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'task_deletions' order by privilege_type`.execute(su.kysely);
     expect(gr.rows.map((g) => g.privilege_type)).toEqual(['INSERT', 'SELECT']);
     // No column-level UPDATE either — the immutability above must not be reachable by another door.
-    const delCols = await sql<{ column_name: string }>`select column_name from information_schema.column_privileges where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'task_runs', 'task_deletions' and privilege_type = 'UPDATE'`.execute(su.kysely);
+    const delCols = await sql<{ column_name: string }>`select column_name from information_schema.column_privileges where grantee = 'acbp_app' and table_schema = 'public' and table_name = 'task_deletions' and privilege_type = 'UPDATE'`.execute(su.kysely);
     expect(delCols.rows).toEqual([]);
 
     // THE POINT OF THE WHOLE DESIGN: `tasks` still has no DELETE, and its column UPDATE is still exactly the two
@@ -397,7 +397,7 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
   test('0029 is reversible: down drops the table, the column and the additive UNIQUE; up reapplies clean', async () => {
     const back = await createMigrator(su).migrateTo('0028_planning_transparency');
     expect(back.error).toBeUndefined();
-    const gone = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'task_runs', 'task_deletions'`.execute(su.kysely);
+    const gone = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'task_deletions'`.execute(su.kysely);
     expect(gone.rows[0]?.n).toBe(0);
     const col = await sql<{ n: number }>`select count(*)::int as n from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'repeated_from_task_id'`.execute(su.kysely);
     expect(col.rows[0]?.n).toBe(0);
@@ -405,6 +405,6 @@ describe.skipIf(!hasTestDatabase)('tasks + task_dependencies (real PostgreSQL, r
     expect(uq.rows[0]?.n).toBe(0);
     const up = await migrateToLatest(su);
     expect(up.error).toBeUndefined();
-    expect((await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'task_runs', 'task_deletions'`.execute(su.kysely)).rows[0]?.n).toBe(1);
+    expect((await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'task_deletions'`.execute(su.kysely)).rows[0]?.n).toBe(1);
   });
 });
