@@ -11,3 +11,6 @@ export { interviewOutputValidator } from './interview-gateway.js';
 export { understandingOutputValidator } from './understanding-gateway.js';
 export { strategyOutputValidator, strategyRecommendationValidator } from './strategy-gateway.js';
 export { roadmapOutputValidator, taskPlanOutputValidator } from './planning-gateway.js';
+// Research (ACBP-P5-006). SHAPE only — the retrieved-source check cannot run in this hook, and the draft/document
+// type split is what makes that safe rather than merely documented.
+export { researchOutputValidator } from './research-gateway.js';

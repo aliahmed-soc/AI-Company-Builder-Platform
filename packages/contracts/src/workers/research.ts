@@ -24,6 +24,34 @@ export function isResearchTaskType(value: unknown): value is ResearchTaskType {
 /** Bound on claims per document. A research document with more than this is a dump, not a finding. */
 export const MAX_RESEARCH_CLAIMS = 100;
 
+/** The gateway output-schema ref for a research document (the composition dispatches `validateOutput` on it). */
+export const RESEARCH_DOCUMENT_SCHEMA = 'research.document.output@1';
+
+/**
+ * One source the worker RETRIEVED — the raw material, before any model sees it.
+ *
+ * `content` is UNTRUSTED EXTERNAL CONTENT (`AI-AND-WORKER-ARCHITECTURE.md` §4). It is wrapped with provenance and
+ * treated as data before it reaches a prompt, and any instructions inside it are inert: canon's invariant 17 is that
+ * tool calls originate from worker control flow, never from instructions parsed out of processed content.
+ */
+export interface FetchedSource {
+  readonly url: string;
+  readonly title: string;
+  readonly retrievedAt: string;
+  readonly content: string;
+}
+
+/**
+ * The read-only research fetch port (`web_research`, informational class).
+ *
+ * PROVIDER-NEUTRAL and deliberately tiny. A CONCRETE implementation reaches the public internet, which is a live
+ * external resource and therefore an owner gate (`CDR-061 §3`) — so what ships is this port plus an in-memory
+ * implementation, exactly as `FakeModelProvider` and P5-011's storage did.
+ */
+export interface ResearchFetcher {
+  fetch(query: string, options?: { readonly limit?: number }): Promise<readonly FetchedSource[]>;
+}
+
 /**
  * One citation. `retrievedAt` is REQUIRED because a citation with no retrieval time cannot be re-checked — the web
  * changes, and "this said X when we read it" is the claim being made.
@@ -231,6 +259,38 @@ export function certifyResearchDocument(draft: ResearchDraft, retrievedUrls: rea
     if (problem !== null) return problem;
   }
   return { ok: true, document: { title: draft.title, summary: draft.summary, claims: draft.claims } as ResearchDocument };
+}
+
+/**
+ * Defensively narrow the gateway's ALREADY-VALIDATED output back to a draft.
+ *
+ * The gateway hands back `unknown` across a seam, and a value that arrived corrupted must not be trusted because
+ * something upstream said it validated it. Re-checking the shape costs nothing and is the difference between a typed
+ * refusal and a `TypeError` deep in a persist path.
+ */
+export function narrowResearchDraft(validatedOutput: unknown): ResearchDraft | undefined {
+  const parsed = parseResearchShape(validatedOutput);
+  return parsed.ok ? parsed.draft : undefined;
+}
+
+/**
+ * Render a certified document as markdown — the artifact's bytes.
+ *
+ * EVERY claim renders its evidence inline. A sourced claim carries its links; an unverified one carries the word
+ * **Unverified** and the reason. A founder reading the artifact can see which is which without opening anything
+ * else, which is the entire point of WORK-002 — the label is worthless if it only exists in the database.
+ */
+export function renderResearchMarkdown(document: ResearchDocument): string {
+  const lines: string[] = [`# ${document.title}`, '', document.summary, '', '## Findings', ''];
+  for (const claim of document.claims) {
+    lines.push(`- ${claim.statement}`);
+    if ('sources' in claim) {
+      for (const source of claim.sources) lines.push(`  - Source: [${source.title}](${source.url}) (retrieved ${source.retrievedAt})`);
+    } else {
+      lines.push(`  - **Unverified.** ${claim.unverifiedReason}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /**

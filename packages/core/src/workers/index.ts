@@ -2,3 +2,5 @@
 export { resolveWorkerAllowlist, setCompanyWorkerState, listWorkers } from './registry.js';
 export type { RegistryOptions, ResolveWorkerParams, ResolveWorkerResult, SetWorkerStateParams, SetWorkerStateResult, WorkerDefinitionDTO, WorkerListingEntry, ListWorkersResult } from './registry.js';
 export * from './runtime.js';
+// The research worker (ACBP-P5-006; WORK-002) — fetch, screen, wrap, generate, CERTIFY, persist.
+export * from './research.js';
