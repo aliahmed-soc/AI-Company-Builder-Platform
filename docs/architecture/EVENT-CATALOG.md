@@ -186,6 +186,17 @@ Retention default: activity-projected events with company data; audit-relevant e
 | approval.requested | Approval engine | Decision Room inbox, notification | approval_id, action_type, payload_hash, risk_class, expiry | audited | ≥ audit |
 | approval.approved / approval.rejected | Approval engine | Coordinator (unblock), activity | approval_id, decider (human/delegated only), decision_notes? | **audit-grade, in-tx** | ≥ audit |
 | approval.expired / approval.revoked | Approval engine | Coordinator (fail closed) | approval_id, (revoked_by) | audited | ≥ audit |
+<!-- IMPLEMENTED (ACBP-P5-003b; CDR-054): the dispatcher registers THREE of the rows below — `tool.call_requested`
+     {tool_id, tool_version, risk_class, external_effect, (denial_reason)}, `tool.call_completed` and
+     `tool.call_failed` {tool_id, tool_version, risk_class, call_outcome, has_receipt}.
+     `tool.call_requested` IS EMITTED FOR REFUSALS TOO, carrying outcome `denied` — TOOL-001 requires the attempt to be
+     audited, and a reader counting denials should not have to parse metadata to find them.
+     `tool.call_started` is NOT registered: nothing executes tools yet (P5-005 owns the worker runtime), so registering
+     it would declare an event no code can emit.
+     `policy_eval_ref` and `approval_ref` are absent because the engines that produce them are Phase 6's. `has_receipt`
+     is a BOOLEAN rather than the receipt: whether an external effect could be evidenced is the auditable fact, and the
+     reference itself lives on the `tool_calls` row. `unconfirmed` never carries the success outcome — canon says a
+     missing receipt marks the call unconfirmed, "never 'succeeded'". -->
 | tool.call_requested / tool.call_started | Dispatcher | (record) | tool_call_id, tool_id+version, risk_class, policy_eval_ref, approval_ref?, idempotency_key | TOOL-002 completeness | ≥ audit |
 | tool.call_completed / tool.call_failed | Dispatcher | Coordinator, usage | tool_call_id, outcome, receipt_ref (external effects: **required for success claim**, invariant 20), error_category | audit-grade for external classes | ≥ audit |
 | model.call_completed | Model gateway | Usage ledger | call_id, provider, model+version, token_usage, est_cost, fallback_used, latency_ms, outcome | usage source record | ≥ billing |

@@ -760,3 +760,54 @@ restrictive), and **when it stops being cheap to change** — once P6-001 policy
 off the values. The same warning heads `risk-class.ts`, where an engineer will actually meet it.
 
 Next: **P5-003b**, the dispatcher chokepoint.
+
+## FLAG — the risk-class set disagrees with canon, and my earlier "canon is silent" was wrong (2026-07-28 03:52 +03:00)
+
+**Not fixed. Left exactly as shipped, flagged for the owner.** This is the one item in this run I am deliberately not
+deciding, under the owner's Phase-6-caution rule: a misclassification here means the AI dispatches under a weaker gate
+than it should.
+
+### What I got wrong
+
+Researching P5-003b, I read `product-specification/REQUIREMENTS.csv` line 64. APPR-001's description says, verbatim:
+
+> "Every tool/action is classified: **informational, internal-reversible, external, or sensitive-irreversible**;
+> classification drives default approval behavior."
+
+Canon enumerates the four classes by name. When I flagged P5-003a as needing an owner decision, I said canon *"never
+enumerates the risk classes"*, and the owner approved my four-class set **on that basis**. The claim was false. I had
+searched the architecture layer — `AI-AND-WORKER-ARCHITECTURE`, `TECHNICAL-ARCHITECTURE`, `EVENT-CATALOG`,
+`ENGINEERING-STANDARDS` — and concluded "silent" without reading the requirements row that CDR-051's own title cites
+(`TOOL-001 / APPR-001`). The lesson is narrow and worth keeping: **"canon is silent" is a claim about ALL of canon, and
+I asserted it after checking one layer.**
+
+### Why it matters, concretely
+
+The count is the same. The fourth class is not.
+
+| Action | Canon's `sensitive-irreversible` | My `external_irreversible` |
+| --- | --- | --- |
+| Permanently destroy a company's data — internal, irreversible | **most restrictive** | `internal_reversible`, the second-**least** restrictive value |
+
+Canon's fourth class is about sensitivity and irreversibility **wherever they occur**. Mine pins the top two classes to
+**external** effects, which leaves an irreversible *internal* action classified two rungs too low.
+
+### Why nothing is blocked
+
+- No MVP tool performs an irreversible internal action; the MVP is structurally zero-external-action (ADR-012).
+- **P5-003b never touches the class NAMES.** It dispatches on `resolveRiskClass` and the ordering alone, so the set can
+  be realigned without touching the dispatcher.
+- It stays cheap to change until P6-001 policy rows and APPR-005 expiry defaults reference the values. After that it is
+  a data migration across trust-critical tables.
+
+### What I need from the owner (no rush — it does not block Phase 5)
+
+One of three:
+
+1. **Adopt canon's four verbatim** — `informational`, `internal_reversible`, `external`, `sensitive_irreversible`. My
+   recommendation: it is what canon says, and it closes the irreversible-internal gap.
+2. **Keep the shipped set** as a deliberate improvement on canon, with the gap accepted and written down.
+3. **Three classes**, the simpler shape I originally raised.
+
+Recorded in `CDR-051 §0.1` and at the top of `packages/contracts/src/tools/risk-class.ts`, so nobody reads either
+without seeing it.

@@ -68,6 +68,8 @@ export { TaskRepository } from './task-repository.js';
 export type { TaskExecutor, NewTaskInput, NewTaskDependencyInput, NewTaskDeletionInput, ListTasksOptions } from './task-repository.js';
 export { TaskRunRepository } from './task-run-repository.js';
 export type { TaskRunExecutor, NewTaskRunInput, TransitionTaskRunInput } from './task-run-repository.js';
+export { ToolCallRepository } from './tool-call-repository.js';
+export type { ToolCallExecutor, NewToolCallInput, CompleteToolCallInput } from './tool-call-repository.js';
 export { JobRepository } from './job-repository.js';
 export type { JobExecutor, NewJobInput, NewJobCheckpointInput } from './job-repository.js';
 export { StrategyRepository } from './strategy-repository.js';
@@ -212,6 +214,8 @@ export type {
   ToolDefinitionRow,
   TaskRunsTable,
   TaskRunRow,
+  ToolCallsTable,
+  ToolCallRow,
   NewTaskDeletion,
 } from './schema.js';
 

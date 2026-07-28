@@ -162,6 +162,13 @@ export const AUDIT_EVENTS = {
   'task.failed': { schemaVersion: 1, subjectType: 'task' },
   'task.cancelled': { schemaVersion: 1, subjectType: 'task' },
   'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
+  // Tool calls (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). The subject is the CALL, not the
+  // task: a reader asking "what did the chokepoint decide about this call" wants one row per call, and the run and
+  // task reach it through the `tool_calls` row. `tool.call_started` is NOT registered — nothing executes tools yet
+  // (P5-005 owns the worker runtime), so registering it would declare an event no code can emit.
+  'tool.call_requested': { schemaVersion: 1, subjectType: 'tool_call' },
+  'tool.call_completed': { schemaVersion: 1, subjectType: 'tool_call' },
+  'tool.call_failed': { schemaVersion: 1, subjectType: 'tool_call' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -541,6 +548,44 @@ export function taskFailed(input: { readonly taskId: string; readonly runId: str
  */
 export function taskCancelled(input: { readonly taskId: string; readonly runId: string; readonly phase: string }): AuditEvent {
   return makeEvent('task.cancelled', input.taskId, 'success', { run_id: input.runId, phase: input.phase });
+}
+
+/**
+ * A tool call was PROPOSED at the chokepoint (ACBP-P5-003b; TOOL-002 "100% of tool calls have records").
+ *
+ * Emitted for REFUSALS as well as authorizations — TOOL-001's failure clause is "attempts are audited", and an
+ * attempt that is turned away is exactly the attempt worth auditing. `outcome` carries the difference, so a reader
+ * counting denials never has to parse metadata to find them. The arguments DIGEST is deliberately absent: it is on
+ * the `tool_calls` row, and duplicating it here would put the same fact in two places that can disagree.
+ */
+export function toolCallRequested(input: {
+  readonly callId: string;
+  readonly toolId: string;
+  /** Which registered version was in force. Null when the tool was not registered — canon pairs 	ool_id+version. */
+  readonly toolVersion: number | null;
+  readonly riskClass: string;
+  readonly externalEffect: boolean;
+  readonly denialReason?: string;
+}): AuditEvent {
+  // `tool_version` is OMITTED when null rather than sent as null: audit metadata is scalars only, and an absent key
+  // says "this tool had no registered version" exactly as well as a null would have — without breaking the bound.
+  const base = { tool_id: input.toolId, risk_class: input.riskClass, external_effect: input.externalEffect, ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }) };
+  return input.denialReason === undefined
+    ? makeEvent('tool.call_requested', input.callId, 'success', base)
+    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason });
+}
+
+/**
+ * A tool call reported its outcome (ACBP-P5-003b; TOOL-002).
+ *
+ * `has_receipt` is a BOOLEAN, not the receipt: whether an external effect could be evidenced is the auditable fact,
+ * and the reference itself is on the row. `unconfirmed` is NOT a success — canon says a missing receipt marks the
+ * call unconfirmed, "never 'succeeded'" — so only `succeeded` carries the success outcome here.
+ */
+export function toolCallCompleted(input: { readonly callId: string; readonly toolId: string; readonly riskClass: string; readonly callOutcome: string; readonly hasReceipt: boolean }): AuditEvent {
+  const name = input.callOutcome === 'failed' ? 'tool.call_failed' : 'tool.call_completed';
+  const outcome: AuditOutcome = input.callOutcome === 'succeeded' ? 'success' : 'blocked';
+  return makeEvent(name, input.callId, outcome, { tool_id: input.toolId, risk_class: input.riskClass, call_outcome: input.callOutcome, has_receipt: input.hasReceipt });
 }
 
 /**

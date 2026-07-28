@@ -99,6 +99,11 @@ describe('event-name registry (deny unregistered)', () => {
       'task.started',
       'task.failed',
       'task.cancelled',
+      // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). `tool.call_started` is
+      // deliberately NOT here — nothing executes tools yet, so registering it would declare an unemittable event.
+      'tool.call_requested',
+      'tool.call_completed',
+      'tool.call_failed',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.

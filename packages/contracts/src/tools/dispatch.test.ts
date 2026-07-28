@@ -1,0 +1,207 @@
+// ACBP-P5-003b — the dispatch decision, made executable (CDR-054; TOOL-002/003; WORK-005; ADR-012).
+//
+// This is the gate. Every test below is a statement about what may execute, so each one is written to fail LOUDLY
+// rather than to pass conveniently: the default posture of every fixture is "everything is fine", and each test
+// breaks exactly one thing.
+import { describe, test, expect } from 'vitest';
+import {
+  TOOL_CALL_OUTCOMES,
+  TOOL_DENIAL_REASONS,
+  isToolCallOutcome,
+  isToolDenialReason,
+  decideDispatch,
+  CLASSES_THAT_PROCEED_WITHOUT_A_GATE,
+  type DispatchRequestFacts,
+} from './dispatch.js';
+import { RISK_CLASSES, MOST_RESTRICTIVE_RISK_CLASS } from './risk-class.js';
+import { toolCallRequested } from '../audit/audit.js';
+
+/** Everything permissible. Each test breaks ONE field, so a passing result always names its own cause. */
+const clear = (over: Partial<DispatchRequestFacts> = {}): DispatchRequestFacts => ({
+  toolId: 'web_research',
+  registered: true,
+  riskClass: 'informational',
+  allowlist: ['web_research', 'memory_read'],
+  stop: { kind: 'clear' },
+  policy: { kind: 'allow' },
+  approval: { kind: 'allow' },
+  ...over,
+});
+
+describe('the closed vocabularies', () => {
+  test('outcomes are exactly canon\'s five, and `unconfirmed` is one of them (TOOL-002)', () => {
+    expect([...TOOL_CALL_OUTCOMES]).toEqual(['requested', 'denied', 'succeeded', 'failed', 'unconfirmed']);
+    // The failure clause is explicit: "Missing receipt marks the call outcome 'unconfirmed', never 'succeeded'."
+    expect(TOOL_CALL_OUTCOMES).toContain('unconfirmed');
+  });
+
+  test('both guards are deny-by-default at the boundary', () => {
+    for (const v of TOOL_CALL_OUTCOMES) expect(isToolCallOutcome(v)).toBe(true);
+    for (const v of TOOL_DENIAL_REASONS) expect(isToolDenialReason(v)).toBe(true);
+    for (const bad of ['SUCCEEDED', 'ok', '', 42, null, undefined, {}, ['denied']]) {
+      expect(isToolCallOutcome(bad)).toBe(false);
+      expect(isToolDenialReason(bad)).toBe(false);
+    }
+  });
+
+  test('a denial reason never carries free text — the set is closed and lowercase', () => {
+    for (const r of TOOL_DENIAL_REASONS) expect(r).toMatch(/^[a-z][a-z_]*$/);
+  });
+
+  test('the requested event OMITS tool_version when there is none — audit metadata takes scalars only', () => {
+    // Found by hosted CI: sending `tool_version: null` throws "Audit metadata value type is not allowed", which would
+    // have made every unregistered-tool refusal fail to audit — the exact attempt TOOL-001 most wants recorded.
+    const unregistered = toolCallRequested({ callId: 'c1', toolId: 'ghost', toolVersion: null, riskClass: 'informational', externalEffect: false, denialReason: 'not_registered' });
+    expect(Object.keys(unregistered.metadata)).not.toContain('tool_version');
+    const registered = toolCallRequested({ callId: 'c2', toolId: 'web_research', toolVersion: 3, riskClass: 'informational', externalEffect: false });
+    expect(registered.metadata).toMatchObject({ tool_version: 3 });
+  });
+});
+
+describe('decideDispatch — the authorized path', () => {
+  test('a registered, allowlisted, unstopped, policy-allowed, approved call is authorized', () => {
+    expect(decideDispatch(clear())).toEqual({ kind: 'authorized', riskClass: 'informational' });
+  });
+
+  test('the resolved class is returned, so a caller never has to re-resolve it', () => {
+    const d = decideDispatch(clear({ riskClass: 'internal_reversible' }));
+    expect(d).toEqual({ kind: 'authorized', riskClass: 'internal_reversible' });
+  });
+});
+
+describe('decideDispatch — the registry (G2, TOOL-001)', () => {
+  test('an UNREGISTERED tool is refused before anything else is even consulted', () => {
+    // Deliberately permissive everywhere else. If registration were checked late, this would pass authorized.
+    const d = decideDispatch(clear({ registered: false }));
+    expect(d).toEqual({ kind: 'denied', reason: 'not_registered', riskClass: MOST_RESTRICTIVE_RISK_CLASS });
+  });
+
+  test('an unregistered tool reports the MOST RESTRICTIVE class, never the class it claimed', () => {
+    // A caller cannot lower its own gate by asserting a class for a tool the registry does not have.
+    const d = decideDispatch({ ...clear({ registered: false }), riskClass: 'informational' });
+    expect(d.riskClass).toBe(MOST_RESTRICTIVE_RISK_CLASS);
+  });
+
+  test('an UNCLASSIFIED registered tool resolves to the most restrictive class and is gated as one', () => {
+    // TOOL-001: "unclassified = most restrictive". With no policy engine it must NOT proceed.
+    const d = decideDispatch(clear({ riskClass: null, policy: { kind: 'unavailable' }, approval: { kind: 'unavailable' } }));
+    expect(d).toEqual({ kind: 'denied', reason: 'policy_unavailable', riskClass: MOST_RESTRICTIVE_RISK_CLASS });
+  });
+});
+
+describe('decideDispatch — the allowlist (G3, WORK-005, invariant 4)', () => {
+  test('a tool absent from the allowlist is refused', () => {
+    expect(decideDispatch(clear({ allowlist: ['memory_read'] })).kind).toBe('denied');
+    expect(decideDispatch(clear({ allowlist: ['memory_read'] }))).toMatchObject({ reason: 'not_allowlisted' });
+  });
+
+  test('NO allowlist at all is refused, and is DISTINGUISHABLE from an empty one', () => {
+    // Two different problems with two different fixes: a missing allowlist is a configuration fault, an empty one is
+    // a worker that legitimately may use nothing. Collapsing them would hide the first inside the second.
+    expect(decideDispatch(clear({ allowlist: undefined }))).toMatchObject({ reason: 'no_allowlist' });
+    expect(decideDispatch(clear({ allowlist: [] }))).toMatchObject({ reason: 'not_allowlisted' });
+  });
+
+  test('the allowlist is checked AFTER registration — an unregistered tool is never reported as un-allowlisted', () => {
+    const d = decideDispatch(clear({ registered: false, allowlist: undefined }));
+    expect(d).toMatchObject({ reason: 'not_registered' });
+  });
+});
+
+describe('decideDispatch — the gates fail CLOSED (G4)', () => {
+  test('an emergency stop refuses, whatever policy and approval say', () => {
+    expect(decideDispatch(clear({ stop: { kind: 'stopped' } }))).toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('an UNREACHABLE stop state refuses too, and says so distinctly', () => {
+    // "No stop is recorded" is a complete answer; "I could not check" is not. They must not read the same.
+    expect(decideDispatch(clear({ stop: { kind: 'unavailable' } }))).toMatchObject({ reason: 'stop_unavailable' });
+  });
+
+  test('a policy DENY refuses, and beats approval (POL-005: approval cannot override forbidden)', () => {
+    const d = decideDispatch(clear({ policy: { kind: 'deny' }, approval: { kind: 'allow' } }));
+    expect(d).toMatchObject({ reason: 'policy_denied' });
+  });
+
+  test('a policy deny is NEVER waived, not even for the least restrictive class', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'deny' } }));
+    expect(d).toMatchObject({ reason: 'policy_denied' });
+  });
+
+  test('an invalid approval refuses', () => {
+    expect(decideDispatch(clear({ approval: { kind: 'deny' } }))).toMatchObject({ reason: 'approval_invalid' });
+  });
+
+  test('an approval deny is NEVER waived either', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', approval: { kind: 'deny' } }));
+    expect(d).toMatchObject({ reason: 'approval_invalid' });
+  });
+});
+
+describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)', () => {
+  // "P5 execution is gated by user-initiated runs on informational-class tools ONLY."
+  const noEngines = { policy: { kind: 'unavailable' }, approval: { kind: 'unavailable' } } as const;
+
+  test('the waiver set is exactly `informational` — the LEAST restrictive class and nothing above it', () => {
+    expect([...CLASSES_THAT_PROCEED_WITHOUT_A_GATE]).toEqual(['informational']);
+    expect(CLASSES_THAT_PROCEED_WITHOUT_A_GATE).not.toContain(MOST_RESTRICTIVE_RISK_CLASS);
+  });
+
+  test('informational proceeds when no engine has answered', () => {
+    expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
+  });
+
+  test('EVERY class above informational is refused when no engine has answered', () => {
+    for (const riskClass of RISK_CLASSES.filter((c) => c !== 'informational')) {
+      const d = decideDispatch(clear({ ...noEngines, riskClass }));
+      expect(d).toEqual({ kind: 'denied', reason: 'policy_unavailable', riskClass });
+    }
+  });
+
+  test('an absent APPROVAL alone still refuses a gated class, even with policy allowing', () => {
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
+    expect(d).toMatchObject({ reason: 'approval_required' });
+  });
+
+  test('the waiver does NOT extend to the stop state — a stop still refuses an informational call', () => {
+    const d = decideDispatch(clear({ ...noEngines, riskClass: 'informational', stop: { kind: 'stopped' } }));
+    expect(d).toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('the waiver does NOT extend to registration or the allowlist', () => {
+    expect(decideDispatch(clear({ ...noEngines, registered: false }))).toMatchObject({ reason: 'not_registered' });
+    expect(decideDispatch(clear({ ...noEngines, allowlist: [] }))).toMatchObject({ reason: 'not_allowlisted' });
+  });
+});
+
+describe('decideDispatch — total and deny-by-default', () => {
+  test('a malformed gate answer is treated as no answer, not as permission', () => {
+    const forged = { kind: 'ALLOW' } as unknown as DispatchRequestFacts['policy'];
+    const d = decideDispatch(clear({ riskClass: 'internal_reversible', policy: forged }));
+    expect(d).toMatchObject({ reason: 'policy_unavailable' });
+  });
+
+  test('a malformed STOP answer refuses rather than reading as clear', () => {
+    const forged = { kind: 'fine' } as unknown as DispatchRequestFacts['stop'];
+    expect(decideDispatch(clear({ stop: forged }))).toMatchObject({ reason: 'stop_unavailable' });
+  });
+
+  test('every returned reason is a member of the closed set', () => {
+    const broken: DispatchRequestFacts[] = [
+      clear({ registered: false }),
+      clear({ allowlist: undefined }),
+      clear({ allowlist: [] }),
+      clear({ stop: { kind: 'stopped' } }),
+      clear({ stop: { kind: 'unavailable' } }),
+      clear({ policy: { kind: 'deny' } }),
+      clear({ riskClass: 'external_irreversible', policy: { kind: 'unavailable' } }),
+      clear({ approval: { kind: 'deny' } }),
+      clear({ riskClass: 'external_irreversible', approval: { kind: 'unavailable' } }),
+    ];
+    for (const facts of broken) {
+      const d = decideDispatch(facts);
+      expect(d.kind).toBe('denied');
+      if (d.kind === 'denied') expect(isToolDenialReason(d.reason)).toBe(true);
+    }
+  });
+});
