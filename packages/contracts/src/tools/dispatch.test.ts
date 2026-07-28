@@ -228,9 +228,9 @@ describe('decideDispatch — total and deny-by-default', () => {
       clear({ stop: { kind: 'stopped' } }),
       clear({ stop: { kind: 'unavailable' } }),
       clear({ policy: { kind: 'deny' } }),
-      clear({ riskClass: 'external_irreversible', policy: { kind: 'unavailable' } }),
+      clear({ riskClass: 'sensitive_irreversible', policy: { kind: 'unavailable' } }),
       clear({ approval: { kind: 'deny' } }),
-      clear({ riskClass: 'external_irreversible', approval: { kind: 'unavailable' } }),
+      clear({ riskClass: 'sensitive_irreversible', approval: { kind: 'unavailable' } }),
     ];
     for (const facts of broken) {
       const d = decideDispatch(facts);

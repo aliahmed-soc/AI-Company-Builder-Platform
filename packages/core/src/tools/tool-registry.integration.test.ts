@@ -90,12 +90,12 @@ describe.skipIf(!hasTestDatabase)('tool registry (real PostgreSQL) — ACBP-P5-0
 
   test('a tool is revised by a NEW VERSION, never an edited row', async () => {
     await register('versioned_tool', 1, 'informational');
-    await register('versioned_tool', 2, 'external_irreversible');
+    await register('versioned_tool', 2, 'sensitive_irreversible');
     await expect(register('versioned_tool', 2, 'informational')).rejects.toSatisfy((e: unknown) => sqlState(e) === UNIQUE_VIOLATION);
     const rows = await owner.kysely.selectFrom('tool_definitions').select(['version', 'risk_class']).where('tool_id', '=', 'versioned_tool').orderBy('version').execute();
     expect(rows).toEqual([
       { version: 1, risk_class: 'informational' },
-      { version: 2, risk_class: 'external_irreversible' },
+      { version: 2, risk_class: 'sensitive_irreversible' },
     ]);
   });
 

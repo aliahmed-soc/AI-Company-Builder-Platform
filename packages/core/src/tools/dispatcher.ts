@@ -34,10 +34,24 @@ const CLEAR = (): StopAnswer => ({ kind: 'clear' });
 const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
 
 /**
- * The classes whose effects reach outside the platform. TOOL-002's receipt rule keys off THIS, not off class names in
- * a database CHECK, so the risk-class set can be re-shaped (CDR-051 §0.1 flags it as open) without a migration.
+ * The classes treated as having effects that reach outside the platform. TOOL-002's receipt rule keys off THIS, not
+ * off class names in a database CHECK, so the risk-class set can be re-shaped without a migration.
+ *
+ * DELIBERATELY UNCHANGED BY THE 2026-07-28 RENAME, and this is the one place where "just rename it" would have been
+ * wrong in a way no test would have shown. `sensitive_irreversible` is canon's class for sensitivity and
+ * irreversibility WHEREVER they occur — so, unlike the `external_irreversible` it replaced, a member of it may be an
+ * INTERNAL action, which has no external receipt to store. Keeping it here means such a tool still cannot claim
+ * `succeeded` without a receipt.
+ *
+ * That is an OVER-approximation, and it is the safe direction: the alternative — dropping it — would have quietly
+ * relaxed a rule TOOL-002 exists to enforce, on a class that is by definition the most dangerous one. Behaviour is
+ * therefore byte-for-byte what it was before the rename.
+ *
+ * THE REAL FIX IS A DIFFERENT FIELD. TOOL-001 asks a registered tool to declare its *"side-effect class"* SEPARATELY
+ * from its risk category, and that is where "does this reach outside the platform" actually belongs. Deriving it from
+ * the risk class is a stand-in until a tool declares it; recorded in CDR-051 §0.2.
  */
-const EXTERNAL_EFFECT_CLASSES: readonly RiskClass[] = ['external_reversible', 'external_irreversible'];
+const EXTERNAL_EFFECT_CLASSES: readonly RiskClass[] = ['external_reversible', 'sensitive_irreversible'];
 
 /**
  * The gates the dispatcher consults. All three are PORTS with fail-closed Phase 5 defaults, because the engines

@@ -811,3 +811,65 @@ One of three:
 
 Recorded in `CDR-051 §0.1` and at the top of `packages/contracts/src/tools/risk-class.ts`, so nobody reads either
 without seeing it.
+
+## CORRECTION APPLIED — the fourth risk class now carries canon's name (2026-07-28 12:47 +03:00)
+
+**Owner decision received and executed.** `external_irreversible` → `sensitive_irreversible`, everywhere it appears.
+Recorded here as a **correction, not a rename**, because other safety logic reads this class.
+
+### What was wrong
+
+APPR-001 enumerates the risk classes — *"informational, internal-reversible, external, or sensitive-irreversible"* —
+and I had told the owner canon never enumerated them, having searched only the architecture layer. The owner approved
+an invented fourth name on that false basis.
+
+The two names are not the same idea. `external_irreversible` tied the top class to **external** effects, so an
+irreversible **internal** action — permanently destroying a company's data — had no home above `internal_reversible`,
+the second-*least* restrictive value. Canon's `sensitive_irreversible` is about sensitivity and irreversibility
+**wherever they occur**, which is a class a classifier can honestly assign to that action.
+
+### What was changed
+
+| Layer | Change |
+| --- | --- |
+| Contracts | `RISK_CLASSES[3]`; the module header now records the correction rather than the flag |
+| Database | **Migration 0039** — data first, then all three CHECKs (`tool_definitions`, `tool_calls`, `worker_definitions`), fully reversible |
+| Policy logic | `EXTERNAL_EFFECT_CLASSES` in the dispatcher — see below, this one needed thought |
+| Tests | every literal, plus new behaviour-preservation tests |
+
+**Migration 0039 rather than editing 0033/0036/0038**, which are merged and may have been applied: a migration that has
+run is a historical fact, and rewriting it would make the recorded history disagree with what a database actually did.
+Data is rewritten *before* the constraints narrow — the only order that cannot strand a row.
+
+### Proving it changed nothing else
+
+Every gate here compares **ranks**, never strings. So the tests pin, by POSITION:
+
+- the ranks as exactly `[0,1,2,3]`;
+- the **full comparison matrix** of `isAtLeastAsRestrictiveAs`, asserted positionally, so a class cannot have moved;
+- `MOST_RESTRICTIVE_RISK_CLASS` still being the last element;
+- the **MVP ceiling still being the second class** — a shift there would silently widen or narrow what a worker may
+  hold, and nothing else would have complained;
+- the retired name still failing `isRiskClass` and still resolving **upward** to most-restrictive.
+
+Real-database: migration 0039 is asserted to have carried the new name into all three CHECKs **and** to have left no
+stranded row anywhere.
+
+### The one place a pure rename WOULD have changed behaviour
+
+`EXTERNAL_EFFECT_CLASSES` drives TOOL-002's receipt rule. Under the old name, membership was tautological — the class
+*was* external. Under canon's name a member may be an **internal** action, with no external receipt to store.
+
+I **kept it in the set**. Dropping it would have quietly relaxed a rule TOOL-002 exists to enforce, on the most
+dangerous class there is; keeping it is an over-approximation in the safe direction and preserves behaviour exactly.
+A real-database test asserts a `sensitive_irreversible` tool still cannot claim `succeeded` without a receipt.
+
+**The proper fix is a different field, and canon already names it:** TOOL-001 asks a tool to declare its *"side-effect
+class"* **separately** from its risk category. "Reaches outside the platform" belongs there, not in an inference from
+the risk class. Recorded in CDR-051 §0.2 as the thing to do when tools gain declared side-effect classes.
+
+### Deliberately NOT swept along
+
+Canon's third class is plain `external`; this set still splits it into `external_reversible`. That split was mine and
+the owner ruled only on the fourth class. Changing an unruled thing under cover of a ruled one is how a decision stops
+being traceable to whoever made it, so it stays flagged in CDR-051 §0.3.

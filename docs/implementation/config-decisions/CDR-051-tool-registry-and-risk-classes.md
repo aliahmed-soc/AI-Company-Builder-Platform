@@ -59,6 +59,49 @@ premise of their approval rather than settling it: whether to adopt canon's four
 three-class shape is theirs to decide with the accurate facts. Raised in `AUTONOMOUS-RUN-LOG.md` under the
 Phase-6-caution rule, because a misclassification here is precisely "the AI acts under a weaker gate than it should".
 
+### 0.2 OWNER DECISION (2026-07-28) — the fourth class now carries canon's name
+
+The owner ruled on §0.1: **`external_irreversible` → `sensitive_irreversible`**, everywhere it appears. Migration
+**0039** carries it into the three CHECKs and any data; contracts, the dispatcher and every test carry it in code.
+
+**This is a correction, not a rename.** The two names denote different ideas, and the old one had a hole:
+
+| | `external_irreversible` (invented) | `sensitive_irreversible` (canon, APPR-001) |
+| --- | --- | --- |
+| Scope | irreversible **external** effects | sensitivity and irreversibility **wherever they occur** |
+| Where an irreversible INTERNAL action lands | nowhere above `internal_reversible` — the second-**least** restrictive value | the most restrictive class, as canon intends |
+
+So the correction does not merely relabel the top of the ordering; it makes a class exist that an honest classifier can
+assign to "permanently destroy this company's data".
+
+**What did NOT change, and is proven not to have changed.** Every gate in this codebase compares *ranks*, never
+strings. `risk-class.test.ts` therefore pins the full comparison matrix **by position**, the ranks as `[0,1,2,3]`, and
+the MVP ceiling as the *second* class — so a rename that had shifted anything up or down would fail loudly rather than
+silently widening what a worker may hold.
+
+**The one place a pure rename WOULD have changed behaviour.** `EXTERNAL_EFFECT_CLASSES` in the dispatcher drives
+TOOL-002's receipt rule. Under the old name, membership was tautological — the class *was* external. Under canon's
+name, a member may be an **internal** action, which has no external receipt to store, so keeping it in the set is now
+an over-approximation.
+
+It is kept anyway, deliberately: dropping it would have quietly **relaxed** a rule TOOL-002 exists to enforce, on the
+most dangerous class there is. Behaviour is byte-for-byte what it was, and a real-database test asserts a
+`sensitive_irreversible` tool still cannot claim `succeeded` without a receipt.
+
+**The real fix is a different field, and canon already names it.** TOOL-001 asks a registered tool to declare its
+*"side-effect class"* **separately** from its risk category. "Does this reach outside the platform" belongs there, not
+in an inference from the risk class. Deriving it is a stand-in until a tool declares it — worth doing when tools gain
+declared side-effect classes, and NOT worth inventing a second vocabulary for now.
+
+### 0.3 STILL DIFFERENT FROM CANON, and deliberately left alone
+
+Canon's third class is plain **`external`**; this set splits it into **`external_reversible`**. That split was mine,
+the owner ruled only on the fourth class, and collapsing the third is a separate decision with its own trade-off (it
+would remove the ability to distinguish a reversible external write from an irreversible one at the class level).
+
+It is left as-is rather than swept along with a correction the owner did rule on — changing an unruled thing under
+cover of a ruled one is how a decision stops being traceable to whoever made it.
+
 ---
 
 ## 1. What this sub-scope owns

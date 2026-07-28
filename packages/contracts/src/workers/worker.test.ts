@@ -42,7 +42,7 @@ describe('the MVP zero-external-actions boundary (ADR-012)', () => {
   });
 
   test('ANY external-effect tool makes it unsafe — the boundary is structural, not procedural', () => {
-    for (const riskClass of ['external_reversible', 'external_irreversible']) {
+    for (const riskClass of ['external_reversible', 'sensitive_irreversible']) {
       expect(isMvpSafeAllowlist([{ toolId: 'web_research', riskClass: 'informational' }, { toolId: 'send_email', riskClass }])).toBe(false);
     }
   });
@@ -66,7 +66,7 @@ describe('the approval profile is a THRESHOLD (CDR-056 §2-G3)', () => {
   test('a class at or above the threshold requires approval; below does not', () => {
     expect(requiresApproval('informational', 'internal_reversible')).toBe(false);
     expect(requiresApproval('internal_reversible', 'internal_reversible')).toBe(true);
-    expect(requiresApproval('external_irreversible', 'internal_reversible')).toBe(true);
+    expect(requiresApproval('sensitive_irreversible', 'internal_reversible')).toBe(true);
   });
 
   test('an UNCLASSIFIED call requires approval whatever the threshold — it resolves to most restrictive', () => {
