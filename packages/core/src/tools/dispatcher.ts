@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import {
   decideDispatch,
   canonicalizeToolArguments,
+  hasUntrustedContext,
   isToolCallOutcome,
   toolCallRequested,
   toolCallCompleted,
@@ -70,6 +71,15 @@ export interface DispatchToolCallParams {
   /** The worker's allowlist. `undefined` means none was supplied, which REFUSES (WORK-005, §1-G3). */
   readonly allowlist: readonly string[] | undefined;
   readonly idempotencyKey?: string;
+  /**
+   * The working-context items this call was proposed alongside (ACBP-P5-003c; NFR-021; invariant 17).
+   *
+   * The ITEMS are passed, not a boolean: the dispatcher classifies them itself through `hasUntrustedContext`, which
+   * treats anything unrecognised as untrusted. A caller-supplied flag would let a mistake upstream read as trusted,
+   * and this is the one input where being wrong means untrusted content reached a tool. Nothing here is persisted —
+   * only the arguments digest ever is.
+   */
+  readonly context?: readonly unknown[];
 }
 
 export interface ToolCallDTO {
@@ -167,6 +177,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
         allowlist: params.allowlist,
+        untrustedContext: hasUntrustedContext(params.context),
         stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
         policy: (await (options.gates?.policy ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
         approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },

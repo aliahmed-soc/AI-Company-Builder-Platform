@@ -2,3 +2,4 @@
 export * from './risk-class.js';
 export * from './dispatch.js';
 export * from './arguments.js';
+export * from './untrusted.js';
