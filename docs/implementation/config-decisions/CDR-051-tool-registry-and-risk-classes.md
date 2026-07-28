@@ -29,6 +29,36 @@ found that it *never enumerates* the risk classes, and stopped rather than inven
 class 3 or 4 and nothing here changes MVP behaviour either way. That is precisely why the decision is cheap to revisit
 now and expensive to revisit later.
 
+### 0.1 CORRECTION (2026-07-28, found while researching P5-003b) — canon DOES enumerate the classes
+
+The row above headed *"What canon actually says"* is **wrong**, and so is the basis on which the owner approved this
+set. **APPR-001 enumerates four classes by name**, in its own description field:
+
+> "Every tool/action is classified: **informational, internal-reversible, external, or sensitive-irreversible**;
+> classification drives default approval behavior."
+
+The earlier search read `AI-AND-WORKER-ARCHITECTURE`, `TECHNICAL-ARCHITECTURE`, `EVENT-CATALOG` and
+`ENGINEERING-STANDARDS` — the architecture layer — and concluded canon was silent. It did not read the REQUIREMENTS
+row that the CDR's own title cites. That is the search failure, and it is worth naming precisely: *"canon is silent"*
+was asserted after checking one layer of canon, not all of it.
+
+**The count matches; the fourth class does not.** Canon's is `sensitive-irreversible` — sensitivity and
+irreversibility **wherever they occur**. This set's is `external_irreversible`, which pins the top two classes to
+**external** effects. The consequence is not cosmetic:
+
+| Action | Canon (`sensitive-irreversible`) | This set |
+| --- | --- | --- |
+| Permanently destroy a company's data (internal, irreversible) | **most restrictive** | `internal_reversible` — the second-**least** restrictive value available |
+
+So under the shipped set, an irreversible internal action has no home above `internal_reversible`, and would dispatch
+under a weaker gate than canon intends. Nothing in the MVP performs such an action today, and P5-003b keys off
+`resolveRiskClass` and the **ordering** only — never the literal names — so realigning remains cheap.
+
+**This is left UNCHANGED and flagged, not fixed.** The owner reserved this decision, and the correction changes the
+premise of their approval rather than settling it: whether to adopt canon's four verbatim, keep this set, or take the
+three-class shape is theirs to decide with the accurate facts. Raised in `AUTONOMOUS-RUN-LOG.md` under the
+Phase-6-caution rule, because a misclassification here is precisely "the AI acts under a weaker gate than it should".
+
 ---
 
 ## 1. What this sub-scope owns

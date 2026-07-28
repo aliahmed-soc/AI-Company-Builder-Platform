@@ -1,16 +1,23 @@
 // @acbp/contracts — tool risk classes (ACBP-P5-003a; CDR-051; TOOL-001 / APPR-001; ADR-010/ADR-012). Zero-dep.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-// THE SET BELOW IS OWNER-APPROVED BY DEFAULT AND PROVISIONAL. See CDR-051 §0 before relying on it.
+// THE SET BELOW IS OWNER-APPROVED BY DEFAULT AND PROVISIONAL, AND IT DISAGREES WITH CANON. See CDR-051 §0.
 //
-// Canon never enumerates the risk classes. It uses `informational` and `internal-reversible` as its own words
-// (AI-AND-WORKER-ARCHITECTURE:41) and treats "external" as ONE undifferentiated group. Splitting that group into
-// reversible / irreversible is an ADDITION to canon, not a reading of it. The owner approved this four-class set
-// as-is on 2026-07-27 specifically to unblock P5-003b/c, and asked that it be recorded as a default to revisit — a
-// three-class set (`informational`, `internal_reversible`, `external`) is equally consistent and simpler.
+// CORRECTION (found while researching P5-003b). An earlier version of this comment said "canon never enumerates the
+// risk classes". THAT WAS WRONG, and the owner's approval of this set was given on that mistaken basis. APPR-001
+// enumerates four classes by name:
 //
-// It is cheap to change NOW and expensive once P6-001 policy rows and APPR-005 expiry defaults key off these values.
-// The MVP is structurally zero-external-actions (ADR-012), so nothing in the MVP exercises classes 2 or 3 either way.
+//     informational · internal-reversible · external · sensitive-irreversible
+//
+// Four, as here — but the FOURTH IS NOT THE SAME CLASS. Canon's is `sensitive-irreversible`, which is about
+// sensitivity and irreversibility wherever they occur; this set's is `external_irreversible`, which ties the top two
+// classes to EXTERNAL effects. The gap is not cosmetic: an irreversible INTERNAL action (permanently destroying a
+// company's data, say) is canon's most restrictive class, and under this set it has no home above
+// `internal_reversible` — the second-LEAST restrictive value.
+//
+// That is a decision the owner reserved, so it is flagged and not changed here; see AUTONOMOUS-RUN-LOG.md. Nothing
+// downstream keys off these NAMES — P5-003b dispatches on `resolveRiskClass` and the ordering alone — so realigning
+// the set stays cheap until P6-001 policy rows and APPR-005 expiry defaults reference the values.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 //
 // What is NOT provisional, and what the tests actually pin: that the set is ORDERED (TOOL-001's "most restrictive"
