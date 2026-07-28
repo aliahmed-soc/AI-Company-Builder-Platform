@@ -112,13 +112,12 @@ export async function runStrategyComparison(client: DatabaseClient, params: RunC
   const result = await deps.gateway(request, options.correlationId !== undefined ? { correlationId: options.correlationId } : {});
   if (result.outcome !== 'ok') return { status: 'generation_failed' };
 
-  const outcome = narrowComparisonOutcome(result.validatedOutput);
-  if (outcome === undefined) {
-    // Re-parse the raw value once more to report WHY, so a caller failing the task has an honest category rather
-    // than "something was wrong with the output".
-    const reparsed = parseComparisonOutput(result.validatedOutput);
-    return { status: 'unusable_output', reason: reparsed.ok ? 'unknown_shape' : reparsed.reason, index: reparsed.ok ? null : reparsed.index };
-  }
+  // Re-narrowed defensively: the value crosses a seam as `unknown`, and "something upstream said it validated this"
+  // is not a reason to trust a corrupted one. Parsed ONCE — review pass 1 removed a second parse that existed only to
+  // recover the refusal reason the first had already computed.
+  const parsed = parseComparisonOutput(result.validatedOutput);
+  if (!parsed.ok) return { status: 'unusable_output', reason: parsed.reason, index: parsed.index };
+  const outcome = parsed.outcome;
 
   // THE ASK PATH. No artifact: a question is not a produced document, and filing it as one would put a request for
   // information into the founder's library alongside their actual work product.

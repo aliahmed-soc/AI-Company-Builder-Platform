@@ -5,7 +5,7 @@
 // from a refusal.
 import { describe, test, expect } from 'vitest';
 import { STRATEGY_OPTION_FIELDS, UNKNOWN_FIELD } from '../strategy/strategy.js';
-import { parseComparisonOutput, MIN_COMPARED_MODELS, MAX_COMPARED_MODELS, MAX_INPUT_REQUESTS } from './comparison.js';
+import { parseComparisonOutput, renderComparisonMarkdown, MIN_COMPARED_MODELS, MAX_COMPARED_MODELS, MAX_INPUT_REQUESTS } from './comparison.js';
 
 /** A complete 16-field model. Built from the canonical list so a field added there cannot leave this stale. */
 const fields = (over: Record<string, string> = {}): Record<string, string> => {
@@ -83,6 +83,33 @@ describe('G3 — every compared model meets STRAT-002 in full', () => {
     // The honest path has to stay open. If "unknown" were rejected the only way to pass would be to make something
     // up, which is the failure this standard exists to prevent.
     expect(parseComparisonOutput(comparison([{ name: 'A', fields: fields({ cost_range: UNKNOWN_FIELD }) }, model('B')]))).toMatchObject({ ok: true });
+  });
+});
+
+describe('the rendered artifact', () => {
+  test('emits the sixteen fields in CANONICAL order, whatever order they arrived in', () => {
+    // Review pass 1. This is not cosmetic: the artifact is content-addressed, so two identical comparisons whose
+    // JSON keys happened to arrive in different orders would render different bytes, hash differently, and become
+    // two artifacts. Determinism here is what makes CDR-060 G3's idempotence real.
+    const forward: Record<string, string> = {};
+    for (const f of STRATEGY_OPTION_FIELDS) forward[f] = `${f}-value`;
+    const reversed: Record<string, string> = {};
+    for (const f of [...STRATEGY_OPTION_FIELDS].reverse()) reversed[f] = `${f}-value`;
+
+    const a = renderComparisonMarkdown('T', [{ name: 'A', fields: forward as never }, { name: 'B', fields: forward as never }]);
+    const b = renderComparisonMarkdown('T', [{ name: 'A', fields: reversed as never }, { name: 'B', fields: reversed as never }]);
+    expect(a).toBe(b);
+    // And the order is canon's, not the object's.
+    const positions = STRATEGY_OPTION_FIELDS.map((f) => a.indexOf(`**${f}**`));
+    expect(positions).toEqual([...positions].sort((x, y) => x - y));
+  });
+
+  test('renders `unknown` rather than hiding it', () => {
+    const withGap: Record<string, string> = {};
+    for (const f of STRATEGY_OPTION_FIELDS) withGap[f] = `${f}-value`;
+    withGap['cost_range'] = UNKNOWN_FIELD;
+    const md = renderComparisonMarkdown('T', [{ name: 'A', fields: withGap as never }, { name: 'B', fields: withGap as never }]);
+    expect(md).toContain(`**cost_range**: ${UNKNOWN_FIELD}`);
   });
 });
 

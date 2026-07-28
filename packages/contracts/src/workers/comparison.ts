@@ -8,7 +8,7 @@
 //   SHRUG  — say "insufficient information" (which returns the problem to the founder unchanged).
 //
 // So the output is a CLOSED two-shape union with no third member, and each shape has to earn its acceptance.
-import { UNKNOWN_FIELD, isCompleteOptionFields, type StrategyOptionFields } from '../strategy/strategy.js';
+import { STRATEGY_OPTION_FIELDS, isCompleteOptionFields, type StrategyOptionFields } from '../strategy/strategy.js';
 
 /** The gateway output-schema ref for a business-model comparison. */
 export const COMPARISON_SCHEMA = 'strategy.comparison.output@1';
@@ -74,13 +74,15 @@ const fail = (reason: ComparisonRefusal, index: number | null): { ok: false; rea
  * TOTAL over `unknown` — this is a model's structured output and the declared type is only a promise. TYPED refusals
  * rather than throws, because the caller's job on a refusal is to fail the task honestly.
  *
- * NOTE ON `UNKNOWN_FIELD`: a field carrying the ADR-019 `unknown` sentinel PASSES. That is deliberate and load-bearing
- * — if the labelled gap were rejected, the only way to satisfy the standard would be to invent a value, which is the
- * exact failure the standard exists to prevent. It is referenced here so the dependency is visible rather than
- * implicit in `isCompleteOptionFields`.
+ * NOTE ON `UNKNOWN_FIELD`: a field carrying the ADR-019 `unknown` sentinel PASSES, inherited from
+ * `isCompleteOptionFields`. That is deliberate and load-bearing — if the labelled gap were rejected, the only way to
+ * satisfy the standard would be to invent a value, which is the exact failure the standard exists to prevent. The
+ * property is pinned by a test, not by anything in this function: review pass 1 removed a `void UNKNOWN_FIELD;`
+ * statement whose comment claimed it made the dependency visible. It made nothing visible and guaranteed nothing —
+ * had `isCompleteOptionFields` started rejecting the sentinel, that line would still have compiled and the comment
+ * would still have claimed otherwise.
  */
 export function parseComparisonOutput(output: unknown): ComparisonParse {
-  void UNKNOWN_FIELD;
   if (typeof output !== 'object' || output === null) return fail('unknown_shape', null);
   const candidate = output as { kind?: unknown; models?: unknown; missing?: unknown };
 
@@ -140,12 +142,18 @@ export function parseComparisonOutput(output: unknown): ComparisonParse {
  * One section per model, every one of the sixteen fields shown including the ones marked `unknown`. Hiding the
  * unknowns would make the document look more complete than the analysis behind it, which is the same dishonesty as
  * inventing the values.
+ *
+ * FIELDS ARE EMITTED IN `STRATEGY_OPTION_FIELDS` ORDER, not in whatever order the parsed object happens to carry.
+ * Review pass 1: the first version iterated `Object.entries`, which follows the model's own key order. Two identical
+ * comparisons whose JSON keys arrived in different orders would then render different bytes, hash differently, and
+ * become two artifacts — so content-addressed idempotence (CDR-060 G3) actually depends on this being deterministic,
+ * quite apart from the PRD specifying the order.
  */
 export function renderComparisonMarkdown(title: string, models: readonly ComparedModel[]): string {
   const lines: string[] = [`# ${title}`, '', `Comparing ${models.length} business models.`, ''];
   for (const model of models) {
     lines.push(`## ${model.name}`, '');
-    for (const [field, value] of Object.entries(model.fields)) lines.push(`- **${field}**: ${value}`);
+    for (const field of STRATEGY_OPTION_FIELDS) lines.push(`- **${field}**: ${model.fields[field]}`);
     lines.push('');
   }
   return `${lines.join('\n')}\n`;
