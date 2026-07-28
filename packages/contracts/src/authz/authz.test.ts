@@ -77,6 +77,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Task runs (ACBP-P5-002; CDR-053): execute is the worker's, cancel is the owner's. Both owner-only today.
   'run:execute': ['owner'],
   'run:cancel': ['owner'],
+  // Worker pause/disable (ACBP-P5-004; CDR-056; WORK-006): OWNER-only - canon calls it an emergency control.
+  'worker:control': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

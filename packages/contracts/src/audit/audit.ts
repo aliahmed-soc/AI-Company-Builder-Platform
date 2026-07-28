@@ -169,6 +169,9 @@ export const AUDIT_EVENTS = {
   'tool.call_requested': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_completed': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_failed': { schemaVersion: 1, subjectType: 'tool_call' },
+  // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006 'Definition changes audited'). Subject = the
+  // WORKER id: an owner asking 'who turned research off and when' wants one thread per worker, not per company.
+  'worker.state_changed': { schemaVersion: 1, subjectType: 'worker' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -598,6 +601,16 @@ export function toolCallCompleted(input: { readonly callId: string; readonly too
   const name = input.callOutcome === 'failed' ? 'tool.call_failed' : 'tool.call_completed';
   const outcome: AuditOutcome = input.callOutcome === 'succeeded' ? 'success' : 'blocked';
   return makeEvent(name, input.callId, outcome, { tool_id: input.toolId, risk_class: input.riskClass, call_outcome: input.callOutcome, has_receipt: input.hasReceipt });
+}
+
+/**
+ * An owner paused, disabled or re-enabled a worker for their company (ACBP-P5-004; WORK-006).
+ *
+ * `has_reason` is a BOOLEAN, matching `task.deleted`: whether the owner explained themselves is useful, and the free
+ * text they wrote is theirs and stays out of the audit payload entirely.
+ */
+export function workerStateChanged(input: { readonly workerId: string; readonly state: string; readonly hasReason: boolean }): AuditEvent {
+  return makeEvent('worker.state_changed', input.workerId, 'success', { state: input.state, has_reason: input.hasReason });
 }
 
 /**

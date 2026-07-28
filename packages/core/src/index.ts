@@ -20,3 +20,5 @@ export * from './composition/index.js';
 export * from './runs/index.js';
 // The tool dispatcher: THE enforcement chokepoint (ACBP-P5-003b; CDR-054).
 export * from './tools/index.js';
+// The worker registry: versioned definitions and the per-company pause (ACBP-P5-004; CDR-056).
+export * from './workers/index.js';

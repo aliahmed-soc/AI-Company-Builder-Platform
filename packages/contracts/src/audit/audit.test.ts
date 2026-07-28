@@ -104,6 +104,8 @@ describe('event-name registry (deny unregistered)', () => {
       'tool.call_requested',
       'tool.call_completed',
       'tool.call_failed',
+      // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006 'Definition changes audited').
+      'worker.state_changed',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
