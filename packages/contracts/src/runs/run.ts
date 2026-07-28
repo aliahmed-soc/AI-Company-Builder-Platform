@@ -5,6 +5,7 @@
 // small. The richer set in WORKFLOW-STATE-MACHINES §4 — waiting_for_input, waiting_for_approval, blocked_by_policy,
 // paused — are TASK states (each emits a `task.*` event) owned by P4-002's `tasks.state`. Collapsing the two would
 // make "which attempt failed, and why?" unanswerable. See CDR-053 §2.
+import { isTaskState, isLegalTaskTransition } from '../task/task.js';
 
 /** CLOSED. `DATA-ARCHITECTURE`: "queued→running→succeeded/failed/cancelled". */
 export const RUN_STATES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const;
@@ -63,6 +64,24 @@ export function classifyCancellation(state: unknown): CancellationKind {
   // Terminal, or unrecognised. Both answer "there is nothing here to cancel", which is the safe direction: the
   // alternative would be attempting to stop something whose state we do not understand.
   return { kind: 'already_terminal' };
+}
+
+/**
+ * May an execution attempt be STARTED for a task in this state? (review pass 2.)
+ *
+ * A run is one attempt at a task, so a task that cannot be executing must not acquire one. Without this, a coordinator
+ * would happily claim an attempt against a `completed`, `failed` or `cancelled` task and put it straight into
+ * `running` — the AI beginning work the owner already finished or called off.
+ *
+ * DERIVED from canon's own task transition table rather than restated as a list: startable means the task is already
+ * `running` (a retry attempt while the task itself stays running) or can legally reach `running` from where it is. A
+ * hand-copied set would silently go wrong the day a twelfth task state is added; this cannot.
+ *
+ * Deny-by-default: an unknown or non-string state is never startable.
+ */
+export function canStartRunForTask(taskState: unknown): boolean {
+  if (!isTaskState(taskState)) return false;
+  return taskState === 'running' || isLegalTaskTransition(taskState, 'running');
 }
 
 /**

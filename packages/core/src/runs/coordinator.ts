@@ -7,8 +7,9 @@
 // EVERY MUTATION IS GUARDED on the state the caller believed the run was in. A coordinator, a worker and an owner can
 // all act on one run at the same moment, and the guard is what turns "someone else already decided" into a reported
 // outcome instead of a silent overwrite.
-import { TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRunRow } from '@acbp/database';
+import { TaskRunRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRunRow } from '@acbp/database';
 import {
+  canStartRunForTask,
   canTransitionRun,
   classifyCancellation,
   isRunLost,
@@ -71,7 +72,10 @@ export type StartRunResult =
   | { readonly status: 'forbidden' }
   | { readonly status: 'attempt_taken' }
   | { readonly status: 'invalid_attempt' }
-  | { readonly status: 'task_not_found' };
+  | { readonly status: 'task_not_found' }
+  // The task exists but cannot be executing — finished, called off, or never queued. Carries the state so the caller
+  // can say WHY rather than retrying forever against a task that will never be startable.
+  | { readonly status: 'task_not_startable'; readonly taskState: string };
 
 /**
  * Claim an attempt and put it straight into `running`.
@@ -93,10 +97,15 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
       if (!Number.isInteger(params.attempt) || params.attempt < 1) return { status: 'invalid_attempt' };
       const runs = new TaskRunRepository(scope.db);
 
-      // RLS-confined, so a task in another company reads as absent: a foreign task is `task_not_found`, never a run
-      // claimed against someone else's work.
-      const task = await scope.db.selectFrom('tasks').select('tasks.id').where('tasks.id', '=', params.taskId).executeTakeFirst();
+      // `findLive`, NOT `findById` (review pass 2). A deleted task keeps its row — `tasks` has no DELETE grant — so a
+      // raw lookup finds work the owner discarded and the coordinator would start executing it. RLS-confined too, so a
+      // task in another company reads as absent: a foreign task is `task_not_found`, never a run claimed against
+      // someone else's work, and never an existence oracle.
+      const task = await new TaskRepository(scope.db).findLive(params.taskId);
       if (task === undefined) return { status: 'task_not_found' };
+      // And the task must be in a state where execution can legitimately be under way. Without this the coordinator
+      // would put a `completed` or `cancelled` task straight into `running` — the AI starting work that is over.
+      if (!canStartRunForTask(task.state)) return { status: 'task_not_startable', taskState: task.state };
 
       const claimed = await runs.claimAttempt({
         accountId: scope.tenant.accountId,

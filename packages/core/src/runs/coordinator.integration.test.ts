@@ -6,13 +6,13 @@
 // Skips when ACBP_TEST_DATABASE_URL is unset — a skipped run is never green; hosted CI on the exact SHA is evidence.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
-import { TaskRunRepository, type DatabaseClient } from '@acbp/database';
+import { TaskRunRepository, TaskRepository, type DatabaseClient } from '@acbp/database';
 import { DEFAULT_HEARTBEAT_GRACE_MS } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { createTask } from '../tasks/index.js';
+import { createTask, planTask, deleteTask } from '../tasks/index.js';
 import { startRun, heartbeatRun, succeedRun, failRun, cancelRun, reclaimLostRuns } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -59,10 +59,28 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
   const runRows = async () => owner.kysely.selectFrom('task_runs').selectAll().execute();
   const auditFor = async (name: string) => owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', name).execute();
 
-  async function newTask(): Promise<string> {
+  async function draftTask(): Promise<string> {
     const r = await createTask(product, { ...base(), title: 'Research five prospects', description: null, milestoneId: null });
     expect(r.status).toBe('ok');
     return (r as { status: 'ok'; task: { taskId: string } }).task.taskId;
+  }
+
+  /**
+   * Advance a task through its own guarded update. There is no `planned → queued` USE CASE yet — that belongs to the
+   * ticket that owns dispatch — but the app role holds the `(state, updated_at)` column grant, so the fixture can
+   * legitimately do what that use case will do.
+   */
+  async function setTaskState(taskId: string, from: string, to: string): Promise<void> {
+    const n = await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, from, to));
+    expect(n).toBe(1);
+  }
+
+  /** A task in `queued` — the state a coordinator actually picks up from, and the only one most of these tests want. */
+  async function newTask(): Promise<string> {
+    const taskId = await draftTask();
+    expect((await planTask(product, { ...base(), taskId })).status).toBe('ok');
+    await setTaskState(taskId, 'planned', 'queued');
+    return taskId;
   }
 
   /** Claim an attempt WITHOUT starting it: a genuinely queued run, which is what a coordinator produces before pickup. */
@@ -256,22 +274,34 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
     expect(await runRows()).toHaveLength(0);
   });
 
-  test('startRun REFUSES a bad attempt number with a typed status, not a constraint error', async () => {
+  // ── review pass 2: the coordinator must not start work that is over ───────────────────────────────────────
+  test('startRun REFUSES a DELETED task — the AI never begins work the owner discarded', async () => {
+    // The pass-2 HIGH. `tasks` has no DELETE grant, so a deleted task's row survives; a raw id lookup finds it and the
+    // coordinator would put it straight into `running`. The probe reads through `findLive` for exactly this reason.
     const taskId = await newTask();
-    for (const attempt of [0, -1, 1.5, Number.NaN]) {
-      expect((await startRun(product, { ...base(), taskId, attempt })).status).toBe('invalid_attempt');
-    }
+    expect((await deleteTask(product, { ...base(), taskId, confirmed: true })).status).toBe('ok');
+
+    const r = await startRun(product, { ...base(), taskId, attempt: 1 });
+    expect(r.status).toBe('task_not_found');
     expect(await runRows()).toHaveLength(0);
+    // Nothing was claimed, so nothing was audited as started either.
+    expect(await auditFor('task.started')).toHaveLength(0);
   });
 
-  test('startRun on a FOREIGN or absent task is task_not_found, not an opaque FK error', async () => {
-    const taskId = await newTask();
-    // Company B cannot start a run against company A's task — and learns nothing about whether it exists.
-    const foreign = await startRun(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, taskId, attempt: 1 });
-    expect(foreign.status).toBe('task_not_found');
-    const absent = await startRun(product, { ...base(), taskId: '00000000-0000-4000-8000-000000000000', attempt: 1 });
-    expect(absent.status).toBe('task_not_found');
-    expect(await runRows()).toHaveLength(0);
+  test('startRun REFUSES a task that cannot be executing — terminal, or never queued', async () => {
+    const cancelled = await newTask();
+    await setTaskState(cancelled, 'queued', 'cancelled');
+    expect(await startRun(product, { ...base(), taskId: cancelled, attempt: 1 })).toEqual({ status: 'task_not_startable', taskState: 'cancelled' });
+
+    // A draft task has never been queued: no worker was ever asked to run it.
+    const draft = await draftTask();
+    expect(await startRun(product, { ...base(), taskId: draft, attempt: 1 })).toEqual({ status: 'task_not_startable', taskState: 'draft' });
+
+    // But `running` IS startable — that is a retry attempt while the task itself stays running.
+    const running = await newTask();
+    await setTaskState(running, 'queued', 'running');
+    expect((await startRun(product, { ...base(), taskId: running, attempt: 1 })).status).toBe('ok');
+    expect(await runRows()).toHaveLength(1);
   });
 
   // ── the state machine and the store ───────────────────────────────────────────────────────────────────────

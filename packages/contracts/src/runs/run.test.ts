@@ -13,8 +13,36 @@ import {
   canTransitionRun,
   classifyCancellation,
   isRunLost,
+  canStartRunForTask,
   DEFAULT_HEARTBEAT_GRACE_MS,
 } from './run.js';
+import { TASK_STATES } from '../task/task.js';
+
+// ── which tasks may have an attempt started (review pass 2) ─────────────────────────────────────────────────
+describe('canStartRunForTask', () => {
+  // Written independently of the implementation: the states from which canon's OWN table can reach `running`, plus
+  // `running` itself (a retry attempt while the task stays running). Everything else must be refused.
+  const STARTABLE: readonly string[] = ['queued', 'running', 'waiting_for_input', 'waiting_for_approval', 'blocked_by_policy', 'paused'];
+
+  test('permits exactly the task states from which execution can legitimately be under way', () => {
+    for (const state of TASK_STATES) expect(canStartRunForTask(state)).toBe(STARTABLE.includes(state));
+  });
+
+  test('REFUSES every terminal task state — an attempt of finished work is incoherent', () => {
+    for (const state of ['completed', 'failed', 'cancelled']) expect(canStartRunForTask(state)).toBe(false);
+  });
+
+  test('REFUSES a task that was never queued — draft and planned have no worker to run them', () => {
+    expect(canStartRunForTask('draft')).toBe(false);
+    expect(canStartRunForTask('planned')).toBe(false);
+  });
+
+  test('is deny-by-default at the boundary: an unknown or non-string state is never startable', () => {
+    for (const bad of ['RUNNING', 'deleted', '', 'queued ', 42, null, undefined, {}, ['queued']]) {
+      expect(canStartRunForTask(bad)).toBe(false);
+    }
+  });
+});
 
 describe('the run state set', () => {
   test('is exactly canon\'s five — a run is one execution attempt, not the task', () => {
