@@ -413,14 +413,26 @@ describe.skipIf(!hasTestDatabase)('worker runtime (real PostgreSQL, restricted r
   test('the restricted role cannot rewrite the STAMP or the SNAPSHOT, and cannot delete a worker run', async () => {
     const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'research' });
     const id = (started as { workerRun: { id: string } }).workerRun.id;
-    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
-      for (const col of ['worker_id', 'worker_version', 'task_run_id', 'max_spend_micros', 'company_id']) {
-        await expect(sql`update worker_runs set ${sql.ref(col)} = ${col === 'worker_id' ? 'other' : 7} where id = ${id}`.execute(db)).rejects.toSatisfy(
-          (e: unknown) => sqlState(e) === INSUFFICIENT_PRIVILEGE,
-        );
-      }
-      await expect(sql`delete from worker_runs where id = ${id}`.execute(db)).rejects.toSatisfy((e: unknown) => sqlState(e) === INSUFFICIENT_PRIVILEGE);
-    });
+    // ONE TRANSACTION PER ATTEMPT. Found by hosted CI on the first version of this test, which ran all six inside a
+    // single `asRestricted` block: the first refusal aborts the transaction, so every statement after it fails with
+    // `25P02` (transaction aborted) instead of `42501` — the test would have kept passing while proving only that the
+    // FIRST column was protected. The values are type-correct too, so a uuid column is refused for the privilege and
+    // not for the cast.
+    const refused = async (statement: (db: Parameters<Parameters<typeof asRestricted>[2]>[0]) => Promise<unknown>): Promise<void> => {
+      await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
+        await expect(statement(db)).rejects.toSatisfy((e: unknown) => sqlState(e) === INSUFFICIENT_PRIVILEGE);
+      });
+    };
+    const otherUuid = '00000000-0000-4000-8000-00000000beef';
+    await refused((db) => sql`update worker_runs set worker_id = 'other' where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set worker_version = 7 where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set max_spend_micros = 7 where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set max_duration_ms = 7 where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set task_run_id = ${otherUuid} where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set company_id = ${otherUuid} where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set account_id = ${otherUuid} where id = ${id}`.execute(db));
+    await refused((db) => sql`update worker_runs set started_at = now() where id = ${id}`.execute(db));
+    await refused((db) => sql`delete from worker_runs where id = ${id}`.execute(db));
     expect((await rows())[0]).toMatchObject({ worker_id: 'research', worker_version: 1 });
   });
 
