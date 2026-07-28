@@ -924,6 +924,33 @@ export interface CompanyWorkerStatesTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
+/**
+ * Worker runs (ACBP-P5-005; CDR-057; WORK-001..006; NFR-015). THE STAMP linking a task run to the worker executing
+ * it — the link `CDR-056 section 6` recorded as missing, in canon's own shape (a Task run HAS a Worker run).
+ * Company-owned, dual-keyed FORCE RLS. The stamp and the snapshot bounds are `never` on update: a run cannot be
+ * re-attributed to a different worker, nor judged against a budget it was not given.
+ */
+export interface WorkerRunsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  task_run_id: ColumnType<string, string, never>;
+  worker_id: ColumnType<string, string, never>;
+  worker_version: ColumnType<number, number, never>;
+  /** SNAPSHOT at start. Re-reading the definition would change the budget a run is judged against mid-flight. */
+  max_spend_micros: ColumnType<number, number, never>;
+  max_duration_ms: ColumnType<number, number, never>;
+  /** The ENFORCEMENT counters. Not a reconciliation source — the ledger link is P5-014's (CDR-057 section 4). */
+  spend_micros: ColumnType<number, number | undefined, number>;
+  steps_completed: ColumnType<number, number | undefined, number>;
+  outcome: ColumnType<string, string | undefined, string>;
+  failure_category: ColumnType<string | null, never, string | null>;
+  halt_reason: ColumnType<string | null, never, string | null>;
+  started_at: ColumnType<Date, Date | string | undefined, never>;
+  ended_at: ColumnType<Date | null, never, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -968,6 +995,7 @@ export interface DatabaseSchema {
   tool_calls: ToolCallsTable;
   worker_definitions: WorkerDefinitionsTable;
   company_worker_states: CompanyWorkerStatesTable;
+  worker_runs: WorkerRunsTable;
 }
 
 // Repository-facing row shapes.
@@ -1057,4 +1085,5 @@ export type TaskRunRow = Selectable<TaskRunsTable>;
 export type ToolCallRow = Selectable<ToolCallsTable>;
 export type WorkerDefinitionRow = Selectable<WorkerDefinitionsTable>;
 export type CompanyWorkerStateRow = Selectable<CompanyWorkerStatesTable>;
+export type WorkerRunRow = Selectable<WorkerRunsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

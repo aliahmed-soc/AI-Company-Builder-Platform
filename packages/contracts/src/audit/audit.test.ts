@@ -11,6 +11,8 @@ import {
   AUDIT_EVENTS,
   AUDIT_ACTOR_TYPES,
   boundedMetadata,
+  workerRunStarted,
+  workerRunFinished,
   membershipInvited,
   membershipRevoked,
   companyCreated,
@@ -106,6 +108,11 @@ describe('event-name registry (deny unregistered)', () => {
       'tool.call_failed',
       // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006 'Definition changes audited').
       'worker.state_changed',
+      // Worker runs (ACBP-P5-005; CDR-057). EVENT-CATALOG names exactly these three for the worker runtime, with
+      // `worker_run_id, worker_id+version, (failure_category)` — so these are canon's names, not new ones.
+      'worker.started',
+      'worker.completed',
+      'worker.failed',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
@@ -395,5 +402,53 @@ describe('typed factories', () => {
     const ev = planningRunRecorded({ runId: 'pr_2', mode: 'steered', outcome: 'failed', taskCount: 0, tasksMissingRationale: 0, memoryItemsConsidered: 0, milestonesInScope: 4 });
     expect(ev.outcome).toBe('success');
     expect(ev.metadata?.['outcome']).toBe('failed');
+  });
+});
+
+describe('worker-run events (ACBP-P5-005; CDR-057; EVENT-CATALOG line 183)', () => {
+  test('the SUBJECT is the worker run, and the worker is carried as id AND version', () => {
+    // The catalog's payload column is `worker_run_id, worker_id+version`. The version is not decoration: once a
+    // worker is re-registered, "which worker ran this" has no answer without it.
+    const ev = workerRunStarted({ workerRunId: 'wr_1', workerId: 'research', workerVersion: 3 });
+    expect(ev.name).toBe('worker.started');
+    expect(ev.subjectId).toBe('wr_1');
+    expect(ev.metadata).toMatchObject({ worker_id: 'research', worker_version: 3 });
+  });
+
+  test('a SUCCEEDED run is `worker.completed`', () => {
+    const ev = workerRunFinished({ workerRunId: 'wr_1', workerId: 'research', workerVersion: 3, outcome: 'succeeded' });
+    expect(ev.name).toBe('worker.completed');
+    expect(ev.metadata?.['run_outcome']).toBe('succeeded');
+  });
+
+  test('a SAFE-STOPPED run is NOT reported as failed', () => {
+    // CDR-057 §1-G7. The run did exactly what the owner asked. Filing it under `worker.failed` would make every
+    // deliberate intervention show up as a malfunction in any report that counts failures.
+    const ev = workerRunFinished({ workerRunId: 'wr_1', workerId: 'research', workerVersion: 3, outcome: 'stopped' });
+    expect(ev.name).toBe('worker.completed');
+    expect(ev.name).not.toBe('worker.failed');
+    // ...and it is still DISTINGUISHABLE from finished work — the payload says which it was.
+    expect(ev.metadata?.['run_outcome']).toBe('stopped');
+  });
+
+  test('a FAILED run is `worker.failed` and carries the closed category canon asks for', () => {
+    const ev = workerRunFinished({ workerRunId: 'wr_1', workerId: 'research', workerVersion: 3, outcome: 'failed', failureCategory: 'policy_blocked', haltReason: 'budget_exhausted' });
+    expect(ev.name).toBe('worker.failed');
+    expect(ev.metadata).toMatchObject({ run_outcome: 'failed', failure_category: 'policy_blocked', halt_reason: 'budget_exhausted' });
+  });
+
+  test('the run RESULT is metadata and the audit OUTCOME stays `success` — the planning-run precedent', () => {
+    // The audited operation is *recording the run*. Reserving `denied`/`blocked` for authorization and policy keeps
+    // those outcomes meaningful, exactly as `planningRunRecorded` argues.
+    expect(workerRunFinished({ workerRunId: 'wr_1', workerId: 'r', workerVersion: 1, outcome: 'failed', failureCategory: 'timeout' }).outcome).toBe('success');
+  });
+
+  test('ABSENT is absent — an unspecified category is never a `null` in the payload', () => {
+    // `AuditMetadata` is scalars only and a `null` THROWS at write time. P5-003b lost auditing for exactly one refusal
+    // path this way, so the omission is asserted rather than assumed.
+    const ev = workerRunFinished({ workerRunId: 'wr_1', workerId: 'r', workerVersion: 1, outcome: 'succeeded' });
+    expect(Object.prototype.hasOwnProperty.call(ev.metadata ?? {}, 'failure_category')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(ev.metadata ?? {}, 'halt_reason')).toBe(false);
+    expect(Object.values(ev.metadata ?? {}).every((v) => v !== null && v !== undefined)).toBe(true);
   });
 });

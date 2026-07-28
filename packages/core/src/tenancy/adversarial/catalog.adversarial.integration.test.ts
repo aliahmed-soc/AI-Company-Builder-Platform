@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -106,6 +106,7 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // Per-company worker state (ACBP-P5-004; CDR-056; WORK-006): SELECT + INSERT at the table level; the state UPDATE
   // is COLUMN-level. Tenancy and worker_id stay immutable, so a pause cannot be re-pointed after the fact.
   company_worker_states: ['INSERT', 'SELECT'],
+  worker_runs: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -276,6 +277,16 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect([...workerStates].sort()).toEqual(['changed_by_user_id', 'reason', 'state', 'updated_at']);
     for (const forbidden of ['id', 'account_id', 'company_id', 'worker_id', 'created_at']) {
       expect(workerStates).not.toContain(forbidden);
+    }
+    // Worker runs (ACBP-P5-005): the counters and the lifecycle only. The STAMP - tenancy, the task run, the worker
+    // id and version - and the SNAPSHOT bounds are all immutable, so a run can never be re-attributed to a different
+    // worker nor re-judged against a budget it was not given. Review pass 2 caught that this table was missing from
+    // the catalog entirely: the local test listed forbidden columns but never the EXACT allowed set, so widening the
+    // grant to ccount_id or max_duration_ms would have passed in silence.
+    const workerRuns = byTable.get('worker_runs') ?? [];
+    expect([...workerRuns].sort()).toEqual(['ended_at', 'failure_category', 'halt_reason', 'outcome', 'spend_micros', 'steps_completed', 'updated_at']);
+    for (const forbidden of ['id', 'account_id', 'company_id', 'task_run_id', 'worker_id', 'worker_version', 'max_spend_micros', 'max_duration_ms', 'started_at', 'created_at']) {
+      expect(workerRuns).not.toContain(forbidden);
     }
     // worker_definitions is GLOBAL platform config with NO write path at all - the tool_definitions precedent.
     expect(byTable.get('worker_definitions') ?? []).toEqual([]);

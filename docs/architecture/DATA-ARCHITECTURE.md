@@ -286,9 +286,12 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      re-pointed at another worker or company after the fact.
      Budgets (`max_spend_micros`/`max_duration_ms`) carry IOQ-12's INTERIM values (CDR-056 §3) — columns rather than
      constants precisely so changing one is a data change, not a deploy. NOT owner-ratified.
-     WORK-006's "disable during execution triggers safe-stop" is NOT met yet and is recorded as such (§6): nothing
-     links a run to a worker until P5-005 stamps it, and a nullable unpopulated `worker_id` would be the FK-less hole
-     CDR-049/CDR-052 refused. No new SECURITY DEFINER / role / BYPASSRLS. -->
+     WORK-006's "disable during execution triggers safe-stop" was NOT met at P5-004 and was recorded as such (§6):
+     nothing linked a run to a worker, and a nullable unpopulated `worker_id` would have been the FK-less hole
+     CDR-049/CDR-052 refused. **ACBP-P5-005 MET IT** (CDR-057): `worker_runs` is the link, and `setCompanyWorkerState`
+     now requests a durable stop on every running run of that worker, in the SAME transaction as the state change —
+     a disable that landed while its stops did not would leave a disabled worker still working.
+     No new SECURITY DEFINER / role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |
@@ -296,7 +299,21 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 | Job checkpoint | C | checkpoint_id, UNIQUE(job_id, step_name) | records that a job STEP completed | recorded (terminal) | **I** | step output: references, never secrets | With company | - | MVP |
 | Durable job | C | job_id, UNIQUE(company_id, idempotency_key) partial | the unit the runner picks up | queued→running→succeeded/failed/dead_letter/cancelled | M (state, attempts) | references only, never secrets | With company | job.enqueued | MVP |
 | Worker definition | G | worker_id, version | allowlists Tools; referenced by runs | draft→active→retired | V | — | Permanent | version changes | MVP |
-| Worker run | C | worker_run_id | 1:1 task run execution segment | started→completed/failed | A | — | With company | worker.* | MVP |
+| Worker run | C | worker_run_id, UNIQUE(task_run_id) | 1:1 task run execution segment | running→succeeded/failed/**stopped** | A | — | With company | worker.* | MVP |
+<!-- ACBP-P5-005 / CDR-057 — `worker_runs` (migration 0040), the STAMP. Company-owned, dual-keyed FORCE RLS,
+     TENANT-PINNED composite FK to `task_runs (id, company_id)` because RI checks always bypass RLS and a
+     single-column FK could point across a company boundary and never be policy-checked.
+     `UNIQUE(task_run_id)` states "one worker executes one attempt"; a retry is a NEW task run, so this never
+     blocks one.
+     The definition's `max_spend_micros`/`max_duration_ms` are SNAPSHOT onto the row, not referenced: re-reading
+     the definition per step would let an edit change the budget a running attempt is judged against, and the
+     record would stop saying what was actually enforced.
+     `stopped` is a FOURTH outcome beside canon's started→completed/failed, and it is not a failure — an owner's
+     safe-stop is the run doing what it was told (CDR-057 §1-G7). It is still distinguishable from finished work:
+     the audit payload carries `run_outcome`.
+     Column-scoped UPDATE of the counters and the lifecycle only, and NO DELETE — the stamp (tenancy, task run,
+     worker id + version) and the snapshot bounds are immutable, so a run can never be re-attributed to a
+     different worker nor re-judged against a budget it was not given. -->
 | Tool definition | G | tool_id, version | risk class; referenced by allowlists | active→retired | V | — | Permanent | class changes audited | MVP |
 | Tool call | C | tool_call_id, idempotency_key | belongs to run; links policy eval + approval | see state machine §6 | A | args digest (not raw sensitive args) | With company | 100% recorded (TOOL-002) | MVP |
 | Policy | C (+G defaults) | policy_id, version | evaluated per action | active→superseded | V | limits config | Permanent versions | policy changes audited | MVP |

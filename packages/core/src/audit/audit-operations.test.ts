@@ -43,6 +43,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'tool.fail',
       // Worker pause/disable (ACBP-P5-004; CDR-056; WORK-006) - deliberately approved addition.
       'worker.set_state',
+      // Worker RUNS (ACBP-P5-005; CDR-057) - deliberately approved additions.
+      'worker.run_start',
+      'worker.run_complete',
+      'worker.run_fail',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
@@ -109,6 +113,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['tool.complete']).toBe('tool.call_completed');
     expect(AUDITED_OPERATIONS['tool.fail']).toBe('tool.call_failed');
     expect(AUDITED_OPERATIONS['worker.set_state']).toBe('worker.state_changed');
+    expect(AUDITED_OPERATIONS['worker.run_start']).toBe('worker.started');
+    expect(AUDITED_OPERATIONS['worker.run_fail']).toBe('worker.failed');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

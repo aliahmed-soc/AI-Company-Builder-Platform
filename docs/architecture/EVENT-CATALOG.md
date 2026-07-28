@@ -181,6 +181,15 @@ Retention default: activity-projected events with company data; audit-relevant e
 | task.failed | Coordinator | activity, Decision Room | task_id, run_id, failure_category, retry_state (TASK-006/010) | audited | with company |
 | task.cancelled | Task | Coordinator, activity | task_id, cancelled_by, phase (queued/running-safe-stop) | audited | with company |
 | worker.started / worker.completed / worker.failed | Worker runtime | Coordinator | worker_run_id, worker_id+version, (failure_category) | run trace | with company |
+<!-- IMPLEMENTED (ACBP-P5-005; CDR-057): all three registered, with canon's names and canon's payload. The subject is
+     the WORKER RUN, not the worker — a reader tracing "what did this attempt do" wants one thread per run — and the
+     version travels with the id because once a worker is re-registered, "which worker ran this" has no answer without it.
+     A SAFE-STOP files under `worker.completed` carrying `run_outcome: 'stopped'`. It is not `worker.failed` (CDR-057
+     §1-G7: the run did what the owner asked, and filing it as a failure would make every deliberate intervention look
+     like a malfunction), and it is not mistakable for finished work either, because the payload says which it was.
+     The audit OUTCOME stays `success` even on a failed run, following `planningRunRecorded`: the audited operation is
+     RECORDING the run, and reserving `denied`/`blocked` for authorization and policy keeps those outcomes meaningful.
+     Optional keys are OMITTED, never null — `AuditMetadata` is scalars only and a null throws at write time. -->
 | policy.evaluated | Policy engine | (record) | evaluation_id, policy_version, decision, evaluation_point (propose/approval/pre_exec) | **is audit-grade** (POL-006) | ≥ audit |
 | policy.blocked | Policy engine | Decision Room, activity | evaluation_id, blocked_action_ref, rule | audited | ≥ audit |
 | approval.requested | Approval engine | Decision Room inbox, notification | approval_id, action_type, payload_hash, risk_class, expiry | audited | ≥ audit |
@@ -191,8 +200,10 @@ Retention default: activity-projected events with company data; audit-relevant e
      `tool.call_failed` {tool_id, tool_version, risk_class, call_outcome, has_receipt}.
      `tool.call_requested` IS EMITTED FOR REFUSALS TOO, carrying outcome `denied` — TOOL-001 requires the attempt to be
      audited, and a reader counting denials should not have to parse metadata to find them.
-     `tool.call_started` is NOT registered: nothing executes tools yet (P5-005 owns the worker runtime), so registering
-     it would declare an event no code can emit.
+     `tool.call_started` is STILL NOT registered after P5-005, and for the SAME reason as before, not a new one: the
+     worker runtime exists but has no tool-invocation path at all, so nothing can emit it. (It does not go through
+     `dispatchToolCall` either — routing worker tool calls through the chokepoint is a forward obligation on
+     P5-006/007/008. CDR-057 §1-G5 states this precisely; an earlier wording here claimed the stronger thing.)
      `policy_eval_ref` and `approval_ref` are absent because the engines that produce them are Phase 6's. `has_receipt`
      is a BOOLEAN rather than the receipt: whether an external effect could be evidenced is the auditable fact, and the
      reference itself lives on the `tool_calls` row. `unconfirmed` never carries the success outcome — canon says a
