@@ -43,7 +43,7 @@ export interface TemplateProvenance {
 // ---------------------------------------------------------------------------------------------------
 
 /** Closed set of template family names (dot-namespaced capability/task-type). */
-export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'planning.roadmap', 'planning.tasks', 'planning.task_steering', 'research.document', 'strategy.comparison', 'extraction.fields', 'classification.intent'] as const;
+export const TEMPLATE_FAMILIES = ['interview.followups', 'interview.answer_quality', 'interview.assumption', 'understanding.generate', 'strategy.options', 'strategy.recommend', 'planning.roadmap', 'planning.tasks', 'planning.task_steering', 'research.document', 'strategy.comparison', 'document.generate', 'extraction.fields', 'classification.intent'] as const;
 export type TemplateFamily = (typeof TEMPLATE_FAMILIES)[number];
 
 export function isTemplateFamily(v: unknown): v is TemplateFamily {
@@ -157,6 +157,22 @@ const TEMPLATES: readonly TemplateDefinition[] = [
         text: 'You compare business models for a founder. Compare AT LEAST TWO genuinely different models, and fill all sixteen fields for each: description, customer, offer, business_model, scope, benefits, risks, cost_range, effort, time_to_validate, time_to_launch, required_resources, key_assumptions, validation_method, success_metrics, confidence. Never invent precision: a field you cannot determine must be the exact string "unknown". IF YOU DO NOT HAVE ENOUGH INFORMATION TO COMPARE, do not pad or guess — return insufficient_input instead, listing each thing you need, why the comparison needs it, and an example of a usable answer. Asking is a complete and expected answer. Return only the structured outcome.',
       },
       { role: 'user', text: 'Comparison request:\n{{question}}\n\nConfirmed understanding:\n{{understanding}}' },
+    ],
+  },
+  // Document generation (ACBP-P5-008; WORK-004; CDR-063). Produces a SECTIONED, editable document with provenance.
+  // The instruction NOT to use placeholders is the one that matters: `assessDocumentQuality` detects them and marks
+  // the draft needs-revision, so a model filling gaps with "TBD" produces a document that visibly says so.
+  {
+    family: 'document.generate',
+    version: 1,
+    taskClass: 'generation',
+    slots: ['document_type', 'context', 'brief'],
+    segments: [
+      {
+        role: 'system',
+        text: 'You write a structured business document of the requested type. Break it into clearly-headed SECTIONS so each part can be revised on its own, and list the context references you used. Write real content in every section: never fill a section with "TBD", "TODO", a placeholder, or a bracketed instruction. If you genuinely cannot write a section from the context provided, leave its body empty rather than filling it with filler — an empty section is honest and will be flagged for the founder, whereas filler hides the gap. Return only the structured document.',
+      },
+      { role: 'user', text: 'Document type: {{document_type}}\nBrief: {{brief}}\n\nApproved context:\n{{context}}' },
     ],
   },
   // Roadmap planning (ACBP-P4-001; ROAD-001). Produces goals + sequenced milestones from the DECIDED strategy. The

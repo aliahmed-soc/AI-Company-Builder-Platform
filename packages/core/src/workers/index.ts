@@ -6,3 +6,5 @@ export * from './runtime.js';
 export * from './research.js';
 // The strategy worker (ACBP-P5-007; WORK-003) - a comparison, or a specific request.
 export * from './comparison.js';
+// The document worker (ACBP-P5-008; WORK-004) - a draft that admits it is a draft.
+export * from './document.js';

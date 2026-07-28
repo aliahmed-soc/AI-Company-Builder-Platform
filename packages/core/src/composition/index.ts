@@ -16,3 +16,5 @@ export { roadmapOutputValidator, taskPlanOutputValidator } from './planning-gate
 export { researchOutputValidator } from './research-gateway.js';
 // Business-model comparison (ACBP-P5-007). Complete in one pass, unlike research's shape/certify split.
 export { comparisonOutputValidator } from './comparison-gateway.js';
+// Document generation (ACBP-P5-008). Structure only - the quality verdict does not gate acceptance.
+export { documentOutputValidator } from './document-gateway.js';
