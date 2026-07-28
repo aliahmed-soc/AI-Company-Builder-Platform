@@ -4,7 +4,7 @@
 // pin the things that are NOT naming: that the ordering exists and is total, and that an absent or unrecognised class
 // resolves to the most restrictive one rather than to anything convenient.
 import { describe, test, expect } from 'vitest';
-import { RISK_CLASSES, isRiskClass, riskRank, resolveRiskClass, isAtLeastAsRestrictiveAs, MOST_RESTRICTIVE_RISK_CLASS } from './risk-class.js';
+import { RISK_CLASSES, isRiskClass, riskRank, resolveRiskClass, isAtLeastAsRestrictiveAs, MOST_RESTRICTIVE_RISK_CLASS, EXTERNAL_EFFECT_RISK_CLASSES, hasExternalEffect } from './risk-class.js';
 
 describe('the canon correction (owner decision 2026-07-28; APPR-001)', () => {
   test('the fourth class is canon\'s `sensitive_irreversible`, and the invented name is GONE', () => {
@@ -28,6 +28,23 @@ describe('the canon correction (owner decision 2026-07-28; APPR-001)', () => {
       for (const [j, b] of RISK_CLASSES.entries()) {
         expect(isAtLeastAsRestrictiveAs(a, b)).toBe(i >= j);
       }
+    }
+  });
+
+  test('TOOL-002\'s receipt rule still covers the renamed class — provable WITHOUT a database (review pass 1)', () => {
+    // This lived privately in the dispatcher, so the only proof was a real-PostgreSQL suite that skips on a laptop —
+    // a safety rule most runs never checked. It is a contract now, and asserted by POSITION so the rename cannot have
+    // quietly narrowed it: the top TWO classes require a receipt, the bottom two do not.
+    expect(EXTERNAL_EFFECT_RISK_CLASSES).toEqual([RISK_CLASSES[2], RISK_CLASSES[3]]);
+    expect(hasExternalEffect(RISK_CLASSES[3])).toBe(true);
+    expect(hasExternalEffect(RISK_CLASSES[2])).toBe(true);
+    expect(hasExternalEffect(RISK_CLASSES[1])).toBe(false);
+    expect(hasExternalEffect(RISK_CLASSES[0])).toBe(false);
+  });
+
+  test('an UNCLASSIFIED call is treated as external-effect — deny-by-default reaches the receipt rule too', () => {
+    for (const unknown of [null, undefined, 'external_irreversible', 'nonsense', 42]) {
+      expect(hasExternalEffect(unknown)).toBe(true);
     }
   });
 

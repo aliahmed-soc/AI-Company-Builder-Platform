@@ -81,3 +81,25 @@ export function resolveRiskClass(stored: unknown): RiskClass {
 export function isAtLeastAsRestrictiveAs(candidate: unknown, threshold: unknown): boolean {
   return riskRank(resolveRiskClass(candidate)) >= riskRank(resolveRiskClass(threshold));
 }
+
+/**
+ * The classes treated as having an effect that reaches OUTSIDE the platform. TOOL-002's receipt rule keys off this.
+ *
+ * IT LIVES HERE, not in the dispatcher, because it is a safety rule and a rule provable only through a database is a
+ * rule most runs never check (review pass 1 on the canon correction: the dispatcher held this privately, so the sole
+ * proof was a real-PostgreSQL suite that skips on a laptop).
+ *
+ * `sensitive_irreversible` is included as an OVER-APPROXIMATION and that is deliberate. Canon's class covers
+ * sensitivity and irreversibility wherever they occur, so a member may be an INTERNAL action with no external receipt
+ * to store — but excluding it would RELAX TOOL-002's rule on the most dangerous class there is, and over-refusing a
+ * receiptless success is the safe direction.
+ *
+ * THE PROPER HOME IS A DIFFERENT FIELD. TOOL-001 asks a registered tool to declare its *"side-effect class"*
+ * separately from its risk category; deriving it from the class is a stand-in until a tool declares it (CDR-051 §0.2).
+ */
+export const EXTERNAL_EFFECT_RISK_CLASSES: readonly RiskClass[] = ['external_reversible', 'sensitive_irreversible'];
+
+/** Does a call at this class need a stored receipt to claim success? Deny-by-default: unclassified counts as external. */
+export function hasExternalEffect(value: unknown): boolean {
+  return EXTERNAL_EFFECT_RISK_CLASSES.includes(resolveRiskClass(value));
+}
