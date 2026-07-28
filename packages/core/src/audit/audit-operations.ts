@@ -51,6 +51,8 @@ import {
   toolCallRequested,
   toolCallCompleted,
   workerStateChanged,
+  creditReserved,
+  creditSettled,
   workerRunStarted,
   workerRunFinished,
   type AuditEvent,
@@ -123,6 +125,9 @@ export const AUDITED_OPERATIONS = {
   // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006).
   'worker.set_state': 'worker.state_changed',
   // Worker RUNS (ACBP-P5-005; CDR-057). Three operations, three events: a run begins, a run ends well, a run fails.
+  // The credit ledger (ACBP-P5-014; CDR-058). Reserve and settle - the two durable money facts.
+  'credit.reserve': 'credit.reserved',
+  'credit.settle': 'credit.settled',
   'worker.run_start': 'worker.started',
   'worker.run_complete': 'worker.completed',
   'worker.run_fail': 'worker.failed',
@@ -148,6 +153,7 @@ export type JobAuditedOperation = 'job.enqueue' | 'job.dead_letter';
 export type RunAuditedOperation = 'run.start' | 'run.fail' | 'run.cancel';
 export type ToolAuditedOperation = 'tool.dispatch' | 'tool.complete' | 'tool.fail';
 export type WorkerAuditedOperation = 'worker.set_state' | 'worker.run_start' | 'worker.run_complete' | 'worker.run_fail';
+export type BillingAuditedOperation = 'credit.reserve' | 'credit.settle';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -164,10 +170,11 @@ export const JOB_AUDITED_OPERATION_IDS: readonly JobAuditedOperation[] = ['job.e
 export const RUN_AUDITED_OPERATION_IDS: readonly RunAuditedOperation[] = ['run.start', 'run.fail', 'run.cancel'];
 export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['tool.dispatch', 'tool.complete', 'tool.fail'];
 export const WORKER_AUDITED_OPERATION_IDS: readonly WorkerAuditedOperation[] = ['worker.set_state', 'worker.run_start', 'worker.run_complete', 'worker.run_fail'];
+export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] = ['credit.reserve', 'credit.settle'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -272,6 +279,10 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => toolCallCompleted({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', callOutcome: 'failed', hasReceipt: false });
     case 'worker.set_state':
       return (subjectId) => workerStateChanged({ workerId: subjectId, state: 'paused', hasReason: false });
+    case 'credit.reserve':
+      return (subjectId) => creditReserved({ txnId: subjectId, runId: subjectId, credits: 1, balanceAfter: 0 });
+    case 'credit.settle':
+      return (subjectId) => creditSettled({ txnId: subjectId, runId: subjectId, settlement: 'release', credits: 1, balanceAfter: 1 });
     case 'worker.run_start':
       return (subjectId) => workerRunStarted({ workerRunId: subjectId, workerId: 'research', workerVersion: 1 });
     case 'worker.run_complete':

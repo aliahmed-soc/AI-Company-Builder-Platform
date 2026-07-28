@@ -44,6 +44,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // Worker pause/disable (ACBP-P5-004; CDR-056; WORK-006) - deliberately approved addition.
       'worker.set_state',
       // Worker RUNS (ACBP-P5-005; CDR-057) - deliberately approved additions.
+      // The credit ledger (ACBP-P5-014; CDR-058) - deliberately approved additions.
+      'credit.reserve',
+      'credit.settle',
       'worker.run_start',
       'worker.run_complete',
       'worker.run_fail',

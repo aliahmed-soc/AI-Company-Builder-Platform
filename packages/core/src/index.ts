@@ -22,3 +22,4 @@ export * from './runs/index.js';
 export * from './tools/index.js';
 // The worker registry: versioned definitions and the per-company pause (ACBP-P5-004; CDR-056).
 export * from './workers/index.js';
+export * from './billing/index.js';
