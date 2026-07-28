@@ -2,21 +2,30 @@
 
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
-## BLOCKED ON THE OWNER — hosted CI cannot run
+## CI IS STILL BLOCKED — and six branches were merged anyway, on the owner's explicit authority
 
-**GitHub Actions is refusing to start jobs**, from 2026-07-28 ~12:46 UTC onward. The annotation on
-every attempt: *"The job was not started because recent account payments have failed or your spending
-limit needs to be increased."* Three re-run attempts, each dead in ~9 seconds with zero steps executed.
-The last successful run was the exact-main verification of `bf381e7` at ~12:05 UTC.
+**Hosted CI has produced no run since 2026-07-28 12:46 UTC.** The GitHub Actions spending limit was reached; jobs
+either fail to start or die in seconds with zero steps executed. Only the owner can clear it — it is a billing
+setting on their account, and payment settings are outside what this agent may touch. The last hosted run was the
+exact-main verification of `bf381e7`.
 
-**Consequence, stated plainly: NOTHING CAN MERGE.** The completion standard requires hosted CI green
-zero-skip on the exact SHA, and every real-PostgreSQL suite in this repo is `skipIf(!hasTestDatabase)`
-with local PostgreSQL unreachable. A green local run therefore proves nothing about RLS predicates,
-grants, constraints, triggers or races — which is most of what the recent tickets are. Work continues
-on branches at the owner's explicit instruction; it accumulates unmerged until billing is cleared.
+**The owner authorised merging on LOCAL verification on 2026-07-29**, one branch at a time, bottom-up, with a full
+local sweep on `main` after each and an instruction to stop dead if any merge turned `main` red. That is what
+happened; nothing was merged on a red or unverified tree.
 
-Only the owner can fix this: it is a billing setting on their account, and changing payment or billing
-settings is outside what this agent may do.
+**What the local evidence is.** Every sweep runs against a REAL PostgreSQL on a database created fresh for that run
+and dropped afterwards, migrations applied from zero, suites serial, no retries, and **zero skips** — the
+`skipIf(!hasTestDatabase)` suites all execute, which is the part that actually exercises RLS predicates, grants,
+constraints, triggers and races.
+
+**What it is NOT.** It is not the hosted zero-skip CI on the exact SHA that this repo's completion standard names,
+and it is one machine with one PostgreSQL version. Every merge commit and every backlog row from this sequence is
+labelled *"merged on local verification, CI still blocked by the GitHub spending limit"*. **When the free minutes
+reset, the full suite must be run on `main` and confirmed** before any of this is treated as CI-proven.
+
+**Migration numbers are no longer provisional.** They were assigned assuming this merge order and the order held:
+`0041`/`0042` (credit ledger) then `0043` (artifacts), strictly ascending, none applied anywhere before now.
+
 
 ## Active
 
