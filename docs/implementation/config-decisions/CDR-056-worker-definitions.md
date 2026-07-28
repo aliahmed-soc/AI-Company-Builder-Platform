@@ -72,3 +72,32 @@ IOQ-12 (*"Initial worker execution budgets: per-run model spend + duration"*) li
 3. Migration 0038 (both tables) + repositories + the reset-list sweep; real-PG.
 4. Core `resolveWorkerAllowlist` + `setCompanyWorkerState` + the dispatcher wiring; real-PG proof of G4/G5/G6.
 5. Docs + **TWO** independent review passes + finalization.
+
+## 6. Review outcomes (both passes FAILED; see `docs/implementation/P5-004-REVIEW.md`)
+
+- **G8 — the MVP boundary is enforced at RESOLUTION, and that is what makes it structural.** §2-G4 said a CHECK would
+  reject an over-reaching allowlist. It cannot: `allowed_tools` is a `text[]` and the risk classes live in another
+  table, and PostgreSQL CHECKs cannot subquery. Pass 1 found that I had documented the guarantee and implemented
+  nothing. It is now enforced at the one point where a definition becomes a **capability** — a violating definition may
+  exist in the registry and can never be used, which is the property canon's *"structural, not procedural"* needs. An
+  allowlist naming an **unregistered** tool fails it too, because an unknown tool resolves to the most restrictive
+  class.
+- **G9 — the boundary check reads the ACTIVE version, not the history.** `toolRiskClasses` returned every version, and
+  since the check refuses if *any* row is external-effect, a tool re-classified **down** would have been refused
+  forever by its own past. `distinct on (tool_id) … order by tool_id, version desc`.
+- **G10 — the registry LISTS (WORK-001), readable by any active member.** One entry per worker at the version that
+  would actually run. A **viewer** can see the pause: hiding it would make the control invisible to exactly the people
+  wondering why nothing ran. `has_reason` is a boolean — the owner's text stays theirs.
+
+### WORK-006's failure clause is NOT met yet, and that is sequencing
+
+> *"Disable during execution triggers safe-stop per TASK-007."*
+
+Disabling stops **future** resolution; it does not currently safe-stop a run already executing. It cannot yet: nothing
+links a run to a worker. `task_runs` has no `worker_id`, because the component that knows which worker is executing is
+the **worker runtime (P5-005)**, and adding a nullable, unpopulated `worker_id` now would be precisely the FK-less hole
+`CDR-049` and `CDR-052 §1` both refused.
+
+So the sequencing is: **P5-005 stamps the worker onto the run, and the disable path then calls P5-002's `cancelRun`**,
+which already implements exactly the bounded safe-stop TASK-007 describes. Recorded here rather than left silent,
+because an unmet failure clause that nobody wrote down is indistinguishable from one nobody noticed.

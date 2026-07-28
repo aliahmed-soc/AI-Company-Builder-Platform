@@ -112,6 +112,52 @@ export async function resolveWorkerAllowlist(client: DatabaseClient, params: Res
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
+// ── the registry listing (WORK-001) ─────────────────────────────────────────────────────────────────────────
+
+export interface WorkerListingEntry extends WorkerDefinitionDTO {
+  /** This company's state. `enabled` when the owner has never touched it — the column default agrees. */
+  readonly state: WorkerState;
+  /** Whether the owner gave a reason. The reason TEXT is theirs and is not surfaced here. */
+  readonly hasReason: boolean;
+}
+
+export type ListWorkersResult = { readonly status: 'ok'; readonly workers: readonly WorkerListingEntry[] } | { readonly status: 'forbidden' };
+
+/**
+ * WORK-001's acceptance, literally: *"Registry lists each worker with capabilities and tool allowlist."*
+ *
+ * Readable by any active member (`run:read` is not a thing; this reuses `task:read`, the member-level read this
+ * board-adjacent view belongs beside) — knowing which workers exist and whether they are paused is not a privileged
+ * fact, and hiding it from a viewer would make the pause invisible to exactly the people wondering why nothing ran.
+ */
+export async function listWorkers(client: DatabaseClient, params: ScopeParams, options: RegistryOptions = {}): Promise<ListWorkersResult> {
+  const run = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<ListWorkersResult> => {
+      if (checkAuthorization(role, 'task:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+      const workers = new WorkerRepository(scope.db);
+      const [definitions, states] = await Promise.all([workers.listActiveDefinitions(), workers.listCompanyStates()]);
+      const byWorker = new Map(states.map((s) => [s.worker_id, s]));
+
+      // `listActiveDefinitions` returns every active version newest-first; the listing shows the one that would
+      // actually run, so later versions of the same worker are dropped rather than shown as duplicates.
+      const seen = new Set<string>();
+      const listing: WorkerListingEntry[] = [];
+      for (const d of definitions) {
+        if (seen.has(d.worker_id)) continue;
+        seen.add(d.worker_id);
+        const stored = byWorker.get(d.worker_id);
+        const state = stored?.state;
+        listing.push({ ...toDTO(d), state: isWorkerState(state) ? state : 'enabled', hasReason: (stored?.reason ?? null) !== null });
+      }
+      return { status: 'ok', workers: listing };
+    },
+    opts(options),
+  );
+  return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
+
 // ── the owner's control (WORK-006) ──────────────────────────────────────────────────────────────────────────
 
 export interface SetWorkerStateParams extends ScopeParams {

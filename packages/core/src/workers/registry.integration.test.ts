@@ -15,7 +15,7 @@ import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { dispatchToolCall } from '../tools/index.js';
-import { resolveWorkerAllowlist, setCompanyWorkerState } from './index.js';
+import { resolveWorkerAllowlist, setCompanyWorkerState, listWorkers } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 const INSUFFICIENT_PRIVILEGE = '42501';
@@ -172,6 +172,41 @@ describe.skipIf(!hasTestDatabase)('worker registry (real PostgreSQL, restricted 
     expect((await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist, context: [] })).status).toBe('authorized');
     // ...and one the definition does NOT list is refused, by the definition rather than by the caller.
     expect(await dispatchToolCall(product, { ...base(), runId, toolId: 'memory_read', args: {}, allowlist, context: [] })).toMatchObject({ status: 'denied', reason: 'not_allowlisted' });
+  });
+
+  // ── the registry listing (WORK-001; review pass 2) ────────────────────────────────────────────────────────
+  test('the registry LISTS each worker with its capabilities and allowlist — WORK-001\'s acceptance, literally', async () => {
+    await register('research', 1, ['web_research']);
+    await register('research', 2, ['web_research', 'memory_read']);
+    await register('strategy', 1, ['memory_read']);
+    await register('retired_one', 1, ['memory_read'], { status: 'retired' });
+
+    const r = await listWorkers(product, base());
+    expect(r.status).toBe('ok');
+    const workers = (r as { workers: readonly { workerId: string; version: number; allowedTools: readonly string[]; state: string }[] }).workers;
+    // One entry per worker — the version that would actually RUN, not every version ever registered.
+    expect(workers.map((x) => x.workerId).sort()).toEqual(['research', 'strategy']);
+    expect(workers.find((x) => x.workerId === 'research')?.version).toBe(2);
+    expect(workers.find((x) => x.workerId === 'research')?.allowedTools).toEqual(['web_research', 'memory_read']);
+  });
+
+  test('the listing shows the PAUSE, and a VIEWER can see it — otherwise it is invisible to whoever is wondering why nothing ran', async () => {
+    await register('research', 1, ['web_research']);
+    await setCompanyWorkerState(product, { ...base(), workerId: 'research', state: 'paused', reason: 'checking output' });
+    const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
+    const r = await listWorkers(product, viewer);
+    expect(r.status).toBe('ok');
+    const entry = (r as { workers: readonly { state: string; hasReason: boolean }[] }).workers[0];
+    expect(entry?.state).toBe('paused');
+    // The FACT that a reason exists is shown; the owner's text is not.
+    expect(entry?.hasReason).toBe(true);
+    expect(JSON.stringify(r)).not.toContain('checking output');
+  });
+
+  test('a worker the owner has never touched lists as enabled — the default and the column agree', async () => {
+    await register('research', 1, ['web_research']);
+    expect((await listWorkers(product, base()) as { workers: readonly { state: string }[] }).workers[0]?.state).toBe('enabled');
+    expect(await stateRows()).toHaveLength(0);
   });
 
   // ── the MVP zero-external-actions boundary (review pass 1) ────────────────────────────────────────────────
