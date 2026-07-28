@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { TaskRunRepository, TaskRepository, type DatabaseClient } from '@acbp/database';
-import { DEFAULT_HEARTBEAT_GRACE_MS } from '@acbp/contracts';
+import { DEFAULT_HEARTBEAT_GRACE_MS, RUN_STATES, RUN_FAILURE_CATEGORIES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -302,6 +302,31 @@ describe.skipIf(!hasTestDatabase)('workflow coordinator (real PostgreSQL, restri
     await setTaskState(running, 'queued', 'running');
     expect((await startRun(product, { ...base(), taskId: running, attempt: 1 })).status).toBe('ok');
     expect(await runRows()).toHaveLength(1);
+  });
+
+  // ── contract ↔ database drift, in BOTH directions ─────────────────────────────────────────────────────────
+  //
+  // Asserting only that the CHECK ACCEPTS every contract value is one-directional: it cannot catch a value present in
+  // the constraint but absent from the contract — a state the database permits and no contract code can reason about.
+  // Reading the constraint's own definition and asserting SET EQUALITY closes both directions at once. (The same gap
+  // was found in P5-003a review pass 2; the fix belongs here for the same reason.)
+  async function constraintDef(name: string): Promise<string> {
+    const r = await sql<{ def: string }>`select pg_get_constraintdef(oid) as def from pg_constraint where conname = ${name}`.execute(owner.kysely);
+    const def = r.rows[0]?.def ?? '';
+    // A renamed or dropped constraint must FAIL here rather than silently compare an empty set.
+    expect(def).not.toBe('');
+    return def;
+  }
+  const literalsIn = (def: string): readonly string[] => [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1] ?? '').sort();
+
+  test('the run-state CHECK and RUN_STATES are the SAME set, not merely compatible', async () => {
+    expect(literalsIn(await constraintDef('task_runs_state_valid'))).toEqual([...RUN_STATES].sort());
+  });
+
+  test('the failure-category CHECK and RUN_FAILURE_CATEGORIES are the SAME set', async () => {
+    // The constraint also names the terminal state it is pinned to, which is not a category — drop it before comparing.
+    const inConstraint = literalsIn(await constraintDef('task_runs_failure_category_valid')).filter((v) => v !== 'failed');
+    expect(inConstraint).toEqual([...RUN_FAILURE_CATEGORIES].sort());
   });
 
   // ── the state machine and the store ───────────────────────────────────────────────────────────────────────
