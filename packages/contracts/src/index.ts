@@ -31,3 +31,4 @@ export * from './tools/index.js';
 export * from './runs/index.js';
 // Worker definitions: versioned configuration and the per-company pause state (ACBP-P5-004; CDR-056).
 export * from './workers/index.js';
+export * from './billing/index.js';
