@@ -2,3 +2,4 @@
 export * from './task.js';
 export * from './board.js';
 export * from './controls.js';
+export * from './completion.js';

@@ -155,12 +155,14 @@ export const AUDIT_EVENTS = {
   // retrying and vanished from the run trail is exactly the case someone needs explained. Bounded metadata
   // {kind, attempts, reason} - the reason is a CLOSED category, never provider exception text, and never the payload.
   // Task runs (ACBP-P5-002; CDR-053; EVENT-CATALOG). Three RUN-DRIVEN task transitions, audited in-tx with the run
-  // state change ("Transitions audited"). 	ask.completed is DELIBERATELY NOT here: canon requires artifact_refs[]
-  // on it ("no artifactless completion", TASK-005), and a run succeeding is not the same fact as a task completing -
-  // the task completes when its artifact is persisted, which belongs to the ticket that owns artifacts.
+  // state change ("Transitions audited").
   'task.started': { schemaVersion: 1, subjectType: 'task' },
   'task.failed': { schemaVersion: 1, subjectType: 'task' },
   'task.cancelled': { schemaVersion: 1, subjectType: 'task' },
+  // `task.completed` was deferred by ACBP-P5-002 to "the ticket that owns artifacts" — that is ACBP-P5-011, and it
+  // is registered here now that an artifact can exist to be required. See `taskCompleted` for why the payload
+  // carries a COUNT rather than canon's literal `artifact_refs[]`.
+  'task.completed': { schemaVersion: 1, subjectType: 'task' },
   'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
   // Tool calls (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). The subject is the CALL, not the
   // task: a reader asking "what did the chokepoint decide about this call" wants one row per call, and the run and
@@ -560,6 +562,34 @@ export function taskCancelled(input: { readonly taskId: string; readonly runId: 
 }
 
 /**
+ * A task COMPLETED (ACBP-P5-011; TASK-005). Deferred here by ACBP-P5-002 because canon requires this row to prove
+ * "no artifactless completion", and until artifacts existed there was nothing for that to be true of.
+ *
+ * THE PAYLOAD CARRIES A COUNT, NOT CANON'S LITERAL `artifact_refs[]`, and that difference is deliberate:
+ *
+ *  - {@link AuditMetadata} is a flat map of SCALARS — no arrays, by design (`EVENT-CATALOG` line 18: references and
+ *    digests only). Smuggling a list through as a joined string would be an array wearing a disguise.
+ *  - The refs are not lost. Every artifact records the run that produced it, and `run_id` is in this payload, so the
+ *    exact set is one join away and cannot drift from the artifacts table — the same reasoning that kept
+ *    `cancelled_by` and the tenant ids out of their payloads rather than copying them into a second place that can
+ *    disagree.
+ *  - What the requirement actually needs from the audit row is that an artifactless completion be VISIBLE, and
+ *    `artifact_count: 0` with `no_artifact_rationale: true` says exactly that. The pair `0`/`false` is impossible by
+ *    construction (`validateCompletionEvidence` has no third shape), so the row cannot describe a completion that
+ *    produced nothing and explained nothing.
+ *
+ * The rationale TEXT is deliberately absent: it is unbounded caller-authored prose, the same surface `task.deleted`
+ * excludes with `has_reason`.
+ */
+export function taskCompleted(input: { readonly taskId: string; readonly runId: string; readonly artifactCount: number; readonly hasNoArtifactRationale: boolean }): AuditEvent {
+  return makeEvent('task.completed', input.taskId, 'success', {
+    run_id: input.runId,
+    artifact_count: input.artifactCount,
+    no_artifact_rationale: input.hasNoArtifactRationale,
+  });
+}
+
+/**
  * A tool call was PROPOSED at the chokepoint (ACBP-P5-003b; TOOL-002 "100% of tool calls have records").
  *
  * Emitted for REFUSALS as well as authorizations — TOOL-001's failure clause is "attempts are audited", and an
@@ -570,7 +600,7 @@ export function taskCancelled(input: { readonly taskId: string; readonly runId: 
 export function toolCallRequested(input: {
   readonly callId: string;
   readonly toolId: string;
-  /** Which registered version was in force. Null when the tool was not registered — canon pairs 	ool_id+version. */
+  /** Which registered version was in force. Null when the tool was not registered — canon pairs `tool_id`+version. */
   readonly toolVersion: number | null;
   readonly riskClass: string;
   readonly externalEffect: boolean;

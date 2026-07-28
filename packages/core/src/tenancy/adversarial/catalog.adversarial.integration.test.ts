@@ -287,7 +287,7 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // id and version - and the SNAPSHOT bounds are all immutable, so a run can never be re-attributed to a different
     // worker nor re-judged against a budget it was not given. Review pass 2 caught that this table was missing from
     // the catalog entirely: the local test listed forbidden columns but never the EXACT allowed set, so widening the
-    // grant to ccount_id or max_duration_ms would have passed in silence.
+    // grant to `account_id` or max_duration_ms would have passed in silence.
     const workerRuns = byTable.get('worker_runs') ?? [];
     expect([...workerRuns].sort()).toEqual(['ended_at', 'failure_category', 'halt_reason', 'outcome', 'spend_micros', 'steps_completed', 'updated_at']);
     for (const forbidden of ['id', 'account_id', 'company_id', 'task_run_id', 'worker_id', 'worker_version', 'max_spend_micros', 'max_duration_ms', 'started_at', 'created_at']) {

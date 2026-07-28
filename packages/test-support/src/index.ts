@@ -8,7 +8,7 @@ export * from './adapters/fakes.js';
 
 
 // Tenant-isolation adversarial harness + threat inventory (ACBP-P1-014; CDR-020). Dev/CI only —
-// 	est-support may never become a production dependency (boundary rule 9).
+// `test-support` may never become a production dependency (boundary rule 9).
 export * from './tenancy/two-tenant-harness.js';
 export * from './tenancy/threat-inventory.js';
 export * from './tenancy/slice-a-journey.js';

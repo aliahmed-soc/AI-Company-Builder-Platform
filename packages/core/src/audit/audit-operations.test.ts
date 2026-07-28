@@ -63,6 +63,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "Controls audited") — deliberately approved.
       'task.repeat',
       'task.delete',
+      // Task completion (ACBP-P5-011; TASK-005) — a succeeded RUN is not a completed TASK, so this is its own operation.
+      'task.complete',
       'membership.invite',
       'membership.revoke',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — deliberately approved additions.
@@ -104,6 +106,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['planning.run_record']).toBe('planning.run_recorded');
     expect(AUDITED_OPERATIONS['task.repeat']).toBe('task.repeated');
     expect(AUDITED_OPERATIONS['task.delete']).toBe('task.deleted');
+    expect(AUDITED_OPERATIONS['task.complete']).toBe('task.completed');
     expect(AUDITED_OPERATIONS['job.enqueue']).toBe('job.enqueued');
     expect(AUDITED_OPERATIONS['job.dead_letter']).toBe('job.dead_lettered');
     expect(AUDITED_OPERATIONS['run.start']).toBe('task.started');
