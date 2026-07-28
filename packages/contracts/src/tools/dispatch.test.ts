@@ -174,6 +174,40 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
   });
 });
 
+describe('decideDispatch — the injection boundary (P5-003c; NFR-021; invariant 17)', () => {
+  // "Heightened policy scrutiny on any tool call proposed while processing untrusted content." Heightened can only
+  // mean MORE refusal, so the informational waiver is withdrawn — and in Phase 5 there is no engine to replace it.
+  test('untrusted context WITHDRAWS the informational waiver — and says so with its own reason', () => {
+    const noEngines = { policy: { kind: 'unavailable' }, approval: { kind: 'unavailable' } } as const;
+    expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' })).kind).toBe('authorized');
+    const under = decideDispatch(clear({ ...noEngines, riskClass: 'informational', untrustedContext: true }));
+    expect(under).toEqual({ kind: 'denied', reason: 'untrusted_context', riskClass: 'informational' });
+  });
+
+  test('a class that was already refused keeps its OWN reason — untrusted context is not a blanket relabel', () => {
+    // `policy_unavailable` is why an internal_reversible call fails; the untrusted context changed nothing for it.
+    const d = decideDispatch(clear({ riskClass: 'internal_reversible', policy: { kind: 'unavailable' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+    expect(d).toMatchObject({ reason: 'policy_unavailable' });
+  });
+
+  test('an explicit policy ALLOW still authorizes under untrusted context — this withdraws a waiver, not permission', () => {
+    // Phase 6's engine is what supplies the heightened scrutiny; the waiver only ever stood in for a missing answer.
+    const d = decideDispatch(clear({ riskClass: 'informational', untrustedContext: true, policy: { kind: 'allow' }, approval: { kind: 'allow' } }));
+    expect(d.kind).toBe('authorized');
+  });
+
+  test('untrusted context does not override the EARLIER gates — they still report their own reasons', () => {
+    expect(decideDispatch(clear({ untrustedContext: true, registered: false }))).toMatchObject({ reason: 'not_registered' });
+    expect(decideDispatch(clear({ untrustedContext: true, allowlist: [] }))).toMatchObject({ reason: 'not_allowlisted' });
+    expect(decideDispatch(clear({ untrustedContext: true, stop: { kind: 'stopped' } }))).toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('an absent flag is the trusted path — the boundary is opt-IN by the caller that knows its provenance', () => {
+    const noEngines = { policy: { kind: 'unavailable' }, approval: { kind: 'unavailable' } } as const;
+    expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' })).kind).toBe('authorized');
+  });
+});
+
 describe('decideDispatch — total and deny-by-default', () => {
   test('a malformed gate answer is treated as no answer, not as permission', () => {
     const forged = { kind: 'ALLOW' } as unknown as DispatchRequestFacts['policy'];

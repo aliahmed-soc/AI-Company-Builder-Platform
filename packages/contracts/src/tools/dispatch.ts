@@ -42,6 +42,9 @@ export const TOOL_DENIAL_REASONS = [
   'policy_unavailable',
   'approval_invalid',
   'approval_required',
+  // ACBP-P5-003c: the ONLY thing that refused this call was the untrusted provenance of the working context.
+  // Distinct from `policy_unavailable` on purpose - it names a call that WOULD have proceeded on the trusted path.
+  'untrusted_context',
 ] as const;
 export type ToolDenialReason = (typeof TOOL_DENIAL_REASONS)[number];
 
@@ -78,6 +81,14 @@ export interface DispatchRequestFacts {
   readonly stop: StopAnswer;
   readonly policy: GateAnswer;
   readonly approval: GateAnswer;
+  /**
+   * Was this call proposed while UNTRUSTED content was in the working context? (ACBP-P5-003c; NFR-021.)
+   *
+   * `AI-AND-WORKER-ARCHITECTURE §4` requires *heightened policy scrutiny* here, and heightened can only mean MORE
+   * refusal — so it WITHDRAWS the Phase 5 waiver below. It does not withdraw permission: an engine that explicitly
+   * allows is still obeyed, because the waiver only ever stood in for a missing answer.
+   */
+  readonly untrustedContext?: boolean;
 }
 
 export type DispatchDecision =
@@ -131,16 +142,22 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (stop === 'stopped') return deny('emergency_stopped');
   if (stop !== 'clear') return deny('stop_unavailable');
 
-  const waived = CLASSES_THAT_PROCEED_WITHOUT_A_GATE.includes(riskClass);
+  // The waiver exists ONLY to stand in for a missing policy answer on the trusted path. Untrusted provenance is
+  // canon's trigger for heightened scrutiny, so the stand-in is withdrawn and a real answer becomes required.
+  const waivable = CLASSES_THAT_PROCEED_WITHOUT_A_GATE.includes(riskClass);
+  const waived = waivable && facts.untrustedContext !== true;
+  // When the untrusted context is the ONLY reason a call fails, say so: policy_unavailable would send a reader to
+  // look for a broken engine, when what actually happened is the boundary doing its job.
+  const gateless = (): ToolDenialReason => (waivable ? 'untrusted_context' : 'policy_unavailable');
 
   // Policy before approval: POL-005 — "approval cannot override forbidden".
   const policy = gate(facts.policy);
   if (policy === 'deny') return deny('policy_denied');
-  if (policy === 'unavailable' && !waived) return deny('policy_unavailable');
+  if (policy === 'unavailable' && !waived) return deny(gateless());
 
   const approval = gate(facts.approval);
   if (approval === 'deny') return deny('approval_invalid');
-  if (approval === 'unavailable' && !waived) return deny('approval_required');
+  if (approval === 'unavailable' && !waived) return deny(waivable ? 'untrusted_context' : 'approval_required');
 
   return { kind: 'authorized', riskClass };
 }

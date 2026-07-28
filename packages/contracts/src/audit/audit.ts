@@ -566,10 +566,22 @@ export function toolCallRequested(input: {
   readonly riskClass: string;
   readonly externalEffect: boolean;
   readonly denialReason?: string;
+  /**
+   * Which injection signals the untrusted context matched (ACBP-P5-003c). A comma-joined CLOSED vocabulary, never
+   * the content — this is what a human reads when deciding whether to quarantine. Absent when there were none, so an
+   * empty string never has to be read as either 'none matched' or 'not checked'.
+   */
+  readonly injectionSignals?: string;
 }): AuditEvent {
   // `tool_version` is OMITTED when null rather than sent as null: audit metadata is scalars only, and an absent key
   // says "this tool had no registered version" exactly as well as a null would have — without breaking the bound.
-  const base = { tool_id: input.toolId, risk_class: input.riskClass, external_effect: input.externalEffect, ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }) };
+  const base = {
+    tool_id: input.toolId,
+    risk_class: input.riskClass,
+    external_effect: input.externalEffect,
+    ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }),
+    ...(input.injectionSignals === undefined || input.injectionSignals === '' ? {} : { injection_signals: input.injectionSignals }),
+  };
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
     : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason });
