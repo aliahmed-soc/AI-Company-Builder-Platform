@@ -9,6 +9,23 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-005 worker runtime — CORE DONE / IN REVIEW (window 13).**
+  Branch `p5-005-worker-runtime` (from main `2f83f3c`), draft PR **#61**, CDR-057, migration **0040**.
+  **This closes the clause CDR-056 §6 recorded as UNMET.** WORK-006's *"disable during execution triggers safe-stop"*
+  was unmet for a structural reason: nothing linked a task run to the worker executing it, so "this worker's running
+  work" could not be asked for. `worker_runs` is that link, in canon's own shape (a Task run HAS a Worker run;
+  EVENT-CATALOG gives the events a `worker_run_id`). Company-owned, dual-keyed FORCE RLS, tenant-pinned composite FK
+  to `task_runs`, `UNIQUE(task_run_id)`, and a column-scoped UPDATE grant leaving the STAMP and the SNAPSHOT bounds
+  immutable — a run can never be re-attributed to another worker nor re-judged against a budget it was not given.
+  `decideStepAdmission` is pure and total, the clock is a parameter, and the check runs BEFORE the step, which is what
+  makes NFR-015's one-billing-increment overshoot bound actually hold. An unreadable bound HALTS rather than reading
+  as "no limit". The runtime never executes a tool itself — every call still goes through `dispatchToolCall`.
+  `setCompanyWorkerState` now sweeps the worker's running runs and requests a durable safe-stop on each **in the same
+  transaction** as the state change, reporting how many; requested, never forced.
+  A safe-stop is a fourth outcome `stopped`, filed under `worker.completed` with `run_outcome: 'stopped'` — not a
+  failure (the run did what it was told) and not mistakable for finished work either.
+  **Reviews in progress.** Migration 0040; local gate green (1389 passed, 0 failed); real-PG suites skip locally.
+
 - **ACBP-P5-004 worker definitions registry — CORE DONE / IN REVIEW (window 12).**
   Branch `p5-004-worker-definitions` (from main `83477a5`), draft PR **#58**, CDR-056, migration **0038**.
   **This closes the allowlist gap** CDR-054 and CDR-055 both deferred: the dispatcher's tool allowlist now comes from a

@@ -88,3 +88,28 @@ indistinguishable from one nobody noticed.*
 4. Core `startWorkerRun` / `runWorkerStep` / `finishWorkerRun`, and the WORK-006 safe-stop wiring; real-PG proof of the
    budget halt, the duration halt, and disable-during-execution.
 5. Docs + **TWO** independent review passes + finalization.
+
+## 6. What was built, and what it did NOT settle
+
+Built as designed. Three things are worth recording because they were decided while building, not before:
+
+- **`stopped` is a fourth run outcome.** Canon's worker events are `started / completed / failed` and its task state
+  machine already calls a stop-requested halt `cancelled`, not `failed`. A safe-stop therefore files under
+  `worker.completed` carrying `run_outcome: 'stopped'` — not `worker.failed`, because the run did what the owner asked
+  and counting it as a malfunction would misreport every deliberate intervention; and not silently as a completion
+  either, because the payload names which of the two it was.
+- **The safe-stop sweep runs INSIDE the state-change transaction.** A disable that committed while its stops did not
+  would leave an owner looking at a disabled worker that is still working — precisely the failure the control exists to
+  prevent. The stop is *requested*, never forced: it is durable on the task run and the worker honours it at its next
+  checkpoint, because killing a call mid-flight is how a half-performed external action happens.
+- **The MVP boundary is re-checked at `startWorkerRun`,** not only at allowlist resolution. Checking only in the read
+  path would leave the enforcement one caller away from being skipped, and this is the moment work actually begins.
+
+**Not settled here, and deliberately left alone:**
+
+- **`usage_events.worker_run_id`** — per-call ledger attribution stays deferred to P5-014 (§4). `worker_runs.spend_micros`
+  is an *enforcement* counter, not a reconciliation source, and this record should not be read as if it were one.
+- **IOQ-12's interim budgets** (0.50 USD-equivalent, 10 minutes) still ride as documented placeholders, not
+  owner-ratified values (CDR-056 §3). This ticket enforces whatever those columns say; it does not bless the numbers.
+- **The third risk class** — canon names it plain `external`, the shipped set splits it into `external_reversible`.
+  Flagged in CDR-051 §0.3, untouched here, and left for the owner to rule on separately.
