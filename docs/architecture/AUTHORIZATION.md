@@ -246,6 +246,11 @@ trusted core/use-case seam:
 - **P5-003a** (tool registry) adds NO authz action. The registry is global platform configuration with a SELECT-only
   grant and no runtime write path at all, so there is nothing for a membership role to be authorized to do. See
   `CDR-051`.
+- **P5-003b** (tool dispatcher) adds NO authz action either, and that is a decision rather than an omission. A tool
+  call happens INSIDE a run's execution, so it reuses `run:execute` — the capability executing a run already needs.
+  Per-tool least privilege is the **allowlist's** job (WORK-005, trust-critical #4), and a second, coarser role gate
+  would duplicate it while being easier to get wrong: a role check cannot express "this worker may read the web but
+  not send mail", which is the whole point of the allowlist. See `CDR-054`.
 
 ## What P1-007 does NOT do (later tickets)
 

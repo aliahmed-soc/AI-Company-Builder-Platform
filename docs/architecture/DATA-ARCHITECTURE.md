@@ -239,6 +239,35 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      `task.completed` is DELIBERATELY NOT emitted here: canon requires `artifact_refs[]` on it ("no artifactless
      completion", TASK-005), and a run succeeding is not the same fact as a task completing. No new SECURITY DEFINER /
      role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P5-003b; CDR-054; TOOL-002/003; WORK-005; NFR-006; ADR-012; trust-critical #4/#11): migration
+     0036 adds `tool_calls` — company-owned, dual-keyed FORCE RLS. This is the 100%-coverage surface of THE enforcement
+     chokepoint (`COMPONENT-CATALOG`: "Trusted — the enforcement chokepoint").
+     REFUSED CALLS GET ROWS TOO, and that single requirement decides the table's two unusual features. TOOL-001's
+     failure clause is "Unknown tools cannot be invoked; attempts are audited", and an attempt with no row is not
+     audited. So `tool_id` carries NO FOREIGN KEY to `tool_definitions` — the commonest refusal IS a tool that is not
+     registered, and an FK would make the required record impossible to write — and `risk_class`, `tool_version` and
+     `external_effect` are SNAPSHOTS of the gate that was actually applied, because re-reading the registry later would
+     misreport which definition a past call passed through.
+     `external_effect` is a BOOLEAN rather than a list of class names inside the receipt CHECK. TOOL-002 requires that
+     an external write cannot claim success without a stored receipt; expressing that as `risk_class in (...)` would
+     hard-code the class names CDR-051 §0.1 flags as OPEN. The boolean keeps the constraint independent of the naming.
+     BLANK IS MISSING (§4-G11, found in review): the receipt CHECK is `coalesce(btrim(receipt_ref),'') = ''`, not
+     `is null` — a whitespace receipt would otherwise satisfy the constraint while evidencing nothing, which is exactly
+     the hollow success the rule exists to prevent.
+     `run_id` is NOT NULL with a tenant-pinned composite FK to `task_runs` (0036 additively adds
+     `task_runs_id_company_uq`). A nullable, FK-less run reference would make "a tool call belonging to nothing" a
+     legal state on the one surface that must account for everything — which is why P5-002 was sequenced first
+     (CDR-052 §1).
+     Idempotency is PER COMPANY via a PARTIAL unique on `(company_id, tool_id, idempotency_key)`, the CDR-049 §4
+     reasoning; `ON CONFLICT` restates the predicate (42P10).
+     Grants are SELECT + INSERT + a COLUMN-scoped UPDATE of exactly `(outcome, denial_reason, receipt_ref,
+     updated_at)`: the digest, the class, the version, the external flag and the run linkage are immutable, so a call
+     cannot be re-labelled with a gentler class, have its arguments swapped after the gate passed it, or be re-pointed
+     at another run. NO DELETE — a call record is the evidence the call happened.
+     DEFERRED, as sequencing rather than omission: `policy_eval_ref`/`approval_ref` (the engines are Phase 6's — a
+     column that is always null pretending to be evidence is worse than none) and `error_category` (canon names it on
+     `tool.call_failed` but enumerates no values for tools, and no tool that can fail exists yet). No new SECURITY
+     DEFINER / role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |

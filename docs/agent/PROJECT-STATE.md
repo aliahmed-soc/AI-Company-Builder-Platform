@@ -9,6 +9,29 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-003b tool dispatcher chokepoint — CORE DONE / IN REVIEW (window 12).**
+  Branch `p5-003b-dispatcher-chokepoint` (from main `f3452fc`), draft PR **#56**, CDR-054. Migration **0036**
+  `tool_calls`. THE enforcement chokepoint: one exported `dispatchToolCall`, and nothing else executes a tool.
+  **The Phase 5 envelope is canon, not a choice.** `IMPLEMENTATION-ROADMAP §M5` says verbatim *"P5 execution is gated
+  by user-initiated runs on informational-class tools only"*, so `CLASSES_THAT_PROCEED_WITHOUT_A_GATE` is exactly
+  `['informational']`. It waives only `unavailable`, never `deny`, and waives nothing else — registration, allowlist
+  and stop state are checked regardless. Deliberately not a config value: a knob there is a knob that turns the
+  chokepoint off.
+  REFUSED CALLS ARE RECORDED, which is why `tool_id` has no FK (the commonest refusal is an unregistered tool) and why
+  the class, version and external flag are snapshots of the gate actually applied.
+  **Both review passes FAILED**, ledger `docs/implementation/P5-003b-REVIEW.md`. Pass 1: a blank idempotency key made
+  two unrelated calls suppress each other, and a whitespace receipt satisfied the very constraint TOOL-002 exists to
+  enforce. Pass 2: the record named the tool but not its VERSION, so a re-registration made every earlier record
+  ambiguous about which definition applied; and two of three CHECKs still had one-directional drift guards.
+  Hosted CI ran the 20-test dispatcher suite green on its first attempt (2260/2260, zero skips) — the reviews found
+  what a green suite did not.
+  **Also on this branch, and flagged rather than fixed:** `CDR-051 §0.1` — canon DOES enumerate the risk classes
+  (APPR-001), my earlier "canon is silent" was wrong, and canon's fourth class is `sensitive-irreversible` rather than
+  `external_irreversible`. See the FLAG in `AUTONOMOUS-RUN-LOG.md`; it is the owner's decision and nothing is blocked.
+
+- **ACBP-P5-002 workflow coordinator — DONE** (squash `f3452fc`, PR #55, exact-main CI green zero-skip 2201/2201).
+  Migrations end **0035** on main. Merged under delegated merge authority.
+
 - **ACBP-P5-002 workflow coordinator — CORE DONE / IN REVIEW (window 12).**
   Branch `p5-002-workflow-coordinator` (from main `9b38d25`), draft PR **#55**, CDR-053. Migration **0035** `task_runs`.
   A RUN IS ONE EXECUTION ATTEMPT of a task — the small state set (`queued · running · succeeded · failed · cancelled`)

@@ -27,7 +27,7 @@ This is the answer to the question the ticket would otherwise have to guess at �
 ## 1. Guarantees
 
 - **G1 — one chokepoint, and it is the only path.** Exactly one exported `dispatchToolCall`. No other module executes a tool. A tool with no dispatcher path does not execute at all, which is what makes TOOL-001's *"unregistered execution paths do not exist"* a structural claim rather than a convention.
-- **G2 — deny-by-default against the registry.** A tool id absent from `tool_definitions` is refused before anything else. A tool present but **unclassified** resolves to `sensitive_irreversible` (P5-003a's `resolveRiskClass`), so it is refused for exactly the reason any sensitive tool is — the unclassified case needs no separate rule.
+- **G2 — deny-by-default against the registry.** A tool id absent from `tool_definitions` is refused before anything else, and is recorded at the **most restrictive** class rather than at the one the caller claimed — otherwise a caller could lower its own gate by asserting a class for a tool nobody registered. A tool present but **unclassified** resolves to `MOST_RESTRICTIVE_RISK_CLASS` (P5-003a's `resolveRiskClass`), so it is refused for exactly the reason the most dangerous class is — the unclassified case needs no separate rule anywhere.
 - **G3 — the allowlist is checked, and an ABSENT allowlist denies.** WORK-005 requires server-enforced least privilege; trust-critical #4 says allowlists are *"versioned in worker definitions"*, and those arrive in P5-004, which depends on this ticket. So the allowlist is a **port** here whose Phase 5 behaviour is: no allowlist supplied → deny. Deferring the SOURCE is honest sequencing; deferring the CHECK would leave the invariant unenforced on the surface that exists to enforce it.
 - **G4 — every gate seam fails closed, and an outage is indistinguishable in effect from a denial.** `PolicyGate`, `ApprovalGate` and `EmergencyStop` are ports whose Phase 5 implementations answer *"no decision available"*. The dispatcher treats no-decision as **deny** for every class above `informational`. There is no configuration in Phase 5 that makes a missing gate permissive.
 - **G5 — 100% call records, written BEFORE execution.** TOOL-002 requires a record for every call. A record written after the fact cannot exist for a call that died mid-flight — which is precisely the call worth having a record of. The row is inserted `requested`, then updated with the outcome, so a crash leaves a visibly unfinished call rather than no call at all.
@@ -56,3 +56,27 @@ This is the answer to the question the ticket would otherwise have to guess at �
 3. Migration 0036 `tool_calls` + repository + the reset-list sweep (the guard enforces it now); real-PG.
 4. Core `dispatchToolCall` + real-PG proof of deny-by-default, fail-closed gating, 100% records, idempotency and the unconfirmed outcome.
 5. Docs + **TWO** independent review passes + finalization.
+
+## 4. Review outcomes (both passes FAILED; see `docs/implementation/P5-003b-REVIEW.md`)
+
+- **G11 — BLANK IS MISSING, at every layer.** A whitespace idempotency key is no key (it would otherwise make two
+  unrelated calls suppress each other), and a whitespace receipt is no receipt (it would otherwise satisfy the
+  constraint TOOL-002 exists to enforce while evidencing nothing). Both are normalized once and judged as absent, in
+  the use case AND in the CHECK.
+- **G12 — the record names the tool VERSION the gate applied.** `EVENT-CATALOG` pairs `tool_id+version`. The
+  registry is versioned and the dispatcher resolves the ACTIVE, highest version, so a record without the version makes
+  every past call ambiguous about which definition — and therefore which risk class — was in force. Nullable, because
+  an unregistered tool genuinely has none.
+- **G13 — every CHECK is set-EQUAL to its contract, in both directions.** `outcome`, `risk_class` and
+  `denial_reason` each assert equality against the contract vocabulary via `pg_get_constraintdef`. A one-directional
+  guard cannot catch a value the database permits and no contract code can rank — which on `risk_class` is a class
+  that dispatches without a rank.
+
+### What is deferred, and why it is sequencing rather than omission
+
+| Deferred | Why |
+| --- | --- |
+| The allowlist SOURCE | Trust-critical #4 puts allowlists in versioned worker definitions, which are **P5-004** — a ticket that depends on this one. The CHECK is enforced here and unconditional; only the source is deferred. |
+| `policy_eval_ref` / `approval_ref` on the record | The engines that would produce them are Phase 6's. Recording a reference to a record that cannot exist would be a column that is always null pretending to be evidence. |
+| `error_category` | `EVENT-CATALOG` names it on `tool.call_failed`, but nothing enumerates its values for TOOLS, and no tool that can fail exists yet. The model gateway's seven ADR-011 categories are a model-provider taxonomy, not a tool one. A nullable column added later is an additive ALTER — the cheap kind — unlike a state set, which is why CDR-049 §4-G6 argued the opposite for states. |
+| `tool.call_started` | Nothing executes tools yet (P5-005 owns the worker runtime). Registering it would declare an event no code can emit. |
