@@ -4,6 +4,7 @@
 // something that does not exist, because a founder cannot tell it from a real one — and a model asked for citations
 // while lacking sources will produce citation-SHAPED strings. These tests are about making that unstorable.
 import { describe, test, expect } from 'vitest';
+import { TASK_TYPES } from '../planning/task-plan.js';
 import { RESEARCH_TASK_TYPES, isResearchTaskType, parseResearchOutput, parseResearchShape, certifyResearchDocument, validateResearchDocument, MAX_RESEARCH_CLAIMS } from './research.js';
 
 const SOURCE = { url: 'https://example.com/report', title: 'Market report 2026', retrievedAt: '2026-07-28T10:00:00.000Z' };
@@ -19,6 +20,13 @@ describe('the three task types canon names', () => {
     expect([...RESEARCH_TASK_TYPES]).toEqual(['market_research', 'competitor_research', 'customer_segment_analysis']);
     for (const t of RESEARCH_TASK_TYPES) expect(isResearchTaskType(t)).toBe(true);
     for (const bad of ['seo_audit', 'MARKET_RESEARCH', '', null, 3]) expect(isResearchTaskType(bad)).toBe(false);
+  });
+
+  test('every one of them is a REAL task type — three lists hold these strings and they can drift', () => {
+    // Review pass 2. The same three strings live in the contract's `TASK_TYPES` (P4-003), in the DB constraint
+    // `tasks_task_type_valid` (migration 0027), and here. A research type absent from `TASK_TYPES` would be a worker
+    // that can only ever run on tasks the platform cannot create — and nothing else would notice.
+    for (const t of RESEARCH_TASK_TYPES) expect(TASK_TYPES as readonly string[]).toContain(t);
   });
 });
 
