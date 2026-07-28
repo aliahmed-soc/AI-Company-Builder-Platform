@@ -52,8 +52,8 @@ export function validateCompletionEvidence(input: unknown): CompletionValidation
   const candidate = input as { kind?: unknown; artifactIds?: unknown; rationale?: unknown };
 
   if (candidate.kind === 'artifacts') {
-    const ids: readonly unknown[] = Array.isArray(candidate.artifactIds) ? (candidate.artifactIds as readonly unknown[]) : [];
     if (!Array.isArray(candidate.artifactIds)) return { ok: false, reason: 'unknown_shape' };
+    const ids: readonly unknown[] = candidate.artifactIds as readonly unknown[];
     if (ids.length === 0) return { ok: false, reason: 'no_evidence' };
     if (ids.length > MAX_COMPLETION_ARTIFACTS) return { ok: false, reason: 'too_many_artifacts' };
     const seen = new Set<string>();

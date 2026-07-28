@@ -27,9 +27,18 @@ describe('what counts as really stored', () => {
     expect(verifyPersistedObject({ exists: true, metadata: { contentType: 'text/markdown', sizeBytes: 20 } }, 12)).toEqual({ ok: false, reason: 'size_mismatch' });
   });
 
-  test('a nonsense expected size refuses rather than passing — fail closed', () => {
-    for (const bad of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
-      expect(verifyPersistedObject({ exists: true, metadata: { contentType: 'text/plain', sizeBytes: bad } }, bad)).toMatchObject({ ok: false });
+  test('a nonsense EXPECTED size refuses rather than passing — fail closed', () => {
+    for (const bad of [Number.NaN, -1, 0, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(verifyPersistedObject({ exists: true, metadata: { contentType: 'text/plain', sizeBytes: 12 } }, bad)).toMatchObject({ ok: false, reason: 'unreadable' });
+    }
+  });
+
+  test('a nonsense REPORTED size refuses too — with a VALID expectation, so the head branch is really exercised', () => {
+    // Review pass 2: the first version of the test above passed the same nonsense value as BOTH arguments. The
+    // expected-size guard runs first, so the head value was never examined and the test would have passed with the
+    // head validation deleted entirely.
+    for (const bad of [Number.NaN, 1.5, Number.POSITIVE_INFINITY, '12', null]) {
+      expect(verifyPersistedObject({ exists: true, metadata: { contentType: 'text/plain', sizeBytes: bad as never } }, 12)).toMatchObject({ ok: false, reason: 'unreadable' });
     }
   });
 

@@ -22,6 +22,29 @@ export function isArtifactFormat(value: unknown): value is ArtifactFormat {
 }
 
 /**
+ * The format list AS WRITTEN IN THE DATABASE, transcribed from `0043_artifacts.ts`'s `artifacts_format_valid` CHECK.
+ *
+ * Two places hold this list and they can silently disagree. Widening {@link ARTIFACT_FORMATS} without a migration
+ * widening the CHECK does not fail at build time or in any unit test — it fails at the first INSERT of the new
+ * format, in production, as a constraint violation from a code path that believed it was doing something legal.
+ *
+ * Found in review pass 2 of ACBP-P5-011, because the identical trap had already been walked into once: ACBP-P5-013
+ * widened `ACTIVITY_TYPES` with no matching migration, arming a fail-closed projector to roll back the very
+ * transition it was meant to record. Same shape, different list.
+ */
+export const ARTIFACT_FORMATS_IN_DATABASE_CHECK: readonly string[] = ['markdown', 'json', 'text'];
+
+/**
+ * Do the contract's formats and the database's CHECK still agree? Asserted by a test, so widening one without the
+ * other is a RED BUILD rather than a production constraint violation.
+ */
+export function artifactFormatsMatchDatabase(): boolean {
+  const contract = [...ARTIFACT_FORMATS].sort();
+  const database = [...ARTIFACT_FORMATS_IN_DATABASE_CHECK].sort();
+  return contract.length === database.length && contract.every((f, i) => f === database[i]);
+}
+
+/**
  * The per-artifact size cap — IOQ-11, recorded in `CDR-060 §3`.
  *
  * 8 MiB. MVP artifacts are generated documents in open text formats; 8 MiB of markdown is roughly a million words,

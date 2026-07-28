@@ -26,6 +26,7 @@ import {
   type ArtifactFormat,
   type ArtifactProvenance,
   type ArtifactRefusal,
+  type HeadObjectResult,
   type ObjectStorage,
   type ObjectVerificationFailure,
 } from '@acbp/contracts';
@@ -145,7 +146,7 @@ export async function persistArtifact(client: DatabaseClient, storage: ObjectSto
 
     // THE READ-BACK. `put` resolving is the provider's claim; this is the check. A provider that silently dropped or
     // truncated the write is caught here, and the row is never written.
-    let head;
+    let head: HeadObjectResult;
     try {
       head = await storage.head(key);
     } catch {

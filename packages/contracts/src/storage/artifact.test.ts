@@ -6,6 +6,8 @@
 import { describe, test, expect } from 'vitest';
 import {
   ARTIFACT_FORMATS,
+  ARTIFACT_FORMATS_IN_DATABASE_CHECK,
+  artifactFormatsMatchDatabase,
   isArtifactFormat,
   MAX_ARTIFACT_BYTES,
   isContentHash,
@@ -31,6 +33,14 @@ describe('open formats (the objective: "open formats", not a proprietary blob)',
 
   test('an unrecognised format is REFUSED, never stored as-is', () => {
     expect(artifact({ format: 'docx' })).toMatchObject({ ok: false, reason: 'unsupported_format' });
+  });
+
+  test('the contract list and the DATABASE CHECK still agree', () => {
+    // Review pass 2. Widening `ARTIFACT_FORMATS` without a migration widening `artifacts_format_valid` breaks
+    // nothing at build time and nothing in any other test — it breaks at the first INSERT of the new format, in
+    // production. P5-013 walked into exactly this with `ACTIVITY_TYPES`. This assertion turns it into a red build.
+    expect(artifactFormatsMatchDatabase()).toBe(true);
+    expect([...ARTIFACT_FORMATS_IN_DATABASE_CHECK].sort()).toEqual([...ARTIFACT_FORMATS].sort());
   });
 });
 
