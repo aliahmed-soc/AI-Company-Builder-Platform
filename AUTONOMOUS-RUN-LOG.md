@@ -957,7 +957,12 @@ The one place a pure rename would have changed behaviour was TOOL-002's receipt 
 **ACBP-P5-005 (worker runtime)** — unblocked by P5-002/003/004, and the ticket that stamps a worker onto a run and so
 closes WORK-006's *"disable during execution triggers safe-stop"*, recorded as unmet in `CDR-056 §6`.
 
-## Window 13 — 2026-07-28, 13:18 → 21:38 +03:00 (real clock, both endpoints)
+## Window 13 — 2026-07-28, 13:18 → 21:28 +03:00 (real clock, both endpoints)
+
+Closed 10 minutes before the nominal 8-hour boundary, at the natural stopping point where P5-011's real-PG proof was
+committed and pushed and the tree was clean. The first version of this heading said 21:38 — the boundary I was aiming
+at rather than the clock I actually read, which is the estimate-instead-of-measurement habit this log is supposed to
+be free of.
 
 **Disk at the boundary:** C 10.7 GB free, E 104.9 GB free. Down 0.7 GB on C across the window; not a constraint.
 
