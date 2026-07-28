@@ -143,6 +143,32 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     expect((await rows()).filter((x) => x.kind === 'reservation')).toHaveLength(1);
   });
 
+  test('TWO DIFFERENT RUNS sharing one idempotency key: the INDEX refuses the second — the only path that reaches ON CONFLICT', async () => {
+    // THE TEST THAT WOULD HAVE CAUGHT D1, AND THE ONE THAT FAILS IF THE INDEX IS DROPPED.
+    //
+    // Every other idempotency test in this file is short-circuited by `findReservationForRun`, which returns
+    // `run_already_reserved` before the INSERT is attempted. So the partial unique index — the actual BILL-002 guard
+    // — was never reached by any test, and its `ON CONFLICT` target was wrong from the day it was written. The guard
+    // existed, the suite looked complete, and no reservation could ever have succeeded at runtime.
+    //
+    // Two DIFFERENT runs sharing ONE key is the only shape that gets past the run-level check and reaches the index.
+    // Drop `credit_transactions_reservation_key_uq` and this test fails with two reservation rows instead of one.
+    await grant(3);
+    const runA = await runningRun();
+    const runB = await runningRun();
+    expect(runA).not.toBe(runB);
+
+    expect((await reserveCredit(product, { ...base(), taskRunId: runA, idempotencyKey: 'shared-key' })).status).toBe('ok');
+    // The insert is a no-op, so the caller is told the key is spent rather than handed a second charge.
+    expect((await reserveCredit(product, { ...base(), taskRunId: runB, idempotencyKey: 'shared-key' })).status).not.toBe('ok');
+
+    // THE ASSERTIONS THAT BREAK WITHOUT THE INDEX: exactly one reservation, and exactly one credit spent.
+    const reservations = (await rows()).filter((x) => x.kind === 'reservation');
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]?.idempotency_key).toBe('shared-key');
+    expect((await rows()).reduce((sum, r) => sum + Number(r.credits), 0)).toBe(2); // 3 granted - 1 reserved
+  });
+
   test('a DIFFERENT key on the same run is still refused — the run, not the key, is what may be charged once', async () => {
     await grant(3);
     const runId = await runningRun();

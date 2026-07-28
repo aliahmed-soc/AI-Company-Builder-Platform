@@ -78,11 +78,20 @@ export class CreditRepository {
         idempotency_key: input.idempotencyKey ?? null,
         created_by_user_id: input.createdByUserId ?? null,
       })
-      // TARGETED at the three indexes that can legitimately refuse a well-formed entry — never a blanket swallow.
+      // TARGETED at the one index that can legitimately refuse a well-formed entry — never a blanket swallow.
       // `CLAUDE.md` forbids a blanket 23505→duplicate by name, and for a good reason here: a conflict this method did
       // not anticipate would be silently reported to the caller as "already exists", which for money is the worst
       // available lie. Anything else still raises.
-      .onConflict((oc) => oc.constraint('credit_transactions_reservation_key_uq').doNothing())
+      //
+      // TARGETED BY INFERENCE (columns + predicate), NOT BY NAME. `ON CONFLICT ON CONSTRAINT <name>` accepts only a
+      // real table CONSTRAINT, and `credit_transactions_reservation_key_uq` is a partial unique INDEX — so the
+      // previous `.constraint(...)` form raised `42704: constraint ... does not exist` on EVERY reservation. The
+      // guard was written and no reservation could ever succeed (D1).
+      //
+      // The predicate below must match the index's own `WHERE` for PostgreSQL to infer it. That coupling is why it is
+      // spelled out rather than hidden behind a name: if the migration's predicate changes and this does not,
+      // inference fails loudly at the next insert instead of silently widening what gets deduplicated.
+      .onConflict((oc) => oc.columns(['account_id', 'idempotency_key']).where('kind', '=', 'reservation').where('idempotency_key', 'is not', null).doNothing())
       .returningAll()
       .executeTakeFirst();
   }
