@@ -83,10 +83,40 @@ correct and enforced, and that the remaining piece is one adapter.
 
 ## 5. Slice plan
 
-1. CDR-060 + branch + draft PR.
-2. Contracts: artifact provenance + the size cap + the content-addressed key derivation — TDD, pure.
-3. Migration: `artifacts` (company-owned, dual-keyed FORCE RLS, provenance NOT NULL, content hash unique per company)
-   + repository + reset-list/catalog sweep; real-PG.
-4. Core `persistArtifact` with the no-hollow-success rule and the in-memory adapter; real-PG proof of prefix
-   isolation, idempotent re-write, and that a failed object write fails the task.
-5. Docs + **TWO** independent review passes + finalization.
+1. ~~CDR-060 + branch + draft PR.~~ **Done** — `7493717`.
+2. ~~Contracts: artifact provenance + the size cap + the content-addressed key derivation — TDD, pure.~~ **Done** —
+   `666f664`.
+3. ~~Migration: `artifacts` + repository + reset-list/catalog sweep; real-PG.~~ **Done** — `4ed102a` (table, repo,
+   40 reset lists, grant catalog) + `76cbdf2` (14 real-PG tests).
+4. ~~Core `persistArtifact` with the no-hollow-success rule and the in-memory adapter.~~ **Done** — `af54e99`
+   (`persistArtifact` + `InMemoryObjectStorage` + `verifyPersistedObject`), plus `88e4ed9` and `9759857`, which are
+   the scope §6 addition below.
+5. Docs + **TWO** independent review passes (`P5-011-REVIEW.md`, both done — `eeb0405`, `529ae08`) + finalization.
+   **Finalization is blocked**: hosted CI has produced no run since the Actions billing limit was reached, and this
+   ticket's 49 real-PG tests are unproven until it runs them zero-skip on the exact SHA.
+
+### Deviation from the plan, deliberate: the uniqueness key
+
+Slice 3 was planned as *"content hash unique per company"*. It shipped as unique per **(company, content hash, run)**.
+The two-column form hands run B the row of an earlier run A whenever their bytes match, so the artifact would claim A
+produced what B produced — provenance (G6) stated and not enforced. Keying on the run keeps retry idempotence intact
+while every distinct run gets its own honest row pointing at the same deduplicated object.
+
+## 6. Scope this ticket ABSORBED from canon: `task.completed`
+
+Not in the original plan, and not optional. `EVENT-CATALOG` line 168 and `audit.ts` both recorded the same deferral in
+the same words: `task.completed` requires `artifact_refs[]` (*"no artifactless completion"*, TASK-005), a succeeded RUN
+is not a completed TASK, and the task completes when its artifact is persisted — *"which belongs to the ticket that
+owns artifacts"*. **This is that ticket.** Leaving it would have shipped artifact storage while TASK-005 remained a
+claim asserted in four documents and enforced in none.
+
+- `validateCompletionEvidence` admits exactly the two shapes canon's wording permits — artifact refs, or an explicit
+  no-artifact rationale — and `CompletionEvidence` has no third member, so the forbidden case cannot be constructed.
+  **An empty artifact list is a refusal, not a synonym for "no artifacts"**: a worker that produced nothing will pass
+  `[]` long before it thinks to pass a rationale.
+- `completeTask` is where that guard is APPLIED, and it re-checks against the database — every cited artifact must
+  exist, in this company, produced by this run. The shape check is perfectly happy with a well-formed id naming
+  nothing, and the audit row would have faithfully recorded `artifact_count: 1` for it.
+- The payload carries `artifact_count` + `no_artifact_rationale` rather than canon's literal `artifact_refs[]`, because
+  audit metadata is scalars-only by design. The refs reach a reader through `run_id`, one join away, and cannot drift
+  from the artifacts table. `0` + `true` makes an artifactless completion visible; `0` + `false` is unreachable.
