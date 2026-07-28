@@ -552,8 +552,10 @@ export function taskStarted(input: { readonly taskId: string; readonly runId: st
 /**
  * A run failed (ACBP-P5-002; TASK-006 "no blank failures" - which means a CATEGORY, never a stack trace).
  *
- * EVENT-CATALOG also lists `retry_state`; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
- * schema version 2 rather than being guessed at here.
+ * SCHEMA VERSION 2 (ACBP-P5-013): `retry_state` has arrived, on the terms P5-002 set when it registered v1 and named
+ * this ticket as the addition's owner. It is TASK-010's retry visibility, and it comes from `describeRunFailure` —
+ * the same function the task detail read uses, so the trail and the screen cannot disagree about whether another
+ * attempt is possible.
  */
 export function taskFailed(input: {
   readonly taskId: string;
