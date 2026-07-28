@@ -956,3 +956,93 @@ The one place a pure rename would have changed behaviour was TOOL-002's receipt 
 
 **ACBP-P5-005 (worker runtime)** — unblocked by P5-002/003/004, and the ticket that stamps a worker onto a run and so
 closes WORK-006's *"disable during execution triggers safe-stop"*, recorded as unmet in `CDR-056 §6`.
+
+## Window 13 — 2026-07-28, 13:18 → 21:38 +03:00 (real clock, both endpoints)
+
+**Disk at the boundary:** C 10.7 GB free, E 104.9 GB free. Down 0.7 GB on C across the window; not a constraint.
+
+### The single fact that shapes this whole window
+
+**Hosted CI has been dead since 12:46 UTC.** The annotation is *"The job was not started because recent account
+payments have failed or your spending limit needs to be increased."* Jobs now last two seconds and run zero steps; as
+of 21:26 the two pushes to `p5-011-artifact-storage` did not even produce a run record. Under the completion standard
+this repo works to, **hosted zero-skip CI on the exact SHA is the only real-database evidence there is**, and local
+PostgreSQL is unreachable here. So:
+
+- **Nothing merged this window.** One thing merged at the very start of it — P5-005 as `bf381e7`, whose CI was green
+  before the block.
+- **Three branches are parked, complete, pushed and unmergeable.**
+- Every real-PG test written since 12:46 is **written but unproven**. `describe.skipIf` drops it silently, and a
+  skipped suite reads exactly like a passing one in the local summary. That is stated in each commit message rather
+  than left for a reader to infer.
+
+The owner adjudicated this explicitly — *"keep working on other unblocked tickets while CI is down"* — so this is not
+being treated as a stop condition. It does mean the queue of merge-ready work only grows until the billing limit is
+lifted.
+
+### What was built
+
+| Ticket | State | Branch |
+| --- | --- | --- |
+| **P5-005** worker runtime | **MERGED** `bf381e7` | deleted |
+| **P5-014** credit ledger | complete, both review passes fixed | `p5-014-credit-ledger` |
+| **P5-013** failure detail | complete, both review passes fixed, ledger written | `p5-013-failure-detail` |
+| **P5-011** artifact storage | CDR + contracts + migration + repo + real-PG proof | `p5-011-artifact-storage` |
+
+### The defects the review passes caught — all three of the named patterns, again
+
+**A guard WRITTEN but never APPLIED (P5-005).** `runWorkerStep` consulted `stop_requested_at` and nothing else. A run
+already reclaimed as `worker_lost` can never be `requestStop`-ed again — that guard is `running`-only — so the worker
+kept spending on a run everyone else considered finished, while the sweep reported `stopsRequested: 0`. **Permanently
+unstoppable.** The fixtures agreed with the bug: `runningRun()` only ever built live task runs, so the false half
+could not fail. The checkpoint now reads task-run state, worker state and the stop flag, and fails closed when the
+task run is absent.
+
+**A claim STATED but never ENFORCED (P5-005).** Five documents asserted that every tool call passes through one
+chokepoint. Nothing enforced it. All five now say the narrower true thing.
+
+**A booby trap (P5-013).** `ACTIVITY_TYPES` had been widened with no migration widening
+`activity_events_type_valid`. The projector is fail-closed, so the *first correct wiring of it* would have rolled back
+`failRun`'s terminal transition — a landmine armed for whoever touched it next. Reverted, and
+`activityTypesMatchDatabase()` now asserts the two sets agree.
+
+**Two minting paths and a free-execution path (P5-014).** A release could exceed its reservation (~2.1bn credits) —
+now a BEFORE INSERT trigger. A single-column company FK — now composite. `settleRun` trusted a caller-supplied
+outcome, so a caller could declare its own run free; it now reads `task_runs`. My fix for the last one then broke its
+own tests, because stripping the parameter left every settlement test settling a still-`running` run.
+
+**Fixtures agreeing with the bug, twice more.** P5-013's blank-failure test seeded `taskInState('draft')` instead of
+`'failed'`. P5-011's content-addressing tests would have been unable to express their own failure case without a
+second task-run attempt in the fixture, so that attempt was seeded deliberately.
+
+### P5-011, and a dependency the backlog gets wrong
+
+`AI-AND-WORKER-ARCHITECTURE.md:37-39` gives all three MVP workers `artifact_write`. The backlog's Dependencies column
+does not. **A research worker with nowhere to write its research is not a research worker**, so P5-011 gates
+P5-006/007/008 and P5-012, and doing it first is dependency order rather than preference. Recorded in CDR-060 §0.
+
+Two decisions in it are worth flagging because both took the safer direction over the obvious one:
+
+- **Content addressing never crosses a tenant.** The same bytes in two companies produce two keys and two objects. A
+  globally content-addressed store would make one company's read a read of another's write; deduplication is not
+  worth a tenant boundary.
+- **The uniqueness key is `(company_id, content_hash, run_id)`, not `(company_id, content_hash)`.** The two-column
+  form hands run B the row of an earlier run A whenever their bytes match — so the artifact would claim A produced
+  what B produced. That is provenance stated but not enforced, the exact pattern this window kept finding. Keying on
+  the run keeps retry idempotence and keeps every run's provenance honest.
+
+**IOQ-11 resolved at 8 MiB** per artifact, interim and not owner-ratified — the same standing as IOQ-12's budgets.
+
+### Still open for the owner — none of them blocking today's work
+
+- **The GitHub Actions billing limit.** Everything above waits on it.
+- **P5-011's concrete R2/S3 adapter** — a live bucket and real credentials, so an owner gate by definition. The port,
+  the semantics and an in-memory implementation all land without it; what remains is one class implementing an
+  interface that already exists.
+- **IOQ-12 budgets** and **canon's third risk class** (`external` vs `external_reversible`) — unchanged, `CDR-056 §3`
+  and `CDR-051 §0.3`.
+
+### Next
+
+**P5-011 slice 4** — core `persistArtifact` with the no-hollow-success rule and the in-memory adapter, then docs and
+two review passes. After that P5-006/007/008, which it unblocks.
