@@ -72,6 +72,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
           or (kind in ('grant', 'reservation') and references_txn_id is null)`,
     )
     .addCheckConstraint('credit_transactions_no_self_reference', sql`references_txn_id is null or references_txn_id <> id`)
+    // A RESERVATION MUST CARRY ITS KEY. The uniqueness index is partial on `idempotency_key is not null`, so a
+    // reservation written without one would slip past it entirely and BILL-002's "one credit spend per key" would
+    // hold only for callers who chose to supply a key. `reserveCredit` requires one; this is what makes it true of
+    // every writer. Settlements legitimately have none — they are identified by the reservation they reference.
+    .addCheckConstraint('credit_transactions_reservation_needs_key', sql`kind <> 'reservation' or idempotency_key is not null`)
     .execute();
 
   // ONE SPEND PER KEY (BILL-002). Scoped to reservations: the consumption and release that follow legitimately share

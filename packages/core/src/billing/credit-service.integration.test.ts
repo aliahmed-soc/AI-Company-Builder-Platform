@@ -7,7 +7,7 @@
 // Skips when ACBP_TEST_DATABASE_URL is unset — a skipped run is never green; hosted CI on the exact SHA is evidence.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
-import { CreditRepository, TaskRepository, closeDatabase, type DatabaseClient } from '@acbp/database';
+import { CreditRepository, TaskRepository, TaskRunRepository, closeDatabase, type DatabaseClient } from '@acbp/database';
 import { CREDITS_PER_MANUAL_RUN } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
@@ -42,6 +42,24 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
   /** Mint as the OWNER role — the product role has no grant path, which is the point (CDR-058 §4). */
   async function grant(credits: number, accountId = w.accountA): Promise<void> {
     await sql`insert into credit_transactions (account_id, kind, credits) values (${accountId}, 'grant', ${credits})`.execute(owner.kysely);
+  }
+
+  /**
+   * End a run for real, as the OWNER role.
+   *
+   * settleRun reads the run's own state now (it used to trust a caller-supplied outcome, which meant a succeeded
+   * run could be settled as cancelled and the work came out free). So a settlement test has to actually END the run —
+   * asserting "a SUCCEEDED run consumes" against a run still sitting in unning would assert nothing.
+   */
+  async function endRun(runId: string, state: 'succeeded' | 'failed' | 'cancelled'): Promise<void> {
+    const row = await new TaskRunRepository(owner.kysely).transition({
+      runId,
+      expectedState: 'running',
+      nextState: state,
+      ...(state === 'failed' ? { failureCategory: 'provider_error' } : {}),
+      endedAt: new Date(),
+    });
+    expect(row?.state).toBe(state);
   }
 
   /** A task carried to a RUNNING run — what a reservation attaches to. */
@@ -226,6 +244,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
+    await endRun(runId, 'succeeded');
     const settled = await settleRun(product, { ...base(), taskRunId: runId });
     expect(settled).toMatchObject({ status: 'ok', settlement: 'consume', balanceAfter: 1 });
     expect((await rows()).map((x) => x.kind).sort()).toEqual(['consumption', 'grant', 'reservation']);
@@ -236,6 +255,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
+    await endRun(runId, 'failed');
     expect(await settleRun(product, { ...base(), taskRunId: runId })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
   });
 
@@ -243,6 +263,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
+    await endRun(runId, 'cancelled');
     expect(await settleRun(product, { ...base(), taskRunId: runId })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
   });
 
@@ -250,7 +271,8 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    expect(await settleRun(product, { ...base(), taskRunId: runId })).toEqual({ status: 'not_settleable' });
+    // The run is genuinely still running — the state in the DATABASE is what refuses, not a string we passed in.
+    expect(await settleRun(product, { ...base(), taskRunId: runId })).toEqual({ status: 'not_settleable', outcome: 'running' });
     expect((await rows()).filter((x) => x.kind === 'consumption' || x.kind === 'release')).toHaveLength(0);
   });
 
@@ -260,6 +282,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
+    await endRun(runId, 'succeeded');
     await settleRun(product, { ...base(), taskRunId: runId });
     const again = await settleRun(product, { ...base(), taskRunId: runId });
     expect(again.status).toBe('already_settled');
@@ -270,7 +293,9 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
 
   test('settling a run that never reserved is refused rather than inventing a settlement', async () => {
     await grant(3);
-    expect(await settleRun(product, { ...base(), taskRunId: await runningRun() })).toEqual({ status: 'no_reservation' });
+    const runId = await runningRun();
+    await endRun(runId, 'succeeded');
+    expect(await settleRun(product, { ...base(), taskRunId: runId })).toEqual({ status: 'no_reservation' });
   });
 
   // ── THE READ (CDR-058 §2 — the A/C widening) ──────────────────────────────────────────────────────────────
@@ -281,6 +306,23 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     const r = await readCreditLedger(product, { userId: w.aOwner, accountId: w.accountA });
     expect(r).toMatchObject({ status: 'ok', balance: 9 });
     expect((r as { entries: readonly unknown[] }).entries).toHaveLength(2);
+  });
+
+  test('AN ACCOUNT VIEWER WHO IS A COMPANY OWNER IS STILL DENIED — the HIGH finding, made testable', async () => {
+    // Review pass 1's HIGH. The first version ran the read in a COMPANY scope, so it checked the caller's
+    // company-membership role: this exact user — account `viewer`, company `owner` — would have been handed the
+    // whole account's ledger, every company's spending. The seeded world cannot express the divergence (every user's
+    // company role equals their account role), which is why the original viewer test passed for the wrong reason.
+    // So the divergence is built here, deliberately, as the owner role.
+    await grant(10);
+    await sql`update company_memberships set role = 'owner' where company_id = ${w.companyA1} and member_user_id = ${w.aViewer}`.execute(owner.kysely);
+    const asCompanyOwner = await sql<{ role: string }>`
+      select role from company_memberships where company_id = ${w.companyA1} and member_user_id = ${w.aViewer}
+    `.execute(owner.kysely);
+    expect(asCompanyOwner.rows[0]?.role).toBe('owner'); // the divergence really exists...
+
+    // ...and the account role is what decides.
+    expect(await readCreditLedger(product, { userId: w.aViewer, accountId: w.accountA })).toEqual({ status: 'forbidden' });
   });
 
   test('a VIEWER cannot read the ledger — it would disclose the account\'s other companies\' spending', async () => {

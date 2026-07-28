@@ -116,7 +116,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
   test('the product role CAN write the three run-lifecycle kinds', async () => {
     await grant(w.accountA, 5);
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
-      const reservation = await new CreditRepository(db).insert({ accountId: w.accountA, companyId: w.companyA1, kind: 'reservation', credits: -1 });
+      const reservation = await new CreditRepository(db).insert({ accountId: w.accountA, companyId: w.companyA1, kind: 'reservation', credits: -1, idempotencyKey: 'fixture-k1' });
       expect(reservation?.kind).toBe('reservation');
       const settled = await new CreditRepository(db).insert({ accountId: w.accountA, companyId: w.companyA1, kind: 'consumption', credits: -0 - 1, referencesTxnId: reservation?.id ?? null });
       expect(settled?.kind).toBe('consumption');
@@ -131,7 +131,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
       (e: unknown) => sqlState(e) === CHECK_VIOLATION,
     );
     await expect(
-      sql`insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA1}, 'reservation', 5)`.execute(owner.kysely),
+      sql`insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountA}, ${w.companyA1}, 'reservation', 5, 'sign-test')`.execute(owner.kysely),
     ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
   });
 
@@ -169,7 +169,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     // work delivered.
     await grant(w.accountA, 5);
     const reservation = await sql<{ id: string }>`
-      insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA1}, 'reservation', -1) returning id
+      insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountA}, ${w.companyA1}, 'reservation', -1, 'fixture-' || gen_random_uuid()) returning id
     `.execute(owner.kysely);
     const rid = reservation.rows[0]?.id ?? '';
     await sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'consumption', -1, ${rid})`.execute(owner.kysely);
@@ -202,7 +202,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     // `grant` and `correction`, and leaving the release path bounded by application code alone contradicted that.
     await grant(w.accountA, 5);
     const res = await sql<{ id: string }>`
-      insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA1}, 'reservation', -1) returning id
+      insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountA}, ${w.companyA1}, 'reservation', -1, 'fixture-' || gen_random_uuid()) returning id
     `.execute(owner.kysely);
     const rid = res.rows[0]?.id ?? '';
     await expect(
@@ -228,11 +228,26 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     await grant(w.accountA, 5);
     await grant(w.accountB, 5);
     const res = await sql<{ id: string }>`
-      insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountB}, ${w.companyB1}, 'reservation', -1) returning id
+      insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountB}, ${w.companyB1}, 'reservation', -1, 'fixture-' || gen_random_uuid()) returning id
     `.execute(owner.kysely);
     await expect(
       sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'release', 1, ${res.rows[0]?.id ?? ''})`.execute(owner.kysely),
     ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+  });
+
+  test('a RESERVATION WITHOUT AN IDEMPOTENCY KEY is refused — otherwise it escapes the uniqueness index', async () => {
+    // The key index is PARTIAL on `idempotency_key is not null`, so a keyless reservation would slip past it entirely
+    // and BILL-002's "one credit spend per key" would hold only for callers who chose to supply one. `reserveCredit`
+    // requires a key; this CHECK is what makes it true of every writer, including the owner role.
+    await grant(w.accountA, 5);
+    await expect(
+      sql`insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA1}, 'reservation', -1)`.execute(owner.kysely),
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+    // A SETTLEMENT legitimately has none — it is identified by the reservation it references, not by a key.
+    const res = await sql<{ id: string }>`
+      insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountA}, ${w.companyA1}, 'reservation', -1, 'k') returning id
+    `.execute(owner.kysely);
+    await sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'consumption', -1, ${res.rows[0]?.id ?? ''})`.execute(owner.kysely);
   });
 
   test('ONE RESERVATION PER RUN is structural — an index, not just the account lock', async () => {
@@ -269,7 +284,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
   test('an entry cannot be written into ANOTHER account, even with its id in hand', async () => {
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
       await expect(
-        sql`insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountB}, ${w.companyB1}, 'reservation', -1)`.execute(db),
+        sql`insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountB}, ${w.companyB1}, 'reservation', -1, 'fixture-' || gen_random_uuid())`.execute(db),
       ).rejects.toSatisfy((e: unknown) => sqlState(e) === RLS_VIOLATION);
     });
   });

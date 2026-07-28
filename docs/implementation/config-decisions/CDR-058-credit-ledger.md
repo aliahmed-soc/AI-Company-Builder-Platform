@@ -37,7 +37,7 @@ race gets shipped.
 
 - **G1 — the ledger is APPEND-ONLY, structurally.** `credit_transactions` gets SELECT + INSERT and nothing else: no
   UPDATE grant on any column, no DELETE. Invariant 10 is then a property of the grants, not of anyone's restraint.
-- **G2 — the balance is DERIVED, always.** `SUM(amount_micros)` over the account's rows. Signed amounts, so a grant is
+- **G2 — the balance is DERIVED, always.** `SUM(credits)` over the account's rows. Signed amounts, so a grant is
   positive and a reservation negative, and the sum is the balance by construction rather than by a rule someone has to
   remember to apply. No cached total, no counter column, nothing to reconcile against itself.
 - **G3 — reservation is ATOMIC, and the race resolves in the DATABASE.** Two runs against one remaining credit: exactly
@@ -144,8 +144,14 @@ that removal, which is why it is corrected rather than quietly left.
 - **No pricing.** `CREDITS_PER_MANUAL_RUN = 1` is the MVP rule as a named constant with D-02 cited at its definition.
   The schema stores an amount and knows nothing about how it was computed.
 - **`usage_events.worker_run_id`** — the link `CDR-057 §4` deferred *to this ticket*. It is in scope and additive; see
-  §5 slice 4. What stays out of scope is per-call cost attribution as a billing source, because that needs the
-  reconciliation P6/Phase 7 owns.
+  §5 slice 4. Nothing populates it yet (the gateway's callers are planning and strategy use cases, none of which run
+  inside a worker run), so the column and the repository field exist to make the link *writable* the moment a worker
+  calls a model; that wiring is P5-006/007/008's. **The owner ruled on 2026-07-28 that the column stays** rather than
+  waiting for its first writer. What is out of scope regardless is per-call cost attribution as a billing source,
+  because that needs the reconciliation Phase 7 owns.
+- **Retry dedupe.** `USAGE-AND-BILLING §4` says a retry is *"billable at most once per logical task"*. This ledger
+  dedupes per **run**, so two successful attempts of one task consume twice. Canon assigns that dedupe to the charging
+  **views**, which are P6-009's — recorded here so that owner sees it rather than rediscovering it.
 
 ## 5. Slice plan
 
@@ -154,7 +160,9 @@ that removal, which is why it is corrected rather than quietly left.
    (which outcome releases and which consumes) — TDD, pure, no clock, no database.
 3. Migration 0041 `credit_transactions` + repository + the reset-list and grant-catalog sweep; real-PG proof of
    append-only (no UPDATE, no DELETE), the RLS predicate, and the idempotency index.
-4. Core `preflightRun` / `reserveCredit` / `consumeCredit` / `releaseCredit`; the `usage_events.worker_run_id` link;
+4. Core `preflightRun` / `reserveCredit` / `settleRun` (one function, not the separate `consumeCredit` /
+   `releaseCredit` this plan first named — the consume-or-release decision belongs in ONE place, reading canon's
+   charging rules, rather than in two call sites that could diverge); the `usage_events.worker_run_id` link;
    real-PG proof of the **AT-025 race** — two concurrent reservations against one remaining credit, exactly one wins,
    and the balance still equals the ledger sum afterwards.
 5. Docs + **TWO** independent review passes + finalization.
