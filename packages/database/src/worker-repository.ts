@@ -80,15 +80,21 @@ export class WorkerRepository {
       .executeTakeFirst();
   }
 
-  /** The risk classes of a set of tools, for the MVP-boundary check. Global registry, so no tenancy applies. */
-  toolRiskClasses(toolIds: readonly string[]): Promise<Array<{ tool_id: string; risk_class: string | null }>> {
-    if (toolIds.length === 0) return Promise.resolve([]);
-    return this.#db
-      .selectFrom('tool_definitions')
-      .select(['tool_id', 'risk_class'])
-      .where('tool_id', 'in', [...toolIds])
-      .where('status', '=', 'active')
-      .orderBy('version', 'desc')
-      .execute();
+  /**
+   * The ACTIVE class of each named tool, for the MVP-boundary check. Global registry, so no tenancy applies.
+   *
+   * ONE ROW PER TOOL, at its highest active version (review pass 1). Without `distinct on`, a tool with a v1 and a
+   * v2 returns both — and since the boundary check refuses if ANY row is external-effect, a tool RE-classified down
+   * from external to informational would still be refused by its own history. A tool absent from the result is a tool
+   * the registry does not have, which the caller must treat as unclassified rather than as absent from the check.
+   */
+  async toolRiskClasses(toolIds: readonly string[]): Promise<Array<{ tool_id: string; risk_class: string | null }>> {
+    if (toolIds.length === 0) return [];
+    const rows = await sql<{ tool_id: string; risk_class: string | null }>`
+      select distinct on (tool_id) tool_id, risk_class from public.tool_definitions
+      where status = 'active' and tool_id = any(${sql.val([...toolIds])}::text[])
+      order by tool_id, version desc
+    `.execute(this.#db);
+    return rows.rows;
   }
 }

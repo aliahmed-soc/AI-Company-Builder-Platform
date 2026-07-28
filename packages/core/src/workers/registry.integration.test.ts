@@ -174,6 +174,35 @@ describe.skipIf(!hasTestDatabase)('worker registry (real PostgreSQL, restricted 
     expect(await dispatchToolCall(product, { ...base(), runId, toolId: 'memory_read', args: {}, allowlist, context: [] })).toMatchObject({ status: 'denied', reason: 'not_allowlisted' });
   });
 
+  // ── the MVP zero-external-actions boundary (review pass 1) ────────────────────────────────────────────────
+  test('a definition whose allowlist reaches PAST internal_reversible can never be used', async () => {
+    // CDR-056 §2-G4 claimed this boundary was structural while nothing enforced it — worse than not claiming it.
+    // It cannot be a CHECK (the classes live in another table and CHECKs cannot subquery), so it is enforced at the
+    // one point where a definition becomes a capability: a violating definition may EXIST and can never be USED.
+    await register('overreaching', 1, ['web_research', 'send_email']);
+    const r = await resolveWorkerAllowlist(product, { ...base(), workerId: 'overreaching' });
+    expect(r).toMatchObject({ status: 'mvp_boundary_violation' });
+    expect((r as { offendingTools: readonly string[] }).offendingTools).toEqual(['send_email']);
+    // And it hands back NO allowlist — a refusal is never a narrower capability.
+    expect(r).not.toHaveProperty('allowlist');
+  });
+
+  test('an allowlist naming an UNREGISTERED tool fails the boundary rather than slipping past it', async () => {
+    // The tool has no class, `resolveRiskClass` maps that to the most restrictive one, and the boundary refuses.
+    await register('typo', 1, ['web_research', 'web_reserch']);
+    expect(await resolveWorkerAllowlist(product, { ...base(), workerId: 'typo' })).toMatchObject({
+      status: 'mvp_boundary_violation',
+      offendingTools: ['web_reserch'],
+    });
+  });
+
+  test('a tool RE-CLASSIFIED down no longer offends — the check reads the ACTIVE version, not the history', async () => {
+    // Without `distinct on (tool_id)`, both versions would return and the old external class would keep refusing.
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('reformed', 1, 'external_reversible', 'v1'), ('reformed', 2, 'informational', 'v2')`.execute(owner.kysely);
+    await register('reformer', 1, ['reformed']);
+    expect((await resolveWorkerAllowlist(product, { ...base(), workerId: 'reformer' })).status).toBe('ok');
+  });
+
   // ── the store's own guarantees ────────────────────────────────────────────────────────────────────────────
   test('the definition registry has NO runtime write path at all (CDR-056 §2-G1)', async () => {
     await register('research', 1, ['web_research']);

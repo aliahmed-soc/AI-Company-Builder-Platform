@@ -5,7 +5,7 @@
 // caller-supplied parameter, which made WORK-005's *"server-enforced"* true mechanically and not yet authoritatively.
 // After this, trust-critical #4's *"allowlists versioned in worker definitions"* is literally where it lives.
 import { WorkerRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type WorkerDefinitionRow } from '@acbp/database';
-import { isWorkerState, workerAcceptsTasks, workerStateChanged, type WorkerState } from '@acbp/contracts';
+import { isWorkerState, workerAcceptsTasks, isMvpSafeAllowlist, workerStateChanged, type WorkerState } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -61,7 +61,10 @@ export type ResolveWorkerResult =
   | { readonly status: 'unknown_worker' }
   // WORK-006: "Disabled workers receive no new tasks; their queued tasks are held visibly." HELD, not cancelled —
   // nothing here transitions a task, and the state is carried so a read path can say which of the two it is.
-  | { readonly status: 'not_accepting'; readonly state: WorkerState };
+  | { readonly status: 'not_accepting'; readonly state: WorkerState }
+  // ADR-012's MVP boundary: this definition's allowlist reaches past `internal_reversible`. Found in review pass 1 —
+  // CDR-056 §2-G4 CLAIMED this boundary was structural while nothing enforced it, which is worse than not claiming it.
+  | { readonly status: 'mvp_boundary_violation'; readonly offendingTools: readonly string[] };
 
 /**
  * Resolve a worker to the allowlist the dispatcher will enforce.
@@ -86,6 +89,21 @@ export async function resolveWorkerAllowlist(client: DatabaseClient, params: Res
       const stored = await workers.findCompanyState(params.workerId);
       const state = stored?.state ?? 'enabled';
       if (!workerAcceptsTasks(state)) return { status: 'not_accepting', state: isWorkerState(state) ? state : 'disabled' };
+
+      // THE MVP BOUNDARY, ENFORCED ON THE PATH THAT MATTERS (review pass 1). It cannot be a CHECK: the allowlist is a
+      // `text[]` and the classes live in another table, and PostgreSQL CHECKs cannot subquery. So it is enforced HERE,
+      // at the only point where a definition turns into a capability — a violating definition may exist in the
+      // registry but can never be used, which is the property canon's "structural, not procedural" actually needs.
+      const classes = await workers.toolRiskClasses(definition.allowed_tools);
+      const byId = new Map(classes.map((c) => [c.tool_id, c.risk_class]));
+      // A tool the registry does not have gets `undefined`, which `resolveRiskClass` maps to the MOST restrictive
+      // class — so an allowlist naming an unregistered tool fails the boundary rather than slipping past it.
+      const entries = definition.allowed_tools.map((toolId) => ({ toolId, riskClass: byId.get(toolId) }));
+      if (!isMvpSafeAllowlist(entries)) {
+        const offendingTools = entries.filter((e) => !isMvpSafeAllowlist([e])).map((e) => e.toolId);
+        options.logger?.warn('worker.mvp_boundary_violation', { metadata: { companyId: params.companyId, workerId: params.workerId, count: offendingTools.length } });
+        return { status: 'mvp_boundary_violation', offendingTools };
+      }
 
       return { status: 'ok', definition: toDTO(definition), allowlist: definition.allowed_tools };
     },
