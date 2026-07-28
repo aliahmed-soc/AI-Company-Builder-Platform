@@ -36,6 +36,11 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'run.start',
       'run.fail',
       'run.cancel',
+      // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002) — deliberately approved additions. `tool.dispatch` covers
+      // refusals as well as authorizations; TOOL-001 requires the attempt to be audited either way.
+      'tool.dispatch',
+      'tool.complete',
+      'tool.fail',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
@@ -98,6 +103,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['run.start']).toBe('task.started');
     expect(AUDITED_OPERATIONS['run.fail']).toBe('task.failed');
     expect(AUDITED_OPERATIONS['run.cancel']).toBe('task.cancelled');
+    expect(AUDITED_OPERATIONS['tool.dispatch']).toBe('tool.call_requested');
+    expect(AUDITED_OPERATIONS['tool.complete']).toBe('tool.call_completed');
+    expect(AUDITED_OPERATIONS['tool.fail']).toBe('tool.call_failed');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
@@ -122,7 +130,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // DEAD-LETTERED job (CDR-052 — the retry cap stopped it) are honestly not successes: their outcome is
       // 'blocked'. Every other approved operation records a success.
       // A failed RUN is likewise not a success (TASK-006) - outcome 'blocked'.
-      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail'];
+      // A failed TOOL CALL is 'blocked' for the same reason. `tool.complete` is only a success when the call actually
+      // SUCCEEDED — an `unconfirmed` external effect goes through the same factory and is deliberately NOT a success
+      // (TOOL-002: "never 'succeeded'"), which is why the canonical sample here uses the succeeded outcome.
+      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail', 'tool.fail'];
       expect(event.outcome).toBe(blocked.includes(op) ? 'blocked' : 'success');
     }
   });

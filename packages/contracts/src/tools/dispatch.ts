@@ -100,7 +100,7 @@ export type DispatchDecision =
 export const CLASSES_THAT_PROCEED_WITHOUT_A_GATE: readonly RiskClass[] = ['informational'];
 
 function gate(answer: unknown): GateAnswer['kind'] {
-  const kind = (answer as GateAnswer | undefined)?.kind;
+  const kind = (answer as { kind?: unknown } | undefined)?.kind;
   // Anything we do not recognise is "no answer". Treating an unrecognised value as `allow` is the one mistake this
   // module must never make, so the fallback is the refusing one.
   return kind === 'allow' || kind === 'deny' ? kind : 'unavailable';
@@ -127,7 +127,7 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (facts.allowlist === undefined) return deny('no_allowlist');
   if (!facts.allowlist.includes(facts.toolId)) return deny('not_allowlisted');
 
-  const stop = (facts.stop as StopAnswer | undefined)?.kind;
+  const stop = (facts.stop as { kind?: unknown } | undefined)?.kind;
   if (stop === 'stopped') return deny('emergency_stopped');
   if (stop !== 'clear') return deny('stop_unavailable');
 

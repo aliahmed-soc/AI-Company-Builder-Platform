@@ -18,3 +18,5 @@ export * from './context/index.js';
 export * from './model/index.js';
 export * from './composition/index.js';
 export * from './runs/index.js';
+// The tool dispatcher: THE enforcement chokepoint (ACBP-P5-003b; CDR-054).
+export * from './tools/index.js';

@@ -48,6 +48,8 @@ import {
   taskStarted,
   taskFailed,
   taskCancelled,
+  toolCallRequested,
+  toolCallCompleted,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -109,6 +111,12 @@ export const AUDITED_OPERATIONS = {
   'run.start': 'task.started',
   'run.fail': 'task.failed',
   'run.cancel': 'task.cancelled',
+  // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). `tool.dispatch` covers the
+  // REFUSALS as well — a call turned away at the chokepoint is still a call the platform decided about, and
+  // TOOL-001 requires the attempt to be audited.
+  'tool.dispatch': 'tool.call_requested',
+  'tool.complete': 'tool.call_completed',
+  'tool.fail': 'tool.call_failed',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -129,6 +137,7 @@ export type DecisionAuditedOperation = 'decision.record';
 export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
 export type JobAuditedOperation = 'job.enqueue' | 'job.dead_letter';
 export type RunAuditedOperation = 'run.start' | 'run.fail' | 'run.cancel';
+export type ToolAuditedOperation = 'tool.dispatch' | 'tool.complete' | 'tool.fail';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -143,10 +152,11 @@ export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[]
 export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
 export const JOB_AUDITED_OPERATION_IDS: readonly JobAuditedOperation[] = ['job.enqueue', 'job.dead_letter'];
 export const RUN_AUDITED_OPERATION_IDS: readonly RunAuditedOperation[] = ['run.start', 'run.fail', 'run.cancel'];
+export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['tool.dispatch', 'tool.complete', 'tool.fail'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -243,6 +253,12 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => taskFailed({ taskId: subjectId, runId: subjectId, attempt: 1, failureCategory: 'worker_lost' });
     case 'run.cancel':
       return (subjectId) => taskCancelled({ taskId: subjectId, runId: subjectId, phase: 'queued' });
+    case 'tool.dispatch':
+      return (subjectId) => toolCallRequested({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', externalEffect: false });
+    case 'tool.complete':
+      return (subjectId) => toolCallCompleted({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', callOutcome: 'succeeded', hasReceipt: false });
+    case 'tool.fail':
+      return (subjectId) => toolCallCompleted({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', callOutcome: 'failed', hasReceipt: false });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

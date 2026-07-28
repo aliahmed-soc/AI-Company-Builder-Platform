@@ -1,3 +1,12 @@
-// core/tools — module public index (ACBP-P0-011 scaffold). Cross-module imports go through this index (spec rule 10). No implementation yet.
-export {};
-
+// core/tools — module public index. The dispatcher is THE chokepoint (ACBP-P5-003b; CDR-054): nothing outside this
+// module executes a tool, and nothing imports `dispatcher.js` directly (spec rule 10).
+export { dispatchToolCall, reportToolCallOutcome, digestToolArguments } from './dispatcher.js';
+export type {
+  ToolGates,
+  DispatcherOptions,
+  DispatchToolCallParams,
+  DispatchToolCallResult,
+  ReportToolCallOutcomeParams,
+  ReportToolCallOutcomeResult,
+  ToolCallDTO,
+} from './dispatcher.js';
