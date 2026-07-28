@@ -425,6 +425,11 @@ export interface UsageEventsTable {
   estimated_cost_micros: ColumnType<number, number, never>;
   fallback_used: ColumnType<boolean, boolean, never>;
   /**
+   * The worker run that caused this call (ACBP-P5-014; the link CDR-057 section 4 deferred to P5-014). Nullable:
+   * calls made outside a worker run - planning, strategy, the interview - legitimately have none.
+   */
+  worker_run_id: ColumnType<string | null, string | null | undefined, never>;
+  /**
    * WHY the call fell over to the secondary provider (ACBP-P5-009; NFR-019). The normalized category, never raw
    * provider text. A reason never appears without a fallover (DB CHECK); the converse is guaranteed by the writer
    * rather than the schema, because rows predating migration 0030 carry `fallback_used = true` with no reason.

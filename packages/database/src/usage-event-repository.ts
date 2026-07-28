@@ -34,6 +34,12 @@ export interface NewUsageEventInput {
   readonly fallbackReason: string | null;
   readonly latencyMs: number;
   readonly correlationId: string | null;
+  /**
+   * The worker run this call belongs to (ACBP-P5-014). OPTIONAL and usually absent: the gateway's callers today are
+   * planning and strategy use cases, none of which execute inside a worker run. The column and this field exist so
+   * the link is writable the moment a worker actually calls a model, which is P5-006/007/008's wiring.
+   */
+  readonly workerRunId?: string | null;
 }
 
 /** Bounded list options. `limit` is clamped by the caller/use case. */
@@ -70,6 +76,7 @@ export class UsageEventRepository {
         fallback_used: input.fallbackUsed, fallback_reason: input.fallbackReason,
         latency_ms: input.latencyMs,
         correlation_id: input.correlationId,
+        worker_run_id: input.workerRunId ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();

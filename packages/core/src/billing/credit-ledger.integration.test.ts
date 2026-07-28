@@ -213,6 +213,25 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     });
   });
 
+  // ── THE USAGE-EVENT LINK (migration 0042; the deferral CDR-057 §4 made TO this ticket) ────────────────────
+  test('usage_events.worker_run_id exists, is nullable, and is TENANT-PINNED', async () => {
+    // NULLABLE on purpose: the gateway's callers today are planning and strategy use cases, none of which execute
+    // inside a worker run, so most usage events legitimately have no worker. The link is here so it is writable the
+    // moment a worker calls a model — which is P5-006/007/008's wiring, and is recorded as theirs in CDR-058 §4.
+    const col = await sql<{ is_nullable: string }>`
+      select is_nullable from information_schema.columns where table_name = 'usage_events' and column_name = 'worker_run_id'
+    `.execute(owner.kysely);
+    expect(col.rows[0]?.is_nullable).toBe('YES');
+
+    // The pin is the point: a single-column FK would let a usage event point at another company's worker run and
+    // never be policy-checked, because RI checks always bypass RLS.
+    const fk = await sql<{ def: string }>`
+      select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'usage_events_worker_run_fk'
+    `.execute(owner.kysely);
+    expect(fk.rows[0]?.def ?? '').toContain('worker_run_id, company_id');
+    expect(fk.rows[0]?.def ?? '').toContain('id, company_id');
+  });
+
   test('a run reference is TENANT-PINNED: the composite FK refuses a run from another company', async () => {
     // RI checks always bypass RLS, so a single-column FK would let an entry point at another company's run and never
     // be policy-checked. The `run_needs_company` CHECK is what stops the pin being skipped via a NULL company.
