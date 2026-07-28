@@ -32,6 +32,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // Durable jobs (ACBP-P5-001a; CDR-049 §4; ADR-008) — deliberately approved addition.
       'job.enqueue',
       'job.dead_letter',
+      // Task runs (ACBP-P5-002; CDR-053) - deliberately approved additions.
+      'run.start',
+      'run.fail',
+      'run.cancel',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
@@ -91,6 +95,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['task.delete']).toBe('task.deleted');
     expect(AUDITED_OPERATIONS['job.enqueue']).toBe('job.enqueued');
     expect(AUDITED_OPERATIONS['job.dead_letter']).toBe('job.dead_lettered');
+    expect(AUDITED_OPERATIONS['run.start']).toBe('task.started');
+    expect(AUDITED_OPERATIONS['run.fail']).toBe('task.failed');
+    expect(AUDITED_OPERATIONS['run.cancel']).toBe('task.cancelled');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
@@ -114,7 +121,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // A recorded STEP FAILURE (CDR-018 §8), a flagged CONTEXT CONFLICT (CDR-032 §3 — items withheld), and a
       // DEAD-LETTERED job (CDR-052 — the retry cap stopped it) are honestly not successes: their outcome is
       // 'blocked'. Every other approved operation records a success.
-      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter'];
+      // A failed RUN is likewise not a success (TASK-006) - outcome 'blocked'.
+      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail'];
       expect(event.outcome).toBe(blocked.includes(op) ? 'blocked' : 'success');
     }
   });

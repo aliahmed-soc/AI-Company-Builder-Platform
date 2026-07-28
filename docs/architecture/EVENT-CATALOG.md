@@ -161,6 +161,17 @@ Retention default: activity-projected events with company data; audit-relevant e
      payload is how the two come to disagree. `deduplicated` records the one enqueue outcome that creates no row — an
      idempotency key matching an existing job — which is reported to the caller as success and would otherwise leave
      no trace at all. -->
+<!-- IMPLEMENTED (ACBP-P5-002; CDR-053): the coordinator registers exactly THREE of the rows below — `task.started`
+     {run_id, attempt}, `task.failed` {run_id, attempt, failure_category}, `task.cancelled` {run_id, phase}. The
+     catalog's `phase (queued/running-safe-stop)` matches `classifyCancellation` exactly, which is a strong independent
+     confirmation that the two-operation split is canon's own reading and not an invention.
+     `task.completed` is DELIBERATELY NOT registered: this row requires `artifact_refs[]` ("no artifactless
+     completion", TASK-005), and a RUN succeeding is not the same fact as a TASK completing — the task completes when
+     its artifact is persisted, which belongs to the ticket that owns artifacts.
+     `retry_state` on `task.failed` is TASK-010 retry visibility, owned by P5-013; it will arrive as schema version 2
+     rather than being guessed at now. `cancelled_by` is likewise deferred: the actor already reaches the audit row
+     through `AuditWriteContext`, and duplicating an identity into the payload would put it in two places that can
+     disagree. -->
 | job.enqueued | Durable job | run trail | job_id (subject), {kind, deduplicated} — never the payload | audited | with company |
 | task.repeated | Task | activity | new task_id (subject), {source_task_id, source_state} | audited | with company |
 | task.deleted | Task | activity | task_id, {state_at_delete, has_reason} — never the reason text | audited | with company |

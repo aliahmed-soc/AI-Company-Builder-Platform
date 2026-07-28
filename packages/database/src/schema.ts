@@ -830,6 +830,29 @@ export interface ToolDefinitionsTable {
   created_at: ColumnType<Date, never, never>;
 }
 
+/**
+ * Task runs (ACBP-P5-002; CDR-053; TASK-007). ONE EXECUTION ATTEMPT of a task — hence `attempt` in its identity.
+ * Company-owned, dual-keyed FORCE RLS. The app role may advance the lifecycle columns only: identity, tenancy, task
+ * linkage and attempt number are `never` on update, so a run cannot be re-pointed or renumbered after the fact.
+ */
+export interface TaskRunsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  task_id: ColumnType<string, string, never>;
+  attempt: ColumnType<number, number, never>;
+  state: ColumnType<string, string | undefined, string>;
+  /** CLOSED category, never worker exception text. Only meaningful on a failed run (enforced by CHECK). */
+  failure_category: ColumnType<string | null, never, string | null>;
+  started_at: ColumnType<Date | null, never, Date | string | null>;
+  /** Liveness: a timestamp the worker advances (CDR-053 §3-G4). */
+  last_heartbeat_at: ColumnType<Date | null, never, Date | string | null>;
+  /** Durable safe-stop request, so a returning worker still sees it. */
+  stop_requested_at: ColumnType<Date | null, never, Date | string | null>;
+  ended_at: ColumnType<Date | null, never, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -870,6 +893,7 @@ export interface DatabaseSchema {
   jobs: JobsTable;
   job_checkpoints: JobCheckpointsTable;
   tool_definitions: ToolDefinitionsTable;
+  task_runs: TaskRunsTable;
 }
 
 // Repository-facing row shapes.
@@ -955,4 +979,5 @@ export type NewJobCheckpoint = Insertable<JobCheckpointsTable>;
 export type NewJob = Insertable<JobsTable>;
 export type TaskDeletionRow = Selectable<TaskDeletionsTable>;
 export type ToolDefinitionRow = Selectable<ToolDefinitionsTable>;
+export type TaskRunRow = Selectable<TaskRunsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

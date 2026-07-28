@@ -187,8 +187,10 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
     for (const planning of ['roadmaps', 'goals', 'milestones', 'task_review_flags']) {
       expect(names).toContain(planning);
     }
-    // Task-run/approval/policy tables (later tickets) must NOT exist yet.
-    for (const notYet of ['task_runs', 'approvals', 'policies']) {
+    // `task_runs` now exists (ACBP-P5-002, migration 0035).
+    expect(names).toContain('task_runs');
+    // Approval/policy tables (later tickets) must NOT exist yet.
+    for (const notYet of ['approvals', 'policies']) {
       expect(names).not.toContain(notYet);
     }
   });
