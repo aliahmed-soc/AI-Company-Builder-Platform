@@ -65,8 +65,8 @@ export type RetryOutcome =
   // "never silently retried" a property of the type rather than of the caller's discipline (§3-G1).
   //
   // It carries NO reason, which review pass 2 corrected. This function decides retry-vs-stop; it does not know WHY
-  // the attempt failed, and a placeholder ttempts_exhausted here contradicted the caller's real cause, which is
-  // what actually gets persisted. That the cap was reached is already recorded by ttempts == maxAttempts — a
+  // the attempt failed, and a placeholder `attempts_exhausted` here contradicted the caller's real cause, which is
+  // what actually gets persisted. That the cap was reached is already recorded by `attempts == maxAttempts` — a
   // second, weaker statement of the same fact is not information, it is a chance for two records to disagree.
   | { readonly outcome: 'dead_lettered' };
 

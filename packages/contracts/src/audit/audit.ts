@@ -526,7 +526,7 @@ export function taskStarted(input: { readonly taskId: string; readonly runId: st
 /**
  * A run failed (ACBP-P5-002; TASK-006 "no blank failures" - which means a CATEGORY, never a stack trace).
  *
- * EVENT-CATALOG also lists etry_state; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
+ * EVENT-CATALOG also lists `retry_state`; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
  * schema version 2 rather than being guessed at here.
  */
 export function taskFailed(input: { readonly taskId: string; readonly runId: string; readonly attempt: number; readonly failureCategory: string }): AuditEvent {
@@ -535,7 +535,7 @@ export function taskFailed(input: { readonly taskId: string; readonly runId: str
 
 /**
  * A run was cancelled (ACBP-P5-002; TASK-007). phase is canon's own distinction - queued cancels instantly,
- * unning is a bounded safe-stop - and it is the field that makes the two operations distinguishable after the
+ * `running` is a bounded safe-stop - and it is the field that makes the two operations distinguishable after the
  * fact. EVENT-CATALOG lists cancelled_by; that is the SERVER-STAMPED audit actor, and copying it into the payload
  * would let the two disagree.
  */
@@ -545,7 +545,7 @@ export function taskCancelled(input: { readonly taskId: string; readonly runId: 
 
 /**
  * A durable job exhausted its retry cap and was dead-lettered (ACBP-P5-001c; NFR-007). Subject = the job id.
- * ttempts is the count that was reached, so the record shows the cap was honoured rather than merely claimed.
+ * `attempts` is the count that was reached, so the record shows the cap was honoured rather than merely claimed.
  */
 export function jobDeadLettered(input: { readonly jobId: string; readonly kind: string; readonly attempts: number; readonly reason: string }): AuditEvent {
   return makeEvent('job.dead_lettered', input.jobId, 'blocked', { kind: input.kind, attempts: input.attempts, reason: input.reason });
