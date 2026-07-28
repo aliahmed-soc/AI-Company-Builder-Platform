@@ -1,30 +1,31 @@
 // @acbp/contracts — tool risk classes (ACBP-P5-003a; CDR-051; TOOL-001 / APPR-001; ADR-010/ADR-012). Zero-dep.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
-// THE SET BELOW IS OWNER-APPROVED BY DEFAULT AND PROVISIONAL, AND IT DISAGREES WITH CANON. See CDR-051 §0.
+// THE FOURTH CLASS IS NOW CANON'S OWN NAME. Owner decision, 2026-07-28. See CDR-051 §0.1 and §0.2.
 //
-// CORRECTION (found while researching P5-003b). An earlier version of this comment said "canon never enumerates the
-// risk classes". THAT WAS WRONG, and the owner's approval of this set was given on that mistaken basis. APPR-001
-// enumerates four classes by name:
+// APPR-001 enumerates the classes by name — `informational · internal-reversible · external · sensitive-irreversible`
+// — and an earlier note in this file claimed canon never did. That claim was wrong (it was asserted after searching
+// only the architecture layer, not the requirements row this module's own header cites), and the owner's original
+// approval of the invented `external_irreversible` rested on it.
 //
-//     informational · internal-reversible · external · sensitive-irreversible
+// The rename is NOT cosmetic, and that is the point. `external_irreversible` tied the top class to EXTERNAL effects,
+// so an irreversible INTERNAL action — permanently destroying a company's data, say — had no home above
+// `internal_reversible`, the second-LEAST restrictive value. `sensitive_irreversible` is about sensitivity and
+// irreversibility WHEREVER they occur, which is what canon means and what a classifier can now honestly assign.
 //
-// Four, as here — but the FOURTH IS NOT THE SAME CLASS. Canon's is `sensitive-irreversible`, which is about
-// sensitivity and irreversibility wherever they occur; this set's is `external_irreversible`, which ties the top two
-// classes to EXTERNAL effects. The gap is not cosmetic: an irreversible INTERNAL action (permanently destroying a
-// company's data, say) is canon's most restrictive class, and under this set it has no home above
-// `internal_reversible` — the second-LEAST restrictive value.
+// The ORDERING and every rank are unchanged, and the rename is proven behaviour-preserving (see risk-class.test.ts:
+// "the correction changed the NAME and nothing else").
 //
-// That is a decision the owner reserved, so it is flagged and not changed here; see AUTONOMOUS-RUN-LOG.md. Nothing
-// downstream keys off these NAMES — P5-003b dispatches on `resolveRiskClass` and the ordering alone — so realigning
-// the set stays cheap until P6-001 policy rows and APPR-005 expiry defaults reference the values.
+// STILL DIFFERENT FROM CANON, deliberately and flagged: canon's third class is plain `external`, this set splits it
+// into `external_reversible`. That split was mine and the owner has not ruled on it; it is recorded in CDR-051 §0.2
+// rather than changed unilaterally alongside a correction the owner did rule on.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 //
-// What is NOT provisional, and what the tests actually pin: that the set is ORDERED (TOOL-001's "most restrictive"
-// is meaningless otherwise), and that anything unclassified resolves to the most restrictive class.
+// What the tests pin regardless of naming: that the set is ORDERED (TOOL-001's "most restrictive" is meaningless
+// otherwise), and that anything unclassified resolves to the most restrictive class.
 
 /** Ordered LEAST → MOST restrictive. The order is the contract (CDR-051 §2-G3), not an implementation detail. */
-export const RISK_CLASSES = ['informational', 'internal_reversible', 'external_reversible', 'external_irreversible'] as const;
+export const RISK_CLASSES = ['informational', 'internal_reversible', 'external_reversible', 'sensitive_irreversible'] as const;
 export type RiskClass = (typeof RISK_CLASSES)[number];
 
 /**
@@ -79,4 +80,26 @@ export function resolveRiskClass(stored: unknown): RiskClass {
  */
 export function isAtLeastAsRestrictiveAs(candidate: unknown, threshold: unknown): boolean {
   return riskRank(resolveRiskClass(candidate)) >= riskRank(resolveRiskClass(threshold));
+}
+
+/**
+ * The classes treated as having an effect that reaches OUTSIDE the platform. TOOL-002's receipt rule keys off this.
+ *
+ * IT LIVES HERE, not in the dispatcher, because it is a safety rule and a rule provable only through a database is a
+ * rule most runs never check (review pass 1 on the canon correction: the dispatcher held this privately, so the sole
+ * proof was a real-PostgreSQL suite that skips on a laptop).
+ *
+ * `sensitive_irreversible` is included as an OVER-APPROXIMATION and that is deliberate. Canon's class covers
+ * sensitivity and irreversibility wherever they occur, so a member may be an INTERNAL action with no external receipt
+ * to store — but excluding it would RELAX TOOL-002's rule on the most dangerous class there is, and over-refusing a
+ * receiptless success is the safe direction.
+ *
+ * THE PROPER HOME IS A DIFFERENT FIELD. TOOL-001 asks a registered tool to declare its *"side-effect class"*
+ * separately from its risk category; deriving it from the class is a stand-in until a tool declares it (CDR-051 §0.2).
+ */
+export const EXTERNAL_EFFECT_RISK_CLASSES: readonly RiskClass[] = ['external_reversible', 'sensitive_irreversible'];
+
+/** Does a call at this class need a stored receipt to claim success? Deny-by-default: unclassified counts as external. */
+export function hasExternalEffect(value: unknown): boolean {
+  return EXTERNAL_EFFECT_RISK_CLASSES.includes(resolveRiskClass(value));
 }

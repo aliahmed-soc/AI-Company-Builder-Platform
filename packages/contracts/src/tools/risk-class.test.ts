@@ -1,17 +1,67 @@
 // ACBP-P5-003a — TOOL-001's "Risk class mandatory; unclassified = most restrictive" made executable.
 //
-// The set itself is OWNER-APPROVED BY DEFAULT and provisional (CDR-051 §0) — canon never enumerates it. These tests
-// therefore pin the two things that are NOT provisional: that the ordering exists and is total, and that an absent or
-// unrecognised class resolves to the most restrictive one rather than to anything convenient.
+// The fourth class carries CANON'S name as of the owner decision of 2026-07-28 (CDR-051 §0.2; APPR-001). These tests
+// pin the things that are NOT naming: that the ordering exists and is total, and that an absent or unrecognised class
+// resolves to the most restrictive one rather than to anything convenient.
 import { describe, test, expect } from 'vitest';
-import { RISK_CLASSES, isRiskClass, riskRank, resolveRiskClass, isAtLeastAsRestrictiveAs, MOST_RESTRICTIVE_RISK_CLASS } from './risk-class.js';
+import { RISK_CLASSES, isRiskClass, riskRank, resolveRiskClass, isAtLeastAsRestrictiveAs, MOST_RESTRICTIVE_RISK_CLASS, EXTERNAL_EFFECT_RISK_CLASSES, hasExternalEffect } from './risk-class.js';
+
+describe('the canon correction (owner decision 2026-07-28; APPR-001)', () => {
+  test('the fourth class is canon\'s `sensitive_irreversible`, and the invented name is GONE', () => {
+    expect(RISK_CLASSES[3]).toBe('sensitive_irreversible');
+    expect(RISK_CLASSES as readonly string[]).not.toContain('external_irreversible');
+    // Deny-by-default still holds for the retired name — it must not linger as an accepted synonym.
+    expect(isRiskClass('external_irreversible')).toBe(false);
+    // And an unrecognised value (which the old name now is) still resolves UPWARD, not downward.
+    expect(resolveRiskClass('external_irreversible')).toBe('sensitive_irreversible');
+  });
+
+  test('the correction changed the NAME and nothing else — every rank and relation is identical', () => {
+    // The whole safety story here is positional: gates compare ranks, never strings. Pinning the exact ordering by
+    // POSITION is what proves a rename cannot have moved a class up or down without anyone noticing.
+    expect(RISK_CLASSES.map(riskRank)).toEqual([0, 1, 2, 3]);
+    expect(MOST_RESTRICTIVE_RISK_CLASS).toBe(RISK_CLASSES[RISK_CLASSES.length - 1]);
+    expect(riskRank(MOST_RESTRICTIVE_RISK_CLASS)).toBe(RISK_CLASSES.length - 1);
+
+    // The full comparison matrix, asserted by position rather than by name, so it is identical before and after.
+    for (const [i, a] of RISK_CLASSES.entries()) {
+      for (const [j, b] of RISK_CLASSES.entries()) {
+        expect(isAtLeastAsRestrictiveAs(a, b)).toBe(i >= j);
+      }
+    }
+  });
+
+  test('TOOL-002\'s receipt rule still covers the renamed class — provable WITHOUT a database (review pass 1)', () => {
+    // This lived privately in the dispatcher, so the only proof was a real-PostgreSQL suite that skips on a laptop —
+    // a safety rule most runs never checked. It is a contract now, and asserted by POSITION so the rename cannot have
+    // quietly narrowed it: the top TWO classes require a receipt, the bottom two do not.
+    expect(EXTERNAL_EFFECT_RISK_CLASSES).toEqual([RISK_CLASSES[2], RISK_CLASSES[3]]);
+    expect(hasExternalEffect(RISK_CLASSES[3])).toBe(true);
+    expect(hasExternalEffect(RISK_CLASSES[2])).toBe(true);
+    expect(hasExternalEffect(RISK_CLASSES[1])).toBe(false);
+    expect(hasExternalEffect(RISK_CLASSES[0])).toBe(false);
+  });
+
+  test('an UNCLASSIFIED call is treated as external-effect — deny-by-default reaches the receipt rule too', () => {
+    for (const unknown of [null, undefined, 'external_irreversible', 'nonsense', 42]) {
+      expect(hasExternalEffect(unknown)).toBe(true);
+    }
+  });
+
+  test('the MVP ceiling did not move — it is still the SECOND class', () => {
+    // `isMvpSafeAllowlist` refuses anything above `internal_reversible`. A rename that shifted the ceiling would
+    // silently widen or narrow what an MVP worker may hold, and nothing else would have complained.
+    expect(RISK_CLASSES[1]).toBe('internal_reversible');
+    expect(riskRank('internal_reversible')).toBe(1);
+  });
+});
 
 describe('the risk-class set', () => {
   test('is closed — an unregistered class is not a class', () => {
     expect(isRiskClass('informational')).toBe(true);
     expect(isRiskClass('internal_reversible')).toBe(true);
     expect(isRiskClass('external_reversible')).toBe(true);
-    expect(isRiskClass('external_irreversible')).toBe(true);
+    expect(isRiskClass('sensitive_irreversible')).toBe(true);
     for (const bad of ['harmless', 'INFORMATIONAL', 'external', '', null, undefined, 0, {}]) {
       expect(isRiskClass(bad)).toBe(false);
     }
@@ -31,7 +81,7 @@ describe('the risk-class set', () => {
   test('informational is the least restrictive — a read-only tool must never out-rank a write', () => {
     expect(riskRank('informational')).toBeLessThan(riskRank('internal_reversible'));
     expect(riskRank('internal_reversible')).toBeLessThan(riskRank('external_reversible'));
-    expect(riskRank('external_reversible')).toBeLessThan(riskRank('external_irreversible'));
+    expect(riskRank('external_reversible')).toBeLessThan(riskRank('sensitive_irreversible'));
   });
 });
 
@@ -93,14 +143,14 @@ describe('isAtLeastAsRestrictiveAs — the comparison policy will key off', () =
   });
 
   test('compares by rank, in the direction the name claims', () => {
-    expect(isAtLeastAsRestrictiveAs('external_irreversible', 'informational')).toBe(true);
-    expect(isAtLeastAsRestrictiveAs('informational', 'external_irreversible')).toBe(false);
+    expect(isAtLeastAsRestrictiveAs('sensitive_irreversible', 'informational')).toBe(true);
+    expect(isAtLeastAsRestrictiveAs('informational', 'sensitive_irreversible')).toBe(false);
   });
 
   test('an UNCLASSIFIED value compares as the most restrictive, so a broken row never slips under a threshold', () => {
     // The comparison must apply the same resolution rule, or a caller could bypass a gate by passing a class the
     // registry failed to record.
-    expect(isAtLeastAsRestrictiveAs(undefined, 'external_irreversible')).toBe(true);
+    expect(isAtLeastAsRestrictiveAs(undefined, 'sensitive_irreversible')).toBe(true);
     expect(isAtLeastAsRestrictiveAs(null, 'informational')).toBe(true);
   });
 });

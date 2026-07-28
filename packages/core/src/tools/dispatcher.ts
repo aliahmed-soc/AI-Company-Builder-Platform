@@ -16,6 +16,7 @@ import {
   decideDispatch,
   canonicalizeToolArguments,
   hasUntrustedContext,
+  hasExternalEffect,
   detectInjection,
   isToolCallOutcome,
   toolCallRequested,
@@ -23,7 +24,6 @@ import {
   type GateAnswer,
   type StopAnswer,
   type ToolDenialReason,
-  type RiskClass,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -32,12 +32,6 @@ import type { Logger } from '@acbp/observability';
 /** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is `clear` and the others are not. */
 const CLEAR = (): StopAnswer => ({ kind: 'clear' });
 const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
-
-/**
- * The classes whose effects reach outside the platform. TOOL-002's receipt rule keys off THIS, not off class names in
- * a database CHECK, so the risk-class set can be re-shaped (CDR-051 §0.1 flags it as open) without a migration.
- */
-const EXTERNAL_EFFECT_CLASSES: readonly RiskClass[] = ['external_reversible', 'external_irreversible'];
 
 /**
  * The gates the dispatcher consults. All three are PORTS with fail-closed Phase 5 defaults, because the engines
@@ -193,7 +187,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
       });
 
-      const externalEffect = EXTERNAL_EFFECT_CLASSES.includes(decision.riskClass);
+      const externalEffect = hasExternalEffect(decision.riskClass);
       const inserted = await calls.insert({
         accountId: scope.tenant.accountId,
         companyId: scope.tenant.companyId,

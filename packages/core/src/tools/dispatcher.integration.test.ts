@@ -297,6 +297,38 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(inCheck).toEqual([...TOOL_DENIAL_REASONS].sort());
   });
 
+  test('migration 0039 carried the canon rename into EVERY class CHECK, data included', async () => {
+    // The owner decision of 2026-07-28. The set-equality test below would catch a missed CHECK, but not a stranded
+    // ROW — so this asserts the retired name is absent from both the constraint and the data.
+    const defs = await sql<{ conname: string; def: string }>`
+      select conname, pg_get_constraintdef(oid) as def from pg_constraint
+      where conname in ('tool_definitions_risk_class_valid', 'tool_calls_risk_class_valid', 'worker_definitions_approval_threshold_valid')
+    `.execute(owner.kysely);
+    expect(defs.rows).toHaveLength(3);
+    for (const row of defs.rows) {
+      expect(row.def, row.conname).toContain('sensitive_irreversible');
+      expect(row.def, row.conname).not.toContain('external_irreversible');
+    }
+    const stranded = await sql<{ n: number }>`
+      select (select count(*) from tool_definitions where risk_class = 'external_irreversible')
+           + (select count(*) from tool_calls where risk_class = 'external_irreversible')
+           + (select count(*) from worker_definitions where approval_threshold_risk_class = 'external_irreversible') as n
+    `.execute(owner.kysely);
+    expect(Number(stranded.rows[0]?.n ?? 0)).toBe(0);
+  });
+
+  test('a SENSITIVE-IRREVERSIBLE tool still cannot claim success without a receipt', async () => {
+    // The one place a pure rename could have changed behaviour unnoticed: `EXTERNAL_EFFECT_CLASSES` drives TOOL-002's
+    // receipt rule, and dropping the renamed class from it would have quietly relaxed that rule on the most dangerous
+    // class there is. Kept as an over-approximation on purpose — the safe direction.
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('purge_everything', 1, 'sensitive_irreversible', 'fixture')`.execute(owner.kysely);
+    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'purge_everything', args: {}, allowlist: [...allowAll, 'purge_everything'], context: [] }, { gates });
+    const callId = (call as { status: 'authorized'; call: { id: string; externalEffect: boolean } }).call.id;
+    expect((call as { call: { externalEffect: boolean } }).call.externalEffect).toBe(true);
+    expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded' })).toEqual({ status: 'receipt_required' });
+  });
+
   test('the OUTCOME and RISK-CLASS CHECKs are set-equal to their contracts too (review pass 2)', async () => {
     // Pass 1 shipped this guard for denial reasons only. One-directional drift on the other two is the same defect:
     // a value the database permits and no contract code can reason about — and on `risk_class` that means a class
