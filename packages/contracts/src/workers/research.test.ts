@@ -4,7 +4,7 @@
 // something that does not exist, because a founder cannot tell it from a real one — and a model asked for citations
 // while lacking sources will produce citation-SHAPED strings. These tests are about making that unstorable.
 import { describe, test, expect } from 'vitest';
-import { RESEARCH_TASK_TYPES, isResearchTaskType, parseResearchOutput, validateResearchDocument, MAX_RESEARCH_CLAIMS } from './research.js';
+import { RESEARCH_TASK_TYPES, isResearchTaskType, parseResearchOutput, parseResearchShape, certifyResearchDocument, validateResearchDocument, MAX_RESEARCH_CLAIMS } from './research.js';
 
 const SOURCE = { url: 'https://example.com/report', title: 'Market report 2026', retrievedAt: '2026-07-28T10:00:00.000Z' };
 const RETRIEVED = ['https://example.com/report', 'https://example.com/other'];
@@ -119,6 +119,32 @@ describe('the document itself', () => {
     const many = Array.from({ length: MAX_RESEARCH_CLAIMS }, () => sourced());
     expect(parseResearchOutput(doc(many), RETRIEVED)).toMatchObject({ ok: true });
     expect(parseResearchOutput(doc([...many, sourced()]), RETRIEVED)).toMatchObject({ ok: false, reason: 'too_many_claims' });
+  });
+});
+
+describe('the shape/certify split — G6 cannot be skipped by wiring only the gateway validator', () => {
+  test('parseResearchShape ACCEPTS a well-formed source that was never retrieved — it checks shape, not truth', () => {
+    // This is not a weakness; it is the honest division of labour. The gateway's `validateOutput` hook receives only
+    // `(schemaRef, rawOutput)` and cannot know which URLs this run fetched.
+    const invented = { url: 'https://plausible-analysts.example/2026', title: 'Outlook', retrievedAt: SOURCE.retrievedAt };
+    expect(parseResearchShape(doc([sourced({ sources: [invented] })]))).toMatchObject({ ok: true });
+  });
+
+  test('...and the resulting DRAFT is refused by certification, which is the only thing that mints a document', () => {
+    // The reason `ResearchDraft` and `ResearchDocument` are different types: if shape-checking produced a document,
+    // the retrieval check would be a step someone has to REMEMBER, and a forgotten guard is this repo's most
+    // frequent defect. A draft simply cannot be persisted.
+    const invented = { url: 'https://plausible-analysts.example/2026', title: 'Outlook', retrievedAt: SOURCE.retrievedAt };
+    const shape = parseResearchShape(doc([sourced({ sources: [invented] })]));
+    expect(shape.ok).toBe(true);
+    if (!shape.ok) return;
+    expect(certifyResearchDocument(shape.draft, RETRIEVED)).toMatchObject({ ok: false, reason: 'unretrieved_source' });
+    expect(certifyResearchDocument(shape.draft, [invented.url])).toMatchObject({ ok: true });
+  });
+
+  test('shape refusals still fire in the shape pass — a malformed source never reaches certification', () => {
+    expect(parseResearchShape(doc([sourced({ sources: [] })]))).toMatchObject({ ok: false, reason: 'unsupported_claim' });
+    expect(parseResearchShape(doc([sourced({ sources: [{ ...SOURCE, url: 'javascript:alert(1)' }] })]))).toMatchObject({ ok: false, reason: 'invalid_source' });
   });
 });
 

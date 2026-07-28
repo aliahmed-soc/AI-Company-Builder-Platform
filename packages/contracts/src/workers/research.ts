@@ -42,16 +42,38 @@ export interface ResearchSource {
  */
 export type ResearchClaim = { readonly statement: string; readonly sources: readonly ResearchSource[] } | { readonly statement: string; readonly unverifiedReason: string };
 
-export interface ResearchDocument {
+/**
+ * A shape-valid document that has NOT yet been checked against what the run retrieved (G1 + G2 only, not G6).
+ *
+ * This type exists because of WHERE the two halves of validation can run. The model gateway's `validateOutput` hook
+ * receives `(schemaRef, rawOutput)` and nothing else — it cannot know which URLs this particular run fetched, so it
+ * can only check shape. If shape-checking produced a `ResearchDocument`, the retrieval check would become a step a
+ * caller must REMEMBER, and "a guard written but never applied" is the defect this repo has hit most often.
+ *
+ * So a draft is not a document. `certifyResearchDocument` is the only thing that mints one, and it is the only place
+ * G6 is enforced — making the central defence unskippable rather than merely documented.
+ */
+export interface ResearchDraft {
   readonly title: string;
   readonly summary: string;
   readonly claims: readonly ResearchClaim[];
+}
+
+declare const researchCertifiedBrand: unique symbol;
+
+/** A research document whose every source was checked against what the run actually retrieved. Only `certifyResearchDocument` mints one. */
+export interface ResearchDocument extends ResearchDraft {
+  readonly [researchCertifiedBrand]: true;
 }
 
 export type ResearchRefusal = 'invalid_document' | 'no_claims' | 'too_many_claims' | 'blank_statement' | 'unsupported_claim' | 'invalid_source' | 'unretrieved_source';
 
 export type ResearchParse =
   | { readonly ok: true; readonly document: ResearchDocument }
+  | { readonly ok: false; readonly reason: ResearchRefusal; readonly claimIndex: number | null };
+
+export type ResearchShapeParse =
+  | { readonly ok: true; readonly draft: ResearchDraft }
   | { readonly ok: false; readonly reason: ResearchRefusal; readonly claimIndex: number | null };
 
 export type ResearchValidation =
@@ -123,7 +145,7 @@ const fail = (reason: ResearchRefusal, claimIndex: number | null): { ok: false; 
  * Reporting `unsupported_claim` for a claim that is really carrying a malformed source would send a caller looking in
  * the wrong place.
  */
-function checkClaim(claim: unknown, index: number, retrieved: ReadonlySet<string>): { ok: false; reason: ResearchRefusal; claimIndex: number | null } | null {
+function checkClaim(claim: unknown, index: number, retrieved: ReadonlySet<string> | null): { ok: false; reason: ResearchRefusal; claimIndex: number | null } | null {
   if (typeof claim !== 'object' || claim === null) return fail('unsupported_claim', index);
   const candidate = claim as { statement?: unknown; sources?: unknown; unverifiedReason?: unknown };
   if (!present(candidate.statement)) return fail('blank_statement', index);
@@ -143,9 +165,12 @@ function checkClaim(claim: unknown, index: number, retrieved: ReadonlySet<string
     // G2 — citation-shaped text is not a citation.
     if (!isHttpUrl(s.url) || !present(s.title) || !isTimestamp(s.retrievedAt)) return fail('invalid_source', index);
     // G6 — and a perfectly-formed citation to a page this run never fetched is exactly what an invented one looks
-    // like, and what injected content asks the model to produce.
-    const canonical = canonicalUrl(s.url);
-    if (canonical === undefined || !retrieved.has(canonical)) return fail('unretrieved_source', index);
+    // like, and what injected content asks the model to produce. `null` means "shape pass only"; the certifying pass
+    // always supplies a real set, and it is the only path that mints a `ResearchDocument`.
+    if (retrieved !== null) {
+      const canonical = canonicalUrl(s.url);
+      if (canonical === undefined || !retrieved.has(canonical)) return fail('unretrieved_source', index);
+    }
   }
   return null;
 }
@@ -158,6 +183,21 @@ function checkClaim(claim: unknown, index: number, retrieved: ReadonlySet<string
  * otherwise inherit its credibility.
  */
 export function parseResearchOutput(output: unknown, retrievedUrls: readonly string[]): ResearchParse {
+  const shape = parseResearchShape(output);
+  if (!shape.ok) return shape;
+  const certified = certifyResearchDocument(shape.draft, retrievedUrls);
+  if (!certified.ok) return certified;
+  return { ok: true, document: certified.document };
+}
+
+/**
+ * G1 + G2 ONLY — shape, not truth. This is what the model gateway's `validateOutput` hook can run, because that hook
+ * sees `(schemaRef, rawOutput)` and has no idea which URLs this run fetched.
+ *
+ * IT RETURNS A DRAFT, NEVER A DOCUMENT. That is the whole point: nothing downstream can persist what comes out of
+ * here without going through {@link certifyResearchDocument}, so G6 cannot be forgotten by a caller.
+ */
+export function parseResearchShape(output: unknown): ResearchShapeParse {
   if (typeof output !== 'object' || output === null) return fail('invalid_document', null);
   const candidate = output as { title?: unknown; summary?: unknown; claims?: unknown };
   if (!present(candidate.title) || !present(candidate.summary)) return fail('invalid_document', null);
@@ -165,15 +205,32 @@ export function parseResearchOutput(output: unknown, retrievedUrls: readonly str
   if (candidate.claims.length === 0) return fail('no_claims', null);
   if (candidate.claims.length > MAX_RESEARCH_CLAIMS) return fail('too_many_claims', null);
 
-  const retrieved = retrievedSet(retrievedUrls);
   const claims: ResearchClaim[] = [];
   for (const [index, claim] of (candidate.claims as readonly unknown[]).entries()) {
-    const problem = checkClaim(claim, index, retrieved);
+    // An EMPTY retrieved set here would refuse every sourced claim, so shape-checking passes a set that accepts any
+    // well-formed source and leaves the retrieval question entirely to `certifyResearchDocument`.
+    const problem = checkClaim(claim, index, null);
     if (problem !== null) return problem;
     const c = claim as { statement: string; sources?: readonly ResearchSource[]; unverifiedReason?: string };
     claims.push(c.sources === undefined ? { statement: c.statement, unverifiedReason: c.unverifiedReason as string } : { statement: c.statement, sources: c.sources });
   }
-  return { ok: true, document: { title: candidate.title, summary: candidate.summary, claims } };
+  return { ok: true, draft: { title: candidate.title, summary: candidate.summary, claims } };
+}
+
+/**
+ * G6 — the central defence, and the ONLY way to obtain a `ResearchDocument`.
+ *
+ * Every source must be one this run actually retrieved. A perfectly-formed URL to a real-looking report the worker
+ * never fetched is exactly what an invented citation looks like, and exactly what injected content asks a model to
+ * produce; shape validation accepts it and only this comparison rejects it.
+ */
+export function certifyResearchDocument(draft: ResearchDraft, retrievedUrls: readonly string[]): ResearchParse {
+  const retrieved = retrievedSet(retrievedUrls);
+  for (const [index, claim] of draft.claims.entries()) {
+    const problem = checkClaim(claim, index, retrieved);
+    if (problem !== null) return problem;
+  }
+  return { ok: true, document: { title: draft.title, summary: draft.summary, claims: draft.claims } as ResearchDocument };
 }
 
 /**
