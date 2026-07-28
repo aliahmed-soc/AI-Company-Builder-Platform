@@ -2,6 +2,22 @@
 
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
+## BLOCKED ON THE OWNER — hosted CI cannot run
+
+**GitHub Actions is refusing to start jobs**, from 2026-07-28 ~12:46 UTC onward. The annotation on
+every attempt: *"The job was not started because recent account payments have failed or your spending
+limit needs to be increased."* Three re-run attempts, each dead in ~9 seconds with zero steps executed.
+The last successful run was the exact-main verification of `bf381e7` at ~12:05 UTC.
+
+**Consequence, stated plainly: NOTHING CAN MERGE.** The completion standard requires hosted CI green
+zero-skip on the exact SHA, and every real-PostgreSQL suite in this repo is `skipIf(!hasTestDatabase)`
+with local PostgreSQL unreachable. A green local run therefore proves nothing about RLS predicates,
+grants, constraints, triggers or races — which is most of what the recent tickets are. Work continues
+on branches at the owner's explicit instruction; it accumulates unmerged until billing is cleared.
+
+Only the owner can fix this: it is a billing setting on their account, and changing payment or billing
+settings is outside what this agent may do.
+
 ## Active
 
 _Newest first. When a ticket merges, a one-line **DONE** entry is added ABOVE its working block; the working block is
@@ -9,7 +25,29 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P5-005 worker runtime — CORE DONE / FINALIZING (window 13).** Exact-head CI on `d10722d` GREEN, 188 files / 2390 tests / **zero skips**.
+- **ACBP-P5-013 failure detail and visible retries — IN PROGRESS (window 13).**
+  Branch `p5-013-failure-detail` (from main `bf381e7`), CDR-059. No migration — everything derives from
+  `task_runs` columns that already exist, because a stored copy of a run's own facts could disagree with it.
+  `describeRunFailure` is total: a failed run with no recorded category reports `unknown` with a real sentence
+  (TASK-006's *"no blank failures"*). Retry visibility separates attempts used / allowed / whether another will
+  happen, and a non-eligible category says so rather than showing a count nobody will spend. Retry safety
+  defaults to UNSAFE, including for `unknown`.
+  **Two deliberate widenings**: the activity taxonomy gains `task.failed` for ACT-005 (closed at four company
+  events since CDR-016), and `task.failed` goes to schema version 2 with `retry_state` — the field P5-002's own
+  docstring assigned to this ticket. Both review passes running; slices 1–4 done, 1412 local tests pass.
+
+- **ACBP-P5-014 run preflight + credit ledger — CORE DONE / BLOCKED ON CI (window 13).**
+  Branch `p5-014-credit-ledger`, draft PR **#62**, CDR-058, migrations **0041 + 0042**.
+  **Both review passes FAILED and every finding is fixed.** They found two ways to create credits from nothing
+  (a release exceeding its reservation — ~2.1bn credits, closed by a trigger; and a single-column company FK)
+  and one unlimited-free-execution path (`settleRun` trusted a caller-supplied outcome). Also a HIGH
+  disclosure: `billing:read` checked the COMPANY role, so a company owner who was only an account viewer would
+  have received the whole account's ledger. Ledger `docs/implementation/P5-014-REVIEW.md`.
+  **CI caught what both passes missed**: `{} as never` for the seed ops made all 14 ledger tests throw, and the
+  suite stayed green locally because it is skip-gated. The AT-025 race has executed in **zero** environments.
+
+- **ACBP-P5-005 worker runtime — DONE** (squash `bf381e7`, PR #61, exact-main CI green zero-skip 2390/2390;
+  branch deleted). Migrations end **0040** on main.
   Branch `p5-005-worker-runtime` (from main `2f83f3c`), draft PR **#61**, CDR-057, migration **0040**.
   **This closes the clause CDR-056 §6 recorded as UNMET.** WORK-006's *"disable during execution triggers safe-stop"*
   was unmet for a structural reason: nothing linked a task run to the worker executing it, so "this worker's running
