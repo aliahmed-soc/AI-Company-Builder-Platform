@@ -16,6 +16,7 @@ import {
   decideDispatch,
   canonicalizeToolArguments,
   hasUntrustedContext,
+  detectInjection,
   isToolCallOutcome,
   toolCallRequested,
   toolCallCompleted,
@@ -78,8 +79,12 @@ export interface DispatchToolCallParams {
    * treats anything unrecognised as untrusted. A caller-supplied flag would let a mistake upstream read as trusted,
    * and this is the one input where being wrong means untrusted content reached a tool. Nothing here is persisted —
    * only the arguments digest ever is.
+   *
+   * REQUIRED, not optional (review pass 1). An optional field defaults a FORGOTTEN context to the trusted path, and
+   * this is the one input where being wrong means untrusted content reached a tool. A caller with genuinely no
+   * context passes `[]` — a decision, rather than an omission that looks identical to one.
    */
-  readonly context?: readonly unknown[];
+  readonly context: readonly unknown[];
 }
 
 export interface ToolCallDTO {
@@ -152,6 +157,11 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       if (taskRun === undefined) return { status: 'run_not_found' };
       if (taskRun.state !== 'running') return { status: 'run_not_running', runState: taskRun.state };
 
+      const untrusted = hasUntrustedContext(params.context);
+      // Run the detector on the LIVE path, not only in tests (review pass 1). It never decides anything - provenance
+      // already closed the gate - but a refusal that says WHICH signals the content matched is the difference between
+      // a log line and something a human can act on, which is NFR-021's second half ('quarantines and flags').
+      const signals = untrusted ? injectionSignalsIn(params.context) : '';
       const calls = new ToolCallRepository(scope.db);
 
       // Idempotency is checked BEFORE the gates. A duplicate is not a new call to authorize — re-running the gates
@@ -177,7 +187,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
         allowlist: params.allowlist,
-        untrustedContext: hasUntrustedContext(params.context),
+        untrustedContext: untrusted,
         stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
         policy: (await (options.gates?.policy ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
         approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
@@ -206,7 +216,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         return { status: 'duplicate', call: toDTO(winner) };
       }
 
-      await audit(scope, requestedEvent(inserted, decision.kind === 'denied' ? decision.reason : null), auditCtx(options));
+      await audit(scope, requestedEvent(inserted, decision.kind === 'denied' ? decision.reason : null, signals), auditCtx(options));
       if (decision.kind === 'denied') {
         // Logged at WARN because a refusal at the chokepoint is the signal the platform alarms on (TOOL-003 asks for
         // owner notification on gate unavailability). Metadata is scalars only — no arguments, no digest.
@@ -294,9 +304,19 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
 
 // ── audit events (the factories live in @acbp/contracts, so the registry types them) ─────────────────────────
 
-function requestedEvent(row: ToolCallRow, denialReason: string | null) {
-  const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect };
+function requestedEvent(row: ToolCallRow, denialReason: string | null, injectionSignals: string) {
+  const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
   return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason });
+}
+
+/** The DISTINCT signals across every untrusted item, comma-joined. Signals only — the content never leaves memory. */
+function injectionSignalsIn(context: readonly unknown[]): string {
+  const found = new Set<string>();
+  for (const item of context) {
+    const content = (item as { content?: unknown } | null | undefined)?.content;
+    if (typeof content === 'string') for (const s of detectInjection(content).signals) found.add(s);
+  }
+  return [...found].sort().join(',');
 }
 
 function completedEvent(row: ToolCallRow) {

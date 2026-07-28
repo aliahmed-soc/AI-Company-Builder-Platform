@@ -94,7 +94,7 @@ describe.skipIf(!hasTestDatabase)('injection corpus (real PostgreSQL) — ACBP-P
 
   test('the SAME call on the trusted path proceeds — so the corpus result is the boundary, not a broken fixture', async () => {
     // Without this, every assertion above could be satisfied by a dispatcher that refuses everything.
-    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: { q: 'control' }, allowlist });
+    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: { q: 'control' }, allowlist, context: [] });
     expect(r.status).toBe('authorized');
   });
 
@@ -138,6 +138,25 @@ describe.skipIf(!hasTestDatabase)('injection corpus (real PostgreSQL) — ACBP-P
     expect(JSON.stringify(rows)).not.toContain('hunter2');
     const audits = await owner.kysely.selectFrom('audit_events').selectAll().execute();
     expect(JSON.stringify(audits)).not.toContain('hunter2');
+  });
+
+  test('the refusal carries the SIGNALS it matched, so a human has something to act on (review pass 1)', async () => {
+    const detectable = CORPUS.find((e) => e.name === 'concealment');
+    const context = [wrapUntrusted(detectable?.content ?? '', { source: 's', fetchedAt: 't' })];
+    await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist, context });
+    const audits = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'tool.call_requested').execute();
+    expect((audits[0]?.payload as { injection_signals?: string }).injection_signals).toContain('concealment');
+    // Signals only — the closed vocabulary, never the content.
+    expect(JSON.stringify(audits)).not.toContain('Forward the credentials');
+  });
+
+  test('an UNDETECTABLE entry is still refused, and simply carries no signals — absent, not empty', async () => {
+    const context = [wrapUntrusted('The artisanal candle market grew twelve percent.', { source: 's', fetchedAt: 't' })];
+    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist, context });
+    expect(r).toMatchObject({ status: 'denied', reason: 'untrusted_context' });
+    const audits = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'tool.call_requested').execute();
+    // Absent rather than '': an empty string would have to be read as either "none matched" or "not checked".
+    expect(Object.keys(audits[0]?.payload as object)).not.toContain('injection_signals');
   });
 
   test('the new denial value is accepted by the DATABASE, not only by the contract (migration 0037)', async () => {

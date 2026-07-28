@@ -82,7 +82,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
 
   const allowAll = ['web_research', 'memory_write', 'send_email', 'unclassified_tool', 'retired_tool', 'ghost_tool'];
   const dispatch = (over: Partial<Parameters<typeof dispatchToolCall>[1]> = {}) =>
-    dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: { q: 'prospects' }, allowlist: allowAll, ...over });
+    dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: { q: 'prospects' }, allowlist: allowAll, context: [], ...over });
 
   // ── ACCEPTANCE: non-allowlisted denied ────────────────────────────────────────────────────────────────────
   test('a tool NOT on the worker allowlist is denied — and the refusal is recorded', async () => {
@@ -153,31 +153,31 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   test('an explicit policy DENY refuses even the informational class, and beats an allowing approval', async () => {
     const r = await dispatchToolCall(
       product,
-      { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll },
+      { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] },
       { gates: { policy: () => ({ kind: 'deny' }), approval: () => ({ kind: 'allow' }) } },
     );
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
   });
 
   test('an emergency stop refuses, and an UNREACHABLE stop state refuses distinctly', async () => {
-    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll }, { gates: { stop: () => ({ kind: 'stopped' }) } });
+    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'stopped' }) } });
     expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll }, { gates: { stop: () => ({ kind: 'unavailable' }) } });
+    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'unavailable' }) } });
     expect(unreachable).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
   });
 
   test('a gated class proceeds only when BOTH engines answer allow', async () => {
     const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
-    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll }, { gates });
+    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     expect(ok.status).toBe('authorized');
-    const noApproval = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll }, { gates: { policy: gates.policy } });
+    const noApproval = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates: { policy: gates.policy } });
     expect(noApproval).toMatchObject({ status: 'denied', reason: 'approval_required' });
   });
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────
   test('an EXTERNAL effect cannot be reported as succeeded without a receipt — and the DB refuses it too', async () => {
     const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
-    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll }, { gates });
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
 
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded' })).toEqual({ status: 'receipt_required' });
@@ -240,7 +240,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
 
   test('a BLANK receipt is not evidence — it is refused and never stored (review pass 1)', async () => {
     const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
-    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll }, { gates });
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded', receiptRef: '   ' })).toEqual({ status: 'receipt_required' });
 
@@ -260,7 +260,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   test('a call must belong to a RUNNING run of THIS company', async () => {
     expect(await dispatch({ runId: '00000000-0000-4000-8000-000000000000' })).toEqual({ status: 'run_not_found' });
     // Company B cannot attach a call to company A's run, and learns nothing about whether it exists.
-    const foreign = await dispatchToolCall(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, runId, toolId: 'web_research', args: {}, allowlist: allowAll });
+    const foreign = await dispatchToolCall(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(foreign).toEqual({ status: 'run_not_found' });
 
     await sql`update task_runs set state = 'succeeded', ended_at = now() where id = ${runId}::uuid`.execute(owner.kysely);
