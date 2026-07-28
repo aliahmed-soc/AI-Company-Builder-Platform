@@ -14,6 +14,7 @@ import {
   type DispatchRequestFacts,
 } from './dispatch.js';
 import { RISK_CLASSES, MOST_RESTRICTIVE_RISK_CLASS } from './risk-class.js';
+import { toolCallRequested } from '../audit/audit.js';
 
 /** Everything permissible. Each test breaks ONE field, so a passing result always names its own cause. */
 const clear = (over: Partial<DispatchRequestFacts> = {}): DispatchRequestFacts => ({
@@ -45,6 +46,15 @@ describe('the closed vocabularies', () => {
 
   test('a denial reason never carries free text — the set is closed and lowercase', () => {
     for (const r of TOOL_DENIAL_REASONS) expect(r).toMatch(/^[a-z][a-z_]*$/);
+  });
+
+  test('the requested event OMITS tool_version when there is none — audit metadata takes scalars only', () => {
+    // Found by hosted CI: sending `tool_version: null` throws "Audit metadata value type is not allowed", which would
+    // have made every unregistered-tool refusal fail to audit — the exact attempt TOOL-001 most wants recorded.
+    const unregistered = toolCallRequested({ callId: 'c1', toolId: 'ghost', toolVersion: null, riskClass: 'informational', externalEffect: false, denialReason: 'not_registered' });
+    expect(Object.keys(unregistered.metadata)).not.toContain('tool_version');
+    const registered = toolCallRequested({ callId: 'c2', toolId: 'web_research', toolVersion: 3, riskClass: 'informational', externalEffect: false });
+    expect(registered.metadata).toMatchObject({ tool_version: 3 });
   });
 });
 
