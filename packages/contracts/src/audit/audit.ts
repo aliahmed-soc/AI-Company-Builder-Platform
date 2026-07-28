@@ -175,13 +175,15 @@ export const AUDIT_EVENTS = {
   // Worker RUNS (ACBP-P5-005; CDR-057). `EVENT-CATALOG` line 183 names exactly these three for the worker runtime,
   // with the payload `worker_run_id, worker_id+version, (failure_category)` — so the subject is the RUN, not the
   // worker: a reader tracing "what did this attempt do" wants one thread per run.
-  // The credit ledger (ACBP-P5-014; CDR-058; BILL-002). Subject = the LEDGER ENTRY, because the entry is the durable
-  // money fact and a reader tracing "where did this credit go" follows entries, not runs.
-  'credit.reserved': { schemaVersion: 1, subjectType: 'credit_transaction' },
-  'credit.settled': { schemaVersion: 1, subjectType: 'credit_transaction' },
   'worker.started': { schemaVersion: 1, subjectType: 'worker_run' },
   'worker.completed': { schemaVersion: 1, subjectType: 'worker_run' },
   'worker.failed': { schemaVersion: 1, subjectType: 'worker_run' },
+  // The credit ledger (ACBP-P5-014; CDR-058; BILL-002). DELIBERATE ADDITIONS: unlike the worker events above, these
+  // two are NOT in EVENT-CATALOG, which names usage.recorded and usage.limit_reached but no credit event. Subject is
+  // the LEDGER ENTRY, because the entry is the durable money fact and a reader tracing where a credit went follows
+  // entries, not runs.
+  'credit.reserved': { schemaVersion: 1, subjectType: 'credit_transaction' },
+  'credit.settled': { schemaVersion: 1, subjectType: 'credit_transaction' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;

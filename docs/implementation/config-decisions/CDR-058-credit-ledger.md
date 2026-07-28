@@ -22,6 +22,13 @@ Canon is unusually complete here, and three of its statements are load-bearing e
    hybridizes is undecided. So *"one manual task run = one credit"* is the MVP **rule**, and it lives in code as a
    named constant — never as a schema assumption, a default, or a CHECK that would have to be migrated away.
 
+   **The neutrality holds for the RULE, not for the UNIT** — worth stating precisely, because the unqualified claim
+   would be false. `credits` is a whole-number `integer`, so a D-02 outcome that priced *fractions* of a credit would
+   need a unit migration to micro-credits (the convention used everywhere else here: `estimated_cost_micros`,
+   `spend_micros`). That is accepted rather than pre-empted: the table is empty, the migration is mechanical, and
+   choosing a sub-credit unit now would be designing for a decision nobody has made. Flagged so the D-02 decider sees
+   the cost rather than discovering it.
+
 Canon does **not** fix: the SQL mechanism for atomicity, or how an account-scoped ledger interacts with the
 company-scoped RLS every other tenant table uses. Both are decided below, because guessing them silently is how a
 race gets shipped.
@@ -44,14 +51,21 @@ race gets shipped.
 - **G5 — one credit spend per idempotency key** (`API-CONTRACTS` line 47, BILL-002 race rule). A partial unique index on
   the reservation's key, so a retried request cannot reserve twice. The uniqueness is scoped to reservations, because
   the consumption and release that follow legitimately share the run.
-- **G6 — the run and its ledger entry are ATOMIC** (`API-CONTRACTS` line 47: *"run + ledger atomic"*). One transaction.
-  A run that exists without its reservation would be free work; a reservation without its run would be a charge for
-  nothing.
+- **G6 — a reservation and its audit event are atomic with each other.** *Corrected after review: the original text
+  claimed the RUN and its ledger entry were atomic, and that is NOT delivered.* `startRun` never touches the ledger,
+  and `reserveCredit` is a separate use case in a separate transaction that requires the run to already exist. Canon
+  is more specific than the original wording admitted — `WORKFLOW-STATE-MACHINES` line 53 puts the reservation in the
+  **`planned→queued`** transition, *"in same tx as credit reservation"*, one transition earlier than where this
+  ticket's reservation attaches. **Nothing in the product is credit-gated today**; see §4.
 - **G7 — metering failure FAILS CLOSED** (`COMPONENT-CATALOG`: *"Metering failure blocks metered work"*). If the
   balance cannot be determined, the answer is refusal, not "probably fine". This is the same direction as P5-005's
   unreadable-bound halt, for the same reason.
-- **G8 — releases are bounded by what was reserved.** A release cannot exceed the reservation it references, and a
-  reservation can be released once. Otherwise a release loop mints credits.
+- **G8 — releases are bounded by what was reserved, IN THE DATABASE.** A release cannot exceed the reservation it
+  references, a settlement must reference a reservation in the same account, and a reservation can be settled once.
+  *The first two were app-code only until review pass 1 showed the hole:* reserve 1 credit, then release 2,147,483,647
+  against it — every CHECK passes, because a CHECK cannot see another row. A `BEFORE INSERT` trigger closes it. It is
+  **not** SECURITY DEFINER, so the referenced row is still subject to the caller's own RLS policy and the closed
+  definer allowlist stays at three.
 
 ## 2. The A/C question — account-owned, company-attributed
 
@@ -72,9 +86,18 @@ holds one company at a time.
 it discloses what the account's *other* companies have been spending. This is a genuine widening of what a row can
 show compared with every company-owned table, so it is stated here rather than inherited by resemblance.
 
-Grants (`credit:reserve` / `credit:consume`) are separate from the read and are **not** owner-only — the runtime
-consumes on a run's behalf. Minting credits (`grant`) is neither: it is a platform/billing operation, and this ticket
-does **not** give the product role a path to it (see §4).
+**And "account-owner" has to mean the ACCOUNT role.** Review pass 1's HIGH finding: the first implementation ran the
+read in a *company* scope, so it checked the caller's company-membership role. A user who was a company owner but only
+an account viewer would have been handed the whole account's ledger. `readCreditLedger` now runs in an **account**
+scope and resolves the role with `resolveOwnMembershipBootstrap` — the same primitive `portfolio:read` uses, for the
+same reason. It takes no `companyId` at all, so the wrong role cannot be reached. Note the fixtures could not have
+caught this: every seeded user's company role equals their account role.
+
+Reservation and settlement reuse **`run:execute`** rather than dedicated `credit:reserve`/`credit:consume` actions —
+those names appeared in an earlier draft of this record and were never registered. `run:execute` is owner-only, which
+is stricter than a worker identity will eventually need; when P5-006/007/008 give workers an identity, that is the
+point to split the actions. Minting (`grant`) and correcting are neither: both are platform/billing operations, and
+this ticket gives the product role no path to either (§4).
 
 ## 3. Why `FOR UPDATE` on the account row, and not the alternatives
 
@@ -85,15 +108,39 @@ does **not** give the product role a path to it (see §4).
 | Advisory lock (`pg_advisory_xact_lock`) | Works, and needs no existing row. But the lock key is a hash of an id, so it is invisible to anyone reading the schema, and two callers using different key derivations would silently not exclude each other. |
 | **`SELECT ... FOR UPDATE` on `accounts`** | **Chosen.** The row exists, there is exactly one per account, the lock is released with the transaction, and the intent is legible at the call site. The cost is that concurrent reservations for one account serialize — which is precisely what the requirement asks for. |
 
-The `accounts` row is read, not written, so this needs no new grant beyond the SELECT the app role already holds.
+**It does need more than SELECT, and the original wording here was wrong.** PostgreSQL requires the **UPDATE**
+privilege (or DELETE, or an explicit `SELECT FOR UPDATE` grant) in addition to SELECT before it will take a row lock.
+This works because migration `0005` already grants `select, update on accounts` to the app role and defines a matching
+`accounts_update` policy. It fails closed if either is ever removed — but the earlier text would have justified exactly
+that removal, which is why it is corrected rather than quietly left.
 
 ## 4. What this ticket does NOT do, said plainly
 
 - **No grant path for the product role.** Minting credits is a platform operation, and there is no
   `grantCredits` use case here. Test fixtures grant as the OWNER role, the same way worker definitions are registered
   in P5-004. A product-role path to minting credits would be the largest possible foot-gun for the smallest reason.
-- **No account usage rollups** (P6-009) and **no hard caps** (P6-010). This is the ledger and the reservation; the
-  aggregation and the limits that read it are separate tickets, and pretending otherwise would leave two half-features.
+- **NOTHING IS CREDIT-GATED.** This is the largest honest gap and it deserves to be first. All four use cases —
+  `preflightRun`, `reserveCredit`, `settleRun`, `readCreditLedger` — have **no production caller**. A run starts,
+  executes and finishes today without consulting the ledger, so every run is currently free work. Canon puts the
+  reservation inside the `planned→queued` transition (`WORKFLOW-STATE-MACHINES` line 53, *"in same tx as credit
+  reservation"*); composing it there is **ACBP-P5-015**'s, and it needs a scope-taking variant so the coordinator can
+  do it in one transaction. Until then this ticket ships the ledger, not the gate.
+- **No correction path.** The schema makes a compensating entry *representable* — the `correction` kind, the
+  reference-shape CHECK, the non-zero CHECK — and the product role is deliberately excluded from writing one. But
+  nothing creates a correction, so invariant 10's *"correction flow tests"* are not satisfied here. That flow is
+  **ACBP-P6-009**. Until then, repairing a bad ledger entry is an owner-role operation, not a product one. (§0.2 says
+  invariant 10 is "a property of the grants" — that is true of *cannot edit*, and says nothing about corrections
+  existing.)
+- **No account usage rollups** (P6-009), **no per-company aggregation** (P6-009), and **no hard caps** (P6-010). This
+  is the ledger and the reservation; the aggregation and the limits that read it are separate tickets, and pretending
+  otherwise would leave two half-features.
+- **The refusal is numbers, not a path.** The backlog asks for *"insufficient credits block with a path"*.
+  `insufficient_credits` reports the balance and the cost, which is honest but is not a remediation: there is no
+  top-up route, no plan-reset date, and by design no grant path. The affordance belongs to the Phase 7 billing module.
+- **`sideEffectClass` is a CONSTANT.** Preflight returns `informational` because a run's tools are not bound until
+  P5-006/007/008; it is not yet derived from the worker's allowlist. It is a `RiskClass` from canon's closed set — an
+  earlier version invented `'internal_only'`, a fifth name, which is the drift this repo already shipped one
+  correction for.
 - **No pricing.** `CREDITS_PER_MANUAL_RUN = 1` is the MVP rule as a named constant with D-02 cited at its definition.
   The schema stores an amount and knows nothing about how it was computed.
 - **`usage_events.worker_run_id`** — the link `CDR-057 §4` deferred *to this ticket*. It is in scope and additive; see

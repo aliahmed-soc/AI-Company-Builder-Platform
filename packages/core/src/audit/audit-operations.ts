@@ -125,12 +125,12 @@ export const AUDITED_OPERATIONS = {
   // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006).
   'worker.set_state': 'worker.state_changed',
   // Worker RUNS (ACBP-P5-005; CDR-057). Three operations, three events: a run begins, a run ends well, a run fails.
-  // The credit ledger (ACBP-P5-014; CDR-058). Reserve and settle - the two durable money facts.
-  'credit.reserve': 'credit.reserved',
-  'credit.settle': 'credit.settled',
   'worker.run_start': 'worker.started',
   'worker.run_complete': 'worker.completed',
   'worker.run_fail': 'worker.failed',
+  // The credit ledger (ACBP-P5-014; CDR-058). Reserve and settle - the two durable money facts.
+  'credit.reserve': 'credit.reserved',
+  'credit.settle': 'credit.settled',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;

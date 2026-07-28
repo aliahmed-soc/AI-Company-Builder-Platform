@@ -1,20 +1,17 @@
 // ACBP-P5-014 — the credit ledger's arithmetic and rules, made executable (CDR-058; BILL-002; TASK-004; invariant 10).
 //
-// The balance is DERIVED, so the derivation is the thing that has to be right. Everything here is pure: no clock, no
-// database, no ordering assumptions — a ledger's sum must not depend on the order rows come back in.
+// The balance is DERIVED by a SQL sum, so what has to be right HERE is the SIGN CONVENTION that makes that sum mean
+// anything. Everything is pure: no clock, no database.
 import { describe, test, expect } from 'vitest';
 import {
   CREDIT_ENTRY_KINDS,
   isCreditEntryKind,
   CREDITS_PER_MANUAL_RUN,
   signedAmount,
-  deriveBalance,
   decideRunSettlement,
   canAfford,
   isCreditGrantKind,
 } from './credit.js';
-
-const entries = (...rows: Array<[string, number]>) => rows.map(([kind, credits]) => ({ kind, credits }));
 
 describe('entry kinds', () => {
   test('are exactly canon\'s five: grant · reservation · consumption · release · correction', () => {
@@ -65,35 +62,6 @@ describe('signedAmount — the sign convention IS the arithmetic', () => {
   test('an unrecognised KIND throws rather than defaulting to a sign', () => {
     // Defaulting either way is a guess about money. Both guesses are wrong: positive mints, negative burns.
     expect(() => signedAmount('bonus', 1)).toThrow();
-  });
-});
-
-describe('deriveBalance — there is no stored balance, so this is the only balance', () => {
-  test('sums a realistic ledger: grant, reserve, consume', () => {
-    expect(deriveBalance(entries(['grant', 10], ['reservation', 1], ['consumption', 1]))).toBe(8);
-  });
-
-  test('a reservation that was RELEASED costs nothing — the release cancels it exactly', () => {
-    // The charging rules turn on this: a provider-fault failure must leave the founder no worse off.
-    expect(deriveBalance(entries(['grant', 5], ['reservation', 1], ['release', 1]))).toBe(5);
-  });
-
-  test('an empty ledger is zero, not an error — a new account simply has no credits yet', () => {
-    expect(deriveBalance([])).toBe(0);
-  });
-
-  test('ORDER DOES NOT MATTER — a sum that depended on row order would be a different number per query', () => {
-    const rows = entries(['grant', 10], ['reservation', 2], ['release', 1], ['consumption', 1], ['correction', 3]);
-    const forwards = deriveBalance(rows);
-    expect(deriveBalance([...rows].reverse())).toBe(forwards);
-    expect(forwards).toBe(11);
-  });
-
-  test('a corrupt row makes the balance UNKNOWN — it never silently contributes zero', () => {
-    // FAIL CLOSED (CDR-058 G7). Skipping an unreadable row would produce a balance that looks fine and is wrong, and
-    // the founder would be charged against it. Refusing is the only honest answer.
-    expect(() => deriveBalance(entries(['grant', 10]).concat([{ kind: 'mystery', credits: 1 }]))).toThrow();
-    expect(() => deriveBalance([{ kind: 'grant', credits: Number.NaN }])).toThrow();
   });
 });
 

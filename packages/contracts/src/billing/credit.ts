@@ -3,9 +3,10 @@
 // come back in.
 //
 // THE BALANCE IS DERIVED. Canon is explicit — *"Balance is always derived"* (`USAGE-AND-BILLING §2`) — so there is no
-// stored total anywhere, and `deriveBalance` is not a convenience over one: it is the only balance there is. A cached
-// total would be a second source of truth, and the moment it disagreed with the ledger nobody could say which was
-// right.
+// stored total anywhere. A cached total would be a second source of truth, and the moment it disagreed with the ledger
+// nobody could say which was right. The derivation itself is a SQL `sum` in `CreditRepository`, not a function here:
+// a ledger grows without bound and only its sum is ever needed. What lives in this module is the SIGN CONVENTION that
+// makes that sum correct.
 import { validationError } from '../errors.js';
 
 /**
@@ -72,23 +73,11 @@ export function signedAmount(kind: unknown, credits: number): number {
   return isCreditGrantKind(kind) ? magnitude : -magnitude;
 }
 
-export interface CreditLedgerEntry {
-  readonly kind: string;
-  readonly credits: number;
-}
-
-/**
- * The account's balance: the sum of its ledger.
- *
- * TOTAL and FAIL-CLOSED (CDR-058 G7). A row it cannot read THROWS rather than contributing zero — skipping it would
- * produce a balance that looks perfectly ordinary and is wrong, and a founder would then be charged against it.
- * `COMPONENT-CATALOG` puts this the same way: *"metering failure blocks metered work (fail closed)"*.
- */
-export function deriveBalance(entries: readonly CreditLedgerEntry[]): number {
-  let total = 0;
-  for (const entry of entries) total += signedAmount(entry?.kind, entry?.credits);
-  return total;
-}
+// NO `deriveBalance` HERE, deliberately. An earlier version had one and it was both DEAD and WRONG: the repository
+// sums the SIGNED stored value, while the contract version expected unsigned magnitudes and applied the sign itself —
+// so the two disagreed on every spend row, and its fixtures used rows the sign CHECK makes impossible to insert. A
+// unit suite was validating a ledger that cannot exist, and nothing in production called it. The SQL sum in
+// `CreditRepository.deriveBalance` is the only balance there is.
 
 /** Can this balance cover this cost? Deny-by-default: anything unreadable on either side affords nothing. */
 export function canAfford(balance: unknown, cost: unknown): boolean {

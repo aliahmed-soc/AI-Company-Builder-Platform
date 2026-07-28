@@ -226,7 +226,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    const settled = await settleRun(product, { ...base(), taskRunId: runId, outcome: 'succeeded' });
+    const settled = await settleRun(product, { ...base(), taskRunId: runId });
     expect(settled).toMatchObject({ status: 'ok', settlement: 'consume', balanceAfter: 1 });
     expect((await rows()).map((x) => x.kind).sort()).toEqual(['consumption', 'grant', 'reservation']);
     expect((await auditRows()).find((a) => a.name === 'credit.settled')?.payload).toMatchObject({ settlement: 'consume', balance_after: 1 });
@@ -236,21 +236,21 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    expect(await settleRun(product, { ...base(), taskRunId: runId, outcome: 'failed' })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
+    expect(await settleRun(product, { ...base(), taskRunId: runId })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
   });
 
   test('a CANCELLED run releases too (MVP-generous, and canon says so)', async () => {
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    expect(await settleRun(product, { ...base(), taskRunId: runId, outcome: 'cancelled' })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
+    expect(await settleRun(product, { ...base(), taskRunId: runId })).toMatchObject({ status: 'ok', settlement: 'release', balanceAfter: 3 });
   });
 
   test('a RUNNING run cannot be settled — the reservation stays held', async () => {
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    expect(await settleRun(product, { ...base(), taskRunId: runId, outcome: 'running' })).toEqual({ status: 'not_settleable', outcome: 'running' });
+    expect(await settleRun(product, { ...base(), taskRunId: runId })).toEqual({ status: 'not_settleable' });
     expect((await rows()).filter((x) => x.kind === 'consumption' || x.kind === 'release')).toHaveLength(0);
   });
 
@@ -260,8 +260,8 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(3);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    await settleRun(product, { ...base(), taskRunId: runId, outcome: 'succeeded' });
-    const again = await settleRun(product, { ...base(), taskRunId: runId, outcome: 'failed' });
+    await settleRun(product, { ...base(), taskRunId: runId });
+    const again = await settleRun(product, { ...base(), taskRunId: runId });
     expect(again.status).toBe('already_settled');
     expect((await rows()).filter((x) => x.kind === 'release')).toHaveLength(0);
     const sum = (await rows()).reduce((acc, x) => acc + x.credits, 0);
@@ -270,7 +270,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
 
   test('settling a run that never reserved is refused rather than inventing a settlement', async () => {
     await grant(3);
-    expect(await settleRun(product, { ...base(), taskRunId: await runningRun(), outcome: 'succeeded' })).toEqual({ status: 'no_reservation' });
+    expect(await settleRun(product, { ...base(), taskRunId: await runningRun() })).toEqual({ status: 'no_reservation' });
   });
 
   // ── THE READ (CDR-058 §2 — the A/C widening) ──────────────────────────────────────────────────────────────
@@ -278,7 +278,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await grant(10);
     const runId = await runningRun();
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
-    const r = await readCreditLedger(product, { ...base() });
+    const r = await readCreditLedger(product, { userId: w.aOwner, accountId: w.accountA });
     expect(r).toMatchObject({ status: 'ok', balance: 9 });
     expect((r as { entries: readonly unknown[] }).entries).toHaveLength(2);
   });
@@ -287,12 +287,12 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     // The one place the A/C scoping widens what a row can show. RLS cannot prevent it (the predicate is the account,
     // by design), so `billing:read` is the control and it is owner-only.
     await grant(10);
-    expect(await readCreditLedger(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 })).toEqual({ status: 'forbidden' });
+    expect(await readCreditLedger(product, { userId: w.aViewer, accountId: w.accountA })).toEqual({ status: 'forbidden' });
   });
 
   test('another account sees none of it', async () => {
     await grant(10);
-    const other = await readCreditLedger(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1 });
+    const other = await readCreditLedger(product, { userId: w.bOwner, accountId: w.accountB });
     expect(other).toMatchObject({ status: 'ok', balance: 0 });
     expect((other as { entries: readonly unknown[] }).entries).toEqual([]);
   });

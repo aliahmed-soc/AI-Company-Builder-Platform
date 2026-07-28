@@ -12,8 +12,17 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { CREDIT_ENTRY_KINDS } from '@acbp/contracts';
+import { provisionPersonalAccount } from '../accounts/provisioning.js';
+import { createCompany } from '../company/company-service.js';
+import { pauseCompany } from '../company/company-lifecycle.js';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { CreditRepository, type DatabaseClient } from '@acbp/database';
+
+// The REAL seed ops. An earlier version passed {} as never, which the typechecker accepted and which made every
+// test in this file throw at seed time — 14/14 failed in hosted CI while the file stayed silently green locally,
+// because the suite is skipIf-gated and local PostgreSQL is unreachable. Casting a fixture to 'never' is a way of
+// telling the compiler to stop checking the thing most likely to be wrong.
+const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
 const INSUFFICIENT_PRIVILEGE = '42501';
 const CHECK_VIOLATION = '23514';
@@ -57,7 +66,7 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
   beforeEach(async () => {
     await truncateFixtures(owner);
     await sql`delete from credit_transactions`.execute(owner.kysely);
-    w = await seedTwoTenantWorld(owner, product, {} as never);
+    w = await seedTwoTenantWorld(owner, product, SEED_OPS);
   });
 
   // ── APPEND-ONLY, BY THE GRANTS ────────────────────────────────────────────────────────────────────────────
@@ -183,6 +192,58 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     await grant(w.accountB, 5);
     await sql`insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountB}, ${w.companyB1}, 'reservation', -1, 'key-1')`.execute(owner.kysely);
     expect((await rows()).filter((r) => r.idempotency_key === 'key-1')).toHaveLength(2);
+  });
+
+  // ── THE MINT ATTEMPTS (review pass 1) ─────────────────────────────────────────────────────────────────────
+  test('a RELEASE CANNOT EXCEED the reservation it references — the two-billion-credit mint', async () => {
+    // Review pass 1's concrete attack, as the app role: reserve 1 credit, then release 2147483647 against it. Every
+    // CHECK in the table passes (kind valid, sign valid, reference shape satisfied, one settlement). Only a trigger
+    // can see the OTHER row, which is why one exists — the migration makes minting structurally impossible for
+    // `grant` and `correction`, and leaving the release path bounded by application code alone contradicted that.
+    await grant(w.accountA, 5);
+    const res = await sql<{ id: string }>`
+      insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA1}, 'reservation', -1) returning id
+    `.execute(owner.kysely);
+    const rid = res.rows[0]?.id ?? '';
+    await expect(
+      sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'release', 2147483647, ${rid})`.execute(owner.kysely),
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+    // ...and the exact amount IS allowed, so the bound is a bound and not a blanket refusal.
+    await sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'release', 1, ${rid})`.execute(owner.kysely);
+    expect((await rows()).reduce((a, r) => a + r.credits, 0)).toBe(5);
+  });
+
+  test('a settlement must reference a RESERVATION, not a grant or another settlement', async () => {
+    // Nothing else was ever held, so nothing else can be released. Without this, releasing against a grant would
+    // hand back credits that were never taken.
+    await grant(w.accountA, 5);
+    const grantId = (await rows())[0]?.id ?? '';
+    await expect(
+      sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'release', 5, ${grantId})`.execute(owner.kysely),
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+  });
+
+  test('a settlement cannot reference ANOTHER account\'s reservation', async () => {
+    // Otherwise a release could return one account's credits into another's balance.
+    await grant(w.accountA, 5);
+    await grant(w.accountB, 5);
+    const res = await sql<{ id: string }>`
+      insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountB}, ${w.companyB1}, 'reservation', -1) returning id
+    `.execute(owner.kysely);
+    await expect(
+      sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, 'release', 1, ${res.rows[0]?.id ?? ''})`.execute(owner.kysely),
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+  });
+
+  test('ONE RESERVATION PER RUN is structural — an index, not just the account lock', async () => {
+    // Before this index the rule rested entirely on the application checking first, which is not the standard
+    // everything else in this table is held to. Asserting the index exists and is UNIQUE and PARTIAL is the check
+    // that survives someone rewriting the use case.
+    const r = await sql<{ def: string }>`select indexdef as def from pg_indexes where indexname = 'credit_transactions_run_reservation_uq'`.execute(owner.kysely);
+    const def = r.rows[0]?.def ?? '';
+    expect(def).toContain('UNIQUE');
+    expect(def).toContain('run_id');
+    expect(def).toContain("kind = 'reservation'");
   });
 
   // ── TENANCY ───────────────────────────────────────────────────────────────────────────────────────────────

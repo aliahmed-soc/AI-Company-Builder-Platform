@@ -78,18 +78,39 @@ export class CreditRepository {
         idempotency_key: input.idempotencyKey ?? null,
         created_by_user_id: input.createdByUserId ?? null,
       })
-      .onConflict((oc) => oc.doNothing())
+      // TARGETED at the three indexes that can legitimately refuse a well-formed entry — never a blanket swallow.
+      // `CLAUDE.md` forbids a blanket 23505→duplicate by name, and for a good reason here: a conflict this method did
+      // not anticipate would be silently reported to the caller as "already exists", which for money is the worst
+      // available lie. Anything else still raises.
+      .onConflict((oc) => oc.constraint('credit_transactions_reservation_key_uq').doNothing())
       .returningAll()
       .executeTakeFirst();
   }
 
-  findById(txnId: string): Promise<CreditTransactionRow | undefined> {
-    return this.#db.selectFrom('credit_transactions').selectAll().where('id', '=', txnId).executeTakeFirst();
-  }
-
-  /** The reservation for a run, if it has one. RLS confines this to the caller's account. */
+  /**
+   * The reservation for a run, if it has one. RLS confines this to the caller's account.
+   *
+   * `credit_transactions_run_reservation_uq` makes at most one possible, so there is no ordering question — before
+   * that index existed this read could have bound a settlement to an arbitrary one of several.
+   */
   findReservationForRun(runId: string): Promise<CreditTransactionRow | undefined> {
     return this.#db.selectFrom('credit_transactions').selectAll().where('run_id', '=', runId).where('kind', '=', 'reservation').executeTakeFirst();
+  }
+
+  /**
+   * The reservation an idempotency key already made — which may belong to a DIFFERENT run.
+   *
+   * Needed because the key index is per account, not per run: reusing one key across two runs is an ordinary client
+   * mistake, and it has to produce a typed refusal rather than an internal error (review pass 1).
+   */
+  findReservationByKey(accountId: string, idempotencyKey: string): Promise<CreditTransactionRow | undefined> {
+    return this.#db
+      .selectFrom('credit_transactions')
+      .selectAll()
+      .where('account_id', '=', accountId)
+      .where('idempotency_key', '=', idempotencyKey)
+      .where('kind', '=', 'reservation')
+      .executeTakeFirst();
   }
 
   /** Whether a reservation has already been settled — one consumption OR one release, never both. */

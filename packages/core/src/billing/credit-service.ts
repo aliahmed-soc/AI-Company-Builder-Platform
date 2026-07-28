@@ -6,10 +6,12 @@
 //
 // THE BALANCE IS DERIVED, ALWAYS. There is no counter to drift, no cache to invalidate, and no reconciliation between
 // two numbers that could disagree. `SUM(credits)` is the balance because the amounts are signed.
-import { CreditRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type CreditTransactionRow } from '@acbp/database';
-import { signedAmount, canAfford, decideRunSettlement, CREDITS_PER_MANUAL_RUN, creditReserved, creditSettled } from '@acbp/contracts';
+import { CreditRepository, TaskRunRepository, resolveOwnMembershipBootstrap, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type CreditTransactionRow } from '@acbp/database';
+import { signedAmount, canAfford, decideRunSettlement, CREDITS_PER_MANUAL_RUN, creditReserved, creditSettled, type RiskClass } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
+import { isMemberRole } from '../members/roles.js';
 import type { Logger } from '@acbp/observability';
 
 export interface CreditOptions {
@@ -38,9 +40,8 @@ function toDTO(row: CreditTransactionRow): CreditEntryDTO {
 
 // ── preflight ───────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface PreflightParams extends ScopeParams {
-  readonly taskRunId?: string;
-}
+/** No run id: a preflight is about the ACCOUNT's balance and the standing cost, not about one particular run. */
+export type PreflightParams = ScopeParams;
 
 export type PreflightResult =
   | {
@@ -48,8 +49,13 @@ export type PreflightResult =
       readonly balance: number;
       readonly cost: number;
       readonly affordable: boolean;
-      /** TASK-004 shows the side-effect class before the founder commits. The MVP has no external effects yet. */
-      readonly sideEffectClass: 'internal_only';
+      /**
+       * TASK-004 shows the side-effect class before the founder commits. A `RiskClass` from canon's CLOSED set — the
+       * first version invented `'internal_only'`, a fifth name outside it, which is the exact drift this repo already
+       * shipped one correction for. Constant for now because a run's tools are not bound until P5-006/007/008 make it
+       * derivable; CDR-058 §4 records that, and `informational` is the honest value while nothing external can happen.
+       */
+      readonly sideEffectClass: RiskClass;
     }
   | { readonly status: 'forbidden' };
 
@@ -68,7 +74,7 @@ export async function preflightRun(client: DatabaseClient, params: PreflightPara
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const balance = await new CreditRepository(scope.db).deriveBalance(scope.tenant.accountId);
       const cost = CREDITS_PER_MANUAL_RUN;
-      return { status: 'ok', balance, cost, affordable: canAfford(balance, cost), sideEffectClass: 'internal_only' };
+      return { status: 'ok', balance, cost, affordable: canAfford(balance, cost), sideEffectClass: 'informational' };
     },
     opts(options),
   );
@@ -150,7 +156,10 @@ export async function reserveCredit(client: DatabaseClient, params: ReserveCredi
       if (entry === undefined) {
         // The idempotency index fired: this key already reserved, in a transaction that committed while we waited for
         // the lock. The first reservation stands and the caller gets it — a retry must not become a second charge.
-        const byKey = await credits.findReservationForRun(params.taskRunId);
+        // BY KEY, not by run. Review pass 1: the first version re-queried by RUN, which under the lock is guaranteed
+        // to be the undefined we already saw — so an ordinary client mistake (one key reused across two runs)
+        // threw an internal error instead of returning a typed refusal, and lready_reserved was unreachable.
+        const byKey = await credits.findReservationByKey(scope.tenant.accountId, params.idempotencyKey.trim());
         if (byKey === undefined) throw new Error('credit reservation was refused but no prior reservation exists — invariant violated');
         return { status: 'already_reserved', entry: toDTO(byKey) };
       }
@@ -167,8 +176,6 @@ export async function reserveCredit(client: DatabaseClient, params: ReserveCredi
 
 export interface SettleRunParams extends ScopeParams {
   readonly taskRunId: string;
-  /** The run's terminal outcome. The charging rules read this and nothing else (`USAGE-AND-BILLING §4`). */
-  readonly outcome: string;
 }
 
 export type SettleRunResult =
@@ -182,6 +189,13 @@ export type SettleRunResult =
 
 /**
  * Consume or release a run's reservation, per canon's charging rules.
+ *
+ * THE OUTCOME IS READ FROM THE RUN, NEVER FROM THE CALLER. Review pass 1's finding: the first version took the
+ * outcome as a parameter, which meant anyone holding `run:execute` could settle a SUCCEEDED run as `cancelled`, get a
+ * release, and have the work for free — unlimited free execution, with a ledger showing a perfectly legible
+ * reserve/release pair. Every settlement test passed because the fixtures' runs were all still `running` and the
+ * assertion only ever exercised the string that was passed in. The run's own recorded state is the only thing that
+ * can decide what the founder is charged.
  *
  * GENEROUS BY CANON, not by choice: every failure and every cancellation RELEASES (`USAGE-AND-BILLING §4` —
  * *"counts against quality metrics, not the customer"*). Technical usage is still recorded on those paths; it is the
@@ -197,8 +211,12 @@ export async function settleRun(client: DatabaseClient, params: SettleRunParams,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<SettleRunResult> => {
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
-      const decision = decideRunSettlement(params.outcome);
-      if (decision.kind === 'hold') return { status: 'not_settleable', outcome: typeof params.outcome === 'string' ? params.outcome : 'unknown' };
+
+      // THE RUN DECIDES. RLS-confined, so another company's run reads as absent rather than as a settleable one.
+      const taskRun = await new TaskRunRepository(scope.db).findById(params.taskRunId);
+      if (taskRun === undefined) return { status: 'no_reservation' };
+      const decision = decideRunSettlement(taskRun.state);
+      if (decision.kind === 'hold') return { status: 'not_settleable', outcome: taskRun.state };
 
       const credits = new CreditRepository(scope.db);
       // Serialized with reservations for the same account, so a settlement cannot interleave with a reservation
@@ -216,7 +234,7 @@ export async function settleRun(client: DatabaseClient, params: SettleRunParams,
       const magnitude = Math.abs(reservation.credits);
       const entry = await credits.insert({
         accountId: scope.tenant.accountId,
-        companyId: scope.tenant.companyId,
+        companyId: reservation.company_id ?? scope.tenant.companyId,
         kind,
         credits: signedAmount(kind, magnitude),
         runId: params.taskRunId,
@@ -241,34 +259,48 @@ export async function settleRun(client: DatabaseClient, params: SettleRunParams,
 
 // ── the read ────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface ReadLedgerParams extends ScopeParams {
+export interface ReadLedgerParams {
+  readonly userId: string;
+  readonly accountId: string;
   readonly limit?: number;
 }
 
 export type ReadLedgerResult =
   | { readonly status: 'ok'; readonly balance: number; readonly entries: readonly CreditEntryDTO[] }
-  | { readonly status: 'forbidden' };
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'invalid_limit'; readonly max: number };
 
 const MAX_LEDGER_PAGE = 100;
 
 /**
  * The account's balance and recent ledger.
  *
- * ACCOUNT-OWNER ONLY (CDR-058 §2). This is the one place the A/C scoping actually widens what a row can show: the
- * ledger spans the account's companies, so a company-scoped operator reading it would learn what the account's OTHER
- * companies have been spending. `billing:read` is the control that prevents it — the RLS predicate cannot, because it
- * is keyed on the account by design.
+ * ACCOUNT-OWNER ONLY (CDR-058 §2), and it runs in an ACCOUNT scope for that exact reason. Review pass 1's HIGH
+ * finding: the first version ran in a COMPANY scope, so the role it checked was the caller's company-membership role,
+ * not their account-membership role. A user who was a company owner but only an account viewer would have been handed
+ * the whole account's ledger — every company's spending — which is precisely the disclosure this action exists to
+ * prevent. The RLS predicate cannot help here: it is keyed on the account by design, so the ledger legitimately spans
+ * companies and only the authorization decides. The fixtures made this untestable, because every seeded user's
+ * company role equals their account role.
+ *
+ * `resolveOwnMembershipBootstrap` is the established primitive for an account-level action (the `portfolio:read`
+ * precedent), and an unknown or absent role denies.
  */
 export async function readCreditLedger(client: DatabaseClient, params: ReadLedgerParams, options: CreditOptions = {}): Promise<ReadLedgerResult> {
-  const run = await runInCompanyScope(
+  const run = await runInAccountScope(
     client,
-    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
-    async (scope, role): Promise<ReadLedgerResult> => {
+    { userId: params.userId, requestedAccountId: params.accountId },
+    async (scope): Promise<ReadLedgerResult> => {
+      const own = await resolveOwnMembershipBootstrap(scope.db, params.userId, params.accountId);
+      const role = own !== null && isMemberRole(own.role) ? own.role : null;
       if (checkAuthorization(role, 'billing:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const credits = new CreditRepository(scope.db);
+      // REJECT, never clamp (the CDR-017 section 8 convention). Silently shrinking a caller's request makes the
+      // response disagree with what was asked for, and the caller cannot tell.
       const requested = params.limit ?? MAX_LEDGER_PAGE;
-      const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, MAX_LEDGER_PAGE) : MAX_LEDGER_PAGE;
-      const [balance, entries] = [await credits.deriveBalance(scope.tenant.accountId), await credits.listForAccount(scope.tenant.accountId, limit)];
+      if (!Number.isInteger(requested) || requested <= 0 || requested > MAX_LEDGER_PAGE) return { status: 'invalid_limit', max: MAX_LEDGER_PAGE };
+      const limit = requested;
+      const [balance, entries] = [await credits.deriveBalance(params.accountId), await credits.listForAccount(params.accountId, limit)];
       return { status: 'ok', balance, entries: entries.map(toDTO) };
     },
     opts(options),

@@ -18,6 +18,11 @@ const APP_ROLE = sql.ref('acbp_app');
 const CURRENT_ACCOUNT = sql`nullif(current_setting('app.current_account', true), '')`;
 
 export async function up(db: Kysely<unknown>): Promise<void> {
+  // A composite FK needs a unique constraint on the exact parent columns. `companies` is keyed on `id` alone, so
+  // `(id, account_id)` has to exist before anything can reference the pair. Additive and redundant for uniqueness —
+  // its only job is to be a legal FK target, which is what lets the reference carry the tenant with it.
+  await sql`alter table public.companies add constraint companies_id_account_uq unique (id, account_id)`.execute(db);
+
   await db.schema
     .createTable('credit_transactions')
     .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
@@ -37,7 +42,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('created_by_user_id', 'uuid')
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addForeignKeyConstraint('credit_transactions_account_fk', ['account_id'], 'accounts', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
-    .addForeignKeyConstraint('credit_transactions_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
+    // COMPOSITE, for the same reason the run FK is: RI checks always bypass RLS. A single-column company FK would let
+    // the app role write its own `account_id` beside a FOREIGN `company_id`, corrupting per-company attribution
+    // without ever tripping a policy. Review pass 1's finding — the run FK had this and the company FK did not.
+    .addForeignKeyConstraint('credit_transactions_company_fk', ['company_id', 'account_id'], 'companies', ['id', 'account_id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     // TENANT-PINNED composite: an entry can only reference a run in the company it is attributed to. RI checks always
     // bypass RLS, so a single-column FK would let it point at another company's run and never be policy-checked.
     .addForeignKeyConstraint('credit_transactions_run_fk', ['run_id', 'company_id'], 'task_runs', ['id', 'company_id'], (cb) => cb.onDelete('no action').onUpdate('no action'))
@@ -72,8 +80,52 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   // ONE SETTLEMENT PER RESERVATION (CDR-058 G8). Covering consumption AND release together is what stops a run being
   // consumed and then also released — which would mint a credit out of an ordinary retry.
   await sql`create unique index credit_transactions_settlement_uq on public.credit_transactions (references_txn_id) where kind in ('consumption', 'release')`.execute(db);
+  // ONE RESERVATION PER RUN, structurally. It rested entirely on the account lock before — everything else in this
+  // table is a constraint, and "the app happens to check first" is not the standard the rest of it is held to.
+  await sql`create unique index credit_transactions_run_reservation_uq on public.credit_transactions (run_id) where kind = 'reservation' and run_id is not null`.execute(db);
   // The balance read: every row for one account.
   await sql`create index credit_transactions_account_idx on public.credit_transactions (account_id, created_at)`.execute(db);
+
+  // ── THE SETTLEMENT BOUND (CDR-058 G8) ───────────────────────────────────────────────────────────────────────
+  //
+  // A CHECK cannot look at another row, so the half of G8 that says "a release cannot exceed the reservation it
+  // references" needed something that can. Without this, the app role could write
+  //   reservation(credits = -1), then release(credits = 2147483647) referencing it
+  // and pass every constraint in this table — two billion credits out of nothing, once per reservation. Review pass 1
+  // found exactly that. The migration goes to real lengths to make minting structurally impossible for `grant` and
+  // `correction`; leaving the release path bounded only by application code contradicted that.
+  //
+  // NOT SECURITY DEFINER — it runs as the invoker, so the referenced row is subject to the caller's own RLS policy.
+  // The closed SECURITY DEFINER allowlist stays at three.
+  await sql`
+    create or replace function public.acbp_check_credit_settlement() returns trigger
+    language plpgsql as $$
+    declare parent public.credit_transactions%rowtype;
+    begin
+      if new.kind not in ('consumption', 'release', 'correction') then return new; end if;
+      select * into parent from public.credit_transactions where id = new.references_txn_id;
+      if not found then
+        raise exception 'credit settlement references a transaction that does not exist' using errcode = '23514';
+      end if;
+      -- SAME ACCOUNT. Otherwise a settlement could return one account's credits into another's balance.
+      if parent.account_id <> new.account_id then
+        raise exception 'credit settlement must reference a transaction in the same account' using errcode = '23514';
+      end if;
+      if new.kind in ('consumption', 'release') then
+        -- A settlement settles a RESERVATION. Nothing else was ever held, so nothing else can be released.
+        if parent.kind <> 'reservation' then
+          raise exception 'a consumption or release must reference a reservation' using errcode = '23514';
+        end if;
+        -- THE BOUND: never give back more than was taken.
+        if abs(new.credits) > abs(parent.credits) then
+          raise exception 'a settlement cannot exceed the reservation it references' using errcode = '23514';
+        end if;
+      end if;
+      return new;
+    end;
+    $$
+  `.execute(db);
+  await sql`create trigger credit_transactions_settlement_bound before insert on public.credit_transactions for each row execute function public.acbp_check_credit_settlement()`.execute(db);
 
   // LEAST PRIVILEGE. SELECT + INSERT only — no UPDATE grant on any column, and no DELETE. There is no path by which
   // the app role can rewrite or remove a ledger row, which is what makes invariant 10 structural.
@@ -94,8 +146,12 @@ export async function down(db: Kysely<unknown>): Promise<void> {
   await sql`drop policy if exists credit_transactions_insert on public.credit_transactions`.execute(db);
   await sql`drop policy if exists credit_transactions_select on public.credit_transactions`.execute(db);
   await sql`revoke all on public.credit_transactions from ${APP_ROLE}`.execute(db);
+  await sql`drop trigger if exists credit_transactions_settlement_bound on public.credit_transactions`.execute(db);
+  await sql`drop function if exists public.acbp_check_credit_settlement()`.execute(db);
   await sql`drop index if exists public.credit_transactions_account_idx`.execute(db);
+  await sql`drop index if exists public.credit_transactions_run_reservation_uq`.execute(db);
   await sql`drop index if exists public.credit_transactions_settlement_uq`.execute(db);
   await sql`drop index if exists public.credit_transactions_reservation_key_uq`.execute(db);
   await db.schema.dropTable('credit_transactions').ifExists().execute();
+  await sql`alter table public.companies drop constraint if exists companies_id_account_uq`.execute(db);
 }

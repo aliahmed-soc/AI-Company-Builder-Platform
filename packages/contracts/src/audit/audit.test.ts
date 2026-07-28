@@ -110,13 +110,12 @@ describe('event-name registry (deny unregistered)', () => {
       'worker.state_changed',
       // Worker runs (ACBP-P5-005; CDR-057). EVENT-CATALOG names exactly these three for the worker runtime, with
       // `worker_run_id, worker_id+version, (failure_category)` — so these are canon's names, not new ones.
-      // The credit ledger (ACBP-P5-014; CDR-058; BILL-002). A reservation and its settlement are both durable money
-      // facts, so both are audited; the balance after is carried so a reader never has to re-derive it.
-      'credit.reserved',
-      'credit.settled',
       'worker.started',
       'worker.completed',
       'worker.failed',
+      // The credit ledger (ACBP-P5-014; CDR-058) - deliberate additions, NOT in EVENT-CATALOG.
+      'credit.reserved',
+      'credit.settled',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
