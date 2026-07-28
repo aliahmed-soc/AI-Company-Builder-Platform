@@ -69,8 +69,12 @@ describe.skipIf(!hasTestDatabase)('completeTask — "no artifactless completion"
   }
 
   async function completedAudits(): Promise<ReadonlyArray<Record<string, unknown>>> {
-    const r = await sql<{ metadata: Record<string, unknown> }>`select metadata from audit_events where event_name = 'task.completed'`.execute(owner.kysely);
-    return r.rows.map((x) => x.metadata);
+    // The columns are `payload` and `name` — NOT `metadata` and `event_name`. The first version of this helper used
+    // the latter pair and threw `column "metadata" does not exist` on every call, failing 10 of this file's 15 tests.
+    // Nothing caught it because the suite had never executed: `describe.skipIf(!hasTestDatabase)` drops the whole file
+    // without a database, and a skipped file reads exactly like a passing one in the summary line.
+    const r = await sql<{ payload: Record<string, unknown> }>`select payload from audit_events where name = 'task.completed'`.execute(owner.kysely);
+    return r.rows.map((x) => x.payload);
   }
 
   describe('the two shapes canon permits', () => {
@@ -146,7 +150,12 @@ describe.skipIf(!hasTestDatabase)('completeTask — "no artifactless completion"
 
     test('a run that has NOT succeeded refuses — a running attempt cannot complete its task', async () => {
       const task = (await sql<{ id: string }>`insert into tasks (account_id, company_id, state, title, created_by_user_id) values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'running', 'in flight', ${w.aOwner}::uuid) returning id`.execute(owner.kysely)).rows[0]!.id;
-      const run = (await sql<{ id: string }>`insert into task_runs (account_id, company_id, task_id, attempt) values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${task}::uuid, 1) returning id`.execute(owner.kysely)).rows[0]!.id;
+      // `state` IS SET EXPLICITLY. `task_runs.state` defaults to `queued` (migration 0035), so the original seed —
+      // which omitted it — created a QUEUED run while the test's name and assertion both said "running". It failed
+      // for the right reason (`run_not_succeeded`) on the wrong run state, which is a test that would have passed a
+      // reviewer's eye while never exercising the in-flight case it claims. Fixing the SEED rather than relaxing the
+      // assertion keeps the test testing what it says it tests.
+      const run = (await sql<{ id: string }>`insert into task_runs (account_id, company_id, task_id, attempt, state) values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${task}::uuid, 1, 'running') returning id`.execute(owner.kysely)).rows[0]!.id;
       expect(await completeTask(product, { ...base(), taskId: task, runId: run, evidence: { kind: 'no_artifact', rationale: 'x' } })).toMatchObject({ status: 'run_not_succeeded', runState: 'running' });
       expect(await taskState(task)).toBe('running');
     });
