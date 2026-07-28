@@ -867,6 +867,8 @@ export interface ToolCallsTable {
   company_id: ColumnType<string, string, never>;
   run_id: ColumnType<string, string, never>;
   tool_id: ColumnType<string, string, never>;
+  /** Which REGISTERED version was in force. NULL only when the tool was not registered at all. */
+  tool_version: ColumnType<number | null, number | null | undefined, never>;
   risk_class: ColumnType<string, string, never>;
   external_effect: ColumnType<boolean, boolean | undefined, never>;
   outcome: ColumnType<string, string | undefined, string>;

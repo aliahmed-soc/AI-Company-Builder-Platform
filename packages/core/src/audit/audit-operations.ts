@@ -254,7 +254,7 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'run.cancel':
       return (subjectId) => taskCancelled({ taskId: subjectId, runId: subjectId, phase: 'queued' });
     case 'tool.dispatch':
-      return (subjectId) => toolCallRequested({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', externalEffect: false });
+      return (subjectId) => toolCallRequested({ callId: subjectId, toolId: 'web_research', toolVersion: 1, riskClass: 'informational', externalEffect: false });
     case 'tool.complete':
       return (subjectId) => toolCallCompleted({ callId: subjectId, toolId: 'web_research', riskClass: 'informational', callOutcome: 'succeeded', hasReceipt: false });
     case 'tool.fail':

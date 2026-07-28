@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { type DatabaseClient } from '@acbp/database';
-import { TOOL_DENIAL_REASONS, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS } from '@acbp/contracts';
+import { TOOL_DENIAL_REASONS, TOOL_CALL_OUTCOMES, RISK_CLASSES, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -283,12 +283,39 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await callRows()).toHaveLength(1);
   });
 
-  test('the denial-reason CHECK and the contract vocabulary are the SAME set, in both directions', async () => {
-    const r = await sql<{ def: string }>`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'tool_calls_denial_reason_valid'`.execute(owner.kysely);
+  async function constraintDef(name: string): Promise<string> {
+    const r = await sql<{ def: string }>`select pg_get_constraintdef(oid) as def from pg_constraint where conname = ${name}`.execute(owner.kysely);
     const def = r.rows[0]?.def ?? '';
+    // A renamed or dropped constraint must FAIL here rather than silently compare an empty set.
     expect(def).not.toBe('');
-    const inCheck = [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1] ?? '').filter((v) => v !== 'denied').sort();
+    return def;
+  }
+  const literalsIn = (def: string): readonly string[] => [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1] ?? '').sort();
+
+  test('the denial-reason CHECK and the contract vocabulary are the SAME set, in both directions', async () => {
+    const inCheck = literalsIn(await constraintDef('tool_calls_denial_reason_valid')).filter((v) => v !== 'denied');
     expect(inCheck).toEqual([...TOOL_DENIAL_REASONS].sort());
+  });
+
+  test('the OUTCOME and RISK-CLASS CHECKs are set-equal to their contracts too (review pass 2)', async () => {
+    // Pass 1 shipped this guard for denial reasons only. One-directional drift on the other two is the same defect:
+    // a value the database permits and no contract code can reason about — and on `risk_class` that means a class
+    // that dispatches without a rank, which is precisely the P5-003a finding in a new place.
+    expect(literalsIn(await constraintDef('tool_calls_outcome_valid'))).toEqual([...TOOL_CALL_OUTCOMES].sort());
+    expect(literalsIn(await constraintDef('tool_calls_risk_class_valid'))).toEqual([...RISK_CLASSES].sort());
+  });
+
+  test('the call records WHICH REGISTERED VERSION was in force (review pass 2)', async () => {
+    // EVENT-CATALOG pairs `tool_id+version`. Without the version, a re-registration makes every earlier record
+    // ambiguous about which definition — and so which risk class — actually applied.
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('web_research', 2, 'informational', 'v2')`.execute(owner.kysely);
+    await dispatch();
+    expect((await callRows())[0]?.tool_version).toBe(2); // the ACTIVE, highest version
+    expect((await auditFor('tool.call_requested'))[0]?.payload).toMatchObject({ tool_version: 2 });
+
+    // An unregistered tool has no version to record, and null says exactly that.
+    await dispatch({ toolId: 'ghost_tool' });
+    expect((await callRows())[1]?.tool_version).toBeNull();
   });
 
   test('a denial reason cannot be attached to a non-denied call', async () => {

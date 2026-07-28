@@ -38,6 +38,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     // refusal is a tool that is not registered — an FK here would make the required record impossible to write. The
     // registry lookup is the dispatcher's job; this column records what was ASKED FOR, registered or not.
     .addColumn('tool_id', 'text', (col) => col.notNull())
+    // WHICH REGISTERED VERSION was in force (review pass 2). EVENT-CATALOG names `tool_id+version` on
+    // `tool.call_requested`, and without it a re-registration at v2 makes every past record ambiguous about which
+    // definition - and so which risk class - actually applied. NULL only when the tool was not registered at all.
+    .addColumn('tool_version', 'integer')
     // The class the gate actually applied, SNAPSHOT at dispatch. The registry can be re-classified afterwards, and a
     // record that re-read the registry would misreport which gate a past call passed through.
     .addColumn('risk_class', 'text', (col) => col.notNull())
@@ -67,6 +71,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       'tool_calls_denial_reason_valid',
       sql`denial_reason is null or (denial_reason in ('not_registered', 'no_allowlist', 'not_allowlisted', 'emergency_stopped', 'stop_unavailable', 'policy_denied', 'policy_unavailable', 'approval_invalid', 'approval_required') and outcome = 'denied')`,
     )
+    .addCheckConstraint('tool_calls_version_positive', sql`tool_version is null or tool_version >= 1`)
     .addCheckConstraint('tool_calls_digest_shape', sql`arguments_digest ~ '^[0-9a-f]{64}$'`)
     // TOOL-002's failure clause, made structural: an external effect cannot be reported as `succeeded` without a
     // receipt. The honest outcome for that case is `unconfirmed`, which this leaves available.

@@ -561,11 +561,13 @@ export function taskCancelled(input: { readonly taskId: string; readonly runId: 
 export function toolCallRequested(input: {
   readonly callId: string;
   readonly toolId: string;
+  /** Which registered version was in force. Null when the tool was not registered — canon pairs 	ool_id+version. */
+  readonly toolVersion: number | null;
   readonly riskClass: string;
   readonly externalEffect: boolean;
   readonly denialReason?: string;
 }): AuditEvent {
-  const base = { tool_id: input.toolId, risk_class: input.riskClass, external_effect: input.externalEffect };
+  const base = { tool_id: input.toolId, tool_version: input.toolVersion, risk_class: input.riskClass, external_effect: input.externalEffect };
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
     : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason });

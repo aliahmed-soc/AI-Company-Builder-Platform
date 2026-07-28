@@ -20,6 +20,8 @@ export interface NewToolCallInput {
   readonly companyId: string;
   readonly runId: string;
   readonly toolId: string;
+  /** The registry version in force, or null when the tool was not registered. */
+  readonly toolVersion?: number | null;
   /** The class the gate ACTUALLY applied, already resolved. Never re-read from the registry afterwards. */
   readonly riskClass: string;
   readonly externalEffect: boolean;
@@ -57,6 +59,7 @@ export class ToolCallRepository {
         company_id: input.companyId,
         run_id: input.runId,
         tool_id: input.toolId,
+        tool_version: input.toolVersion ?? null,
         risk_class: input.riskClass,
         external_effect: input.externalEffect,
         outcome: input.outcome,

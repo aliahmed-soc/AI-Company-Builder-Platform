@@ -27,14 +27,14 @@ import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
 
+/** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is `clear` and the others are not. */
+const CLEAR = (): StopAnswer => ({ kind: 'clear' });
+const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
+
 /**
  * The classes whose effects reach outside the platform. TOOL-002's receipt rule keys off THIS, not off class names in
  * a database CHECK, so the risk-class set can be re-shaped (CDR-051 §0.1 flags it as open) without a migration.
  */
-/** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is clear and the others are not. */
-const CLEAR = (): StopAnswer => ({ kind: 'clear' });
-const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
-
 const EXTERNAL_EFFECT_CLASSES: readonly RiskClass[] = ['external_reversible', 'external_irreversible'];
 
 /**
@@ -76,6 +76,7 @@ export interface ToolCallDTO {
   readonly id: string;
   readonly runId: string;
   readonly toolId: string;
+  readonly toolVersion: number | null;
   readonly riskClass: string;
   readonly externalEffect: boolean;
   readonly outcome: string;
@@ -88,6 +89,7 @@ function toDTO(row: ToolCallRow): ToolCallDTO {
     id: row.id,
     runId: row.run_id,
     toolId: row.tool_id,
+    toolVersion: row.tool_version,
     riskClass: row.risk_class,
     externalEffect: row.external_effect,
     outcome: row.outcome,
@@ -154,7 +156,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // refuses; `risk_class` may be null, which resolves to the most restrictive class (TOOL-001).
       const definition = await scope.db
         .selectFrom('tool_definitions')
-        .select(['risk_class'])
+        .select(['risk_class', 'version'])
         .where('tool_id', '=', params.toolId)
         .where('status', '=', 'active')
         .orderBy('version', 'desc')
@@ -176,6 +178,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         companyId: scope.tenant.companyId,
         runId: params.runId,
         toolId: params.toolId,
+        toolVersion: definition?.version ?? null,
         riskClass: decision.riskClass,
         externalEffect,
         outcome: decision.kind === 'denied' ? 'denied' : 'requested',
@@ -281,7 +284,7 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
 // ── audit events (the factories live in @acbp/contracts, so the registry types them) ─────────────────────────
 
 function requestedEvent(row: ToolCallRow, denialReason: string | null) {
-  const base = { callId: row.id, toolId: row.tool_id, riskClass: row.risk_class, externalEffect: row.external_effect };
+  const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect };
   return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason });
 }
 
