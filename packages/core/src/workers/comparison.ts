@@ -35,6 +35,8 @@ import type { Logger } from '@acbp/observability';
 
 /** Bound on the understanding text handed to one prompt. */
 const UNDERSTANDING_PROMPT_MAX = 12_000;
+/** Well inside the database's 500-character `artifacts_title_present` bound — a title is a label, not a summary. */
+const ARTIFACT_TITLE_MAX = 200;
 
 export interface StrategyWorkerDeps {
   readonly gateway: ResearchModelGateway;
@@ -123,6 +125,12 @@ export async function runStrategyComparison(client: DatabaseClient, params: RunC
   // information into the founder's library alongside their actual work product.
   if (outcome.kind === 'insufficient_input') return { status: 'needs_input', missing: outcome.missing };
 
+  // TRIMMED BEFORE SLICING, and computed once. Review pass 2: `question.slice(0, 200)` on a question whose first 200
+  // characters are whitespace produces a blank title, which passes this function's own non-blank check (the question
+  // has content further along) and then violates the database's `artifacts_title_present` CHECK — surfacing as a raw
+  // constraint error where every other outcome here is a typed result. It was also computed twice, once for the title
+  // and once for the heading, which is two chances for them to drift apart.
+  const title = params.question.trim().slice(0, ARTIFACT_TITLE_MAX);
   const persisted = await persistArtifact(
     client,
     deps.storage,
@@ -134,9 +142,9 @@ export async function runStrategyComparison(client: DatabaseClient, params: RunC
       workerId: 'strategy',
       workerVersion: params.workerVersion,
       modelVersion: params.modelVersion,
-      title: params.question.slice(0, 200),
+      title,
       format: 'markdown',
-      content: renderComparisonMarkdown(params.question.slice(0, 200), outcome.models),
+      content: renderComparisonMarkdown(title, outcome.models),
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
