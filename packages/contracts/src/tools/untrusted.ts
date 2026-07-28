@@ -18,12 +18,20 @@ export function isContentTrust(value: unknown): value is ContentTrust {
 }
 
 /**
- * The classes canon treats as trustworthy INPUT. Everything else — including anything unrecognised — is untrusted.
+ * The ONLY class treated as trustworthy input. Everything else — including anything unrecognised — is untrusted.
  *
- * `semi_trusted_generated` is on the untrusted side on purpose: canon says generated documents are "never auto-promoted
- * to fact", and a model's own earlier output is exactly the channel a successful injection would use to persist.
+ * `tool_output` IS NOT HERE, and that is the whole point (review pass 2). An earlier version listed it, which opened a
+ * laundering path: a `web_research` tool fetches a page, its output goes into the context labelled `tool_output`, the
+ * label reads as trusted, and the injected instructions are back inside the boundary they were supposed to be outside
+ * of. Canon never called tool output trusted — `AI-AND-WORKER-ARCHITECTURE §4` says **"per-tool class"**, meaning the
+ * TOOL decides, and a web-fetching tool's output is external content wearing a different hat. Until a per-tool trust
+ * mapping exists (it needs the worker/tool registry of P5-004), the safe reading of "per-tool" is "not automatically
+ * trusted".
+ *
+ * `semi_trusted_generated` is likewise out: canon says generated documents are "never auto-promoted to fact", and a
+ * model's own earlier output is exactly the channel a successful injection would use to persist across steps.
  */
-const TRUSTED_INPUT: readonly string[] = ['trusted_user_input', 'tool_output'];
+const TRUSTED_INPUT: readonly string[] = ['trusted_user_input'];
 
 /**
  * Is this trust label untrusted? **Unknown counts as untrusted**, which is the whole point: defaulting an
