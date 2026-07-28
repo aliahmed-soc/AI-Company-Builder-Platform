@@ -9,6 +9,22 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-004 worker definitions registry — CORE DONE / IN REVIEW (window 12).**
+  Branch `p5-004-worker-definitions` (from main `83477a5`), draft PR **#58**, CDR-056, migration **0038**.
+  **This closes the allowlist gap** CDR-054 and CDR-055 both deferred: the dispatcher's tool allowlist now comes from a
+  VERSIONED DEFINITION rather than from whoever called it, which is what trust-critical #4 says. Two tables — global
+  `worker_definitions` (SELECT-only, canon's eleven fields) and tenant `company_worker_states` (WORK-006's
+  per-company pause, keyed WITHOUT a version so registering v2 cannot silently un-pause).
+  **Both review passes FAILED.** Pass 1: CDR-056 claimed the MVP zero-external-actions boundary was enforced
+  STRUCTURALLY and nothing called the check — a definition allowlisting an external tool would have resolved cleanly.
+  It is now enforced at RESOLUTION (a violating definition may exist and can never be USED). Pass 2: WORK-006's
+  "disable during execution triggers safe-stop" is unmet and was SILENT — it needs P5-005 to stamp a worker onto a
+  run first, now recorded in CDR-056 §6; and WORK-001's listing acceptance was unproven.
+  **IOQ-12 budgets are INTERIM and not owner-ratified** (CDR-056 §3) — no telemetry exists to derive them from.
+
+- **ACBP-P5-003c injection boundary — DONE** (squash `83477a5`, PR #57, exact-main CI green zero-skip 2294/2294).
+  **ACBP-P5-003 is complete** (a `5381389` + b `c9c4a5e` + c `83477a5`). Migrations end **0037** on main.
+
 - **ACBP-P5-003c injection boundary — CORE DONE / IN REVIEW (window 12).**
   Branch `p5-003c-injection-boundary` (from main `c9c4a5e`), draft PR **#57**, CDR-055, migration **0037** (ALTER-only).
   **The boundary is PROVENANCE, not detection.** While any untrusted item is in the working context the dispatcher's
