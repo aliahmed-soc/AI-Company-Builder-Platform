@@ -9,6 +9,22 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-003c injection boundary — CORE DONE / IN REVIEW (window 12).**
+  Branch `p5-003c-injection-boundary` (from main `c9c4a5e`), draft PR **#57**, CDR-055, migration **0037** (ALTER-only).
+  **The boundary is PROVENANCE, not detection.** While any untrusted item is in the working context the dispatcher's
+  informational waiver is withdrawn, so every tool call is refused with `untrusted_context`. That makes NFR-021's
+  *"zero unauthorized tool executions"* structural: three of the nine corpus entries match no detector signal and are
+  refused anyway. The corpus runs against a real database and asserts on the `tool_calls` TABLE, with a control test
+  proving the same call on the trusted path IS authorized.
+  **Both review passes FAILED.** Pass 1: `context` was optional, so a forgotten context defaulted to the trusted
+  path; and the detector shipped uncalled. Pass 2 found a COMPLETE BYPASS — `tool_output` was classified as trusted,
+  so a web-fetching tool's output re-entering the context would have laundered injected instructions straight back
+  inside. Canon says *"per-tool class"*, never trusted. Ledger `docs/implementation/P5-003c-REVIEW.md`.
+  **ACBP-P5-003 is complete** (a + b + c).
+
+- **ACBP-P5-003b tool dispatcher chokepoint — DONE** (squash `c9c4a5e`, PR #56, exact-main CI green zero-skip
+  2265/2265). Migrations end **0036** on main.
+
 - **ACBP-P5-003b tool dispatcher chokepoint — CORE DONE / IN REVIEW (window 12).**
   Branch `p5-003b-dispatcher-chokepoint` (from main `f3452fc`), draft PR **#56**, CDR-054. Migration **0036**
   `tool_calls`. THE enforcement chokepoint: one exported `dispatchToolCall`, and nothing else executes a tool.

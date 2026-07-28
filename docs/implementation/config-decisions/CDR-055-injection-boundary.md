@@ -61,3 +61,26 @@ Detection then serves the second half of the requirement (quarantine and flaggin
 3. Dispatcher integration: withdraw the waiver under untrusted provenance; migration for the new denial value.
 4. The injection corpus, driven through the real dispatcher against real PostgreSQL.
 5. Docs + **TWO** independent review passes + finalization.
+
+## 5. Review outcomes (both passes FAILED; see `docs/implementation/P5-003c-REVIEW.md`)
+
+- **G7 — the context parameter is REQUIRED.** Optional, a FORGOTTEN context defaulted to the trusted path, and this
+  is the one input where being wrong means untrusted content reached a tool. A caller with genuinely no context passes
+  `[]` — a decision rather than an omission that looks identical to one.
+- **G8 — detection runs on the LIVE path and records its signals.** It still decides nothing, but a refusal that names
+  which signals matched is the difference between a log line and something a human can act on — NFR-021's second half.
+  Signals only, never content; the key is ABSENT rather than empty when nothing matched, because `''` would have to
+  be read as either "none matched" or "not checked".
+- **G9 — TOOL OUTPUT IS NOT TRUSTED.** The pass-2 finding, and a complete bypass: a web-fetching tool's output
+  re-entering the context as `tool_output` would have read as trusted and put the injected instructions back inside
+  the boundary. Canon says **"per-tool class"** — the tool decides — and a per-tool mapping needs P5-004's registry, so
+  until then the only safe reading is *not automatically trusted*. `TRUSTED_INPUT` is exactly
+  `['trusted_user_input']`.
+
+### A deliberate deviation: this module is STRICTER than canon's table
+
+Canon attaches heightened scrutiny only to *"External web content"*. Here **every** class except
+`trusted_user_input` withdraws the waiver — including `tool_output` and `semi_trusted_generated`. That is a
+conscious over-restriction in the safe direction while no per-tool trust mapping exists, and it costs nothing today
+because nothing in the platform fetches external content yet. Recorded here so a future reader sees a decision rather
+than a bug, and so P5-004 knows it inherits the question.
