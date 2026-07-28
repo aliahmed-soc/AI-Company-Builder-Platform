@@ -118,12 +118,26 @@ describe.skipIf(!hasTestDatabase)('the research worker (real PostgreSQL) — ACB
       expect(markdown).toContain('No public dataset splits the segment this way.');
     });
 
-    test('the prompt carries the sources as UNTRUSTED data, labelled as such', async () => {
+    test('retrieved bytes reach the USER role only — never the system prompt (NFR-021, invariant 17)', async () => {
+      // THE property, not the label. Review pass 1: the previous version of this test asserted the block's wording,
+      // which a template edit could keep while moving the slot into the system segment — the one change that would
+      // actually matter. What makes instructions inert is position: fetched text sits in a user message the model was
+      // told to summarise, never in the segment carrying its instructions.
+      // A NEUTRAL marker on purpose: an injection-flavoured one would be caught by the screen and the run would never
+      // reach the gateway, so the test would pass without proving anything about placement.
+      const marker = 'DISTINCTIVE-PAGE-BODY-MARKER-7f3a the market is described here';
+      fetcher.seed(QUESTION, [{ ...SOURCE_A, content: marker }]);
       const gateway = gatewayReturning(document([claimFrom(SOURCE_A, 'A claim.')]));
       await runResearch(product, params(), { gateway: gateway.fn, fetcher, storage });
-      const prompt = gateway.calls[0]?.contextParts.map((p) => p.content).join('\n') ?? '';
-      expect(prompt).toContain('untrusted source material');
-      expect(prompt).toContain(SOURCE_A.url);
+
+      const parts = gateway.calls[0]?.contextParts ?? [];
+      expect(parts.length).toBeGreaterThan(0);
+      const systemText = parts.filter((p) => p.role === 'system').map((p) => p.content).join('\n');
+      const userText = parts.filter((p) => p.role !== 'system').map((p) => p.content).join('\n');
+      expect(systemText).not.toContain(marker);
+      expect(userText).toContain(marker);
+      expect(userText).toContain('untrusted source material');
+      expect(userText).toContain(SOURCE_A.url);
     });
   });
 
