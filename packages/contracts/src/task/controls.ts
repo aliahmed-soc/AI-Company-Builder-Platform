@@ -11,6 +11,7 @@
 // exercised" while recording the observed detail controls as Delete, Repeat and (for Todo) Run now. Building it would
 // mean inventing a state transition and a user-facing control from one word in a summary field.
 import { isTaskState, type TaskDTO, type TaskState } from './task.js';
+import type { RunFailureDetail } from '../runs/failure-detail.js';
 
 /** The controls this ticket defines. `run_now` is TASK-004 (needs the credit preflight) and is NOT here. */
 export const TASK_CONTROLS = ['repeat', 'delete'] as const;
@@ -93,6 +94,13 @@ export interface TaskDetailDTO extends TaskDTO {
   readonly repeatedFromTaskId: string | null;
   /** Every control's verdict for this state, with a reason whenever one is unavailable. Total over TASK_CONTROLS. */
   readonly controls: readonly ControlVerdict[];
+  /**
+   * The latest failed run's complete detail, or `null` when this task has not failed (ACBP-P5-013; TASK-006).
+   *
+   * `null` says "this has not failed". An empty object would render as a failure with every field blank, which is
+   * precisely what TASK-006's *"no blank failures"* forbids — so the two states are distinguishable by construction.
+   */
+  readonly latestFailure: RunFailureDetail | null;
 }
 
 /**
@@ -103,6 +111,23 @@ export interface TaskDetailDTO extends TaskDTO {
  * The extra fields are taken as an explicit second argument rather than spread from a wider row, so adding a column
  * to `tasks` can never silently widen what the detail view exposes.
  */
-export function buildTaskDetail(task: TaskDTO, extra: { readonly rationale: string | null; readonly repeatedFromTaskId: string | null }): TaskDetailDTO {
-  return { ...task, rationale: extra.rationale, repeatedFromTaskId: extra.repeatedFromTaskId, controls: controlAvailability(task.state) };
+export function buildTaskDetail(
+  task: TaskDTO,
+  extra: {
+    readonly rationale: string | null;
+    readonly repeatedFromTaskId: string | null;
+    /**
+     * REQUIRED, not optional (ACBP-P5-013). A field that defaults quietly is a field nobody decided about, which is
+     * the same reasoning that made the other extras explicit. TypeScript asks every call site the question.
+     */
+    readonly latestFailure: RunFailureDetail | null;
+  },
+): TaskDetailDTO {
+  return {
+    ...task,
+    rationale: extra.rationale,
+    repeatedFromTaskId: extra.repeatedFromTaskId,
+    controls: controlAvailability(task.state),
+    latestFailure: extra.latestFailure,
+  };
 }

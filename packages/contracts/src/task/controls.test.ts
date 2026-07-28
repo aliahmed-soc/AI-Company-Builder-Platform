@@ -1,5 +1,6 @@
 // @acbp/contracts — task control-availability tests (ACBP-P4-005; CDR-043; TASK-002/TASK-008).
 import { describe, test, expect } from 'vitest';
+import { describeRunFailure } from '../runs/failure-detail.js';
 import { TASK_STATES } from './task.js';
 import { TASK_CONTROLS, isTaskControl, controlAvailability, availableControls, buildTaskDetail } from './controls.js';
 
@@ -113,7 +114,7 @@ describe('buildTaskDetail (CDR-043 §4-G7/G8 — TASK-002 detail view)', () => {
   test('MISSING FIELDS STAY MISSING — nothing is defaulted into existence (TASK-002 failure clause)', () => {
     // The whole failure clause is "missing fields render explicitly as missing". A placeholder here would be the
     // difference between "no type was stated" and "the type is general" — the fabrication ADR-019 forbids.
-    const d = buildTaskDetail(base, { rationale: null, repeatedFromTaskId: null });
+    const d = buildTaskDetail(base, { rationale: null, repeatedFromTaskId: null, latestFailure: null });
     expect(d.taskType).toBeNull();
     expect(d.description).toBeNull();
     expect(d.milestoneId).toBeNull();
@@ -123,7 +124,7 @@ describe('buildTaskDetail (CDR-043 §4-G7/G8 — TASK-002 detail view)', () => {
   });
 
   test('carries the fields TASK-002 names — type, creation time, structured description', () => {
-    const d = buildTaskDetail({ ...base, taskType: 'market_research', description: 'Talk to five people.' }, { rationale: 'Fastest way to learn.', repeatedFromTaskId: 't_0' });
+    const d = buildTaskDetail({ ...base, taskType: 'market_research', description: 'Talk to five people.' }, { rationale: 'Fastest way to learn.', repeatedFromTaskId: 't_0', latestFailure: null });
     expect(d.taskType).toBe('market_research');
     expect(d.createdAt).toBe('2026-07-01T00:00:00.000Z');
     expect(d.description).toBe('Talk to five people.');
@@ -135,15 +136,41 @@ describe('buildTaskDetail (CDR-043 §4-G7/G8 — TASK-002 detail view)', () => {
     // Derived, never stored: a stored availability set goes stale the moment the task changes state, which is
     // precisely when the owner is most likely to be looking at it.
     for (const state of TASK_STATES) {
-      const d = buildTaskDetail({ ...base, state }, { rationale: null, repeatedFromTaskId: null });
+      const d = buildTaskDetail({ ...base, state }, { rationale: null, repeatedFromTaskId: null, latestFailure: null });
       expect(d.controls).toEqual(controlAvailability(state));
     }
   });
 
   test('a running task’s detail explains why delete is unavailable rather than omitting the control', () => {
-    const d = buildTaskDetail({ ...base, state: 'running' }, { rationale: null, repeatedFromTaskId: null });
+    const d = buildTaskDetail({ ...base, state: 'running' }, { rationale: null, repeatedFromTaskId: null, latestFailure: null });
     const del = d.controls.find((c) => c.control === 'delete');
     expect(del).toEqual({ control: 'delete', available: false, reason: 'cancel_first' });
     expect(d.controls).toHaveLength(TASK_CONTROLS.length);
+  });
+});
+
+describe('the detail carries the LATEST FAILURE (ACBP-P5-013; TASK-006)', () => {
+  const base = { rationale: null, repeatedFromTaskId: null, latestFailure: null } as const;
+  const task = { taskId: 't1', state: 'failed' } as unknown as Parameters<typeof buildTaskDetail>[0];
+
+  test('a failed task shows category, summary, attempts and retry safety', () => {
+    // TASK-006's acceptance verbatim: "Every failure shows category/summary/attempts/retry-safety". The detail view
+    // is where a founder actually looks, so this is where it has to appear.
+    const detail = buildTaskDetail(task, { ...base, latestFailure: describeRunFailure({ state: 'failed', failureCategory: 'timeout', attempt: 2 }) });
+    expect(detail.latestFailure).toMatchObject({ category: 'timeout', attemptsUsed: 2, retrySafety: 'safe' });
+    expect(detail.latestFailure?.summary.length).toBeGreaterThan(10);
+  });
+
+  test('a task with no failed run has latestFailure NULL - not an empty object', () => {
+    // Null says "this has not failed". An empty object would render as a failure with every field blank, which is
+    // the exact thing TASK-006 forbids.
+    const detail = buildTaskDetail(task, { ...base, latestFailure: null });
+    expect(detail.latestFailure).toBeNull();
+  });
+
+  test('the field is REQUIRED in the extras, so a caller cannot forget to consider it', () => {
+    // Same reasoning P4-005 gave for passing extras explicitly: a field that defaults quietly is a field nobody
+    // decided about. TypeScript enforces this at every call site.
+    expect(Object.prototype.hasOwnProperty.call(buildTaskDetail(task, { ...base, latestFailure: null }), 'latestFailure')).toBe(true);
   });
 });

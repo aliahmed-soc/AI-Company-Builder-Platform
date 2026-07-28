@@ -350,4 +350,49 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
   async function stateOf(id: string): Promise<string | undefined> {
     return (await sql<{ state: string }>`select state from tasks where id = ${id}::uuid`.execute(owner.kysely)).rows[0]?.state;
   }
+
+  // ── FAILURE DETAIL (ACBP-P5-013; TASK-006 "no blank failures") ────────────────────────────────────────────
+  describe('the detail carries the latest run failure', () => {
+    /** A run for this task, ended in the given state as the OWNER role. */
+    async function runEndedAs(taskId: string, state: string, category: string | null, attempt = 1): Promise<void> {
+      await sql`
+        insert into task_runs (account_id, company_id, task_id, attempt, state, failure_category, started_at, ended_at)
+        values (${w.accountA}, ${w.companyA1}, ${taskId}::uuid, ${attempt}, ${state}, ${category}, now(), now())
+      `.execute(owner.kysely);
+    }
+
+    test('a FAILED run renders a COMPLETE detail — category, summary, attempts, retry safety', async () => {
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', 'timeout', 2);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      expect(failure).toMatchObject({ category: 'timeout', attemptsUsed: 2, retrySafety: 'safe', nextAttempt: 'scheduled' });
+      expect((failure?.summary ?? '').length).toBeGreaterThan(10);
+    });
+
+    test('A FAILED RUN WITH NO RECORDED CATEGORY IS unknown, NOT BLANK — the whole point of TASK-006', async () => {
+      // The row a crash between the transition and the category write leaves behind. It is reachable in production,
+      // so it is reachable here: written directly, because no use case would produce it deliberately.
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', null);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('unknown');
+      expect(failure?.summary ?? '').not.toBe('');
+    });
+
+    test('a task whose LATEST run succeeded has NO failure detail, even if an earlier one failed', async () => {
+      // Showing the old failure would answer "what is wrong with this task" with something that is no longer true.
+      const taskId = await taskInState('completed');
+      await runEndedAs(taskId, 'failed', 'provider_error', 1);
+      await runEndedAs(taskId, 'succeeded', null, 2);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
+    });
+
+    test('a task with no runs at all has no failure detail', async () => {
+      const r = await getTaskDetail(product, { ...base(), taskId: await taskInState('draft') });
+      expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
+    });
+  });
 });
