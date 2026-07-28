@@ -1229,3 +1229,163 @@ before `p5-011` to keep migration numbers ascending.
 
 Not starting P5-012, P5-015 or any new ticket. Not opening PRs. Not changing `ci.yml`. Not merging anything. Not
 building anything further on unverified work. **Waiting for the owner.**
+
+## SECURITY LAPSE — a trust-all PostgreSQL config, added by an earlier window (found 2026-07-29 ~00:00 +03:00)
+
+**Record this as a lapse, not a footnote.** While fixing local connectivity I found the dedicated `acbp-local-dev`
+WSL PostgreSQL configured with BOTH of the following at once:
+
+```
+listen_addresses = '*'                                  # postgresql.conf
+host  all  all  0.0.0.0/0  trust   # ACBP_TEST_TRUST     # FIRST rule in pg_hba.conf
+```
+
+First-match-wins in `pg_hba.conf`, so that rule was the effective policy: **any user, any database, from any IP
+address, with no password** — including `postgres` superuser. This machine holds a PUBLIC IP (`149.56.109.100`)
+alongside its LAN addresses.
+
+**How it got there.** The `# ACBP_TEST_TRUST` marker is not from the repo's own provisioning: `tools/local/db.ps1`
+and `tools/local/provision.sh` generate a random password, write it to git-ignored `.env.local`, and never touch
+`pg_hba.conf`. An earlier autonomous window almost certainly added it to force a connection through after the
+port had drifted from 5432 to 5433 and the repo tooling reported "no response". That is the failure mode to
+remember: **the connection was broken for a mundane reason (wrong port), and the response was to disable
+authentication globally rather than find the reason.**
+
+**Mitigating facts, stated so the record is accurate and not alarmist.** WSL2 places the distro behind NAT on a
+virtual adapter, so the port was not directly addressable from the LAN without an explicit Windows portproxy or
+firewall rule, and I confirmed neither existed. The realistic exposure was every process on this machine and every
+other WSL distro — including `docker-desktop` and `OpenClawGateway`. That is still unacceptable, and it is not what
+the configuration *said*: the configuration said "anyone, anywhere, no password."
+
+**It also hid a second defect.** With `trust` matching first, the password in `.env.local` was never checked — and it
+did not actually match the role. Removing trust surfaced `password authentication failed for user "acbp_dev"`
+immediately. A permissive auth rule does not only widen access; it conceals the breakage that would otherwise force
+someone to look.
+
+**Removed, not narrowed.** The rule is deleted outright — there is no trust auth at any scope now. The repo already
+provisions a password, and CI itself authenticates with one, so trust was never needed. `listen_addresses` is back to
+`'localhost'` and the port back to `5432`.
+
+**Verified after the fix, with positive controls on both sides of the negatives** (my first attempt at this
+verification was worthless — it ran while the WSL VM was idle-stopped, so "unreachable" proved nothing):
+
+| Check | Result |
+| --- | --- |
+| Bind address inside WSL (`ss -lntp`) | `127.0.0.1:5432` only |
+| Windows listening sockets on 5432 | none — WSL's localhost relay, not a real socket |
+| `netsh interface portproxy show all` | no entries |
+| Firewall rules matching postgres/5432 | none |
+| Reachability from `172.27.144.1`, `172.18.48.1`, `192.168.100.2`, `192.168.100.30`, `149.56.109.100` | **all refused** |
+| Reachability from `127.0.0.1` (control, run before AND after the negatives) | succeeds |
+
+**For a future window: do not repeat this.** If the database is unreachable, the cause is a port, a stopped distro,
+or a wrong credential — never a reason to widen `pg_hba.conf`. Widening authentication to make a test pass is the
+same class of error as deleting an assertion to make a suite green.
+
+---
+
+## LOCAL VERIFICATION — full damage report across the stack (2026-07-29 01:45 +03:00)
+
+**Every number below is LOCALLY VERIFIED, NOT CI-PROVEN.** Nothing merged, nothing marked Done, nothing fixed.
+
+Method, per branch: a freshly created `acbp_verify_<uuid>` database, dropped in a `finally`; migrations from zero;
+`vitest run --no-file-parallelism` (serial); no retries; a pre-flight that refuses to start if any other database
+still grants privileges to the cluster-wide `acbp_app` role. **Zero skips on every branch** — the real-PG suites
+genuinely executed for the first time.
+
+### Per-branch results
+
+| Branch | Test files | Tests | Failed | Skipped |
+| --- | --- | --- | --- | --- |
+| `p5-014-credit-ledger` | 4 failed / 187 passed (191) | 2451 | **20** | 0 |
+| `p5-013-failure-detail` | 1 failed / 188 passed (189) | 2419 | **1** | 0 |
+| `p5-011-artifact-storage` | 1 failed / 194 passed (195) | 2477 | **10** | 0 |
+| `p5-006-research-worker` | 1 failed / 196 passed (197) | 2516 | **10** | 0 |
+| `p5-007-strategy-worker` | 1 failed / 199 passed (200) | 2553 | **10** | 0 |
+| `p5-008-document-worker` | 1 failed / 201 passed (202) | 2586 | **10** | 0 |
+
+### The six distinct defects
+
+**D1 — `ON CONFLICT ON CONSTRAINT` naming an INDEX, not a constraint. (p5-014)**
+`reserveCredit` (`credit-service.ts:120`) uses `ON CONFLICT ON CONSTRAINT credit_transactions_reservation_key_uq`,
+but migration 0041 creates that idempotency guard as a **partial unique index**. PostgreSQL's
+`ON CONFLICT ON CONSTRAINT` accepts only real constraints, so every reservation raises `42704`. A partial unique
+index can only be targeted by its column list plus its `WHERE` clause. **Every P5-014 reservation path fails at
+runtime.** Accounts for 13 credit-service failures and part of the credit-ledger ones.
+
+**D2 — the closed `acbp_` function allowlist was not updated. (p5-014)**
+Migration 0041 adds `public.acbp_check_credit_settlement()` — a fourth `acbp_`-prefixed function. The catalog suites
+assert *exactly three*. 2 failures (`rls-adversarial`, `bootstrap-functions`). The function is correctly NOT
+SECURITY DEFINER; the assertion counts by name prefix, not by definer-ness.
+
+**D3 — PUBLIC holds EXECUTE on that new function. (p5-014)**
+`CREATE FUNCTION` grants `EXECUTE` to `PUBLIC` by default and migration 0041 never revoked it, so
+"only the restricted app role has EXECUTE; PUBLIC does not" fails. A genuine least-privilege lapse, not a test
+expectation problem — and the migration's own comment asserts the privilege posture it does not implement.
+
+**D4 — the migration and its own tests disagree. (p5-014)**
+The direct-SQL ledger tests insert reservations without an `idempotency_key`, violating the
+`credit_transactions_reservation_needs_key` CHECK that the same migration adds. The CHECK encodes a real CDR-058
+rule; the tests were written against the pre-CHECK shape. 4 credit-ledger failures.
+
+**D5 — an incomplete rename. (p5-013)**
+`task-controls.integration.test.ts` still expects `nextAttempt: 'scheduled'`; P5-013's own review pass renamed the
+contract value to `'retry_eligible'`. The production code is correct; the expectation is stale. 1 failure.
+
+**D6 — a test helper querying columns that do not exist. (p5-011, inherited by three branches)**
+`complete.integration.test.ts`'s `completedAudits()` selects `metadata` from `audit_events where event_name = …`.
+The real columns are **`payload`** and **`name`**. The helper runs in nearly every test in the file, so one defect
+produces 10 failures. **This is the same 10 failures on `p5-011`, `p5-006`, `p5-007` and `p5-008`** — inherited
+unchanged down the stack, not four separate problems.
+
+### Same root cause vs genuinely separate
+
+- **D1 + D4** are separate defects but both live in migration 0041's idempotency design (index shape; CHECK vs tests).
+- **D2 + D3** are one *change* (the new trigger function) producing two distinct defects: a catalog drift and a
+  privilege lapse. D3 is the one that matters.
+- **D6 is a single defect counted four times** by the branch table above. 40 of the 61 total failures are D6.
+- **D5** is unrelated to everything else.
+
+### The "guard written but never applied" pattern — two more
+
+- **D1**: the idempotency guard exists in the migration (partial unique index) and in the use case (`ON CONFLICT`),
+  and the two halves do not connect — the statement errors before the guard can ever apply.
+- **D3**: the migration's comment states the privilege posture ("the closed allowlist stays at three") while leaving
+  `PUBLIC EXECUTE` in place.
+
+Earlier instances this session: the unstoppable worker (P5-005), the untrusted-content wrapping that transformed
+nothing (P5-006), the `void UNKNOWN_FIELD` statement (P5-007), and the prefix CHECK that did not check traversal
+(P5-011). **These two were found by EXECUTION rather than by reading** — which is the point the CI outage had been
+hiding.
+
+### Where each fix belongs, and what ripples
+
+| Defect | Fix on | Ripples upward? |
+| --- | --- | --- |
+| D1, D2, D3, D4 | `p5-014` | **No** — nothing is stacked on `p5-014`; it is an independent branch |
+| D5 | `p5-013` | **No** — independent branch |
+| D6 | `p5-011` | **YES** — `p5-006`, `p5-007`, `p5-008` inherit the file; one fix on `p5-011` plus a rebase clears all three |
+
+### What PASSES, which matters as much
+
+Every worker's own new suite is green: **research 16/16, comparison 13/13, document 12/12, worker-gateways 6/6.**
+On `p5-011`, the `artifacts` table suite (14) and `persistArtifact` (15) both pass — only `completeTask` fails, and
+only because of D6's helper. The migration-reversal test ("migrations reverse fully and re-apply restores every
+managed table") passes on every branch.
+
+### Environment defects fixed to make any of this possible
+
+- A leftover `acbp_p2009_test` database from a merged ticket held `acbp_app` dependencies and blocked
+  `DROP ROLE acbp_app` **cluster-wide**, failing the migration-down test from any database. Dropped.
+- `acbp_test` held the same grants; recreated empty.
+- The `acbp_dev` password did not match `.env.local` (masked by the trust rule); resynced.
+- `acbp_dev` lacked SUPERUSER, which CI's `acbp_ci` has by virtue of being the image's `POSTGRES_USER`; granted, so
+  local matches CI's privilege level.
+- WSL shuts the VM down when idle, which made connectivity flap; held open with a keep-alive process (no
+  `.wslconfig` change, nothing global).
+
+### Still true
+
+CI remains blocked on the GitHub Actions spending limit — owner-only. Local proof is **not** a substitute: it does
+not exercise the CI service's exact image, and five of six branches still have no PR, so no workflow would run for
+them even if billing were restored.
