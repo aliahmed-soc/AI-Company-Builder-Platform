@@ -37,13 +37,24 @@ with *"Cap breaches halt the task and alert."*
 - **G4 — a breach HALTS, and halts honestly.** Budget breach ⇒ the run fails with `policy_blocked`; duration overrun ⇒
   `timeout`, which is the category `FAILURE-AND-RECOVERY` and the backlog both name. Neither is reported as success,
   and neither silently continues.
-- **G5 — the runtime never executes a tool itself.** Every tool call goes through `dispatchToolCall`. The chokepoint is
-  only a chokepoint if the component doing the work cannot go around it (invariant 4).
+- **G5 — the runtime has NO TOOL-INVOCATION PATH.** *Corrected after review pass 2, which found the original wording
+  ("every tool call goes through `dispatchToolCall`") asserted in five documents and enforced in none.* This module does
+  not call the dispatcher, and nothing here structurally stops a step closure from calling a tool directly. The true
+  statement today is narrower: the runtime never reaches a tool because it has no way to. Routing every worker tool
+  call through the chokepoint (invariant 4) is a **forward obligation on P5-006/007/008**, not a guarantee this ticket
+  delivers — and saying otherwise would be exactly the "structural, not procedural" claim that failed P5-004's review.
 - **G6 — WORK-006's failure clause is CLOSED.** *"Disable during execution triggers safe-stop per TASK-007."* With the
-  stamp in place, disabling a worker can find its live runs and call P5-002's `cancelRun`, which already implements the
-  bounded safe-stop TASK-007 describes. This is the debt `CDR-056 §6` recorded, and it is paid here.
-- **G7 — a safe-stop is REQUESTED, never forced.** `cancelRun` on a running run sets a durable `stop_requested_at`; the
-  worker halts at its next checkpoint. Killing mid-call is what §4 of `WORKFLOW-STATE-MACHINES` forbids.
+  stamp in place, `setCompanyWorkerState` finds this worker's live runs and requests a durable stop on each, in the same
+  transaction as the state change. It calls `TaskRunRepository.requestStop` rather than P5-002's `cancelRun` — the
+  sweep's authority is `worker:control`, already checked, and `cancelRun` would re-check `run:cancel` per run — **and it
+  emits the same `task.cancelled` / `running_safe_stop` audit event `cancelRun` emits.** The first version did not, and
+  set durable stops on N runs with no record of them; that was a review finding, not a design choice.
+- **G7 — a safe-stop is REQUESTED, never forced.** A running run gets a durable `stop_requested_at`; the worker halts at
+  its next checkpoint. Killing mid-call is what §4 of `WORKFLOW-STATE-MACHINES` forbids.
+- **G8 — a run must never become UNSTOPPABLE.** *Added after review pass 1 found it violated.* Every checkpoint checks
+  three things, not one: the stop flag, the **task run's state**, and the **worker's current company state**. A task run
+  already reclaimed or failed can never be `requestStop`-ed again (that guard is `running`-only), so a worker keyed only
+  to the flag would have kept spending while the sweep reported reaching nothing. An absent task run fails CLOSED.
 
 ## 2. Shape
 
@@ -59,7 +70,7 @@ with *"Cap breaches halt the task and alert."*
 
 The runtime executes **steps** supplied by the caller, because no worker logic exists yet (P5-006/007/008) and no live
 provider has ever been called. A step is a function returning `{ spentMicros }`; the runtime brackets each one with the
-budget and duration checks and the tool chokepoint.
+budget and duration checks. **Not with the tool chokepoint** — see G5; there is no tool path here to bracket.
 
 That is not a placeholder for its own sake: it is the seam that makes **G3 and G4 provable today**, against a real
 database, without a provider. A budget halt asserted through a fake provider would prove the fake.
@@ -107,8 +118,21 @@ Built as designed. Three things are worth recording because they were decided wh
 
 **Not settled here, and deliberately left alone:**
 
-- **`usage_events.worker_run_id`** — per-call ledger attribution stays deferred to P5-014 (§4). `worker_runs.spend_micros`
-  is an *enforcement* counter, not a reconciliation source, and this record should not be read as if it were one.
+- **METERING IS NOT DONE, and §4 originally understated the gap.** §4 says `usage_events` carries no run link, which
+  implies usage events are being written for worker work and merely lack one. They are not: **no usage event is emitted
+  for a worker run at all**, this runtime never traverses diagram 07's dispatcher→ledger edge, and `spentMicros` is
+  whatever the caller's step closure self-reports — not a metered figure. `worker_runs.spend_micros` is an *enforcement*
+  counter and must not be read as a reconciliation or billing source. Per-call attribution stays P5-014's.
+- **CRASH RESUME AND HEARTBEAT for worker runs are UNMET.** COMPONENT-CATALOG gives this component *"crash → job resume;
+  heartbeat timeout"*, quoted in §0 and then never returned to — review pass 2's finding. There is no `resumeWorkerRun`,
+  no heartbeat column, and `UNIQUE(task_run_id)` makes resuming the *same* attempt impossible by construction (a retry
+  is a new task run, which is the intended shape). What P5-005 does provide is that a crashed run no longer leaks: when
+  `reclaimLostRuns` fails the task run, it now closes the orphaned worker run as `failed`/`worker_lost` and audits it,
+  so no run sits at `running` for ever polluting the safe-stop sweep. Resume itself belongs to the ticket that gives
+  the coordinator a worker-driven execution loop (P5-006 onward).
+- **THE TASK-LEVEL TERMINAL TRANSITION stays the coordinator's.** On a budget or duration halt this runtime requests a
+  durable stop on the task run — so NFR-015's *"halt the task"* is real and the task is not left running with no worker
+  — but the terminal `failed` transition remains P5-002's `failRun`, driven by the caller.
 - **IOQ-12's interim budgets** (0.50 USD-equivalent, 10 minutes) still ride as documented placeholders, not
   owner-ratified values (CDR-056 §3). This ticket enforces whatever those columns say; it does not bless the numbers.
 - **The third risk class** — canon names it plain `external`, the shipped set splits it into `external_reversible`.

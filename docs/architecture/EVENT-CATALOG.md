@@ -200,9 +200,10 @@ Retention default: activity-projected events with company data; audit-relevant e
      `tool.call_failed` {tool_id, tool_version, risk_class, call_outcome, has_receipt}.
      `tool.call_requested` IS EMITTED FOR REFUSALS TOO, carrying outcome `denied` — TOOL-001 requires the attempt to be
      audited, and a reader counting denials should not have to parse metadata to find them.
-     `tool.call_started` is STILL NOT registered after P5-005. The worker runtime exists, but it deliberately never
-     executes a tool itself — every call goes through `dispatchToolCall`, which already emits `tool.call_requested`.
-     Registering a start event no code can emit would declare a record that does not exist.
+     `tool.call_started` is STILL NOT registered after P5-005, and for the SAME reason as before, not a new one: the
+     worker runtime exists but has no tool-invocation path at all, so nothing can emit it. (It does not go through
+     `dispatchToolCall` either — routing worker tool calls through the chokepoint is a forward obligation on
+     P5-006/007/008. CDR-057 §1-G5 states this precisely; an earlier wording here claimed the stronger thing.)
      `policy_eval_ref` and `approval_ref` are absent because the engines that produce them are Phase 6's. `has_receipt`
      is a BOOLEAN rather than the receipt: whether an external effect could be evidenced is the auditable fact, and the
      reference itself lives on the `tool_calls` row. `unconfirmed` never carries the success outcome — canon says a

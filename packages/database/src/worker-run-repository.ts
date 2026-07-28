@@ -93,6 +93,27 @@ export class WorkerRunRepository {
     return this.#db.selectFrom('worker_runs').selectAll().where('id', '=', workerRunId).executeTakeFirst();
   }
 
+  /**
+   * The run, plus how long it has been running **measured by the DATABASE's clock**.
+   *
+   * Found in review pass 2: computing `Date.now() - started_at` mixes two clocks. `started_at` is a Postgres `now()`
+   * and the caller's is Node's; a few seconds of skew either way makes the elapsed time wrong, and skew in the
+   * negative direction makes it NEGATIVE — which the fail-closed bounds check would read as "unreadable" and halt a
+   * perfectly healthy run. Subtracting two timestamps from ONE clock has neither problem.
+   */
+  findByIdForUpdate(workerRunId: string): Promise<(WorkerRunRow & { elapsed_ms: number }) | undefined> {
+    return this.#db
+      .selectFrom('worker_runs')
+      .selectAll()
+      .select(sql<number>`(extract(epoch from (now() - started_at)) * 1000)::bigint::int`.as('elapsed_ms'))
+      .where('id', '=', workerRunId)
+      // FOR UPDATE, because the admission decision that follows must not be made twice on one run. Two callers
+      // reading the same spend would both find headroom and both execute, turning NFR-015's one-increment bound into
+      // N — and the in-SQL increment below cannot help, since it prevents a lost update, not a double admission.
+      .forUpdate()
+      .executeTakeFirst();
+  }
+
   findByTaskRun(taskRunId: string): Promise<WorkerRunRow | undefined> {
     return this.#db.selectFrom('worker_runs').selectAll().where('task_run_id', '=', taskRunId).executeTakeFirst();
   }

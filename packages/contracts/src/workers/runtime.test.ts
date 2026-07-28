@@ -8,6 +8,8 @@ import {
   isWorkerRunOutcome,
   isTerminalWorkerRunOutcome,
   decideStepAdmission,
+  HALT_REASONS,
+  isHaltReason,
   DEFAULT_MAX_SPEND_MICROS,
   DEFAULT_MAX_DURATION_MS,
 } from './runtime.js';
@@ -26,6 +28,29 @@ describe('worker-run outcomes', () => {
     for (const bad of ['RUNNING', 'done', '', null, undefined, 42]) expect(isWorkerRunOutcome(bad)).toBe(false);
     expect(isTerminalWorkerRunOutcome('running')).toBe(false);
     for (const o of ['succeeded', 'failed', 'stopped']) expect(isTerminalWorkerRunOutcome(o)).toBe(true);
+  });
+});
+
+describe('halt reasons', () => {
+  test('are an ARRAY, so the database CHECK has something to be compared against', () => {
+    // Review pass 1: as a bare union type this had no runtime form, so the migration's hard-coded list could not be
+    // guarded. A fourth reason would have compiled, passed every test, and then failed as a constraint violation at
+    // halt time — breaking the halt path in production and nowhere else.
+    expect([...HALT_REASONS]).toEqual(['budget_exhausted', 'duration_exceeded', 'bounds_unreadable']);
+    for (const r of HALT_REASONS) expect(isHaltReason(r)).toBe(true);
+    for (const bad of ['budget', '', null, undefined, 7]) expect(isHaltReason(bad)).toBe(false);
+  });
+
+  test('every reason the decision can actually PRODUCE is in the set', () => {
+    // The other direction of the same guard: a reason returned by the function but missing from the list would pass
+    // the assertion above and still violate the CHECK.
+    const produced = [
+      admit({ spentMicros: 99_999 }),
+      admit({ elapsedMs: 99_999 }),
+      decideStepAdmission({ ...budget, maxSpendMicros: 0, spentMicros: 0, elapsedMs: 0, stopRequested: false }),
+    ].map((d) => (d.kind === 'halt' ? d.reason : ''));
+    expect(produced.every((r) => isHaltReason(r))).toBe(true);
+    expect(new Set(produced)).toEqual(new Set(HALT_REASONS));
   });
 });
 

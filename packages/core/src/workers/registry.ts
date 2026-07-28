@@ -5,7 +5,7 @@
 // caller-supplied parameter, which made WORK-005's *"server-enforced"* true mechanically and not yet authoritatively.
 // After this, trust-critical #4's *"allowlists versioned in worker definitions"* is literally where it lives.
 import { WorkerRepository, WorkerRunRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type WorkerDefinitionRow } from '@acbp/database';
-import { isWorkerState, workerAcceptsTasks, isMvpSafeAllowlist, workerStateChanged, type WorkerState } from '@acbp/contracts';
+import { isWorkerState, workerAcceptsTasks, isMvpSafeAllowlist, workerStateChanged, taskCancelled, type WorkerState } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -220,13 +220,20 @@ export async function setCompanyWorkerState(client: DatabaseClient, params: SetW
       //
       // REQUESTED, NEVER FORCED (CDR-057 §1-G7). The stop is durable on the task run and the worker honours it at its
       // next checkpoint. Killing a call mid-flight is how a half-performed external action happens.
+      // EVERY STOP IS AUDITED, with the same event and the same `running_safe_stop` phase `cancelRun` uses. Found in
+      // review pass 2: the first version called `requestStop` directly and set a durable stop on N task runs with NO
+      // record of it — an owner reading the trail would see the disable and not the stops it caused, which is the
+      // half of the story that matters when work goes quiet.
       let stopsRequested = 0;
       if (!workerAcceptsTasks(params.state)) {
         const taskRuns = new TaskRunRepository(scope.db);
         for (const live of await new WorkerRunRepository(scope.db).listRunningForWorker(params.workerId)) {
           // `requestStop` is guarded on a RUNNING task run and idempotent, so a run that ended in between is simply
           // not counted rather than being resurrected.
-          if ((await taskRuns.requestStop(live.task_run_id)) !== undefined) stopsRequested += 1;
+          const stopped = await taskRuns.requestStop(live.task_run_id);
+          if (stopped === undefined) continue;
+          await audit(scope, taskCancelled({ taskId: stopped.task_id, runId: stopped.id, phase: 'running_safe_stop' }), auditCtx(options));
+          stopsRequested += 1;
         }
       }
 

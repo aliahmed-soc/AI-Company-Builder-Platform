@@ -7,7 +7,7 @@
 // EVERY MUTATION IS GUARDED on the state the caller believed the run was in. A coordinator, a worker and an owner can
 // all act on one run at the same moment, and the guard is what turns "someone else already decided" into a reported
 // outcome instead of a silent overwrite.
-import { TaskRunRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRunRow } from '@acbp/database';
+import { TaskRunRepository, TaskRepository, WorkerRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRunRow } from '@acbp/database';
 import {
   canStartRunForTask,
   canTransitionRun,
@@ -17,6 +17,7 @@ import {
   taskStarted,
   taskFailed,
   taskCancelled,
+  workerRunFinished,
   DEFAULT_HEARTBEAT_GRACE_MS,
   type RunFailureCategory,
 } from '@acbp/contracts';
@@ -354,6 +355,22 @@ export async function reclaimLostRuns(client: DatabaseClient, params: ReclaimLos
         // write. That is a normal race and the other outcome wins — reclaiming anyway would overwrite a real result.
         if (failed === undefined) continue;
         await audit(scope, taskFailed({ taskId: failed.task_id, runId: failed.id, attempt: failed.attempt, failureCategory: 'worker_lost' }), auditCtx(options));
+
+        // REAP THE WORKER RUN TOO (ACBP-P5-005, review pass 2). A reclaimed attempt's worker run would otherwise sit
+        // at `running` for ever: no `worker.failed` record of how it ended, and a permanent entry in the safe-stop
+        // sweep's "live runs" — so a later disable would keep finding a run that died long ago.
+        const workerRuns = new WorkerRunRepository(scope.db);
+        const orphan = await workerRuns.findByTaskRun(failed.id);
+        if (orphan !== undefined && orphan.outcome === 'running') {
+          const closed = await workerRuns.finish({ workerRunId: orphan.id, outcome: 'failed', failureCategory: 'worker_lost' });
+          if (closed !== undefined) {
+            await audit(
+              scope,
+              workerRunFinished({ workerRunId: closed.id, workerId: closed.worker_id, workerVersion: closed.worker_version, outcome: 'failed', failureCategory: 'worker_lost' }),
+              auditCtx(options),
+            );
+          }
+        }
         reclaimed.push(failed.id);
       }
       if (reclaimed.length > 0) options.logger?.warn('run.reclaimed_lost', { metadata: { companyId: params.companyId, count: reclaimed.length } });

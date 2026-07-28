@@ -19,12 +19,22 @@ ticket without a DONE line above it is genuinely in flight._
   immutable — a run can never be re-attributed to another worker nor re-judged against a budget it was not given.
   `decideStepAdmission` is pure and total, the clock is a parameter, and the check runs BEFORE the step, which is what
   makes NFR-015's one-billing-increment overshoot bound actually hold. An unreadable bound HALTS rather than reading
-  as "no limit". The runtime never executes a tool itself — every call still goes through `dispatchToolCall`.
+  as "no limit". The runtime has NO tool-invocation path at all; routing worker tool calls through `dispatchToolCall`
+  is a forward obligation on P5-006/007/008 (CDR-057 §1-G5 — an earlier wording here claimed the stronger thing).
   `setCompanyWorkerState` now sweeps the worker's running runs and requests a durable safe-stop on each **in the same
-  transaction** as the state change, reporting how many; requested, never forced.
+  transaction** as the state change, auditing each as `task.cancelled`/`running_safe_stop` and reporting how many;
+  requested, never forced.
   A safe-stop is a fourth outcome `stopped`, filed under `worker.completed` with `run_outcome: 'stopped'` — not a
   failure (the run did what it was told) and not mistakable for finished work either.
-  **Reviews in progress.** Migration 0040; local gate green (1389 passed, 0 failed); real-PG suites skip locally.
+  **BOTH REVIEW PASSES FAILED.** Pass 1 HIGH: `runWorkerStep` read the task run but consulted only `stop_requested_at`,
+  ignoring its STATE — a run reclaimed as `worker_lost` can never be `requestStop`-ed again, so the worker became
+  permanently UNSTOPPABLE while the sweep reported reaching nothing. Every test passed because the fixtures only made
+  live task runs: the P5-002 defect shape exactly. Also fixed from pass 1: double admission under concurrency (now
+  `FOR UPDATE`), a throwing step rolling its own spend back to zero, `finishWorkerRun` accepting any non-empty
+  category string, and `HALT_REASONS` having no runtime form for its CHECK to be guarded against. Pass 2: the sweep
+  set durable stops with NO audit record; the tool-chokepoint claim was asserted in five documents and enforced in
+  none; a reclaimed attempt left a zombie `running` worker run for ever; no test asserted a single audit ROW; and
+  `worker_runs` was missing from the central grant catalog. Ledger `docs/implementation/P5-005-REVIEW.md`.
 
 - **ACBP-P5-004 worker definitions registry — CORE DONE / IN REVIEW (window 12).**
   Branch `p5-004-worker-definitions` (from main `83477a5`), draft PR **#58**, CDR-056, migration **0038**.

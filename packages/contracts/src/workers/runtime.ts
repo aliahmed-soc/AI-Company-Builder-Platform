@@ -22,8 +22,19 @@ export function isTerminalWorkerRunOutcome(value: unknown): boolean {
   return value === 'succeeded' || value === 'failed' || value === 'stopped';
 }
 
-/** Why a run was halted before its work was done. A REASON, never a message. */
-export type HaltReason = 'budget_exhausted' | 'duration_exceeded' | 'bounds_unreadable';
+/**
+ * Why a run was halted before its work was done. A REASON, never a message.
+ *
+ * An ARRAY, not a bare union — review pass 1's finding. A union type has no runtime existence, so the database CHECK
+ * that hard-codes these strings had nothing to be compared against: adding a fourth reason would compile, pass every
+ * test, and then fail as a constraint violation at halt time, breaking the halt path in production only.
+ */
+export const HALT_REASONS = ['budget_exhausted', 'duration_exceeded', 'bounds_unreadable'] as const;
+export type HaltReason = (typeof HALT_REASONS)[number];
+
+export function isHaltReason(value: unknown): value is HaltReason {
+  return typeof value === 'string' && (HALT_REASONS as readonly string[]).includes(value);
+}
 
 export interface StepAdmissionInput {
   readonly maxSpendMicros: number;

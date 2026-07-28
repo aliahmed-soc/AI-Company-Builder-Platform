@@ -3,14 +3,29 @@
 // ONE SHARED EXECUTOR. Canon is explicit that workers are "versioned configuration + prompts over one shared execution
 // runtime — not independent agent services", so this module runs every worker and none of them ships its own loop.
 //
-// IT NEVER EXECUTES A TOOL ITSELF. Every tool call goes through `dispatchToolCall`; the chokepoint is only a chokepoint
-// if the component doing the work cannot go around it (invariant 4).
+// IT HAS NO TOOL-INVOCATION PATH AT ALL. Be precise about this, because the imprecise version was a review finding:
+// this module does not call `dispatchToolCall`, and nothing here structurally prevents a step closure from calling a
+// tool directly. What is true today is the narrower statement — the runtime never reaches a tool, because it has no
+// way to. Routing every worker tool call through the chokepoint (invariant 4) is a FORWARD OBLIGATION on the tickets
+// that give workers actual logic (P5-006/007/008), not a guarantee this ticket delivers.
 //
-// THE STEP IS A SEAM, not a placeholder for its own sake. No worker logic exists yet (P5-006/007/008) and no live
-// provider has ever been called, so the caller supplies the step. That seam is what makes the budget and duration
-// halts provable TODAY against a real database — a halt asserted through a fake provider would prove the fake.
+// THE STEP IS A SEAM, not a placeholder for its own sake. No worker logic exists yet and no live provider has ever
+// been called, so the caller supplies the step. That seam is what makes the budget and duration halts provable TODAY
+// against a real database — a halt asserted through a fake provider would prove the fake.
 import { WorkerRunRepository, WorkerRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type WorkerRunRow } from '@acbp/database';
-import { decideStepAdmission, workerAcceptsTasks, isWorkerState, isMvpSafeAllowlist, workerRunStarted, workerRunFinished, type HaltReason } from '@acbp/contracts';
+import {
+  decideStepAdmission,
+  workerAcceptsTasks,
+  isWorkerState,
+  isMvpSafeAllowlist,
+  isWorkerRunOutcome,
+  isTerminalWorkerRunOutcome,
+  isRunFailureCategory,
+  workerRunStarted,
+  workerRunFinished,
+  type HaltReason,
+  type WorkerRunOutcome,
+} from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
@@ -38,12 +53,17 @@ export interface WorkerRunDTO {
   readonly maxDurationMs: number;
   readonly spendMicros: number;
   readonly stepsCompleted: number;
-  readonly outcome: string;
+  /** The CLOSED set, not `string`. A stored value outside it never leaves this module as if it were an outcome. */
+  readonly outcome: WorkerRunOutcome;
   readonly failureCategory: string | null;
   readonly haltReason: string | null;
 }
 
 function toDTO(row: WorkerRunRow): WorkerRunDTO {
+  // Validate on the way OUT of the database, not just on the way in. The CHECK constraint makes an invalid outcome
+  // impossible today, but a DTO typed `string` would let a future widening leak straight through — and having written
+  // a closed-set guard, leaving it uncalled is the defect that was the finding on P5-004.
+  if (!isWorkerRunOutcome(row.outcome)) throw new Error('worker run carries an outcome outside the closed set — invariant violated');
   return {
     id: row.id,
     taskRunId: row.task_run_id,
@@ -77,7 +97,9 @@ export type StartWorkerRunResult =
   | { readonly status: 'run_not_running'; readonly runState: string }
   | { readonly status: 'run_not_found' }
   // `UNIQUE(task_run_id)` fired: this attempt already has a worker. One worker executes one attempt.
-  | { readonly status: 'already_stamped'; readonly workerRun: WorkerRunDTO };
+  | { readonly status: 'already_stamped'; readonly workerRun: WorkerRunDTO }
+  // ...and it is a DIFFERENT worker's. Named separately so "you already have one" cannot be read off another's run.
+  | { readonly status: 'stamped_by_other_worker'; readonly workerId: string };
 
 /**
  * Stamp a worker onto a task run and begin executing.
@@ -98,6 +120,9 @@ export async function startWorkerRun(client: DatabaseClient, params: StartWorker
       const taskRun = await new TaskRunRepository(scope.db).findById(params.taskRunId);
       if (taskRun === undefined) return { status: 'run_not_found' };
       if (taskRun.state !== 'running') return { status: 'run_not_running', runState: taskRun.state };
+      // A run whose owner has already asked it to stop is not work to hand out. Stamping one would emit a `started`
+      // and an immediate `stopped` with zero steps — a trace that says a worker ran when none did.
+      if (taskRun.stop_requested_at !== null) return { status: 'run_not_running', runState: taskRun.state };
 
       const workers = new WorkerRepository(scope.db);
       const definition = await workers.findActiveDefinition(params.workerId);
@@ -128,6 +153,9 @@ export async function startWorkerRun(client: DatabaseClient, params: StartWorker
       if (started === undefined) {
         const existing = await runs.findByTaskRun(params.taskRunId);
         if (existing === undefined) throw new Error('worker run insert wrote nothing and no existing stamp exists — invariant violated');
+        // WHOSE stamp matters. `already_stamped` reads as "you already have one"; returning it for a run another
+        // worker owns would hand the caller a different worker's run under that reassuring word.
+        if (existing.worker_id !== params.workerId) return { status: 'stamped_by_other_worker', workerId: existing.worker_id };
         return { status: 'already_stamped', workerRun: toDTO(existing) };
       }
 
@@ -156,11 +184,16 @@ export type RunWorkerStepResult =
   | { readonly status: 'ok'; readonly workerRun: WorkerRunDTO }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
-  | { readonly status: 'not_running'; readonly outcome: string }
+  | { readonly status: 'not_running'; readonly outcome: WorkerRunOutcome }
   // The step was NOT executed. Whatever the reason, nothing was spent on it.
   | { readonly status: 'halted'; readonly reason: HaltReason; readonly workerRun: WorkerRunDTO }
-  // The owner's safe-stop landed. Also not executed — and NOT a failure (CDR-057 §1-G7).
-  | { readonly status: 'stopped'; readonly workerRun: WorkerRunDTO };
+  // The owner's safe-stop landed, or the attempt itself is over. Also not executed — and NOT a failure (§1-G7).
+  | { readonly status: 'stopped'; readonly workerRun: WorkerRunDTO }
+  // The step itself threw. Typed, because a raw internal error at the boundary tells a caller nothing it can act on.
+  | { readonly status: 'step_failed'; readonly workerRun: WorkerRunDTO };
+
+/** A spend the counter can hold. `integer` overflows at ~2.1e9 and would roll the transaction back instead of halting. */
+const MAX_STEP_SPEND_MICROS = 1_000_000_000;
 
 /**
  * Execute one step, bracketed by the budget and duration checks.
@@ -170,53 +203,85 @@ export type RunWorkerStepResult =
  * afterwards would bound nothing — one expensive call could land arbitrarily far past the cap.
  *
  * A HALT ENDS THE RUN. There is no "skip this step and try the next": the bound is on the run, so the run is over.
+ *
+ * THE ROW IS LOCKED FOR THE DECISION (review pass 1). Two concurrent callers on one run would otherwise both read the
+ * same spend, both find headroom, and both execute — turning "no more than one increment" into N. The in-SQL
+ * increment prevents a lost UPDATE; it does nothing about double ADMISSION, which is the part the bound depends on.
  */
 export async function runWorkerStep(client: DatabaseClient, params: RunWorkerStepParams, options: RuntimeOptions = {}): Promise<RunWorkerStepResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
-  const now = options.now ?? new Date();
   const run = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<RunWorkerStepResult> => {
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const runs = new WorkerRunRepository(scope.db);
-      const current = await runs.findById(params.workerRunId);
+      const current = await runs.findByIdForUpdate(params.workerRunId);
       if (current === undefined) return { status: 'not_found' };
-      if (current.outcome !== 'running') return { status: 'not_running', outcome: current.outcome };
+      if (isTerminalWorkerRunOutcome(current.outcome)) return notRunning(current.outcome);
 
-      // The safe-stop request lives on the TASK run (P5-002 owns cancellation), so this is where the worker learns of
-      // it — at a checkpoint, between steps, exactly as §4 requires rather than mid-call.
+      // ── EVERYTHING THAT SAYS "STOP" ───────────────────────────────────────────────────────────────────────
+      //
+      // THE ATTEMPT MUST STILL BE LIVE. Review pass 1's HIGH finding: the first version read the task run and looked
+      // only at `stop_requested_at`, ignoring its STATE. A task run reclaimed as `worker_lost` or failed by its owner
+      // is no longer `running`, so `requestStop` — which is guarded on `running` — can never mark it again. The
+      // worker run would have become permanently unstoppable: the safe-stop sweep would report reaching nothing
+      // while the worker kept spending, possibly alongside a retry attempt. Every test passed because the fixtures
+      // only ever produced live task runs — the same way the fixtures agreed with the bug in P5-002.
+      //
+      // FAIL CLOSED on an absent task run: `undefined` means gone or invisible, and neither is a reason to keep going.
       const taskRun = await new TaskRunRepository(scope.db).findById(current.task_run_id);
+      const attemptOver = taskRun === undefined || taskRun.state !== 'running';
+
+      // AND THE WORKER MUST STILL BE ACCEPTING WORK. `startWorkerRun` checks this, but a disable committing
+      // concurrently with a start sees no uncommitted row to sweep, so that run would begin with no stop request
+      // against it. Re-reading here — the designated checkpoint — closes the write skew rather than locking two
+      // tables on every path.
+      const state = (await new WorkerRepository(scope.db).findCompanyState(current.worker_id))?.state ?? 'enabled';
+
       const admission = decideStepAdmission({
         maxSpendMicros: current.max_spend_micros,
         maxDurationMs: current.max_duration_ms,
         spentMicros: current.spend_micros,
-        elapsedMs: now.getTime() - current.started_at.getTime(),
-        stopRequested: taskRun?.stop_requested_at != null,
+        // From the DATABASE's clock, not Node's — see `findByIdForUpdate`. Mixing the two makes elapsed time wrong,
+        // and negative skew would read as an unreadable bound and halt a healthy run.
+        elapsedMs: current.elapsed_ms,
+        stopRequested: attemptOver || !workerAcceptsTasks(state) || taskRun?.stop_requested_at != null,
       });
 
-      if (admission.kind === 'stop') {
-        const stopped = await runs.finish({ workerRunId: params.workerRunId, outcome: 'stopped' });
-        if (stopped === undefined) return { status: 'not_running', outcome: (await runs.findById(params.workerRunId))?.outcome ?? 'running' };
-        await audit(scope, workerRunFinished({ workerRunId: stopped.id, workerId: stopped.worker_id, workerVersion: stopped.worker_version, outcome: 'stopped' }), auditCtx(options));
-        return { status: 'stopped', workerRun: toDTO(stopped) };
-      }
+      if (admission.kind === 'stop') return finishAs(scope, runs, params.workerRunId, { outcome: 'stopped' }, 'stopped', audit, options);
 
       if (admission.kind === 'halt') {
-        const halted = await runs.finish({ workerRunId: params.workerRunId, outcome: 'failed', failureCategory: admission.failureCategory, haltReason: admission.reason });
-        if (halted === undefined) return { status: 'not_running', outcome: (await runs.findById(params.workerRunId))?.outcome ?? 'running' };
-        // WARN, because NFR-015's failure clause is "Cap breaches halt the task AND ALERT". Scalars only.
-        options.logger?.warn('worker.run_halted', { metadata: { companyId: params.companyId, workerId: halted.worker_id, reason: admission.reason, spendMicros: halted.spend_micros } });
-        await audit(scope, workerRunFinished({ workerRunId: halted.id, workerId: halted.worker_id, workerVersion: halted.worker_version, outcome: 'failed', failureCategory: admission.failureCategory, haltReason: admission.reason }), auditCtx(options));
-        return { status: 'halted', reason: admission.reason, workerRun: toDTO(halted) };
+        const halted = await finishAs(scope, runs, params.workerRunId, { outcome: 'failed', failureCategory: admission.failureCategory, haltReason: admission.reason }, 'halted', audit, options, admission.reason);
+        if (halted.status === 'halted') {
+          // NFR-015 says cap breaches halt THE TASK and alert — not merely the worker run. A durable stop request is
+          // how canon halts a running run (`WORKFLOW-STATE-MACHINES §4`), so the task stops too rather than sitting
+          // `running` with no worker until the reaper mislabels it `worker_lost` and destroys the honest category.
+          // The TERMINAL transition stays the coordinator's (P5-002's `failRun`); this ticket does not take it over.
+          if (taskRun !== undefined && taskRun.state === 'running') await new TaskRunRepository(scope.db).requestStop(taskRun.id);
+          options.logger?.warn('worker.run_halted', { metadata: { companyId: params.companyId, workerId: halted.workerRun.workerId, reason: admission.reason, spendMicros: halted.workerRun.spendMicros } });
+        }
+        return halted;
       }
 
-      const result = await params.step();
-      // A step that reports nonsense is recorded as costing NOTHING rather than as a negative or NaN spend, which
-      // would corrupt the counter the budget is enforced against. The step still counts as taken.
-      const spent = Number.isFinite(result?.spentMicros) && result.spentMicros > 0 ? Math.floor(result.spentMicros) : 0;
+      // ── THE STEP ──────────────────────────────────────────────────────────────────────────────────────────
+      let result: StepResult;
+      try {
+        result = await params.step();
+      } catch {
+        // A THROW IS NOT A ROLLBACK. Letting it propagate would undo the whole transaction, so a step that spent real
+        // provider money and then failed would leave the counter untouched — and a caller retrying in a loop could
+        // spend indefinitely without ever advancing toward the cap. The exception text is never surfaced or stored.
+        const failed = await finishAs(scope, runs, params.workerRunId, { outcome: 'failed', failureCategory: 'provider_error' }, 'step_failed', audit, options);
+        return failed.status === 'step_failed' || failed.status === 'not_running' ? failed : { status: 'not_found' };
+      }
+
+      // A step reporting nonsense costs NOTHING rather than a negative, NaN or overflowing spend — any of which would
+      // corrupt the very counter the budget is enforced against. The step still counts as taken.
+      const reported = result?.spentMicros;
+      const spent = Number.isFinite(reported) && reported > 0 ? Math.min(Math.floor(reported), MAX_STEP_SPEND_MICROS) : 0;
       const updated = await runs.recordStep(params.workerRunId, spent);
-      if (updated === undefined) return { status: 'not_running', outcome: (await runs.findById(params.workerRunId))?.outcome ?? 'running' };
+      if (updated === undefined) return notRunning((await runs.findById(params.workerRunId))?.outcome);
       return { status: 'ok', workerRun: toDTO(updated) };
     },
     opts(options),
@@ -249,21 +314,23 @@ export async function finishWorkerRun(client: DatabaseClient, params: FinishWork
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       if (params.outcome !== 'succeeded' && params.outcome !== 'failed') return { status: 'invalid' };
       // A category is REQUIRED on failure and REFUSED on success — the P5-002 shape, for the same reason: a row that
-      // contradicts its own outcome is worse than a typed refusal.
-      if (params.outcome === 'failed' && (params.failureCategory ?? '') === '') return { status: 'invalid' };
+      // contradicts its own outcome is worse than a typed refusal. The VALUE is checked against the closed set, not
+      // merely its presence (review pass 1): an out-of-set category would otherwise sail past this guard, hit the DB
+      // CHECK, and surface as an unclassified internal error where a typed refusal was promised.
+      if (params.outcome === 'failed' && !isRunFailureCategory(params.failureCategory)) return { status: 'invalid' };
       if (params.outcome === 'succeeded' && params.failureCategory !== undefined) return { status: 'invalid' };
 
       const runs = new WorkerRunRepository(scope.db);
       const current = await runs.findById(params.workerRunId);
       if (current === undefined) return { status: 'not_found' };
-      if (current.outcome !== 'running') return { status: 'not_running', outcome: current.outcome };
+      if (isTerminalWorkerRunOutcome(current.outcome)) return notRunning(current.outcome);
 
       const finished = await runs.finish({
         workerRunId: params.workerRunId,
         outcome: params.outcome,
         failureCategory: params.outcome === 'failed' ? (params.failureCategory ?? null) : null,
       });
-      if (finished === undefined) return { status: 'not_running', outcome: (await runs.findById(params.workerRunId))?.outcome ?? 'running' };
+      if (finished === undefined) return notRunning((await runs.findById(params.workerRunId))?.outcome);
 
       await audit(
         scope,
@@ -281,6 +348,52 @@ export async function finishWorkerRun(client: DatabaseClient, params: FinishWork
     opts(options),
   );
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
+
+/** A run that is no longer ours to step. Reported with the CLOSED outcome, never a bare string. */
+function notRunning(outcome: unknown): { readonly status: 'not_running'; readonly outcome: WorkerRunOutcome } {
+  return { status: 'not_running', outcome: isWorkerRunOutcome(outcome) ? outcome : 'running' };
+}
+
+/**
+ * Close a run and audit it, in one place.
+ *
+ * ONE PATH for every ending, so no ending can be added later that forgets its audit record — the P5-003b lesson,
+ * where exactly one refusal path lost its auditing and nothing noticed.
+ */
+async function finishAs(
+  scope: Parameters<typeof writeAuditEvent>[0],
+  runs: WorkerRunRepository,
+  workerRunId: string,
+  close: { outcome: 'stopped' | 'failed'; failureCategory?: string; haltReason?: HaltReason },
+  status: 'stopped' | 'halted' | 'step_failed',
+  audit: typeof writeAuditEvent,
+  options: RuntimeOptions,
+  reason?: HaltReason,
+): Promise<RunWorkerStepResult> {
+  const closed = await runs.finish({
+    workerRunId,
+    outcome: close.outcome,
+    failureCategory: close.failureCategory ?? null,
+    haltReason: close.haltReason ?? null,
+  });
+  // The guard did not match: something else ended the run between our read and our write. The other outcome wins.
+  if (closed === undefined) return notRunning((await runs.findById(workerRunId))?.outcome);
+  await audit(
+    scope,
+    workerRunFinished({
+      workerRunId: closed.id,
+      workerId: closed.worker_id,
+      workerVersion: closed.worker_version,
+      outcome: close.outcome,
+      ...(close.failureCategory !== undefined ? { failureCategory: close.failureCategory } : {}),
+      ...(close.haltReason !== undefined ? { haltReason: close.haltReason } : {}),
+    }),
+    auditCtx(options),
+  );
+  const dto = toDTO(closed);
+  if (status === 'halted') return { status: 'halted', reason: reason ?? 'bounds_unreadable', workerRun: dto };
+  return status === 'stopped' ? { status: 'stopped', workerRun: dto } : { status: 'step_failed', workerRun: dto };
 }
 
 function auditCtx(options: RuntimeOptions): AuditWriteContext {

@@ -6,15 +6,16 @@
 //
 // Skips when ACBP_TEST_DATABASE_URL is unset — a skipped run is never green; hosted CI on the exact SHA is evidence.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import type { Logger } from '@acbp/observability';
 import { sql } from 'kysely';
 import { WorkerRunRepository, TaskRunRepository, TaskRepository, type DatabaseClient } from '@acbp/database';
-import { DEFAULT_MAX_SPEND_MICROS, DEFAULT_MAX_DURATION_MS, WORKER_RUN_OUTCOMES, RUN_FAILURE_CATEGORIES } from '@acbp/contracts';
+import { DEFAULT_MAX_SPEND_MICROS, DEFAULT_MAX_DURATION_MS, WORKER_RUN_OUTCOMES, HALT_REASONS, RUN_FAILURE_CATEGORIES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
-import { startRun } from '../runs/index.js';
+import { startRun, reclaimLostRuns } from '../runs/index.js';
 import { setCompanyWorkerState } from './registry.js';
 import { startWorkerRun, runWorkerStep, finishWorkerRun } from './runtime.js';
 
@@ -81,6 +82,8 @@ describe.skipIf(!hasTestDatabase)('worker runtime (real PostgreSQL, restricted r
   }
 
   const rows = async () => owner.kysely.selectFrom('worker_runs').selectAll().execute();
+  const auditRows = async () => owner.kysely.selectFrom('audit_events').selectAll().orderBy('event_id').execute();
+  const auditNames = async () => (await auditRows()).map((r) => r.name);
   const step = (micros: number) => () => Promise.resolve({ spentMicros: micros });
 
   beforeEach(async () => {
@@ -182,15 +185,16 @@ describe.skipIf(!hasTestDatabase)('worker runtime (real PostgreSQL, restricted r
 
   // ── THE DURATION HALT ─────────────────────────────────────────────────────────────────────────────────────
   test('DURATION OVERRUN halts with `timeout` — the category canon names for it', async () => {
-    // AI-AND-WORKER-ARCHITECTURE: *"wall-clock bound; overrun → safe-stop → failed(`timeout`)"*. The clock is
-    // injected rather than slept through: a test that waited ten real minutes would prove the same thing and be
-    // useless in CI.
-    await register('slow', 1, ['web_research'], { duration: 60_000 });
+    // AI-AND-WORKER-ARCHITECTURE: *"wall-clock bound; overrun → safe-stop → failed(`timeout`)"*. The bound is tiny
+    // rather than the clock being injected: elapsed time now comes from the DATABASE (review pass 2 — mixing Node's
+    // clock with a Postgres `now()` makes it wrong, and negative skew would halt a healthy run as "unreadable"), so
+    // the honest way to prove an overrun is to set a bound a real millisecond can exceed.
+    await register('slow', 1, ['web_research'], { duration: 1 });
     const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'slow' });
     const id = (started as { workerRun: { id: string } }).workerRun.id;
 
-    const later = new Date(Date.now() + 61_000);
-    const halted = await runWorkerStep(product, { ...base(), workerRunId: id, step: step(1) }, { now: later });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const halted = await runWorkerStep(product, { ...base(), workerRunId: id, step: step(1) });
     expect(halted).toMatchObject({ status: 'halted', reason: 'duration_exceeded' });
     expect((halted as { workerRun: { failureCategory: string | null } }).workerRun.failureCategory).toBe('timeout');
     expect(RUN_FAILURE_CATEGORIES).toContain('timeout');
@@ -261,6 +265,133 @@ describe.skipIf(!hasTestDatabase)('worker runtime (real PostgreSQL, restricted r
     expect((await rows()).find((r) => r.id === id)?.outcome).toBe('running');
   });
 
+  // ── THE HIGH FINDING: a run must never become UNSTOPPABLE ─────────────────────────────────────────────────
+  test('a worker run whose TASK RUN is over stops at its next step — it does not keep spending', async () => {
+    // Review pass 1's HIGH. The first version read the task run and consulted only `stop_requested_at`, ignoring its
+    // STATE. A task run reclaimed as `worker_lost` (or failed by its owner) is no longer `running`, so `requestStop`
+    // — guarded on `running` — can never mark it again: the safe-stop sweep would report reaching NOTHING while this
+    // worker carried on spending, possibly beside a retry attempt. Every test passed because `runningRun()` only
+    // ever made live task runs. That is the same shape as the P5-002 defect, and this is the test that forbids it.
+    const runId = await runningRun();
+    const started = await startWorkerRun(product, { ...base(), taskRunId: runId, workerId: 'research' });
+    const id = (started as { workerRun: { id: string } }).workerRun.id;
+    await new TaskRunRepository(owner.kysely).transition({ runId, expectedState: 'running', nextState: 'failed', failureCategory: 'worker_lost' });
+
+    let ran = false;
+    const after = await runWorkerStep(product, { ...base(), workerRunId: id, step: () => { ran = true; return Promise.resolve({ spentMicros: 500 }); } });
+    expect(after.status).toBe('stopped');
+    expect(ran).toBe(false);
+    expect((await rows())[0]).toMatchObject({ outcome: 'stopped', spend_micros: 0 });
+  });
+
+  test('a worker DISABLED between the start and the next step stops, even with no stop request on the run', async () => {
+    // The write-skew case: a disable committing concurrently with a start sees no uncommitted worker run to sweep,
+    // so that run would begin life with nothing asking it to stop. Re-reading the worker state at the checkpoint is
+    // what closes it — the state, not just the stop flag, is a reason to halt.
+    const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'research' });
+    const id = (started as { workerRun: { id: string } }).workerRun.id;
+    await sql`update company_worker_states set state = 'disabled' where worker_id = 'research'`.execute(owner.kysely);
+    await sql`insert into company_worker_states (account_id, company_id, worker_id, state, changed_by_user_id) values (${w.accountA}, ${w.companyA1}, 'research', 'disabled', ${w.aOwner}) on conflict do nothing`.execute(owner.kysely);
+
+    let ran = false;
+    const after = await runWorkerStep(product, { ...base(), workerRunId: id, step: () => { ran = true; return Promise.resolve({ spentMicros: 1 }); } });
+    expect(after.status).toBe('stopped');
+    expect(ran).toBe(false);
+  });
+
+  test('a run whose owner already asked it to stop is never stamped in the first place', async () => {
+    const runId = await runningRun();
+    await new TaskRunRepository(owner.kysely).requestStop(runId);
+    expect((await startWorkerRun(product, { ...base(), taskRunId: runId, workerId: 'research' })).status).toBe('run_not_running');
+    expect(await rows()).toHaveLength(0);
+  });
+
+  test('a RECLAIMED attempt does not leave a zombie worker run in the safe-stop sweep', async () => {
+    // Review pass 2. `reclaimLostRuns` ends the task run; without reaping, its worker run sat at `running` for ever —
+    // no record of how it ended, and a permanent entry in "this worker's live runs" that a later disable would keep
+    // finding. Both halves matter: the audit record and the sweep's honesty.
+    const runId = await runningRun();
+    await startWorkerRun(product, { ...base(), taskRunId: runId, workerId: 'research' });
+    await sql`update task_runs set last_heartbeat_at = now() - interval '1 hour', started_at = now() - interval '1 hour' where id = ${runId}`.execute(owner.kysely);
+
+    expect((await reclaimLostRuns(product, { ...base() })).status).toBe('ok');
+    expect((await rows())[0]).toMatchObject({ outcome: 'failed', failure_category: 'worker_lost' });
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
+      expect(await new WorkerRunRepository(db).listRunningForWorker('research')).toEqual([]);
+    });
+    expect((await auditNames()).filter((n) => n === 'worker.failed')).toHaveLength(1);
+  });
+
+  // ── THE AUDIT TRAIL ITSELF ────────────────────────────────────────────────────────────────────────────────
+  test('EVERY ending writes its audit row — start, halt, stop and finish', async () => {
+    // Asserted against the table, not the factory. P5-003b lost auditing on exactly one path while every factory
+    // unit test still passed, which is why the factories being tested is not evidence that they are CALLED.
+    await register('tight', 1, ['web_research'], { spend: 1_000 });
+    const s1 = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'tight' });
+    const id1 = (s1 as { workerRun: { id: string } }).workerRun.id;
+    await runWorkerStep(product, { ...base(), workerRunId: id1, step: step(9_000) });
+    await runWorkerStep(product, { ...base(), workerRunId: id1, step: step(1) });
+
+    const halt = (await auditRows()).find((r) => r.name === 'worker.failed');
+    expect(halt?.subject_id).toBe(id1);
+    expect(halt?.payload).toMatchObject({ worker_id: 'tight', worker_version: 1, run_outcome: 'failed', failure_category: 'policy_blocked', halt_reason: 'budget_exhausted' });
+    expect(Object.values((halt?.payload ?? {}) as Record<string, unknown>).every((v) => v !== null)).toBe(true);
+
+    const s2 = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'research' });
+    const id2 = (s2 as { workerRun: { id: string } }).workerRun.id;
+    await finishWorkerRun(product, { ...base(), workerRunId: id2, outcome: 'succeeded' });
+
+    const names = await auditNames();
+    expect(names.filter((n) => n === 'worker.started')).toHaveLength(2);
+    expect(names).toContain('worker.completed');
+    expect((await auditRows()).find((r) => r.name === 'worker.completed')?.payload).toMatchObject({ run_outcome: 'succeeded' });
+  });
+
+  test('a SAFE-STOP is audited as completed-with-run_outcome-stopped, and the sweep audits task.cancelled', async () => {
+    const runId = await runningRun();
+    const started = await startWorkerRun(product, { ...base(), taskRunId: runId, workerId: 'research' });
+    const id = (started as { workerRun: { id: string } }).workerRun.id;
+    expect(await setCompanyWorkerState(product, { ...base(), workerId: 'research', state: 'disabled' })).toMatchObject({ stopsRequested: 1 });
+
+    // The sweep sets a durable stop on N task runs. Review pass 2: the first version did that with NO record at all —
+    // an owner reading the trail would see the disable and not the stops it caused.
+    const cancelled = (await auditRows()).find((r) => r.name === 'task.cancelled');
+    expect(cancelled?.payload).toMatchObject({ phase: 'running_safe_stop' });
+
+    await runWorkerStep(product, { ...base(), workerRunId: id, step: step(1) });
+    const completed = (await auditRows()).find((r) => r.name === 'worker.completed');
+    expect(completed?.payload).toMatchObject({ run_outcome: 'stopped' });
+    expect(await auditNames()).not.toContain('worker.failed');
+  });
+
+  test('the budget halt ALERTS — NFR-015 says halt AND alert', async () => {
+    // The `and alert` half was inert: nothing asserted the warn, so removing it would have gone unnoticed.
+    await register('tight', 1, ['web_research'], { spend: 1_000 });
+    const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'tight' });
+    const id = (started as { workerRun: { id: string } }).workerRun.id;
+    await runWorkerStep(product, { ...base(), workerRunId: id, step: step(9_000) });
+
+    const warnings: Array<{ event: string; metadata?: Record<string, unknown> }> = [];
+    const logger = { debug() {}, info() {}, error() {}, warn: (event: string, f?: { metadata?: Record<string, unknown> }) => warnings.push({ event, ...(f ?? {}) }) };
+    await runWorkerStep(product, { ...base(), workerRunId: id, step: step(1) }, { logger: logger as unknown as Logger });
+    expect(warnings.map((warning) => warning.event)).toContain('worker.run_halted');
+    expect(warnings[0]?.metadata).toMatchObject({ reason: 'budget_exhausted' });
+  });
+
+  // ── A STEP THAT THROWS ────────────────────────────────────────────────────────────────────────────────────
+  test('a THROWING step is recorded as a provider_error, not rolled back into nothing', async () => {
+    // Letting the throw propagate would undo the whole transaction, so a step that spent real provider money and
+    // then failed would leave the counter untouched — and a caller retrying in a loop could spend for ever without
+    // advancing toward the cap. The exception itself never reaches the caller or the record.
+    const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'research' });
+    const id = (started as { workerRun: { id: string } }).workerRun.id;
+    const r = await runWorkerStep(product, { ...base(), workerRunId: id, step: () => Promise.reject(new Error('provider exploded with a secret in the message')) });
+    expect(r.status).toBe('step_failed');
+    expect(JSON.stringify(r)).not.toContain('secret');
+    expect((await rows())[0]).toMatchObject({ outcome: 'failed', failure_category: 'provider_error' });
+    expect((await auditRows()).find((a) => a.name === 'worker.failed')?.payload).toMatchObject({ failure_category: 'provider_error' });
+  });
+
   // ── FINISHING ─────────────────────────────────────────────────────────────────────────────────────────────
   test('finishing records the outcome once, and a finished run cannot be finished again', async () => {
     const started = await startWorkerRun(product, { ...base(), taskRunId: await runningRun(), workerId: 'research' });
@@ -315,8 +446,20 @@ describe.skipIf(!hasTestDatabase)('worker runtime (real PostgreSQL, restricted r
     );
     // SET EQUALITY, not one-directional containment: a class added to the contract and forgotten in the CHECK is
     // exactly the drift that was the finding on three consecutive tickets.
-    const r = await sql<{ def: string }>`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'worker_runs_outcome_valid'`.execute(owner.kysely);
-    const literals = [...(r.rows[0]?.def ?? '').matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1] ?? '').sort();
-    expect(literals).toEqual([...WORKER_RUN_OUTCOMES].sort());
+    const literalsIn = async (name: string, drop: readonly string[] = []): Promise<readonly string[]> => {
+      const r = await sql<{ def: string }>`select pg_get_constraintdef(oid) as def from pg_constraint where conname = ${name}`.execute(owner.kysely);
+      const def = r.rows[0]?.def ?? '';
+      expect(def).not.toBe('');
+      return [...def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1] ?? '').filter((v) => !drop.includes(v)).sort();
+    };
+
+    // SET EQUALITY on ALL THREE lists, not one-directional containment. A value added to a contract and forgotten in
+    // the CHECK is the drift that was the finding on three consecutive tickets — and review pass 1 caught that only
+    // the outcome list had this guard. `HALT_REASONS` exists as an ARRAY for exactly this: as a bare union type it
+    // had no runtime form to compare against, so a fourth reason would have compiled, passed, and then broken the
+    // halt path in production only.
+    expect(await literalsIn('worker_runs_outcome_valid')).toEqual([...WORKER_RUN_OUTCOMES].sort());
+    expect(await literalsIn('worker_runs_failure_category_valid', ['failed'])).toEqual([...RUN_FAILURE_CATEGORIES].sort());
+    expect(await literalsIn('worker_runs_halt_reason_valid', ['failed', 'stopped'])).toEqual([...HALT_REASONS].sort());
   });
 });
