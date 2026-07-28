@@ -70,6 +70,8 @@ export { TaskRunRepository } from './task-run-repository.js';
 export type { TaskRunExecutor, NewTaskRunInput, TransitionTaskRunInput } from './task-run-repository.js';
 export { WorkerRepository } from './worker-repository.js';
 export type { WorkerExecutor, SetCompanyWorkerStateInput } from './worker-repository.js';
+export { CreditRepository } from './credit-repository.js';
+export type { CreditExecutor, NewCreditEntryInput } from './credit-repository.js';
 export { WorkerRunRepository } from './worker-run-repository.js';
 export type { WorkerRunExecutor, NewWorkerRunInput, FinishWorkerRunInput } from './worker-run-repository.js';
 export { ToolCallRepository } from './tool-call-repository.js';
@@ -226,6 +228,8 @@ export type {
   CompanyWorkerStateRow,
   WorkerRunsTable,
   WorkerRunRow,
+  CreditTransactionsTable,
+  CreditTransactionRow,
   NewTaskDeletion,
 } from './schema.js';
 
