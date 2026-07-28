@@ -70,7 +70,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addCheckConstraint('tool_calls_digest_shape', sql`arguments_digest ~ '^[0-9a-f]{64}$'`)
     // TOOL-002's failure clause, made structural: an external effect cannot be reported as `succeeded` without a
     // receipt. The honest outcome for that case is `unconfirmed`, which this leaves available.
-    .addCheckConstraint('tool_calls_receipt_required', sql`not (outcome = 'succeeded' and external_effect and receipt_ref is null)`)
+    //
+    // BLANK COUNTS AS MISSING (review pass 1). `is null` alone would accept a whitespace receipt — a value that
+    // satisfies the constraint while evidencing nothing, which is exactly the hollow success this rule exists to
+    // prevent. The use case rejects it too; this is the layer that holds when something skips the use case.
+    .addCheckConstraint('tool_calls_receipt_required', sql`not (outcome = 'succeeded' and external_effect and coalesce(btrim(receipt_ref), '') = '')`)
     .execute();
 
   // PER-COMPANY idempotency (CDR-049 §4 precedent): a global unique would let one tenant's key collide with — and so

@@ -120,6 +120,9 @@ export function digestToolArguments(args: unknown): string {
 export async function dispatchToolCall(client: DatabaseClient, params: DispatchToolCallParams, options: DispatcherOptions = {}): Promise<DispatchToolCallResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
   const argumentsDigest = digestToolArguments(params.args);
+  // A BLANK KEY IS NO KEY (review pass 1). Treating '' as a real key would make two unrelated calls that both omitted
+  // a meaningful one silently suppress each other - a duplicate answer for something that was never a duplicate.
+  const idempotencyKey = (params.idempotencyKey ?? '').trim() === '' ? undefined : params.idempotencyKey;
 
   const run = await runInCompanyScope(
     client,
@@ -142,8 +145,8 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // Idempotency is checked BEFORE the gates. A duplicate is not a new call to authorize — re-running the gates
       // could even produce a different answer for a call that already happened, which would be a second, contradictory
       // record of one event (NFR-006; FAILURE-AND-RECOVERY row 11).
-      if (params.idempotencyKey !== undefined) {
-        const prior = await calls.findByIdempotencyKey(params.toolId, params.idempotencyKey);
+      if (idempotencyKey !== undefined) {
+        const prior = await calls.findByIdempotencyKey(params.toolId, idempotencyKey);
         if (prior !== undefined) return { status: 'duplicate', call: toDTO(prior) };
       }
 
@@ -178,13 +181,13 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         outcome: decision.kind === 'denied' ? 'denied' : 'requested',
         denialReason: decision.kind === 'denied' ? decision.reason : null,
         argumentsDigest,
-        idempotencyKey: params.idempotencyKey ?? null,
+        idempotencyKey: idempotencyKey ?? null,
       });
 
       // The unique index fired between the read above and this insert: another caller claimed the key first. Report
       // the call that won rather than inventing a second record of the same event.
       if (inserted === undefined) {
-        const winner = params.idempotencyKey === undefined ? undefined : await calls.findByIdempotencyKey(params.toolId, params.idempotencyKey);
+        const winner = idempotencyKey === undefined ? undefined : await calls.findByIdempotencyKey(params.toolId, idempotencyKey);
         if (winner === undefined) throw new Error('tool call insert wrote nothing and no idempotent winner exists — invariant violated');
         return { status: 'duplicate', call: toDTO(winner) };
       }
@@ -248,12 +251,17 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
       const current = await calls.findById(params.callId);
       if (current === undefined) return { status: 'not_found' };
       if (current.outcome !== 'requested') return { status: 'not_requested', outcome: current.outcome };
-      if (params.outcome === 'succeeded' && current.external_effect && (params.receiptRef ?? '').trim() === '') return { status: 'receipt_required' };
+      // Blank is MISSING. A whitespace receipt satisfies a naive `is not null` while evidencing nothing, which is the
+      // hollow success TOOL-002 exists to prevent — so it is normalized to null once, here, and judged as absent.
+      const receipt: string | null = (params.receiptRef ?? '').trim() === '' ? null : (params.receiptRef ?? null);
+      if (params.outcome === 'succeeded' && current.external_effect && receipt === null) return { status: 'receipt_required' };
 
       const updated = await calls.complete({
         callId: params.callId,
         outcome: params.outcome,
-        receiptRef: params.receiptRef ?? null,
+        // Blank is stored as NULL: a whitespace receipt evidences nothing, and keeping it would leave a value that
+        // LOOKS like evidence in the column the receipt rule reads.
+        receiptRef: receipt,
       });
       // The guard missed: something else closed the call between the read and the write. Re-read and report what it
       // actually became rather than claiming this report landed.

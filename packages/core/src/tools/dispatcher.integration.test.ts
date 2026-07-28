@@ -227,6 +227,35 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await callRows()).toHaveLength(2);
   });
 
+  test('a BLANK idempotency key is NO key — two unrelated calls never suppress each other (review pass 1)', async () => {
+    // Treating '' as a real key would make the second call a "duplicate" of something it has nothing to do with.
+    for (const key of ['', '   ']) {
+      await dispatch({ idempotencyKey: key });
+      await dispatch({ idempotencyKey: key });
+    }
+    const rows = await callRows();
+    expect(rows).toHaveLength(4);
+    for (const row of rows) expect(row.idempotency_key).toBeNull();
+  });
+
+  test('a BLANK receipt is not evidence — it is refused and never stored (review pass 1)', async () => {
+    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll }, { gates });
+    const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
+    expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded', receiptRef: '   ' })).toEqual({ status: 'receipt_required' });
+
+    // And the CONSTRAINT holds the same line, for anything that skips the use case.
+    await expect(
+      asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) =>
+        sql`update tool_calls set outcome = 'succeeded', receipt_ref = '   ' where id = ${callId}::uuid`.execute(db),
+      ),
+    ).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+
+    // A blank receipt on a legitimate non-success outcome is stored as NULL rather than as fake evidence.
+    expect((await reportToolCallOutcome(product, { ...base(), callId, outcome: 'failed', receiptRef: '  ' })).status).toBe('ok');
+    expect((await callRows())[0]?.receipt_ref).toBeNull();
+  });
+
   // ── the run linkage ───────────────────────────────────────────────────────────────────────────────────────
   test('a call must belong to a RUNNING run of THIS company', async () => {
     expect(await dispatch({ runId: '00000000-0000-4000-8000-000000000000' })).toEqual({ status: 'run_not_found' });
