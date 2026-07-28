@@ -70,6 +70,8 @@ export { TaskRunRepository } from './task-run-repository.js';
 export type { TaskRunExecutor, NewTaskRunInput, TransitionTaskRunInput } from './task-run-repository.js';
 export { WorkerRepository } from './worker-repository.js';
 export type { WorkerExecutor, SetCompanyWorkerStateInput } from './worker-repository.js';
+export { WorkerRunRepository } from './worker-run-repository.js';
+export type { WorkerRunExecutor, NewWorkerRunInput, FinishWorkerRunInput } from './worker-run-repository.js';
 export { ToolCallRepository } from './tool-call-repository.js';
 export type { ToolCallExecutor, NewToolCallInput, CompleteToolCallInput } from './tool-call-repository.js';
 export { JobRepository } from './job-repository.js';
@@ -222,6 +224,8 @@ export type {
   WorkerDefinitionRow,
   CompanyWorkerStatesTable,
   CompanyWorkerStateRow,
+  WorkerRunsTable,
+  WorkerRunRow,
   NewTaskDeletion,
 } from './schema.js';
 

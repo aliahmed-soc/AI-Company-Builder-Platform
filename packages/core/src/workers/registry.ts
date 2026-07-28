@@ -4,7 +4,7 @@
 // tool allowlist comes from. The dispatcher always enforced it — no allowlist supplied ⇒ deny — but the list was a
 // caller-supplied parameter, which made WORK-005's *"server-enforced"* true mechanically and not yet authoritatively.
 // After this, trust-critical #4's *"allowlists versioned in worker definitions"* is literally where it lives.
-import { WorkerRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type WorkerDefinitionRow } from '@acbp/database';
+import { WorkerRepository, WorkerRunRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type WorkerDefinitionRow } from '@acbp/database';
 import { isWorkerState, workerAcceptsTasks, isMvpSafeAllowlist, workerStateChanged, type WorkerState } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -167,7 +167,9 @@ export interface SetWorkerStateParams extends ScopeParams {
 }
 
 export type SetWorkerStateResult =
-  | { readonly status: 'ok'; readonly workerId: string; readonly state: WorkerState }
+  // `stopsRequested` is how many RUNNING runs of this worker were asked to stop. Reported rather than hidden, because
+  // "did disabling it actually reach the work already in flight?" is the question WORK-006 is asking.
+  | { readonly status: 'ok'; readonly workerId: string; readonly state: WorkerState; readonly stopsRequested: number }
   | { readonly status: 'forbidden' }
   | { readonly status: 'unknown_worker' }
   | { readonly status: 'invalid' };
@@ -207,10 +209,31 @@ export async function setCompanyWorkerState(client: DatabaseClient, params: SetW
       });
       if (row === undefined) throw new Error('worker state upsert wrote nothing — invariant violated');
 
+      // ── THE SAFE STOP (ACBP-P5-005; WORK-006 *"disable during execution triggers safe-stop"*) ──────────────
+      //
+      // This is the clause `CDR-056 §6` recorded as UNMET, and it was unmet for a structural reason: nothing linked a
+      // run to the worker executing it, so "this worker's running work" could not be asked for. `worker_runs` is that
+      // link, and this sweep is the clause.
+      //
+      // IN THE SAME TRANSACTION as the state change. A disable that landed while its stops did not would leave the
+      // owner looking at a disabled worker that is still working — the exact failure the control exists to prevent.
+      //
+      // REQUESTED, NEVER FORCED (CDR-057 §1-G7). The stop is durable on the task run and the worker honours it at its
+      // next checkpoint. Killing a call mid-flight is how a half-performed external action happens.
+      let stopsRequested = 0;
+      if (!workerAcceptsTasks(params.state)) {
+        const taskRuns = new TaskRunRepository(scope.db);
+        for (const live of await new WorkerRunRepository(scope.db).listRunningForWorker(params.workerId)) {
+          // `requestStop` is guarded on a RUNNING task run and idempotent, so a run that ended in between is simply
+          // not counted rather than being resurrected.
+          if ((await taskRuns.requestStop(live.task_run_id)) !== undefined) stopsRequested += 1;
+        }
+      }
+
       // `has_reason` is a BOOLEAN: whether the owner explained themselves is useful, the text they wrote is theirs.
       await audit(scope, workerStateChanged({ workerId: params.workerId, state: params.state, hasReason: reason !== null }), auditCtx(options));
-      options.logger?.info('worker.state_changed', { metadata: { companyId: params.companyId, workerId: params.workerId, state: params.state } });
-      return { status: 'ok', workerId: params.workerId, state: params.state };
+      options.logger?.info('worker.state_changed', { metadata: { companyId: params.companyId, workerId: params.workerId, state: params.state, stops_requested: stopsRequested } });
+      return { status: 'ok', workerId: params.workerId, state: params.state, stopsRequested };
     },
     opts(options),
   );

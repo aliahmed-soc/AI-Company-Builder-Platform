@@ -172,6 +172,12 @@ export const AUDIT_EVENTS = {
   // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006 'Definition changes audited'). Subject = the
   // WORKER id: an owner asking 'who turned research off and when' wants one thread per worker, not per company.
   'worker.state_changed': { schemaVersion: 1, subjectType: 'worker' },
+  // Worker RUNS (ACBP-P5-005; CDR-057). `EVENT-CATALOG` line 183 names exactly these three for the worker runtime,
+  // with the payload `worker_run_id, worker_id+version, (failure_category)` — so the subject is the RUN, not the
+  // worker: a reader tracing "what did this attempt do" wants one thread per run.
+  'worker.started': { schemaVersion: 1, subjectType: 'worker_run' },
+  'worker.completed': { schemaVersion: 1, subjectType: 'worker_run' },
+  'worker.failed': { schemaVersion: 1, subjectType: 'worker_run' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -611,6 +617,45 @@ export function toolCallCompleted(input: { readonly callId: string; readonly too
  */
 export function workerStateChanged(input: { readonly workerId: string; readonly state: string; readonly hasReason: boolean }): AuditEvent {
   return makeEvent('worker.state_changed', input.workerId, 'success', { state: input.state, has_reason: input.hasReason });
+}
+
+/**
+ * A worker began executing a task run (ACBP-P5-005; CDR-057; EVENT-CATALOG line 183). Subject = the WORKER RUN.
+ *
+ * The version travels with the id because canon's payload column says `worker_id+version` and because, once a worker
+ * is re-registered, "which worker ran this" has no answer without it.
+ */
+export function workerRunStarted(input: { readonly workerRunId: string; readonly workerId: string; readonly workerVersion: number }): AuditEvent {
+  return makeEvent('worker.started', input.workerRunId, 'success', { worker_id: input.workerId, worker_version: input.workerVersion });
+}
+
+/**
+ * A worker run ended (ACBP-P5-005; CDR-057).
+ *
+ * A SAFE-STOP IS NOT A FAILURE (CDR-057 §1-G7). An owner's stop request is filed under `worker.completed` carrying
+ * `run_outcome: 'stopped'`, so it is never counted as a malfunction and is still never mistaken for finished work.
+ *
+ * The audit OUTCOME stays `success` on a failed run, following `planningRunRecorded`: the audited operation is
+ * *recording the run*, and reserving `denied`/`blocked` for authorization and policy keeps those outcomes meaningful.
+ *
+ * Optional keys are OMITTED, never `null` — `AuditMetadata` is scalars only and a `null` throws at write time.
+ */
+export function workerRunFinished(input: {
+  readonly workerRunId: string;
+  readonly workerId: string;
+  readonly workerVersion: number;
+  readonly outcome: string;
+  readonly failureCategory?: string;
+  readonly haltReason?: string;
+}): AuditEvent {
+  const name = input.outcome === 'failed' ? 'worker.failed' : 'worker.completed';
+  return makeEvent(name, input.workerRunId, 'success', {
+    worker_id: input.workerId,
+    worker_version: input.workerVersion,
+    run_outcome: input.outcome,
+    ...(input.failureCategory !== undefined ? { failure_category: input.failureCategory } : {}),
+    ...(input.haltReason !== undefined ? { halt_reason: input.haltReason } : {}),
+  });
 }
 
 /**
