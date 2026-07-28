@@ -9,6 +9,33 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-002 workflow coordinator — CORE DONE / IN REVIEW (window 12).**
+  Branch `p5-002-workflow-coordinator` (from main `9b38d25`), draft PR **#55**, CDR-053. Migration **0035** `task_runs`.
+  A RUN IS ONE EXECUTION ATTEMPT of a task — the small state set (`queued · running · succeeded · failed · cancelled`)
+  is deliberate: WORKFLOW-STATE-MACHINES §4's `waiting_for_*` / `paused` / `blocked_by_policy` are TASK states owned by
+  P4-002, and collapsing the two would make "which attempt failed, and why?" unanswerable.
+  All three acceptance clauses proven against real PostgreSQL: cancel-queued-instant, running-safe-stop-bounded (a
+  durable `stop_requested_at` the worker learns about at its next heartbeat), and timeout (a liveness SWEEP, not a
+  timer — the process that would hold the timer is the one most likely to have died).
+  Two authz actions, `run:execute` (the worker's) and `run:cancel` (the owner's), because a worker able to cancel its
+  own run could hide work it had been told to stop. Three audit events registered; `task.completed` deliberately NOT,
+  since canon requires `artifact_refs[]` on it and a run succeeding is not a task completing.
+  **Both review passes FAILED**, ledger `docs/implementation/P5-002-REVIEW.md`. Pass 1: `cancelRun` could tell an owner
+  "already terminal" about a *running* run. Pass 2: `startRun` would begin executing a task the owner had DELETED, and
+  would start an attempt for a task in any state at all. The pass-2 pair hid because every test in the suite started
+  runs against `draft` tasks — the fixtures agreed with the bug.
+  Also on this branch, deliberately out of scope: `fix(repo)` stripping stray control characters that a PowerShell
+  backtick-escape had eaten into three committed files (`audit.ts`, `retry.ts`, `EXECUTION-LOG.md`). The BEL in
+  `audit.ts` had made git classify the blob as binary, silently disabling line-ending normalization for it.
+
+- **ACBP-P5-001a durable job store + tenant stamping — DONE** (squash `ff845fd`, PR #50, exact-main CI green zero-skip
+  2053/2053). **ACBP-P5-001b step checkpointing + resume — DONE** (squash `b36f5a8`, PR #53, 2084/2084).
+  **ACBP-P5-003a tool registry + risk classes — DONE** (squash `5381389`, PR #52, 2117/2117). **ACBP-P5-001c retry cap
+  + dead-letter — DONE** (squash `9b38d25`, PR #54, 2145/2145). **ACBP-P5-001 is complete** (all three sub-scopes).
+  Merged in that order under delegated merge authority (owner decision, window 9), each with exact-main CI checked
+  before the next. Migrations end **0034** on main. P5-003a's risk-class set stays **owner-approved-by-default and
+  provisional** (CDR-051 §0) — a decision to revisit, not a settled one.
+
 - **ACBP-P5-001a durable job store + tenant stamping — CORE DONE / IN REVIEW (window 9).**
   Branch `p5-001a-job-store-tenant-stamping` (from main `223f8e5`), draft PR **#50**, CDR-049. The FIRST of the twelve
   ratified safety-critical sub-scopes (owner decision 2026-07-27 approving my own 3-way splits for P5-001/003 and

@@ -66,3 +66,17 @@ This is the one place canon can be misread, so it is settled here explicitly.
 3. Migration 0035 `task_runs` + repository + the reset-list sweep (the guard now enforces it); real-PG.
 4. Core `startRun` / `heartbeatRun` / `completeRun` / `cancelRun` + real-PG proof of the three acceptance clauses.
 5. Docs + **TWO** independent review passes + finalization.
+
+## 6. Review outcomes (both passes FAILED; see `docs/implementation/P5-002-REVIEW.md`)
+
+- **G7 — a run is never started for a task that is not live.** `startRun` reads through `findLive`, so a task the
+  owner DELETED can never acquire an execution attempt. Deletion is recorded in `task_deletions` and the task row
+  survives (there is no DELETE grant), so a raw id lookup finds discarded work and would start executing it. A deleted
+  task answers `task_not_found` — the same answer a foreign task gets, so the refusal is not an existence oracle.
+- **G8 — a run is never started for a task that cannot be executing.** `canStartRunForTask` is DERIVED from canon's
+  own task transition table: startable means the task is already `running` (a retry attempt while the task stays
+  running) or can legally reach `running`. `completed`/`failed`/`cancelled`/`draft`/`planned` are refused
+  with `task_not_startable`. Deriving rather than restating means the rule cannot go stale when a task state is added.
+- **G9 — a missed cancellation guard is answered honestly, never as `already_terminal`.** If a queued run is picked
+  up between the read and the guarded write, `cancelRun` re-reads and the request becomes a safe-stop. Reporting
+  `already_terminal` would tell an owner their stop landed on finished work while the work carried on.

@@ -209,6 +209,36 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      deliberately tighter so the contract is the error surface and the CHECK a true backstop.
      Checkpoints/resume (P5-001b) and retry caps/dead-lettering (P5-001c) are separate sub-scopes. No new SECURITY
      DEFINER / role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P5-002; CDR-053; TASK-007; NFR-005; ADR-008): migration 0035 adds `task_runs` — company-owned,
+     dual-keyed FORCE RLS.
+     A RUN IS ONE EXECUTION ATTEMPT of a task, which is why `attempt` is part of its identity and why its state set is
+     SMALL. WORKFLOW-STATE-MACHINES §4's richer set — waiting_for_input, waiting_for_approval, blocked_by_policy,
+     paused — are TASK states (each emits a `task.*` event) owned by P4-002's `tasks.state`. Collapsing the two would
+     make "which attempt failed, and why?" unanswerable (CDR-053 §2).
+     `UNIQUE(task_id, attempt)` makes the claim atomic: two coordinators racing to start attempt 2 do not both proceed,
+     and the loser is TOLD (`attempt_taken`) rather than given a duplicate or silently skipped to the next number.
+     The FK to `tasks` is TENANT-PINNED (RI checks always bypass RLS), for which 0035 additively adds `(id, company_id)`
+     UNIQUE to `tasks` — guarded, because 0029 may already have added it.
+     LIVENESS IS A TIMESTAMP THE WORKER ADVANCES, NOT A BACKGROUND TIMER (§3-G4): `last_heartbeat_at` plus a bounded
+     grace makes "is this run lost?" a pure comparison any healthy process can make. The process that would have held
+     the timer is the one most likely to have died — which is the very failure this detects. `isRunLost` FAILS CLOSED:
+     a running run with neither heartbeat nor start time reads as lost.
+     CANCELLATION IS TWO OPERATIONS because the acceptance clause names two. A queued run has no worker to consult, so
+     it is cancelled outright; a running run gets a DURABLE `stop_requested_at` and halts at its next safe point, which
+     is what §4's "current tool call completes/aborts safely, then halt" requires. Found in review: when a queued run is
+     picked up mid-cancellation the guard misses, and the honest answer is a safe-stop — never `already_terminal`,
+     which would tell an owner their stop landed on finished work while the work carried on (§6-G9).
+     A RUN IS NEVER STARTED FOR WORK THAT IS OVER (§6-G7/G8, both found in review): `startRun` reads through `findLive`,
+     so a DELETED task — whose row survives, there being no DELETE grant — can never acquire an attempt; and
+     `canStartRunForTask`, DERIVED from canon's own task transition table rather than restated, refuses `completed`,
+     `failed`, `cancelled`, `draft` and `planned`.
+     Grants are SELECT + INSERT + a COLUMN-scoped UPDATE of exactly the lifecycle columns — tenancy, task linkage and
+     attempt number are immutable after insert. NO DELETE: a run is the record that an attempt happened.
+     `failure_category` is a CLOSED set including canon's `worker_lost`, one-directionally CHECKed against the terminal
+     state (the P5-009/P5-001c lesson) — a category, never provider or worker exception text.
+     `task.completed` is DELIBERATELY NOT emitted here: canon requires `artifact_refs[]` on it ("no artifactless
+     completion", TASK-005), and a run succeeding is not the same fact as a task completing. No new SECURITY DEFINER /
+     role / BYPASSRLS. -->
 | Task | C | task_id | traces to Milestone; has Runs, Dependencies | see WORKFLOW-STATE-MACHINES §4 | M (state) | — | With company | task.* | MVP |
 | Task dependency | C | (task_id, depends_on_task_id) | Task↔Task | with tasks | I | — | With tasks | — | MVP |
 | Task deletion | C | deletion_id, UNIQUE(task_id) | one per deleted Task; records state at delete | recorded (terminal) | **I** | optional owner reason (never in audit) | With tasks | task.deleted | MVP |

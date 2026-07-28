@@ -238,6 +238,11 @@ trusted core/use-case seam:
   `job:enqueue`, on the `task:delete` precedent: scheduling work and executing it are different capabilities, and a
   named action makes it a one-line policy change to grant execution to a worker identity that may never enqueue —
   which is exactly what P5-002 will need. See `CDR-050`.
+- **P5-002** (workflow coordinator) adds `run:execute` and `run:cancel`, both **`owner` only** today. Two actions, not
+  one, and for a sharper reason than the P5-001b precedent: `run:execute` is the WORKER's capability (start, heartbeat,
+  finish, and later the worker identity itself), while `run:cancel` is the OWNER's stop decision. A worker able to
+  cancel its own run could quietly hide work it had been told to stop, so a single action could not express what is
+  needed. API-CONTRACTS puts run control at "Owner/operator". See `CDR-053`.
 - **P5-003a** (tool registry) adds NO authz action. The registry is global platform configuration with a SELECT-only
   grant and no runtime write path at all, so there is nothing for a membership role to be authorized to do. See
   `CDR-051`.
