@@ -17,6 +17,7 @@ import {
   taskStarted,
   taskFailed,
   taskCancelled,
+  describeRunFailure,
   workerRunFinished,
   DEFAULT_HEARTBEAT_GRACE_MS,
   type RunFailureCategory,
@@ -227,7 +228,15 @@ async function finish(client: DatabaseClient, params: FinishRunParams, nextState
       if (nextState === 'failed') {
         await audit(
           scope,
-          taskFailed({ taskId: updated.task_id, runId: updated.id, attempt: updated.attempt, failureCategory: params.failureCategory as string }),
+          // The retry state comes from the SAME function the run read uses (ACBP-P5-013), so the audit trail and
+          // what a founder is shown can never disagree about whether another attempt is coming.
+          taskFailed({
+            taskId: updated.task_id,
+            runId: updated.id,
+            attempt: updated.attempt,
+            failureCategory: params.failureCategory as string,
+            retryState: retryStateFor(updated.attempt, params.failureCategory),
+          }),
           auditCtx(options),
         );
       }
@@ -354,7 +363,17 @@ export async function reclaimLostRuns(client: DatabaseClient, params: ReclaimLos
         // The guard did not match: the worker came back and finished, or an owner cancelled, between the read and the
         // write. That is a normal race and the other outcome wins — reclaiming anyway would overwrite a real result.
         if (failed === undefined) continue;
-        await audit(scope, taskFailed({ taskId: failed.task_id, runId: failed.id, attempt: failed.attempt, failureCategory: 'worker_lost' }), auditCtx(options));
+        await audit(
+          scope,
+          taskFailed({
+            taskId: failed.task_id,
+            runId: failed.id,
+            attempt: failed.attempt,
+            failureCategory: 'worker_lost',
+            retryState: retryStateFor(failed.attempt, 'worker_lost'),
+          }),
+          auditCtx(options),
+        );
 
         // REAP THE WORKER RUN TOO (ACBP-P5-005, review pass 2). A reclaimed attempt's worker run would otherwise sit
         // at `running` for ever: no `worker.failed` record of how it ended, and a permanent entry in the safe-stop
@@ -379,6 +398,17 @@ export async function reclaimLostRuns(client: DatabaseClient, params: ReclaimLos
     opts(options),
   );
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
+}
+
+/**
+ * The retry state a failure carries into the audit trail (ACBP-P5-013; TASK-010).
+ *
+ * Derived from describeRunFailure rather than computed here, so the value written to the audit event is the SAME
+ * value the run read shows a founder. Two independent derivations of 'is another attempt coming' would eventually
+ * disagree, and the trail is the thing people reach for when they already suspect the screen.
+ */
+function retryStateFor(attempt: number, failureCategory: unknown): string {
+  return describeRunFailure({ state: 'failed', failureCategory, attempt })?.nextAttempt ?? 'not_eligible';
 }
 
 function auditCtx(options: CoordinatorOptions): AuditWriteContext {

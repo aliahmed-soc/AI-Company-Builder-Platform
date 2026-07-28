@@ -159,7 +159,9 @@ export const AUDIT_EVENTS = {
   // on it ("no artifactless completion", TASK-005), and a run succeeding is not the same fact as a task completing -
   // the task completes when its artifact is persisted, which belongs to the ticket that owns artifacts.
   'task.started': { schemaVersion: 1, subjectType: 'task' },
-  'task.failed': { schemaVersion: 1, subjectType: 'task' },
+  // VERSION 2 (ACBP-P5-013): retry_state joined the payload. P5-002 registered v1 and named this ticket as the
+  // owner of the addition rather than guessing the field into existence early.
+  'task.failed': { schemaVersion: 2, subjectType: 'task' },
   'task.cancelled': { schemaVersion: 1, subjectType: 'task' },
   'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
   // Tool calls (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). The subject is the CALL, not the
@@ -551,8 +553,20 @@ export function taskStarted(input: { readonly taskId: string; readonly runId: st
  * EVENT-CATALOG also lists `retry_state`; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
  * schema version 2 rather than being guessed at here.
  */
-export function taskFailed(input: { readonly taskId: string; readonly runId: string; readonly attempt: number; readonly failureCategory: string }): AuditEvent {
-  return makeEvent('task.failed', input.taskId, 'blocked', { run_id: input.runId, attempt: input.attempt, failure_category: input.failureCategory });
+export function taskFailed(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly attempt: number;
+  readonly failureCategory: string;
+  /** TASK-010 retry visibility: scheduled, exhausted or not_eligible — the value `describeRunFailure` produces. */
+  readonly retryState: string;
+}): AuditEvent {
+  return makeEvent('task.failed', input.taskId, 'blocked', {
+    run_id: input.runId,
+    attempt: input.attempt,
+    failure_category: input.failureCategory,
+    retry_state: input.retryState,
+  });
 }
 
 /**

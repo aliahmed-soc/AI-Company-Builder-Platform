@@ -13,8 +13,15 @@ import { isUlid } from '../audit/ulid.js';
 import { asciiToBase64Url, base64UrlToAscii } from '../codec/base64url.js';
 import type { AuditMetadata } from '../audit/audit.js';
 
-/** The CLOSED set of activity types the feed may render — the four durable company events (CDR-016). */
-export const ACTIVITY_TYPES = ['company.created', 'company.updated', 'company.paused', 'company.resumed'] as const;
+/**
+ * The CLOSED set of activity types the feed may render.
+ *
+ * FOUR company lifecycle events (CDR-016) plus 	ask.failed — a DELIBERATE widening for ACT-005 (ACBP-P5-013;
+ * CDR-059 G6), which requires a *"suppression-proof feed record"* of failures. A feed that showed everything the
+ * system did EXCEPT the things that went wrong would be the specific dishonesty that requirement names. It stays
+ * CLOSED: this is one considered addition, not an opening.
+ */
+export const ACTIVITY_TYPES = ['company.created', 'company.updated', 'company.paused', 'company.resumed', 'task.failed'] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 export function isActivityType(value: unknown): value is ActivityType {
   return typeof value === 'string' && (ACTIVITY_TYPES as readonly string[]).includes(value);
@@ -29,7 +36,11 @@ export function isProjectableActivity(auditEventName: unknown): auditEventName i
   return isActivityType(auditEventName);
 }
 
-/** Proposed-vs-executed marking (ACT-003, invariant 20). Every P1-009 company event is an executed fact. */
+/**
+ * Proposed-vs-executed marking (ACT-003, invariant 20). Every type in the set is an EXECUTED fact — including
+ * 	ask.failed, which has already happened; marking a failure proposed would suggest a founder could still
+ * prevent it.
+ */
 export type ExecutionState = 'proposed' | 'executed';
 export function executionStateFor(_type: ActivityType): ExecutionState {
   return 'executed';
@@ -46,6 +57,10 @@ const SUMMARY_ALLOWLIST: Readonly<Record<ActivityType, readonly string[]>> = {
   'company.updated': ['changed_fields'],
   'company.paused': [],
   'company.resumed': [],
+  // ACT-005 (ACBP-P5-013). TASK-006 wants a CATEGORY (never a stack trace) and TASK-010 wants the retry policy to be
+  // visible. Deliberately NOT the run id, the actor, or any provider text — the category IS the explanation, and a
+  // provider's message is unbounded, not ours to show, and the thing this allowlist exists to keep out.
+  'task.failed': ['failure_category', 'attempt', 'retry_state'],
 };
 
 /** Project a bounded payload down to the type's allowlisted summary keys (unknown keys are dropped, never emitted). */

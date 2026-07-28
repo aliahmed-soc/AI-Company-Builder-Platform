@@ -39,7 +39,9 @@ describe('exact temporal serialization', () => {
 
 describe('activity taxonomy (company events only)', () => {
   test('the visible types are exactly the four company events', () => {
-    expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated']);
+    // WIDENED ONCE, DELIBERATELY: `task.failed` joined the set for ACT-005 (ACBP-P5-013; CDR-059 G6). This assertion
+    // firing on an addition is the guard working — the set is closed, and every member has to be argued for.
+    expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated', 'task.failed']);
     for (const t of ACTIVITY_TYPES) expect(isActivityType(t)).toBe(true);
   });
   test('account-level / Logger-only / unknown names are NOT projectable', () => {
@@ -163,5 +165,35 @@ describe('activity cursor (opaque base64url; versioned; account+company bound; a
     expect(decodeActivityCursor(acct, co, tamperedAfter)).toEqual({ after: { occurredAt: '2026-01-01T00:00:00.000Z', eventId: CUR.after.eventId }, upper: CUR.upper });
     const tamperedUpper = encObj({ ...base, ue: '01ARZ3NDEKTSV4RRFFQ69G5FA2' });
     expect(decodeActivityCursor(acct, co, tamperedUpper)?.upper.eventId).toBe('01ARZ3NDEKTSV4RRFFQ69G5FA2');
+  });
+});
+
+describe('ACT-005 — a failure is visible in the feed (ACBP-P5-013; CDR-059 G6)', () => {
+  test('task.failed IS projectable — the taxonomy is deliberately widened past the four company events', () => {
+    // CDR-016 closed this set at the four company lifecycle events. ACT-005 requires failure visibility with a
+    // "suppression-proof feed record", and a feed that showed everything the system did EXCEPT its failures would be
+    // the specific dishonesty that requirement names. The widening is recorded in CDR-059 G6.
+    expect(isProjectableActivity('task.failed')).toBe(true);
+    expect(ACTIVITY_TYPES).toContain('task.failed');
+  });
+
+  test('its summary carries the CATEGORY, the ATTEMPT and the RETRY STATE - and nothing else', () => {
+    // Exactly what TASK-006 and TASK-010 require a founder to be able to see, and no more. No run id, no actor, no
+    // free text, and above all no provider message: the category IS the explanation.
+    const summary = activitySummaryFor('task.failed', {
+      failure_category: 'provider_error',
+      attempt: 2,
+      retry_state: 'scheduled',
+      run_id: 'should-be-dropped',
+      provider_message: 'connection reset by peer',
+    });
+    expect(summary).toEqual({ failure_category: 'provider_error', attempt: 2, retry_state: 'scheduled' });
+    expect(Object.keys(summary)).not.toContain('run_id');
+    expect(JSON.stringify(summary)).not.toContain('connection reset');
+  });
+
+  test('a failure is an EXECUTED fact, like every other feed item', () => {
+    // It already happened. Marking it 'proposed' would suggest the founder could still prevent it (ACT-003).
+    expect(executionStateFor('task.failed')).toBe('executed');
   });
 });
