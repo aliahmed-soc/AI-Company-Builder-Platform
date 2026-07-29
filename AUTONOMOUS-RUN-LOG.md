@@ -1532,3 +1532,99 @@ git normalises on staging, but it broke the LF-anchored `mark-done.ps1` regex un
 ### Still true
 
 CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence.
+
+## Window 17 — ACBP-P6-001 + ACBP-P6-002 merged; the policy engine now gates tool calls (2026-07-30, ~00:30–03:00 +03)
+
+State at start: `main == origin/main == 2f51bd7` (Phase 5 complete), migrations ending 0044, disk C 7.53 GB / E 81.47 GB.
+State at end: `main == origin/main == 338ae08`, migrations ending **0046**, disk C 7.50 GB / E 81.47 GB. PR #64 MERGED.
+**A real PostgreSQL was live for the entire window**, so every `skipIf(!hasTestDatabase)` suite EXECUTED — the first
+window in a while where "green" means what it says.
+
+Final gate on the merge commit, on `main`: **`pnpm run check` EXIT 0 — 218 test files, 2881 tests, ZERO SKIPS.**
+Locally verified, NOT CI-proven: hosted CI is still blocked on the GitHub Actions spending limit (owner-only).
+
+### What merged
+
+**ACBP-P6-001 (a/b/c) — Done.** The deterministic policy engine: pure evaluator with a required baseline, closed
+ordered decision vocabulary, most-restrictive-wins, total over `unknown`; versioned `policies` + append-only
+`policy_evaluations` (migration 0045); a fail-closed service where "no active policy" is an **answer** (deny).
+
+**ACBP-P6-002 — merged, and NOT Done.** `ToolGates.policy` is deleted; the dispatcher consults the engine itself
+inside the scope already open, so the evaluation, the `tool_calls` row and every audit event commit or roll back
+together. Migration 0046 links the call to the evaluation that decided it.
+
+### Two rulings this window, both PM-level and recorded as such
+
+1. **Policy is the authority on whether an approval is needed** (CDR-067 §2-G7) — a LOOSENING of a security check.
+2. **Leave `gates.approval` injectable, and give the record teeth** — see below.
+3. **Do not wire evaluation point 1**, with the safety argument stated explicitly rather than implied.
+
+### The loosening opened a hole, and a TEST caught it — not review
+
+With the approval demand made conditional on policy, an answer of `allow` left `untrustedContext` with **no effect
+whatsoever**: the NFR-021 injection boundary went dead, and laundered content would have reached tools on a plain
+`allow`. The boundary had been resting on a mechanism that was not its own — untrusted provenance refused a call by
+WITHDRAWING the waiver, which only worked because an approval was demanded of every non-waived call. Remove the
+demand, remove the property, silently. Found by the injection corpus (7 failures) during the full sweep.
+
+**The lesson, because it will recur: a security property can rest on a mechanism that is not its own, and removing
+the mechanism removes the property with no local sign.** Nothing in the loosening's own tests mentioned untrusted
+content.
+
+### Two independent reviews, both of which found things
+
+**Review 1 was scoped to ONE question** — *find any path where a call proceeds without an approval that policy
+demanded* — with ten named attack lines and permission to answer "nothing found". `decideDispatch` held on all ten.
+Two gaps came out anyway, **both in code this ticket touched but did not change, neither findable from the diff**:
+`toPolicyGateAnswer` forwarded the decision unvalidated (and an unreadable decision landed on `unavailable`, the ONE
+value the waiver spares — so the failure mode was an informational call proceeding on a decision nobody could read),
+and the idempotency short circuit reported a prior DENIED call as `duplicate` and did not bind the key to the
+arguments.
+
+**Review 2 (SHIP WITH FIXES, 14 confirmed) found a corrupted source file under a green gate.** Two raw TABs where a
+PowerShell escape ate the `t` of `tool_calls`, plus a literal backtick-n that merged two comment lines. Third
+recurrence of the class. It also caught that `gate()`'s totality was *claimed*-tested and untested — the INV-4 test's
+title named `gate()` while its body exercised `policyGate()`, different codomains — which matters precisely because
+the loosening made the approval gate the sole enforcement of `require_approval`.
+
+### Three things I did because a note is not a guard
+
+- **`tools/check-approval-port.mjs`**, in `check:static`. Fails the build the moment an approval store exists while
+  `ToolGates` still declares `approval?:`. Carries a negative self-test, exits **2** (distinctly) if it can no longer
+  see its target, is itself tested against six fixture trees, and was proven against the real tree. Closing the port
+  is now an **acceptance condition of ACBP-P6-003**, recorded in the backlog row.
+- **`check-encoding.mjs` now fails on a raw TAB and a lone CR.** Both signals were MEASURED before adoption: TAB
+  scored 0 across 584 files; lone-CR scored 1 — a **fourth, previously unnoticed** instance where `running` had lost
+  its `r` in a JSDoc comment. Deliberately NOT checked: a backtick followed by an escape letter — it reads like the
+  strongest signal and returned 10 hits of which 10 were legitimate template literals. A guard that cries wolf gets
+  deleted.
+- **A suspicion was TESTED rather than reasoned about.** Review 2 suspected the mutual FK cycle between `tool_calls`
+  and `policy_evaluations` would wedge company deletion. It does not — both FKs are `NO ACTION`, checked at end of
+  statement, so the cycle resolves inside the cascade. The test now asserts it instead of the CDR explaining it.
+
+### Standing corollary added
+
+**A claim in a document is not evidence, and a test title is not coverage.** Four documentation overstatements were
+corrected this window (§2-G8 claimed three `@ts-expect-error` assertions including one that cannot exist; CDR-066
+§0.2 cited a test this ticket had deleted; 0045's column comment said the opposite of what P6-002 made true; CDR-067
+§1 claimed the *limit* dimension was wired when only `risk_class` is observed) — and every correction is now backed
+by a test rather than by a better sentence.
+
+### What is open, and where it lands
+
+- **`gates.approval` is caller-injectable.** Not reachable today (zero non-test callers of `dispatchToolCall`,
+  verified independently rather than on the reviewer's word) and not a regression, but the approval gate is now the
+  *sole* enforcement of `require_approval`. **ACBP-P6-003 must consult the approval store internally and DELETE the
+  port**, as `policy` was deleted here. `gates.stop` is the same shape for P6-007.
+- **ACBP-P6-002's acceptance row is UNMET**: one of three evaluation points. Point 2 → ACBP-P6-003. Point 1 → an
+  **OWNER GATE** (CDR-067 §1): the engine's observations are tool-shaped, and a point-1 refusal would change P4-002's
+  state machine — under the owner-ruled baseline, planning is internal work allowed by default, so a point-1 gate
+  refusing planning would deny work the company's own policy permits.
+- Five residual risks from review 1 and the truncate-order forward risk from review 2 are logged with disposition in
+  CDR-067 §2-G10.
+
+### Still true
+
+CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
+free minutes reset, the full suite must be run on `main` at `338ae08` and confirmed** before any of it is treated as
+CI-proven.
