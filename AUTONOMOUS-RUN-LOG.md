@@ -1027,6 +1027,22 @@ shape). Only the credit suite was affected.
 negative self-test that fails the build if its own patterns stop matching a known defect — because a checker that
 silently stops matching becomes a checker that always passes, which is this same failure one level up.
 
+**Corollary: before adding a charge to any path, find where the lifecycle ALREADY charges.** Twice now a second
+charge has been written onto a path that was already metered once. D9 (P5-014): a `consumption` debited what the
+`reservation` had already taken, so a *succeeded* run cost two credits while a failed one cost none. Then CDR-064 G4
+(P5-012) planned to reserve a credit in `requestRevision` — but `WORKFLOW-STATE-MACHINES` §4 puts the credit check on
+`planned→queued`, which the new task goes through like any other, so that would have charged twice for one revision.
+Caught before shipping this time, and pinned by a test that fails if any charge appears on that path. **A credit
+lifecycle has exactly one charging point; adding a second is never additive, it is a double charge.**
+
+**Corollary: when a document summarises a journey, go and read the journey.** `AI-AND-WORKER-ARCHITECTURE.md:13`
+summarises J-13 as "revisions create lineage-linked new **runs**". `MASTER-PRD-v1.md` J-13 actually says *"new linked
+**task** created (lineage to original) → re-execution"*. Taking the summary at face value led P5-012's migration to
+model a `run_id` that cannot exist at request time — the run only appears once the new task is queued, and the
+original task cannot be re-opened because `running→completed` is terminal. `CLAUDE.md`'s canonical source priority
+settles it (PRD #4 above architecture #5); the conflict is now flagged inline at that line so the next reader does
+not re-derive it.
+
 **Corollary: a RUNNER that can emit a meaningless red is as dangerous as a test that can emit a meaningless green.**
 On 2026-07-29 a sweep on `main` reported *91 files failed, 32 tests failed, 1095 skipped*. All of it was noise:
 WSL2's idle timeout was tearing the distro down ~18 s after each `wsl` call returned, so PostgreSQL died mid-sweep

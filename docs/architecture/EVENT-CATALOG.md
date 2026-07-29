@@ -169,6 +169,19 @@ Retention default: activity-projected events with company data; audit-relevant e
      completion", TASK-005), and a RUN succeeding is not the same fact as a TASK completing — the task completes when
      its artifact is persisted, which belongs to the ticket that owns artifacts. **ACBP-P5-011 is that ticket and has
      now registered it** — see the note under the `task.completed` row below. -->
+<!-- IMPLEMENTED (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13): `artifact.revision_requested` is registered, and it
+     is a DELIBERATE ADDITION — this file does not name it. The backlog's audit behaviour for that ticket is literally
+     "lineage audited", and an event carrying only one end of a link is not lineage, so the payload carries BOTH:
+     `original_artifact_id` (what was being revised) and `new_task_id` (the task created to do it).
+
+     `new_task_id`, NOT a run id. J-13 says a revision creates a NEW LINKED TASK; the run follows when that task is
+     queued, so at request time there is no run to name.
+
+     `has_guidance` is a BOOLEAN and the guidance TEXT never enters the payload — `task.deleted`'s reason-text
+     precedent. Audit metadata is a flat map of scalars by design, and founder prose is unbounded and PII-adjacent.
+     That a revision was asked for, by whom, and of what, is what the audit trail needs; the words live in the request
+     row the owner can read. Subject = the revision request id. Written in the SAME transaction as the task and the
+     revision row (ADR-015 audit-or-nothing). -->
 <!-- IMPLEMENTED (ACBP-P5-011; CDR-060; TASK-005): `task.completed` is registered, and the requirement it carries is
      enforced in code rather than asserted in prose. `validateCompletionEvidence` admits exactly the two shapes this
      row's wording permits — one or more artifact refs, OR an explicit no-artifact rationale — and has no third

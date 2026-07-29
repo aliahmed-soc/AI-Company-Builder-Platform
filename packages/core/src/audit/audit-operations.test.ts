@@ -66,6 +66,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "Controls audited") — deliberately approved.
       'task.repeat',
       'task.delete',
+      // Revision requests (ACBP-P5-012; CDR-064) - deliberately approved addition.
+      'artifact.request-revision',
       // Task completion (ACBP-P5-011; TASK-005) — a succeeded RUN is not a completed TASK, so this is its own operation.
       'task.complete',
       'membership.invite',

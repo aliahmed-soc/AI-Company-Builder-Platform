@@ -42,6 +42,19 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-012 revision workflow — DONE** (CDR-064; J-13; TASK-005 lineage), merged on local verification.
+  Migration 0044 `artifact_revisions` + `requestRevision` + `readArtifactLineage`. **A revision creates a NEW LINKED
+  TASK, not a run on the finished one** — `MASTER-PRD-v1.md` J-13 says so outright, `running→completed` is terminal,
+  and at request time no run exists yet. `AI-AND-WORKER-ARCHITECTURE.md:13` summarises this as "new runs", which is
+  what led slice 2's first schema astray; the conflict is now flagged inline at that line, and the PRD wins on
+  canonical source priority (#4 above #5).
+  **It charges no credit.** `WORKFLOW-STATE-MACHINES` §4 already meters `planned→queued`, so charging here would have
+  doubled it — the D9 shape in a new place, caught before shipping and pinned by a test.
+  Lineage is DERIVED (artifact → run → task → request), never a column on `artifacts`, so it cannot drift. Review
+  pass 2 caught a key-reuse defect: one idempotency key reused for a different artifact used to report success for a
+  document that was never revised; now a typed refusal.
+  Locally verified, NOT CI-proven.
+
 - **ACBP-P5-013 failure detail and visible retries — IN PROGRESS (window 13).**
   Branch `p5-013-failure-detail` (from main `bf381e7`), CDR-059. No migration — everything derives from
   `task_runs` columns that already exist, because a stored copy of a run's own facts could disagree with it.

@@ -239,6 +239,28 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
      `task.completed` is DELIBERATELY NOT emitted here: canon requires `artifact_refs[]` on it ("no artifactless
      completion", TASK-005), and a run succeeding is not the same fact as a task completing. No new SECURITY DEFINER /
      role / BYPASSRLS. -->
+<!-- IMPLEMENTED (ACBP-P5-012; CDR-064; TASK-005 lineage; J-13): migration 0044 adds `artifact_revisions` —
+     company-owned, dual-keyed FORCE RLS, SELECT + INSERT only (no UPDATE, not even column-level; no DELETE). One row
+     per revision REQUEST: `original_artifact_id` (what is being revised) and `new_task_id` (the task created to do
+     it), BOTH tenant-pinned by composite FK, because RI checks always bypass RLS and a link that can cross a tenant
+     boundary is worse than no link.
+
+     LINEAGE IS DERIVED, NOT STORED. There is deliberately no `revision_of_artifact_id` column on `artifacts`: an
+     artifact is a revision of the original because the run that produced it belongs to `new_task_id`. The same fact
+     in two places is a fact that can disagree, and a revision run writing three artifacts would need such a column
+     set correctly three times — the one that was missed becoming a document with no visible ancestor.
+
+     A NEW LINKED TASK, NOT A NEW RUN. `MASTER-PRD-v1.md` J-13: "new linked task created (lineage to original) →
+     re-execution → both versions retained." `running→completed` is TERMINAL in WORKFLOW-STATE-MACHINES §4, so the
+     original task cannot be re-opened, and at request time no run exists to reference. (`AI-AND-WORKER-ARCHITECTURE`
+     line 13 summarises this as "new runs" — read J-13 itself, not the summary.)
+
+     IDEMPOTENT PER REQUEST via a real named UNIQUE constraint on (company_id, idempotency_key) — a real CONSTRAINT
+     rather than a partial index, because the key is NOT NULL here, which makes it a legal `ON CONFLICT ON CONSTRAINT`
+     target and puts the whole P5-014 D1 class out of reach. NO new SECURITY DEFINER / role / BYPASSRLS.
+
+     `artifacts` gains ONE index only (`artifacts_id_company_uq`), so the composite FK above has a target. No column,
+     constraint or grant on `artifacts` changes — its append-only posture is exactly as P5-011 shipped it. -->
 <!-- IMPLEMENTED (ACBP-P5-003b; CDR-054; TOOL-002/003; WORK-005; NFR-006; ADR-012; trust-critical #4/#11): migration
      0036 adds `tool_calls` — company-owned, dual-keyed FORCE RLS. This is the 100%-coverage surface of THE enforcement
      chokepoint (`COMPONENT-CATALOG`: "Trusted — the enforcement chokepoint").

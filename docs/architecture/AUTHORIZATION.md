@@ -194,6 +194,11 @@ trusted core/use-case seam:
   The decision records a SELECTION only — it neither writes the immutable Decision record (P3-005) nor unlocks planning
   (the P4 boundary). DISTINCT closed action, deny-by-default; not granted to a viewer, an account owner without company
   membership, nor via forged provider claims. See `CDR-037`.
+- **P5-012** (revision workflow) adds `artifact:revise`, **`owner`-only** — `API-CONTRACTS.md:55` scopes the
+  Documents row explicitly (*"Member (read), owner (revise)"*), so unlike `task:delete` this is not a case where canon
+  is silent and restricting would invent a requirement. It also commits the company to work: the new task it creates
+  is metered when it is queued. The lineage READ is deliberately NOT this action — it rides `task:read`, so a viewer
+  can see a document's history without being able to spend a credit revising it.
 - **P3-005** (immutable decision records) adds `decision:record`, **`owner`-only** — the STRAT-006 / J-08 "Actor: owner"
   gate on writing the durable, audit-grade decision record (the `strategy:select` precedent). It authorizes writing the
   record that links the understanding version + the options considered + the selection + an optional rationale; the

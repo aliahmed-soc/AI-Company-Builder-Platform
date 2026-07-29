@@ -38,6 +38,7 @@ import {
   planningRunRecorded,
   taskRepeated,
   taskDeleted,
+  artifactRevisionRequested,
   type AuditEventName,
 } from './index.js';
 
@@ -150,6 +151,7 @@ describe('event-name registry (deny unregistered)', () => {
       // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008).
       'task.repeated',
       'task.deleted',
+      'artifact.revision_requested',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
@@ -392,6 +394,26 @@ describe('typed factories', () => {
     // `has_reason` is a BOOLEAN: deleting a completed task and deleting a queued one are very different losses, and
     // the state records that — but the reason itself is free text and stays out of the payload.
     expect(typeof ev.metadata?.['has_reason']).toBe('boolean');
+    expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'string' || typeof v === 'boolean')).toBe(true);
+  });
+
+  test('artifactRevisionRequested: carries BOTH ends of the lineage, never the guidance text (TASK-005 / J-13)', () => {
+    const ev = artifactRevisionRequested({ revisionId: 'rev_1', originalArtifactId: 'art_1', newTaskId: 'task_2', hasGuidance: true });
+    expect(ev).toEqual({
+      name: 'artifact.revision_requested',
+      schemaVersion: 1,
+      subjectType: 'artifact_revision',
+      subjectId: 'rev_1',
+      outcome: 'success',
+      metadata: { original_artifact_id: 'art_1', new_task_id: 'task_2', has_guidance: true },
+    });
+    // The backlog's audit behaviour for this ticket is literally "lineage audited", so BOTH ends must be present:
+    // what was revised, and the TASK created to revise it (J-13). One without the other is not lineage.
+    expect(ev.metadata?.['original_artifact_id']).toBe('art_1');
+    expect(ev.metadata?.['new_task_id']).toBe('task_2');
+    // `has_guidance` is a BOOLEAN — `task.deleted`'s reason-text precedent. Founder prose is unbounded and
+    // PII-adjacent; that a revision was asked for is the auditable fact, the words are in the request row.
+    expect(typeof ev.metadata?.['has_guidance']).toBe('boolean');
     expect(Object.values(ev.metadata ?? {}).every((v) => typeof v === 'string' || typeof v === 'boolean')).toBe(true);
   });
 
