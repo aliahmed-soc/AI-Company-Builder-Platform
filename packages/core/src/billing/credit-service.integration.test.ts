@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { CreditRepository, TaskRepository, TaskRunRepository, closeDatabase, type DatabaseClient } from '@acbp/database';
-import { CREDITS_PER_MANUAL_RUN } from '@acbp/contracts';
+import { CREDITS_PER_MANUAL_RUN, RISK_CLASSES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -75,17 +75,53 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
   }
 
   /**
+   * A one-shot barrier: the contenders must not start until the lock is DEMONSTRABLY held.
+   *
+   * D10. Without this the two lock tests were racy in the wrong direction and always lost. The holder is a FRESH
+   * client — its first statement pays TCP connect, authentication, `BEGIN` and the `SET LOCAL` scope GUCs — while the
+   * reservation runs on the already-warm shared `product` pool. Merely creating the holder's promise first does not
+   * order them: the reservation reached the account lock, took it, committed and released it before the holder's
+   * `FOR UPDATE` ever executed. Nothing blocked, so `waitForBlockedBy` burned its whole budget and the test timed out
+   * — while the lock it was trying to prove was working perfectly.
+   */
+  function lockBarrier(): { readonly held: Promise<void>; readonly signal: () => void } {
+    let signal!: () => void;
+    const held = new Promise<void>((resolve) => {
+      signal = resolve;
+    });
+    return { held, signal };
+  }
+
+  /**
    * Block until some backend is waiting on a lock held by `pid`.
    *
    * This is what makes the race DETERMINISTIC, and it THROWS if nothing ever blocks — so a future change that quietly
    * removed the lock would fail this test loudly rather than turning it into a sequential one that still passes.
+   *
+   * The budget MUST stay below the enclosing test's timeout. At 400 x 25ms it was exactly the 10s default, so this
+   * error could never be seen: vitest killed the test first and reported a bare timeout instead of the diagnosis.
+   * The two callers now pass an explicit 30s timeout, leaving this the signal that actually surfaces (D10).
    */
-  async function waitForBlockedBy(pid: number, atLeast = 1): Promise<void> {
-    for (let attempt = 0; attempt < 400; attempt += 1) {
-      const r = await sql<{ n: number }>`
-        select count(*)::int as n from pg_locks l where not l.granted and ${pid}::int = any (pg_blocking_pids(l.pid))
+  async function waitForBlockedBy(pid: number, atLeast = 1): Promise<readonly string[]> {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      // TRANSITIVELY blocked, not directly. PostgreSQL queues row-lock waiters behind EACH OTHER: with a holder H and
+      // two contenders A and B the chain is H <- A <- B, so `pg_blocking_pids` names A (not H) as B's blocker and only
+      // ONE backend is ever directly blocked by H. Counting direct blockers made `atLeast = 2` unsatisfiable by
+      // construction — the AT-025 race test could never have passed, and never got the chance to say so (D10).
+      const r = await sql<{ pid: number; query: string }>`
+        with recursive waiter as (
+          select a.pid, unnest(pg_blocking_pids(a.pid)) as blocker
+          from pg_stat_activity a
+          where cardinality(pg_blocking_pids(a.pid)) > 0
+        ),
+        chain as (
+          select w.pid from waiter w where w.blocker = ${pid}::int
+          union
+          select w.pid from waiter w join chain c on w.blocker = c.pid
+        )
+        select distinct c.pid, a.query from chain c join pg_stat_activity a on a.pid = c.pid
       `.execute(owner.kysely);
-      if ((r.rows[0]?.n ?? 0) >= atLeast) return;
+      if (r.rows.length >= atLeast) return r.rows.map((x) => x.query);
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error(`fewer than ${atLeast} backend(s) ever blocked on the account lock — the AT-025 race was not reproduced`);
@@ -101,7 +137,15 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
   test('preflight reports the balance, the cost and the side-effect class, and changes nothing', async () => {
     await grant(3);
     const r = await preflightRun(product, { ...base() });
-    expect(r).toMatchObject({ status: 'ok', balance: 3, cost: CREDITS_PER_MANUAL_RUN, affordable: true, sideEffectClass: 'internal_only' });
+    expect(r).toMatchObject({ status: 'ok', balance: 3, cost: CREDITS_PER_MANUAL_RUN, affordable: true, sideEffectClass: 'informational' });
+    // D8. This expected `'internal_only'` — an invented FIFTH name that a P5-014 review pass had already corrected in
+    // the product, and that this test was never updated to match. `toMatchObject` compares a plain literal, so nothing
+    // type-checked the stale value against `RiskClass` and it survived. Pin MEMBERSHIP of the closed set too, so the
+    // next invented name fails here rather than in a reviewer's eye.
+    //
+    // NOT the CDR-051 §0.3 open question: that one is about canon's THIRD class (`external` vs `external_reversible`)
+    // and the owner has not ruled on it. `informational` is the FIRST class and is unaffected either way.
+    expect(RISK_CLASSES).toContain((r as { sideEffectClass: string }).sideEffectClass);
     // READ-ONLY: a preflight that wrote would charge for looking.
     expect(await rows()).toHaveLength(1);
   });
@@ -208,15 +252,18 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     const clientB = createRestrictedProductClient();
     try {
       let bothQueued = false;
+      const barrier = lockBarrier();
       const gateHeld = asRestricted(gate, { account: w.accountA, company: w.companyA1 }, async (db) => {
         await sql`select id from accounts where id = ${w.accountA} for update`.execute(db);
         const r = await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(db);
+        barrier.signal(); // the gate now HOLDS the lock — only now may the contenders start (D10).
         await waitForBlockedBy(r.rows[0]?.pid ?? 0, 2);
         bothQueued = true;
         // Returning here commits the gate transaction and releases the lock; the two contenders then proceed one
         // after the other, each deriving a balance the other cannot be midway through changing.
       });
 
+      await barrier.held;
       const racing = Promise.all([
         reserveCredit(clientA, { ...base(), taskRunId: runA, idempotencyKey: 'race-a' }),
         reserveCredit(clientB, { ...base(), taskRunId: runB, idempotencyKey: 'race-b' }),
@@ -240,7 +287,9 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
       expect(await new CreditRepository(db).deriveBalance(w.accountA)).toBe(sum);
     });
-  });
+    // Explicit, and well above waitForBlockedBy's 15s budget, so a genuine failure to reproduce the race reports
+    // ITSELF rather than being cut short by the 10s default and reported as a bare timeout (D10).
+  }, 30_000);
 
   test('the reservation is SERIALIZED by a real lock — a held account lock blocks it', async () => {
     // Proves the mechanism, not just the outcome. If someone removed `lockAccountForSpend`, the race test above could
@@ -250,20 +299,31 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     const holder = createRestrictedProductClient();
     try {
       let released = false;
+      let blockedQueries: readonly string[] = [];
+      const barrier = lockBarrier();
       const holding = asRestricted(holder, { account: w.accountA, company: w.companyA1 }, async (db) => {
         await sql`select id from accounts where id = ${w.accountA} for update`.execute(db);
         const r = await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(db);
-        await waitForBlockedBy(r.rows[0]?.pid ?? 0);
+        barrier.signal(); // the holder now HOLDS the lock — only now may the reservation start (D10).
+        blockedQueries = await waitForBlockedBy(r.rows[0]?.pid ?? 0);
         released = true;
       });
+      await barrier.held;
       const reserving = reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
       await holding;
       expect(released).toBe(true); // something DID block on the account lock — the serialization point is real.
+
+      // WHICH statement blocked, not merely that one did. Asserting "something blocked" did NOT prove this guard:
+      // `credit_transactions.account_id` references `accounts`, so the INSERT's referential-integrity check takes a
+      // KEY SHARE lock on the very same row, which conflicts with the holder's FOR UPDATE and blocks all by itself.
+      // Deleting `lockAccountForSpend` entirely therefore still left this test GREEN — it agreed with the bug. Pinning
+      // the blocked statement to the explicit row lock is what makes removing the guard fail here (D10).
+      expect(blockedQueries.some((q) => /for update/i.test(q) && /accounts/i.test(q))).toBe(true);
       expect((await reserving).status).toBe('ok');
     } finally {
       await closeDatabase(holder);
     }
-  });
+  }, 30_000);
 
   // ── SETTLEMENT (USAGE-AND-BILLING §4) ─────────────────────────────────────────────────────────────────────
   test('a SUCCEEDED run consumes: the credit is gone and the ledger says why', async () => {
