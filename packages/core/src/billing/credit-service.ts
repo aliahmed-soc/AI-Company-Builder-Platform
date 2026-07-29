@@ -251,6 +251,12 @@ export async function settleRun(client: DatabaseClient, params: SettleRunParams,
       }
 
       const balanceAfter = await credits.deriveBalance(scope.tenant.accountId);
+      // `credits` here is THE SIZE OF THE HOLD BEING SETTLED, not the settlement row's own amount — and since D9 the
+      // two differ for a consumption: the row moves 0 because the reservation already took the credit, while this
+      // reports the 1 that was consumed. Stated because a reader reconciling the audit trail against the ledger will
+      // otherwise meet 1-against-0 on the money path and have to work out which is wrong. Neither is: `settlement`
+      // says which disposal happened and `balance_after` carries the effect, so "consumed 1, 2 left" reads correctly.
+      // Reporting the row's 0 instead would be accurate and useless — an audit line saying a run cost nothing.
       await audit(scope, creditSettled({ txnId: entry.id, runId: params.taskRunId, settlement: decision.kind, credits: magnitude, balanceAfter }), auditCtx(options));
       return { status: 'ok', settlement: decision.kind, entry: toDTO(entry), balanceAfter };
     },

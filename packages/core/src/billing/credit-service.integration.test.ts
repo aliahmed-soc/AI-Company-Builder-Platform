@@ -337,7 +337,9 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     expect(settled).toMatchObject({ status: 'ok', settlement: 'consume', balanceAfter: 2 });
     expect((await rows()).map((x) => x.kind).sort()).toEqual(['consumption', 'grant', 'reservation']);
     expect((await rows()).find((x) => x.kind === 'consumption')?.credits).toBe(0);
-    expect((await auditRows()).find((a) => a.name === 'credit.settled')?.payload).toMatchObject({ settlement: 'consume', balance_after: 2 });
+    // The audit reports the HOLD's size (1), while the ledger row moves 0 — pinned deliberately, both of them, so the
+    // difference is a recorded decision rather than something a later reader has to reverse-engineer (review pass 2).
+    expect((await auditRows()).find((a) => a.name === 'credit.settled')?.payload).toMatchObject({ settlement: 'consume', credits: 1, balance_after: 2 });
   });
 
   test('A SUCCEEDED RUN COSTS EXACTLY ONE CREDIT — reserving and consuming are ONE charge, not two', async () => {
