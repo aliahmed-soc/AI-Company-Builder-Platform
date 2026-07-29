@@ -142,22 +142,36 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (stop === 'stopped') return deny('emergency_stopped');
   if (stop !== 'clear') return deny('stop_unavailable');
 
-  // The waiver exists ONLY to stand in for a missing policy answer on the trusted path. Untrusted provenance is
-  // canon's trigger for heightened scrutiny, so the stand-in is withdrawn and a real answer becomes required.
+  // Policy before approval: POL-005 — "approval cannot override forbidden".
+  const policy = gate(facts.policy);
+
+  // The waiver exists ONLY to stand in for a MISSING policy answer on the trusted path. Two things withdraw it:
+  //
+  //   1. Untrusted provenance — canon's trigger for heightened scrutiny (P5-003c, NFR-021).
+  //   2. A policy engine having ANSWERED AT ALL (owner ruling, CDR-066 §0 option A, 2026-07-29).
+  //
+  // (2) closes a real bypass. `GateAnswer` is `allow | deny | unavailable` and cannot express ADR-010's third output,
+  // `require_approval`; an engine requiring approval must therefore answer this gate `allow` — it is not a denial —
+  // and let the APPROVAL gate below carry the requirement. While the waiver also covered that gate, an informational
+  // call on a trusted path was AUTHORIZED with no approval, i.e. the AI acting without the human okay policy had just
+  // demanded. It is reachable because `require_approval` is not risk-class-derived: a spend cap (POL-001) or usage
+  // limit (NFR-015) requires approval for an ordinary research run.
   const waivable = CLASSES_THAT_PROCEED_WITHOUT_A_GATE.includes(riskClass);
-  const waived = waivable && facts.untrustedContext !== true;
+  const waived = waivable && facts.untrustedContext !== true && policy === 'unavailable';
   // When the untrusted context is the ONLY reason a call fails, say so: policy_unavailable would send a reader to
   // look for a broken engine, when what actually happened is the boundary doing its job.
   const gateless = (): ToolDenialReason => (waivable ? 'untrusted_context' : 'policy_unavailable');
 
-  // Policy before approval: POL-005 — "approval cannot override forbidden".
-  const policy = gate(facts.policy);
   if (policy === 'deny') return deny('policy_denied');
   if (policy === 'unavailable' && !waived) return deny(gateless());
 
   const approval = gate(facts.approval);
   if (approval === 'deny') return deny('approval_invalid');
-  if (approval === 'unavailable' && !waived) return deny(waivable ? 'untrusted_context' : 'approval_required');
+  // ALWAYS `approval_required` here, and that is now provable rather than a simplification: reaching this line means
+  // policy did not deny and was not an unwaived `unavailable`, and a waived call cannot get here at all — so policy
+  // answered `allow`. Untrusted provenance can no longer be the cause, because with policy answered the waiver was
+  // never in play; the honest reason is simply that an approval is required and none was presented.
+  if (approval === 'unavailable' && !waived) return deny('approval_required');
 
   return { kind: 'authorized', riskClass };
 }

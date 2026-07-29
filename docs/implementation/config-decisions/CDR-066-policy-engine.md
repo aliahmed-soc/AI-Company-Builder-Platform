@@ -8,10 +8,22 @@ Security: **invariant 5** (the model can never mark its own action approved), **
 
 ---
 
-## §0 — OWNER GATE: a `require_approval` decision can currently be bypassed
+## §0 — RESOLVED: a `require_approval` decision could be bypassed
 
-**This is flagged, not decided. No code in this ticket resolves it.** It is raised here because it is precisely the
-shape the owner asked to be stopped on: a path where the AI could act **without approval when it should not**.
+> **OWNER RULING, 2026-07-29: option A — the waiver applies only when policy is `unavailable`.**
+> Fixed in `packages/contracts/src/tools/dispatch.ts` on this branch, test-first: the failing test was written and
+> observed failing (`expected authorized to deeply equal denied`) before the one-line change. All 81 tool-contract
+> tests pass afterwards, including every pre-existing waiver and injection-boundary test — the Phase 5 informational
+> path is unchanged.
+>
+> **It landed here rather than in P6-002** because it is a known bypass with a decided fix, and building three
+> sub-scopes on top of it would mean shipping the engine while the gate it feeds could be waived. §0's "this binds
+> P6-002" no longer applies; what remains for P6-002 is wiring the engine into the dispatcher.
+
+The record below is kept as written, because the reasoning is what justifies the change.
+
+**This was flagged, not decided.** It is raised here because it is precisely the shape the owner asked to be stopped
+on: a path where the AI could act **without approval when it should not**.
 
 ### The path
 
@@ -70,14 +82,22 @@ must be asked, which is the owner's to make.
 | B | Widen `GateAnswer` to carry `require_approval`, and make that value non-waivable. | Most explicit; changes a merged trust-critical contract and every caller. |
 | C | Remove `CLASSES_THAT_PROCEED_WITHOUT_A_GATE` entirely once the engine exists. | Strictest; also removes the informational path Phase 5 relies on until P6-001c is wired, so it must land *with* P6-002, not before. |
 
-**I recommend A.** It is the smallest change that makes the code do what its own comment already claims, and it is
-reversible. But it is still a decision about when a human is asked, so it waits for you.
+**I recommended A; the owner ruled A.**
 
-### What this means for sequencing
+### What the fix actually changed
 
-P6-001a/b/c can all proceed: the engine is a separate component from the dispatcher, and nothing in a/b/c widens
-what may execute. **The gate binds ACBP-P6-002** (dispatcher enforcement integration), which must not be marked done
-while a `require_approval` can be waived. Recorded here so P6-002 cannot start without meeting it.
+```ts
+const waived = waivable && facts.untrustedContext !== true && policy === 'unavailable';
+```
+
+One added conjunct. Two consequences worth naming:
+
+- **The Phase 5 path is untouched.** When no engine has answered (`policy === 'unavailable'`), an informational call
+  on a trusted path is still authorized — every pre-existing waiver test passes unchanged.
+- **`untrusted_context` became unreachable on the approval line, so it was removed there.** Reaching that line now
+  implies policy answered `allow` (a denial returns earlier, and a waived call cannot reach it), so untrusted
+  provenance can no longer be the cause and `approval_required` is the honest reason. That is a proof about the
+  control flow, not a simplification — and it is why the branch was deleted rather than left as dead code.
 
 ---
 

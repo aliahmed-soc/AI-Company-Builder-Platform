@@ -151,6 +151,24 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
   });
 
+  // ── the waiver stands in for a MISSING policy answer, never for a present one (CDR-066 §0; owner ruled option A,
+  // 2026-07-29) ───────────────────────────────────────────────────────────────────────────────────────────────
+  //
+  // THE DEFECT THIS PINS: `GateAnswer` is `allow | deny | unavailable` and cannot express ADR-010's third output,
+  // `require_approval`. So an engine requiring approval must answer the policy gate `allow` (it is not a denial) and
+  // let the APPROVAL gate carry the requirement. Before this fix the waiver applied to the approval gate too, so an
+  // informational call on a trusted path was authorized with no approval — the AI acting without the human okay that
+  // policy had just demanded. Reachable because `require_approval` is not risk-class-derived: a spend cap (POL-001)
+  // or usage limit (NFR-015) requires approval for an ordinary research run.
+  test('an ENGINE-ALLOWED informational call still needs an approval answer — the waiver does not cover it', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
+    expect(d).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'informational' });
+  });
+
+  test('the waiver survives exactly where it was meant to: policy unavailable AND approval unavailable', () => {
+    expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
+  });
+
   test('EVERY class above informational is refused when no engine has answered', () => {
     for (const riskClass of RISK_CLASSES.filter((c) => c !== 'informational')) {
       const d = decideDispatch(clear({ ...noEngines, riskClass }));
