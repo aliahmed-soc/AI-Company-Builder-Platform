@@ -187,14 +187,15 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   };
 
   /**
-   * A research task in `queued`, which is the only startable state.
+   * Take an EXISTING draft task to `queued`, the only startable state.
    *
-   * `createTask` → `planTask` is the REAL product path as far as `planned`. The last hop is done on the OWNER
-   * connection because `planned→queued` is legal in the contract and implemented by NO use case (CDR-065 §3-G5c) —
-   * the same shape as Slice D's owner-side `failed`. `task_type` is stamped here too: `CreateTaskParams` carries no
-   * type, and "pick a research task" has to mean something.
+   * `planTask` is the REAL product path as far as `planned`. The last hop is done on the OWNER connection because
+   * `planned→queued` is legal in the contract and implemented by NO use case (CDR-065 §3-G5c) — the same shape as
+   * Slice D's owner-side `failed`. `task_type` is stamped here too: `CreateTaskParams` carries no type, and "pick a
+   * research task" has to mean something.
+   *
+   * Separate from {@link queuedResearchTask} because a revision's task already exists — `requestRevision` created it.
    */
-  /** Take an EXISTING draft task to `queued`. Split out because a revision's new task is already created. */
   const queueExistingTask = async (taskId: string): Promise<string | undefined> => {
     const planned = await ops.planTask(product, { ...ids, taskId });
     if (planned.status !== 'ok') return undefined;
@@ -209,10 +210,14 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   };
 
   /**
-   * Start a queued task and reserve its credit — the four calls every run in this journey makes.
+   * Start a queued task, advance the TASK's own state, and reserve its credit — used by the runs whose individual
+   * steps are not separately recorded (the revision run and the failure run).
    *
-   * `taskRunning` is the owner-side `queued→running` on the TASK (CDR-065 §3-G5c), kept here so the synthetic step
-   * appears once rather than being re-typed at every call site where it could quietly diverge.
+   * Steps 3 and 4 deliberately do NOT use this: they assert the run's attempt, state and post-reservation balance and
+   * record their own verdicts, which is the point of having them as steps at all.
+   *
+   * The `update tasks set state = 'running'` is the owner-side `queued→running` (CDR-065 §3-G5c), kept here so the
+   * synthetic hop appears in one place rather than being retyped at each call site where it could quietly diverge.
    */
   const startAndReserve = async (taskId: string, key: string): Promise<{ runId: string } | { failure: string }> => {
     const s = await ops.startRun(product, { ...ids, taskId, attempt: 1 });
@@ -224,7 +229,17 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   };
 
   const researchParams = (runId: string) => ({ ...ids, runId, taskType: TASK_TYPE, question: QUESTION, workerVersion: 1, modelVersion: 'fake@1' });
-  const researchDeps = (behavior: SliceEFakeBehavior) => ({ gateway: makeGateway(behavior), fetcher: makeFetcher(QUESTION, SOURCES), storage: makeStorage() });
+
+  /**
+   * ONE object store for the whole journey, not one per run.
+   *
+   * A fresh store per call was the first version, and it made "both versions retained" weaker than it reads: the two
+   * documents' bytes would have landed in two throwaway stores that never coexisted, so the only thing actually shared
+   * was the metadata in PostgreSQL. A real deployment has one object store; the journey should too, or the retention
+   * claim is about rows rather than documents.
+   */
+  const storage = makeStorage();
+  const researchDeps = (behavior: SliceEFakeBehavior) => ({ gateway: makeGateway(behavior), fetcher: makeFetcher(QUESTION, SOURCES), storage });
 
   // The account needs a balance, and the PRODUCT ROLE HAS NO GRANT PATH — deliberately (CDR-058 §4). Minting on the
   // owner connection is therefore a precondition, not a demonstration. THREE runs' worth: the original consumes one,
@@ -370,6 +385,11 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   if (revisionQueued === undefined) return bail('the revision re-executes', 'J-13', 'the revision task (created in draft) could not be planned and queued');
   const revisionRun = await startAndReserve(revision.newTaskId, `slice-e-rev-run-${revision.newTaskId}`);
   if ('failure' in revisionRun) return bail('the revision re-executes', 'J-13', revisionRun.failure);
+  // THE GUIDANCE DOES NOT REACH THE WORKER, and that is a real limitation rather than a shortcut taken here:
+  // `RunResearchParams` has no guidance field, so a revision re-runs the SAME question and the founder's words live
+  // only in the revision row. The scripted output differs because the fixture says so, not because the guidance
+  // changed anything. Recorded in CDR-065 §5-G10 so the next reader does not mistake this step for proof that
+  // revisions are steered.
   const revised = await ops.runResearch(product, researchParams(revisionRun.runId), researchDeps({ kind: 'respond', output: REVISED_OUTPUT }));
   if (revised.status !== 'ok' || revised.artifact === undefined) return bail('the revision re-executes', 'J-13', `expected ok, got ${revised.status}`);
   const revisedArtifact = revised.artifact;

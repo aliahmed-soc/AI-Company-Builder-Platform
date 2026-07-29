@@ -230,6 +230,14 @@ Per CDR-064 G4 the revision **request** charges no credit (the new task meters w
 ledger assertion at step 9 must not expect a second charge at request time; the revision **run** reserves and
 consumes one like any other run, which is why the journey grants three credits rather than two.
 
+**A limitation found while wiring this, recorded rather than hidden.** `RunResearchParams` has no guidance
+field. The founder's revision guidance is validated, stored and audited by P5-012 — and then **never reaches
+the worker**. A revision today re-runs the *same* question; the journey's revised document differs only
+because the fixture scripts a different output. So step 13 proves *both versions are retained*, and proves
+nothing about the revision being **steered** by what the founder asked for. Wiring guidance into the worker
+prompt is a product change well outside a Testing ticket's scope; it belongs with whichever ticket next
+touches the worker input path.
+
 ---
 
 ## §6 Consequences
