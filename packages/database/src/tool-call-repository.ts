@@ -25,6 +25,14 @@ export interface NewToolCallInput {
   /** The class the gate ACTUALLY applied, already resolved. Never re-read from the registry afterwards. */
   readonly riskClass: string;
   readonly externalEffect: boolean;
+  /**
+   * The policy evaluation that decided this call (ACBP-P6-002; CDR-067 §2-G3).
+   *
+   * NULL when there was no usable policy to evaluate: the call is still recorded, as a denial (CDR-066 §6-G16).
+   * Set at INSERT only - there is no update path, because which decision allowed a call is fixed the moment the
+   * call is recorded.
+   */
+  readonly policyEvalId?: string | null;
   readonly outcome: string;
   readonly denialReason?: string | null;
   /** sha256 hex. Never the arguments. */
@@ -65,6 +73,7 @@ export class ToolCallRepository {
         outcome: input.outcome,
         denial_reason: input.denialReason ?? null,
         arguments_digest: input.argumentsDigest,
+        policy_eval_id: input.policyEvalId ?? null,
         idempotency_key: input.idempotencyKey ?? null,
       })
       .onConflict((oc) => oc.columns(['company_id', 'tool_id', 'idempotency_key']).where('idempotency_key', 'is not', null).doNothing())

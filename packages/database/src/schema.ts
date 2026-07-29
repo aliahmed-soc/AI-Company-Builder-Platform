@@ -881,6 +881,14 @@ export interface ToolCallsTable {
   denial_reason: ColumnType<string | null, string | null | undefined, string | null>;
   /** sha256 hex of a canonical encoding. NEVER the arguments. Immutable after insert. */
   arguments_digest: ColumnType<string, string, never>;
+  /**
+   * The policy evaluation that authorized (or refused) this call (ACBP-P6-002; CDR-067 §2-G3).
+   *
+   * NULL when there was no usable policy to evaluate — the call is still recorded, as a denial (CDR-066 §6-G16).
+   * `never` on update: which decision allowed a call is fixed when the call is recorded, and a re-pointable link
+   * would let the record of WHY something was allowed be rewritten afterwards.
+   */
+  policy_eval_id: ColumnType<string | null, string | null | undefined, never>;
   idempotency_key: ColumnType<string | null, string | null | undefined, never>;
   receipt_ref: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
