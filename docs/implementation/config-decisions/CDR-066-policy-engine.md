@@ -424,7 +424,91 @@ action through. The acceptance clause is about the system, so the proof runs aga
 
 ---
 
-## §6 Consequences
+## §6 P6-001c — the engine service and fail-closed unavailability
+
+Acceptance clause: ***"unavailability denies"*** (TOOL-003).
+
+### G15 — "no active policy" is an ANSWER (deny), not an unavailability
+
+**This is the load-bearing decision of P6-001c, and it was nearly the wrong way round.**
+
+The obvious shape is: no active policy ⇒ the engine cannot answer ⇒ `unavailable`. That is **unsafe**, and the
+reason is the Phase 5 waiver. After the §0 fix, `waived = waivable && !untrustedContext && policy === 'unavailable'`
+— so an `unavailable` policy answer on an informational-class tool over a trusted path is **still waived**, and the
+call proceeds with no policy and no approval. A company with no policy configured would run AI actions ungoverned.
+
+**Decision.** The two are separated:
+
+| Situation | Result | Why |
+|---|---|---|
+| The engine ran and the company has **no active policy** | **`deny`** | The engine *answered*: there are no rules. G2 already says an empty rule set denies — a policy that says nothing has permitted nothing. |
+| The engine ran and the stored rule set is **unreadable** | **`deny`** | Same reasoning; the evaluator is total and refuses (G4). |
+| The engine **could not run at all** (scope failure, database unreachable) | `unavailable` | This is TOOL-003's actual case: *"policy engine unreachable ⇒ deny (fail closed)"*, and the dispatcher denies on it for every non-waived class. |
+
+`unavailable` is now reserved for "no answer was produced", which is what the waiver was ever meant to stand in for.
+Anything the engine actually determined comes back as a decision.
+
+**Why this did not need an owner gate.** Both candidate readings were available and one is strictly safer; the
+charter's instruction in that situation is to take the safer reversible interpretation and document it. Choosing
+`unavailable` would have been the choice that lets the AI act unapproved, so it is the one that would have needed
+asking. **Flagged prominently here so the owner can overrule it** — the reversal is a one-line change in
+`evaluateCompanyPolicy` plus this table.
+
+### G16 — a no-policy refusal gets its OWN event, and records no evaluation row
+
+**Decision.** When a company has no active policy — or its rule set cannot be read — the refusal emits
+**`policy.unavailable`** (subject: the **company**) and writes **no** `policy_evaluations` row. `policy.blocked`
+(subject: the evaluation) is reserved for refusals a real evaluation produced.
+
+**Why no row.** `policy_evaluations.policy_id` is NOT NULL behind the version-pinning composite FK (G12). Making it
+nullable to accommodate this case would weaken the pin for every *real* evaluation — the guarantee that a recorded
+version is the version that decided. And there is nothing honest to record: an evaluation row exists to say *which
+rules* produced a decision, and here there were none.
+
+**Why a separate event — corrected during implementation.** The first draft made `policy.blocked`'s evaluation id
+optional so it could cover both cases. The audit registry rejected it: `makeEvent` requires a non-empty subject, by
+design. That refusal was right, and it exposed a real modelling error rather than an inconvenience — an event whose
+subject is sometimes absent is two events wearing one name, and a reader could not tell *"the rules said no"* from
+*"there were no rules to ask"*. They are different operational problems: one is the policy working, the other is the
+policy missing. TOOL-003 attaches an owner notification specifically to the second
+(*"blocks execution (fail closed), with owner notification"*), which is exactly why it needs its own event to hang
+off.
+
+### G17 — evaluation rides `run:execute`; initialization is owner-only `policy:manage`
+
+**Decision.** `evaluateCompanyPolicy` checks `run:execute` — the same action `preflightRun` and the dispatcher use,
+because evaluation happens on the execution path on behalf of a run. `initializeCompanyPolicy` checks a new
+**owner-only** `policy:manage`.
+
+**Why a separate action.** Deciding what a company is allowed to do is not the same authority as doing it. A worker
+holds `run:execute`; a worker that could also rewrite the policy it is about to be judged by would make the whole
+chain circular — invariant 5's shape, one layer down.
+
+### G18 — three audit events, two of them canon's own
+
+**Decision.** `policy.evaluated` (every evaluation) and `policy.blocked` (every `deny`) are transcribed from
+`EVENT-CATALOG` L221–222. `policy.changed` is added for policy creation, from `DATA-ARCHITECTURE`'s *"policy changes
+audited"* — canon states the requirement without naming the event, so the name is derived from its own phrase.
+
+**Both the row and the event, deliberately.** The event carries `evaluation_id` plus scalars and *points at* the
+row; the row carries the detail. They are written in ONE transaction (audit-or-nothing, ADR-015), so they cannot
+disagree through partial failure — this is not the CDR-064 G1 "same fact in two places" problem, because the event
+does not restate the detail, it references it.
+
+### G19 — what P6-001c does NOT own
+
+Editing limits — spending, message, usage, working hours — is **ACBP-P6-010** (Limits and alerts). P6-001c seeds
+the owner-ruled default (G10) so the engine is reachable at all, and stops there. This keeps AOQ-14's values out of
+this ticket exactly as G8 requires.
+
+**An obligation this places on ACBP-P6-002:** when it maps `EvaluateCompanyPolicyResult` onto the dispatcher's
+`GateAnswer`, `unavailable` and `forbidden` must both map to `{kind: 'unavailable'}` and never to `{kind: 'allow'}`.
+The dispatcher already fails closed on that value, so the safe mapping is also the obvious one — recorded because
+the failure mode is silent.
+
+---
+
+## §7 Consequences
 
 - A new pure module in `@acbp/contracts` (zero-dep, no framework, no provider) plus its unit tests.
 - No migration, no core use case, no API surface, no authz action, no audit event — all of those belong to b/c.

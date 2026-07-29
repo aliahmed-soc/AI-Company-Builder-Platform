@@ -85,6 +85,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'run:cancel': ['owner'],
   // Worker pause/disable (ACBP-P5-004; CDR-056; WORK-006): OWNER-only - canon calls it an emergency control.
   'worker:control': ['owner'],
+  // ACBP-P6-001c / CDR-066 §6-G17: owner-only. Setting the policy decides what the AI may do unsupervised.
+  'policy:manage': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];
