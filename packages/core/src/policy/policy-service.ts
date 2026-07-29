@@ -13,6 +13,7 @@ import { PolicyRepository, writeAuditEvent, type DatabaseClient, type AuditWrite
 import {
   DEFAULT_NEW_COMPANY_POLICY,
   evaluatePolicy,
+  resolvePolicyDecision,
   policyEvaluated,
   policyBlocked,
   policyUnavailable,
@@ -78,10 +79,11 @@ export type EvaluateCompanyPolicyResult =
  * no result at all, which in this module is a thrown error, and a caller's catch is what turns that into
  * `unavailable`. That is TOOL-003's *"engine unreachable ⇒ deny (fail closed)"*, kept honest.
  *
- * `require_approval` maps to **allow** on the POLICY gate, and that is deliberate: the policy gate is not the
- * approval gate. The approval requirement is carried by the approval gate, which after CDR-066 §0's fix is no
- * longer waived once policy has answered. Mapping `require_approval` to `deny` here would refuse actions a human is
- * perfectly entitled to approve.
+ * `require_approval` maps to **`require_approval`** — it is a `kind` on the gate answer, not a fourth thing this
+ * function has to flatten (ACBP-P6-002; CDR-067 §2-G7/G8). Both flattenings were wrong and for opposite reasons:
+ * onto `allow` is exactly the CDR-066 §0 bypass, and onto `deny` would refuse actions a human is entitled to
+ * approve. Carrying the requirement ON the answer is also what makes it unforgeable — there is no separate
+ * `approvalRequired` fact for a caller to supply.
  */
 export function toPolicyGateAnswer(result: EvaluateCompanyPolicyResult): PolicyGateAnswer {
   // NOT "decided" means the engine found no usable rules, or the caller was not entitled to ask. Both DENY
@@ -90,7 +92,14 @@ export function toPolicyGateAnswer(result: EvaluateCompanyPolicyResult): PolicyG
   if (result.status !== 'decided') return { kind: 'deny' };
   // The engine's three outputs pass through UNFLATTENED. Collapsing "require_approval" onto "allow" is exactly what
   // created the CDR-066 s0 bypass; collapsing it onto "deny" would refuse actions a human is entitled to approve.
-  return { kind: result.decision };
+  //
+  // RESOLVED, NOT FORWARDED (CDR-067 s2-G10). This was the only link between stored policy and the dispatcher gate
+  // that was not total over `unknown`, and the value an unreadable decision landed on was `unavailable` - the one
+  // gate value the waiver spares. So the failure mode was not a wrong denial, it was an informational call
+  // proceeding on a decision nobody could read. Raised by the loosening's independent review; nothing reached it
+  // today because the evaluator routes every decision through this same resolver, which is exactly why the guard is
+  // cheap: it costs one call and removes a class of future defect entirely.
+  return { kind: resolvePolicyDecision(result.decision) };
 }
 
 function opts(o: PolicyServiceOptions): { correlationId?: string; logger?: Logger } {

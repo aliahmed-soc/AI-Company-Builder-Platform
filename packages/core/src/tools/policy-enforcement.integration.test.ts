@@ -223,6 +223,44 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     expect(row(calls).policy_eval_id).not.toBe(row(calls, 1).policy_eval_id);
   });
 
+  // ──────────────── THE IDEMPOTENCY SHORT CIRCUIT IS NOT A WAY PAST THE GATE (CDR-067 §2-G10) ─────────────────
+  //
+  // Raised by the loosening's independent review, which called this "the one place the chokepoint is genuinely not a
+  // chokepoint": the duplicate check returns BEFORE the policy evaluation. Short-circuiting is right for a call that
+  // actually ran — re-gating it could produce a second, contradictory record of one event. It is wrong for a call
+  // that never ran, and wrong for a key attached to different arguments.
+
+  test('replaying a DENIED call returns the DENIAL, never `duplicate` — a refused call never ran', async () => {
+    // `duplicate` means "already ran in this company". A denied call did not run, and a caller written as
+    // `if (denied) abort else proceed` would read a laundered refusal as permission.
+    const first = await dispatch({ allowlist: ['memory_write'], idempotencyKey: 'k-denied' });
+    expect(first).toMatchObject({ status: 'denied', reason: 'not_allowlisted' });
+
+    const replay = await dispatch({ idempotencyKey: 'k-denied' });
+    expect(replay).toMatchObject({ status: 'denied', reason: 'not_allowlisted' });
+
+    // AND NO SECOND ROW: the refusal is reported from the existing record, so one attempt stays one record.
+    expect(await callRows()).toHaveLength(1);
+  });
+
+  test('a key attached to DIFFERENT arguments is a conflict, not a duplicate', async () => {
+    // Otherwise the caller receives someone else's authorization: the prior call's record, carrying the prior call's
+    // digest, in answer to a request whose arguments were never gated or recorded.
+    expect((await dispatch({ args: { q: 'first' }, idempotencyKey: 'k-args' })).status).toBe('authorized');
+
+    const conflict = await dispatch({ args: { q: 'second' }, idempotencyKey: 'k-args' });
+    expect(conflict.status).toBe('idempotency_conflict');
+    expect(await callRows()).toHaveLength(1);
+  });
+
+  test('the SAME arguments under the same key are still a plain duplicate', async () => {
+    // The hardening must not break what idempotency is for. Identical retry → the original record, no second call.
+    expect((await dispatch({ args: { q: 'same' }, idempotencyKey: 'k-same' })).status).toBe('authorized');
+    const again = await dispatch({ args: { q: 'same' }, idempotencyKey: 'k-same' });
+    expect(again.status).toBe('duplicate');
+    expect(await callRows()).toHaveLength(1);
+  });
+
   // ─────────────────────────────────────── ATOMICITY AND ISOLATION ────────────────────────────────────────────
 
   test('a failed audit write leaves NO evaluation and NO call row — the whole dispatch rolls back together', async () => {

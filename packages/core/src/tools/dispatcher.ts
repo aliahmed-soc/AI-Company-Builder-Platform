@@ -19,6 +19,7 @@ import {
   hasExternalEffect,
   detectInjection,
   isToolCallOutcome,
+  isToolDenialReason,
   toolCallRequested,
   toolCallCompleted,
   type GateAnswer,
@@ -127,6 +128,11 @@ export type DispatchToolCallResult =
   | { readonly status: 'denied'; readonly call: ToolCallDTO; readonly reason: ToolDenialReason }
   // NFR-006: this idempotency key already ran in this company. The first call's record is returned; nothing re-runs.
   | { readonly status: 'duplicate'; readonly call: ToolCallDTO }
+  /**
+   * The idempotency key already names a call with DIFFERENT arguments (CDR-067 §2-G10). Deliberately carries no
+   * `call`: handing back the other call's record is the very confusion this status exists to prevent.
+   */
+  | { readonly status: 'idempotency_conflict' }
   | { readonly status: 'forbidden' }
   | { readonly status: 'run_not_found' }
   // A run that is not `running` has no execution to attach a tool call to — the P5-002 pass-2 lesson, same shape.
@@ -174,9 +180,31 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // Idempotency is checked BEFORE the gates. A duplicate is not a new call to authorize — re-running the gates
       // could even produce a different answer for a call that already happened, which would be a second, contradictory
       // record of one event (NFR-006; FAILURE-AND-RECOVERY row 11).
+      //
+      // THAT REASONING HOLDS ONLY FOR A CALL THAT ACTUALLY HAPPENED (CDR-067 §2-G10). The loosening's independent
+      // review named this the one place the chokepoint is not a chokepoint, because this return precedes the policy
+      // evaluation. Two cases are not duplicates at all, and both are handled before the short circuit:
       if (idempotencyKey !== undefined) {
         const prior = await calls.findByIdempotencyKey(params.toolId, idempotencyKey);
-        if (prior !== undefined) return { status: 'duplicate', call: toDTO(prior) };
+        if (prior !== undefined) {
+          // 1. THE KEY NAMES DIFFERENT ARGUMENTS. Returning the prior record here would answer a request whose
+          //    arguments were never gated and never recorded, with someone else's authorization and someone else's
+          //    digest. A key identifies one call; two argument sets are two calls, and this one has no record.
+          //    (`run_id` is deliberately NOT compared: reusing a key on a later attempt of the same work is exactly
+          //    what a retry after a resume looks like, and refusing that would break the feature.)
+          if (prior.arguments_digest !== argumentsDigest) return { status: 'idempotency_conflict' };
+          // 2. THE PRIOR CALL WAS DENIED, so it never ran and there is nothing to be idempotent about. `duplicate`
+          //    means "already ran in this company"; reporting a refusal that way invites a caller written as
+          //    `if (denied) abort; else proceed;` to treat a laundered denial as permission. The refusal is reported
+          //    from the existing record, so one attempt still leaves exactly one record.
+          if (prior.outcome === 'denied') {
+            // Total over the stored column. A reason outside the closed set means the row is corrupt, and the
+            // fail-closed reading of a corrupt refusal is that the gate could not be established.
+            const reason = isToolDenialReason(prior.denial_reason) ? prior.denial_reason : 'policy_unavailable';
+            return { status: 'denied', call: toDTO(prior), reason };
+          }
+          return { status: 'duplicate', call: toDTO(prior) };
+        }
       }
 
       // The registry: the ACTIVE definition, highest version. `undefined` means unregistered, which the decision
