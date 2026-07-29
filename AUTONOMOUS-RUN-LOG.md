@@ -1026,6 +1026,51 @@ shape). Only the credit suite was affected.
 **Corollary: a checker needs the same treatment as the code it checks.** `tools/check-conflict-targets.mjs` carries a
 negative self-test that fails the build if its own patterns stop matching a known defect — because a checker that
 silently stops matching becomes a checker that always passes, which is this same failure one level up.
+
+---
+
+## THE SIX-BRANCH MERGE — 2026-07-29, on local verification, CI still blocked
+
+Owner-authorised: merge on local evidence, one at a time, bottom-up, a full local sweep on `main` after each, and
+stop dead if any merge turned `main` red. None did. **Every commit and backlog row from this sequence is labelled
+"merged on local verification, CI still blocked by the GitHub spending limit" — none of it is CI-proven, and the
+full suite must be re-run on `main` when the free minutes reset.**
+
+| # | Ticket | Merge | Files / tests green on `main` after |
+| --- | --- | --- | --- |
+| 1 | ACBP-P5-014 credit ledger | `a27a93f` | 191 / 2457 |
+| 2 | ACBP-P5-013 failure detail | `5bdc84a` | 192 / 2486 |
+| 3 | ACBP-P5-011 artifact storage | `149cdbe` | 199 / 2573 |
+| 4 | ACBP-P5-006 research worker | `d4ea84e` | 201 / 2612 |
+| 5 | ACBP-P5-007 strategy worker | `fb2a3b7` | 204 / 2649 |
+| 6 | ACBP-P5-008 document worker | `fdebdca` | 206 / 2682 |
+
+Migrations end at **0043**, strictly ascending: P5-014's `0041`/`0042` merged before P5-011's `0043`, which had been
+numbered to leave exactly that gap. The order was verified against the actual migration files before the first merge
+rather than taken on trust.
+
+**P5-014 → P5-011 was the hard one, and it is the reset-list hazard for the fourth time.** Both tickets inserted a
+table name at the same anchor in 41 schema-reset lists, so **neither side was a superset**: `--ours` would have
+dropped `artifacts`, `--theirs` would have dropped `credit_transactions` *and* reverted the D2/D3 catalog fixes.
+Resolved as a true union with every token from both sides asserted to survive, and two things surfaced that a careful
+read would not have caught:
+
+- `artifacts.integration.test.ts` is a **new** file, so git never raised a conflict on it — and it was missing
+  `credit_transactions` entirely. `check:reset-lists` named the file and the table.
+- A doc-comment boundary fell inside a conflict hunk, truncating `CreditTransactionsTable`. Typecheck reported it as
+  a bogus "octal literals are not allowed" syntax cascade. `schema.ts` was rebuilt from `main` with P5-011's
+  additions spliced in at proper boundaries rather than concatenated.
+
+Both are the same lesson as the standing rule above: the guards caught what reading did not.
+
+**Also fixed, and it was already on `main`:** `EVENT-CATALOG.md` carried a corrupted duplicate line —
+`` `retry_state` `` had become `etry_state` and `` `task.failed` `` a literal TAB, a PowerShell double-quoted string
+having consumed the backticks as `` `r `` and `` `t `` escapes. Same mechanism that has corrupted files here before.
+
+**Mechanism note:** after squashing a branch into `main`, the branches stacked on it were rebased with
+`git rebase --onto main <OLD-TIP> <branch>` using the **pre-rebase** tip. Using the rewritten branch name instead
+counts its own rewritten commits as unique and tries to replay 26 commits instead of 4.
+
 ## Window 13 — 2026-07-28, 13:18 → 21:28 +03:00 (real clock, both endpoints)
 
 Closed 10 minutes before the nominal 8-hour boundary, at the natural stopping point where P5-011's real-PG proof was
