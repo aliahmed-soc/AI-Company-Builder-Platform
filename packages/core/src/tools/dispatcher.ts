@@ -27,6 +27,7 @@ import {
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
+import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
 import type { Logger } from '@acbp/observability';
 
 /** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is `clear` and the others are not. */
@@ -34,15 +35,22 @@ const CLEAR = (): StopAnswer => ({ kind: 'clear' });
 const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
 
 /**
- * The gates the dispatcher consults. All three are PORTS with fail-closed Phase 5 defaults, because the engines
- * behind them are Phase 6's (`IMPLEMENTATION-ROADMAP §M5`).
+ * The gates the dispatcher consults through PORTS, with fail-closed defaults, because the engines behind them are
+ * still later tickets: `stop` is ACBP-P6-007, `approval` is ACBP-P6-003/004.
  *
- * `stop` defaults to `clear` and the other two to `unavailable`, and the asymmetry is deliberate: with no stop
- * mechanism in existence, no stop CAN be in force, so `clear` is simply true. A policy engine that does not exist has
- * not evaluated anything, which is a missing answer rather than a permissive one.
+ * **THERE IS NO `policy` PORT (ACBP-P6-002; CDR-067 §2-G1/G8).** The dispatcher consults the engine itself, so a
+ * caller cannot supply, override or omit a policy answer — and because the approval REQUIREMENT rides that answer
+ * (`PolicyGateAnswer`), a caller cannot forge the requirement either. `COMPONENT-CATALOG` names this component
+ * *"Trusted — the enforcement chokepoint"* and `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check
+ * **never skippable**: a gate a caller may omit will eventually be omitted, and the omission would be invisible,
+ * because the old default (`unavailable`) *looks* like a deliberate fail-closed answer. `stop` and `approval` become
+ * internal the same way when their engines land.
+ *
+ * `stop` defaults to `clear` and `approval` to `unavailable`, and the asymmetry is deliberate: with no stop mechanism
+ * in existence, no stop CAN be in force, so `clear` is simply true. An approval engine that does not exist has not
+ * approved anything, which is a missing answer rather than a permissive one.
  */
 export interface ToolGates {
-  readonly policy?: () => Promise<GateAnswer> | GateAnswer;
   readonly approval?: () => Promise<GateAnswer> | GateAnswer;
   readonly stop?: () => Promise<StopAnswer> | StopAnswer;
 }
@@ -52,6 +60,11 @@ export interface DispatcherOptions {
   readonly logger?: Logger;
   readonly auditWriter?: typeof writeAuditEvent;
   readonly gates?: ToolGates;
+  /**
+   * The instant handed to the policy engine. CDR-066 §3-G3 keeps the clock an INPUT, never ambient, so a recorded
+   * evaluation's timestamp is assertable and a working-hours decision can be re-derived from its own record.
+   */
+  readonly now?: Date;
 }
 
 export interface DispatchToolCallParams {
@@ -176,6 +189,33 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         .orderBy('version', 'desc')
         .executeTakeFirst();
 
+      // ── THE POLICY GATE, consulted here and nowhere else (ACBP-P6-002; CDR-067 §2-G1/G2) ────────────────
+      //
+      // Point 3 of APPROVAL-AND-POLICY-ARCHITECTURE §5 — *"immediately before execution … never skippable"*. It runs
+      // in the SCOPE ALREADY OPEN, so the evaluation, the call record and every audit event commit or roll back
+      // together: a call recorded as authorized whose evaluation was rolled back would assert an authorization that
+      // never happened. It also needs no second authorization check — this function already required `run:execute`.
+      //
+      // UNCONDITIONALLY, even for a call that will be refused on some other ground (G4). `decideDispatch` takes the
+      // policy answer as an INPUT, so it cannot be evaluated lazily without inverting the decision function — and
+      // "all checks audited" means a record that the policy WAS consulted is worth having even when the allowlist
+      // refused first.
+      //
+      // THE RISK CLASS IS `registry`-PROVENANCED because it came from `tool_definitions`, not from model text. That
+      // is exactly the distinction CDR-066 §3-G5 draws: a model-suggested class is untrusted and takes the most
+      // restrictive path. Passing `registry` here is a claim about where the value came from, and it is true.
+      const policyResult = await evaluatePolicyInScope(
+        scope,
+        {
+          accountId: params.accountId,
+          companyId: params.companyId,
+          evaluationPoint: 'pre_execution',
+          observations: { risk_class: { value: definition?.risk_class, provenance: 'registry' } },
+          evaluatedAt: options.now ?? new Date(),
+        },
+        opts(options),
+      );
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
@@ -183,7 +223,11 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         allowlist: params.allowlist,
         untrustedContext: untrusted,
         stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
-        policy: (await (options.gates?.policy ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
+        // The engine's OWN mapping, tested beside it, so the translation cannot be got wrong here. It never yields
+        // `unavailable`: a RESULT is an answer, and only a thrown evaluation — which propagates and rolls the whole
+        // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval
+        // demand conditional on POLICY rather than on the risk class (CDR-067 §2-G7).
+        policy: toPolicyGateAnswer(policyResult),
         approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
       });
 
@@ -199,6 +243,9 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         outcome: decision.kind === 'denied' ? 'denied' : 'requested',
         denialReason: decision.kind === 'denied' ? decision.reason : null,
         argumentsDigest,
+        // The evaluation that decided this call (CDR-067 §2-G3). Null when there was no usable policy — the call is
+        // still recorded, as a denial, because TOOL-002 wants 100% of attempts recorded.
+        policyEvalId: policyResult.status === 'decided' ? policyResult.evaluationId : null,
         idempotencyKey: idempotencyKey ?? null,
       });
 

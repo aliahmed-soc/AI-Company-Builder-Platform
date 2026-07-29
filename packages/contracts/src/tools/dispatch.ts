@@ -179,8 +179,13 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   // call on a trusted path was AUTHORIZED with no approval, i.e. the AI acting without the human okay policy had just
   // demanded. It is reachable because `require_approval` is not risk-class-derived: a spend cap (POL-001) or usage
   // limit (NFR-015) requires approval for an ordinary research run.
+  // ONE READ, ONE CONST — INV-2 applies to this fact exactly as it does to `policy`, and for the same reason: it is
+  // consulted twice below (the waiver, and the approval requirement), so a second read could make those two
+  // conclusions disagree about the same call. Adding the requirement clause introduced precisely that second read,
+  // and the INV-2 test failed on it with `expected 2 to be 1` before this const existed.
+  const untrusted = facts.untrustedContext === true;
   const waivable = CLASSES_THAT_PROCEED_WITHOUT_A_GATE.includes(riskClass);
-  const waived = waivable && facts.untrustedContext !== true && policy === 'unavailable';
+  const waived = waivable && !untrusted && policy === 'unavailable';
   // When the untrusted context is the ONLY reason a call fails, say so: policy_unavailable would send a reader to
   // look for a broken engine, when what actually happened is the boundary doing its job.
   const gateless = (): ToolDenialReason => (waivable ? 'untrusted_context' : 'policy_unavailable');
@@ -193,7 +198,18 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   // Derived from the policy answer, on the same `policy` const INV-2 pins — NOT a fact a caller can supply. There is
   // no `approvalRequired` input anywhere, so there is nothing to forge: the requirement is inseparable from the
   // answer that produced it, and the dispatcher builds that answer from the engine (`ToolGates` has no policy port).
-  const approvalRequired = policy === 'require_approval';
+  //
+  // …OR UNTRUSTED PROVENANCE DEMANDS ONE (CDR-067 §2-G9). This second clause is not defensive padding; it closes a
+  // hole the first clause opened. Before P6-002, untrusted content refused a call by WITHDRAWING the waiver, which
+  // worked only because an approval was demanded of every non-waived call. Once the demand became conditional on
+  // policy, an `allow` answer meant `untrustedContext` had no effect whatsoever and the NFR-021 boundary went dead —
+  // laundered content would have reached tools on a plain `allow`. Caught by the injection corpus, not by review.
+  //
+  // `AI-AND-WORKER-ARCHITECTURE §4` requires *heightened policy scrutiny* on a call proposed while processing
+  // untrusted content, and heightened can only mean MORE refusal — so untrusted provenance REQUIRES an approval in
+  // its own right. It cannot grant one: an explicit `deny` from either gate still refuses below.
+  // `untrusted` is the SINGLE const read above, beside `policy`, and for the same INV-2 reason.
+  const approvalRequired = policy === 'require_approval' || untrusted;
 
   const approval = gate(facts.approval);
   // AN EXPLICIT REFUSAL ALWAYS WINS, whether or not policy asked for an approval. "No approval was needed" is not a
@@ -201,10 +217,12 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (approval === 'deny') return deny('approval_invalid');
   // AN ABSENT APPROVAL REFUSES ONLY WHEN POLICY DEMANDED ONE.
   //
-  // `approvalRequired` is the whole condition now, and `!waived` is gone from this line deliberately: reaching here
-  // with `approvalRequired` true means `policy === 'require_approval'`, which is an ANSWER — so `waived` is already
-  // false by INV-3 (it requires `policy === 'unavailable'`). Keeping `!waived` would have been dead weight that
-  // reads like a second guard, and a guard that cannot fire is worse than no guard: the next reader trusts it.
+  // `approvalRequired` is the whole condition now, and `!waived` is gone from this line deliberately: EITHER disjunct
+  // already forces `waived` false. `policy === 'require_approval'` is an ANSWER, so INV-3's `policy === 'unavailable'`
+  // conjunct fails; and `untrusted` is itself one of `waived`'s conjuncts, negated. Keeping `!waived` would have been
+  // dead weight that reads like a second guard, and a guard that cannot fire is worse than no guard: the next reader
+  // trusts it. (This is the one place the two clauses of `approvalRequired` had to be checked SEPARATELY — a proof
+  // that held for the policy disjunct alone would not have held for the union.)
   //
   // `approval_required` remains the honest reason, and `untrusted_context` remains wrong here for the reason CDR-066
   // §0.1 established: that reason means "would have proceeded on the trusted path", and a call whose policy demands
@@ -221,7 +239,13 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   //   INV-4  `policyGate()` stays total onto its four kinds with `unavailable` as the fallback. It gained exactly one
   //          recognised value; anything unrecognised must still land on `unavailable`, or an unreadable answer could
   //          be read as `require_approval` — or worse, as `allow`.
-  if (approval === 'unavailable' && approvalRequired) return deny('approval_required');
+  //
+  // THE REASON DISTINGUISHES WHY the approval was required, and the distinction is the one CDR-066 §0.1 established:
+  // `untrusted_context` means *"this would have proceeded on the trusted path"*. That is true only when untrusted
+  // provenance was the SOLE cause — if policy demanded the approval too, the call would have been held on the
+  // trusted path as well, and blaming provenance would send a reader to quarantine content that was never the
+  // problem.
+  if (approval === 'unavailable' && approvalRequired) return deny(untrusted && policy !== 'require_approval' ? 'untrusted_context' : 'approval_required');
 
   return { kind: 'authorized', riskClass };
 }

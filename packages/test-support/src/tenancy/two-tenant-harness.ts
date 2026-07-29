@@ -53,12 +53,16 @@ export const ALL_TABLES = [
   // GLOBAL platform config, not tenant data (ACBP-P5-003a) — but this is the DROP/RESET list, not the tenancy list,
   // and it must name every migrated table. Omitting it lets the table survive `resetSchema`, so the next
   // `CREATE TABLE` collides, the migration aborts, and every downstream suite runs against no tables at all.
-  'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
+  'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
   'job_checkpoints',
   'jobs',
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',
   'tool_calls',
+  // AFTER 	ool_calls, and the order is load-bearing (ACBP-P6-002): 	ool_calls.policy_eval_id references
+  // policy_evaluations, so clearing the parent first raises 23503 on a TRUNCATE/DELETE path. check:reset-lists`n  // verifies MEMBERSHIP, not order, so this one is on the reader - it surfaced as every dispatcher test failing in
+  // beforeEach with one FK error.
+  'policy_evaluations', 'policies',
   'task_runs', 'task_deletions',
   'task_dependencies',
   'tasks',

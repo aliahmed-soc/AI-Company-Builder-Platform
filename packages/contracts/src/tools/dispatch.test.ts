@@ -318,6 +318,40 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     }
   });
 
+  // ── THE HOLE THE LOOSENING OPENED, AND ITS CLOSURE (CDR-067 §2-G9) ──────────────────────────────────────
+  //
+  // Making the approval demand conditional on policy silently disabled the NFR-021 injection boundary: untrusted
+  // provenance used to refuse a call by WITHDRAWING the waiver, which only worked while every non-waived call was
+  // asked for an approval. With policy answering `allow`, `untrustedContext` stopped having any effect at all.
+  //
+  // FOUND BY THE INJECTION CORPUS SUITE, not by reading the diff. These tests exist so it can never come back
+  // silently: they fail if untrusted provenance stops requiring an approval in its own right.
+  test('UNTRUSTED provenance requires an approval EVEN WHEN policy plainly allows', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+    expect(d).toEqual({ kind: 'denied', reason: 'untrusted_context', riskClass: 'informational' });
+  });
+
+  test('UNTRUSTED provenance requires an approval for EVERY risk class, policy allowing throughout', () => {
+    for (const riskClass of RISK_CLASSES) {
+      const d = decideDispatch(clear({ riskClass, policy: { kind: 'allow' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
+    }
+  });
+
+  test('untrusted provenance does not GRANT anything — an approval still authorizes, and a deny still refuses', () => {
+    // Heightened scrutiny means more refusal, never less: with a real approval the call proceeds, exactly as a
+    // trusted one would, and an explicit refusal still wins.
+    expect(decideDispatch(clear({ policy: { kind: 'allow' }, approval: { kind: 'allow' }, untrustedContext: true })).kind).toBe('authorized');
+    expect(decideDispatch(clear({ policy: { kind: 'allow' }, approval: { kind: 'deny' }, untrustedContext: true }))).toMatchObject({ reason: 'approval_invalid' });
+  });
+
+  test('when policy ALSO required the approval, the reason blames policy — not the content', () => {
+    // `untrusted_context` means "would have proceeded on the trusted path". With policy demanding approval it would
+    // NOT have, so naming provenance would send a reader to quarantine content that was never the problem.
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
   test('an EXPLICIT approval deny still refuses even when policy did not require one', () => {
     // Revocation wins regardless. "No approval was needed" is not a licence to ignore one that says no.
     const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'deny' } }));
