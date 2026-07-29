@@ -74,7 +74,11 @@ const RETRY_ELIGIBLE_CATEGORIES: readonly ReportedFailureCategory[] = ['timeout'
  * `scheduled` would have asserted a future event that never happens, which is the exact opposite of G4's own
  * standard ("honest about the future"). Eligibility is what this can actually know.
  */
-export type NextAttempt = 'retry_eligible' | 'exhausted' | 'not_eligible';
+// A RUNTIME array, not a bare type union, following `RISK_CLASSES` / `CREDIT_ENTRY_KINDS`. A type-only union cannot
+// be asserted against: `toMatchObject({ nextAttempt: 'scheduled' })` compares a plain literal and type-checks nothing,
+// which is exactly how a test kept expecting the pre-rename value long after the product stopped producing it (D5).
+export const NEXT_ATTEMPT_VALUES = ['retry_eligible', 'exhausted', 'not_eligible'] as const;
+export type NextAttempt = (typeof NEXT_ATTEMPT_VALUES)[number];
 
 export interface RunFailureDetail {
   readonly category: ReportedFailureCategory;

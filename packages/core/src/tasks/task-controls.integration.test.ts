@@ -13,7 +13,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { TASK_CONTROLS } from '@acbp/contracts';
+import { TASK_CONTROLS, NEXT_ATTEMPT_VALUES } from '@acbp/contracts';
 import { createTask, planTask, addTaskDependency, getTask, listTasks, getTaskDetail, repeatTask, deleteTask, getTaskBoard, TASK_DELETE_REASON_MAX } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -366,7 +366,14 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
       await runEndedAs(taskId, 'failed', 'timeout', 2);
       const r = await getTaskDetail(product, { ...base(), taskId });
       const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
-      expect(failure).toMatchObject({ category: 'timeout', attemptsUsed: 2, retrySafety: 'safe', nextAttempt: 'scheduled' });
+      // D5. This expected `'scheduled'`, a value the contract does not have. `NextAttempt` was renamed to
+      // `retry_eligible` during P5-013's own review, precisely because nothing re-runs a failed task yet — no retry
+      // trigger exists and `startRun` has no production caller — so `scheduled` would promise the founder a future
+      // event that never arrives (CDR-059 G4, "honest about the future"). The product was corrected; this was not.
+      // `toMatchObject` compares a plain literal, so nothing type-checked the stale value against `NextAttempt`.
+      expect(failure).toMatchObject({ category: 'timeout', attemptsUsed: 2, retrySafety: 'safe', nextAttempt: 'retry_eligible' });
+      // Pin MEMBERSHIP of the closed set too, so the next invented value fails here rather than in a reviewer's eye.
+      expect(NEXT_ATTEMPT_VALUES).toContain((failure as unknown as { nextAttempt: string }).nextAttempt);
       expect((failure?.summary ?? '').length).toBeGreaterThan(10);
     });
 
