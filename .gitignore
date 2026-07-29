@@ -35,3 +35,7 @@ next-env.d.ts
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Owner-only tooling and approval records - deliberately untracked (re-added by mistake in 6b7243e).
+tools/auto-pm.ps1
+docs/agent/OWNER-APPROVALS.md
