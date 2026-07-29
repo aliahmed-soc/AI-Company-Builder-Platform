@@ -139,6 +139,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     end;
     $$
   `.execute(db);
+  // D3 — REVOKE THE DEFAULT PUBLIC EXECUTE. `CREATE FUNCTION` grants EXECUTE to PUBLIC implicitly, so this trigger
+  // function shipped callable by every role in the cluster, including any future least-privilege role that should
+  // hold nothing. It is not SECURITY DEFINER, so calling it directly escalates nothing — but a trigger function
+  // invoked outside its trigger runs with a NULL `new` record and is a rough edge nobody chose to expose. The three
+  // bootstrap functions are explicitly revoked from PUBLIC for the same reason; this one was simply missed.
+  await sql`revoke all on function public.acbp_check_credit_settlement() from public`.execute(db);
   await sql`create trigger credit_transactions_settlement_bound before insert on public.credit_transactions for each row execute function public.acbp_check_credit_settlement()`.execute(db);
 
   // LEAST PRIVILEGE. SELECT + INSERT only — no UPDATE grant on any column, and no DELETE. There is no path by which
