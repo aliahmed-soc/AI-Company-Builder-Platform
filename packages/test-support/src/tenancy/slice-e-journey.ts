@@ -76,7 +76,8 @@ export interface SliceEOps {
    *  required only when finishing as failed, and refused on success. Typed from the contract so the journey cannot
    *  pass a category that does not exist. */
   failRun(c: DatabaseClient, p: Ids & { runId: string; failureCategory?: RunFailureCategory }): Promise<Status<{ run: { state: string; failureCategory: string | null } }>>;
-  completeTask(c: DatabaseClient, p: Ids & { taskId: string; runId: string; evidence: unknown }): Promise<Status<{ artifactCount: number }>>;
+  /** `reason` is the `CompletionRefusal` carried by `{status:'refused'}` — surfaced so a failure names WHY. */
+  completeTask(c: DatabaseClient, p: Ids & { taskId: string; runId: string; evidence: unknown }): Promise<Status<{ artifactCount: number; reason: string }>>;
   settleRun(c: DatabaseClient, p: Ids & { taskRunId: string }): Promise<Status<{ settlement: string; balanceAfter: number }>>;
   readCreditLedger(c: DatabaseClient, p: { userId: string; accountId: string; limit?: number }): Promise<Status<{ balance: number; entries: readonly { id: string; kind: string; credits: number; runId: string | null }[] }>>;
   /**
@@ -282,8 +283,20 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
 
   // ── 10. the trail: activity + audit, carrying no content ───────────────────────────────────────────────
   const activity = await ops.getCompanyActivity(product, { ...ids, limit: 50 });
-  if (activity.status !== 'ok' || activity.page === undefined) return bail('activity is visible', 'ACT-001', `expected ok, got ${activity.status}`);
-  if (activity.page.items.length === 0) return bail('activity is visible', 'ACT-001', 'the founder-facing activity stream is empty after a whole run');
+  if (activity.status !== 'ok' || activity.page === undefined) return bail('activity feed reads', 'ACT-001', `expected ok, got ${activity.status}`);
+  // THE HONEST ASSERTION, and the first draft of this step got it wrong. `ACTIVITY_TYPES` is exactly
+  // ['company.created','company.updated','company.paused','company.resumed'] — NO task, run or execution event
+  // projects into the founder-facing feed. A "the feed is non-empty" check therefore passed on the `company.created`
+  // event left by SEEDING, while the step claimed the feed recorded the run. It did not, and does not.
+  //
+  // So this asserts what is actually true: execution is fully AUDITED, and the activity feed does not yet show it.
+  // Asserting the ABSENCE is deliberate — if someone widens the taxonomy to project execution, this step goes red and
+  // forces the claim to be re-examined rather than silently becoming an overstatement again. P5-013 already widened
+  // ACTIVITY_TYPES once without a migration; the divergence was caught and reverted (see the contract's own note).
+  const executionInFeed = activity.page.items.filter((i) => !i.type.startsWith('company.'));
+  if (executionInFeed.length > 0) {
+    return bail('activity feed scope is as documented', 'ACT-001', `the feed now projects ${executionInFeed.map((i) => i.type).join(', ')} — execution events reached the founder-facing feed, so this journey's "audited but not yet shown" claim is out of date and P6-008's scope has moved`);
+  }
 
   const events = await sql<{ name: string }>`select name from audit_events where company_id = ${companyId}::uuid order by occurred_at, event_id`.execute(owner.kysely);
   const names = events.rows.map((e) => e.name);
@@ -297,7 +310,7 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   const forbidden = [QUESTION, 'Size the UK independent gym market', 'UK independent gym market', SOURCE_A.url, SOURCE_A.content, 'Growth is expected to continue next year.'];
   const leaked = forbidden.filter((needle) => payloads.rows.some((r) => r.blob.includes(needle)));
   if (leaked.length > 0) return bail('audit payloads carry no content', 'NFR-008', `content leaked into audit metadata: ${leaked.join(' | ')}`);
-  record('activity and audit both record the run, and no payload carries content', 'ACT-001 / ACT-002 / NFR-008', true, `${activity.page.items.length} activity event(s), ${names.length} audit event(s); ${expected.length} required names present, 0 content leaks`);
+  record('the run is fully audited, carries no content, and is NOT yet in the founder-facing feed', 'ACT-002 / NFR-008', true, `${names.length} audit event(s) — ${expected.length} required names present, 0 content leaks. The activity feed holds ${activity.page.items.length} item(s), all company-lifecycle: ACTIVITY_TYPES projects no execution event, so a founder cannot yet SEE this run in their feed (P6-008 owns that)`);
 
   // ── 11. revision (J-13) — and it charges NOTHING at request time ───────────────────────────────────────
   const balanceBeforeRevision = ledger.balance;

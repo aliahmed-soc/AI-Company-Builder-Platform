@@ -190,14 +190,27 @@ was written to agree with the code.
 
 ### G9 — activity/audit/usage scope
 
-**Decision.** Slice E reconciles the **foundations**: the activity event stream (P1-009, ACT-001), the audit
-trail (P1-008, ACT-002) and the credit ledger (P5-014). It does **not** demonstrate the ACT-004 activity
-*views* or the USAGE-001 *rollups*.
+**Decision.** Slice E reconciles the **audit trail** (P1-008, ACT-002) and the **credit ledger** (P5-014). It
+does **not** demonstrate the ACT-004 activity *views* or the USAGE-001 *rollups* — and, corrected after the
+first real run, it does not demonstrate execution in the **activity feed** either, because nothing projects
+there.
 
-**Why.** Those are `ACBP-P6-008` (Decision Room and activity completion) and `ACBP-P6-009` (Account usage
-rollups and reconciliation), both still `Planned`. Demonstrating a view that does not exist is impossible;
-claiming to have demonstrated it would be worse. The backlog row's own wording is "Ledger reconciles in
-demo" — the ledger, which exists, not the rollup, which does not.
+**The finding, recorded rather than papered over.** `ACTIVITY_TYPES` is exactly
+`['company.created', 'company.updated', 'company.paused', 'company.resumed']`. **No task, run, artifact or
+credit event projects into the founder-facing activity feed.** The first draft of journey step 10 asserted the
+feed was non-empty and reported that "activity and audit both record the run"; it passed — on the
+`company.created` event left behind by SEEDING. The claim was false and the assertion was too weak to notice.
+
+The step now asserts the truth in both directions: the run is fully audited, and the feed contains **no**
+execution event. Asserting the absence is deliberate — if the taxonomy is later widened, the step goes red and
+forces this claim to be re-examined instead of quietly becoming an overstatement again. (P5-013 already
+widened `ACTIVITY_TYPES` once without a matching migration; the contract carries its own note about the
+revert, and `activityTypesMatchDatabase` is the guard.)
+
+**Consequence for the product, not just the demo:** a founder today cannot see an execution run in their
+activity feed at all. That is `ACBP-P6-008`'s scope (Decision Room and activity completion, ACT-001/003/004
+views), with `ACBP-P6-009` owning the usage rollups. Both are still `Planned`. The backlog row's own wording
+is "Ledger reconciles in demo" — the ledger, which exists, not the rollup, which does not.
 
 ### G10 — revision closes the journey
 
