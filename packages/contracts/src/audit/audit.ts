@@ -142,6 +142,11 @@ export const AUDIT_EVENTS = {
   // {state_at_delete, has_reason} — never the reason text. `tasks` has NO DELETE grant: the row survives and reads
   // exclude it, so "deleted" is a recorded fact rather than an erasure that would destroy this very audit trail.
   'task.deleted': { schemaVersion: 1, subjectType: 'task' },
+  // A revision was requested for an artifact (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13). AUDITED in-tx with the
+  // request row and the credit reservation (ADR-015). Subject = the revision request id; payload =
+  // {original_artifact_id, run_id, has_guidance} — both ends of the lineage, never the guidance text, following
+  // `task.deleted`. The original artifact is untouched: `artifacts` has no UPDATE grant at all.
+  'artifact.revision_requested': { schemaVersion: 1, subjectType: 'artifact_revision' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
   // generation's options (with an optional phase-scope flag). AUDITED in-tx (ADR-015). Subject = the selection id;
   // bounded metadata {mode, phase_scope?} — NEVER option content / chosen fields / reject reasons. The immutable
@@ -530,6 +535,33 @@ export function taskRepeated(input: { readonly newTaskId: string; readonly sourc
  */
 export function taskDeleted(input: { readonly taskId: string; readonly stateAtDelete: string; readonly hasReason: boolean }): AuditEvent {
   return makeEvent('task.deleted', input.taskId, 'success', { state_at_delete: input.stateAtDelete, has_reason: input.hasReason });
+}
+
+/**
+ * A revision of an artifact was requested (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13). Subject = the REVISION
+ * request id.
+ *
+ * THE LINEAGE IS THE POINT — the backlog's audit behaviour for this ticket is literally "lineage audited". So the
+ * payload carries both ends: what was being revised (`original_artifact_id`) and the run that was started to do it
+ * (`run_id`). Read together with the artifacts table, that is the whole ancestry, and it cannot drift from the
+ * request row because it IS the request row.
+ *
+ * `has_guidance` is a boolean and the guidance TEXT never enters the payload — `task.deleted`'s reason-text
+ * precedent. `AuditMetadata` is flat scalars by design, and founder prose in an audit row is unbounded and
+ * PII-adjacent. That a revision was asked for, by whom, of what, is what an audit trail needs; the words are in the
+ * request row the owner can read.
+ */
+export function artifactRevisionRequested(input: {
+  readonly revisionId: string;
+  readonly originalArtifactId: string;
+  readonly runId: string;
+  readonly hasGuidance: boolean;
+}): AuditEvent {
+  return makeEvent('artifact.revision_requested', input.revisionId, 'success', {
+    original_artifact_id: input.originalArtifactId,
+    run_id: input.runId,
+    has_guidance: input.hasGuidance,
+  });
 }
 
 /**

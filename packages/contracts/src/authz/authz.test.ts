@@ -64,6 +64,8 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:select': ['owner'],
   // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006): owner-only.
   'decision:record': ['owner'],
+  // Revision requests (ACBP-P5-012; CDR-064 G5): owner-only, per API-CONTRACTS.md:55 "Member (read), owner (revise)".
+  'artifact:revise': ['owner'],
   // Planning (ACBP-P4-001; CDR-039; ROAD-001/002): generate/read are member actions; the versioned EDIT is owner-only.
   'roadmap:generate': ['owner', 'viewer'],
   'roadmap:read': ['owner', 'viewer'],

@@ -119,6 +119,11 @@ export const AUTHZ_ACTIONS = [
   // record of a decision (J-08 "Actor: owner"). Reads reuse strategy:read (the decision is surfaced on the strategy
   // read); a dedicated Decisions list/get surface is deferred with the strategy HTTP surface.
   'decision:record',
+  // Revision requests (ACBP-P5-012; CDR-064 G5; TASK-005 lineage / J-13). OWNER-ONLY, because `API-CONTRACTS.md:55`
+  // scopes the Documents row explicitly — "Member (read), owner (revise)" — and because a revision SPENDS a credit:
+  // it starts a new metered run. Members read documents; the owner commits the company to more work. Reading a
+  // revision's lineage is not this action; it rides the document read.
+  'artifact:revise',
   // Planning (ACBP-P4-001; CDR-039; ROAD-001/002). Generation + read are member actions (the understanding:generate /
   // strategy:generate precedent); the versioned EDIT is owner-only (API-CONTRACTS "Owner (edit)").
   'roadmap:generate',
@@ -247,6 +252,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'strategy:select': ['owner'],
   // The owner-only immutable decision-record write (STRAT-006; J-08 "Actor: owner") — the strategy:select precedent.
   'decision:record': ['owner'],
+  // Revision requests are OWNER-ONLY (ACBP-P5-012; CDR-064 G5). `API-CONTRACTS.md:55` scopes the Documents row
+  // explicitly - "Member (read), owner (revise)" - so unlike `task:delete` this is not a case where canon is silent
+  // and restricting would invent a requirement. It also spends a credit, which is the strategy:select precedent.
+  'artifact:revise': ['owner'],
   // Roadmap generation/read are member actions (like understanding:generate / strategy:generate).
   'roadmap:generate': ['owner', 'viewer'],
   'roadmap:read': ['owner', 'viewer'],
