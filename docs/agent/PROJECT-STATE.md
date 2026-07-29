@@ -9,6 +9,14 @@ either fail to start or die in seconds with zero steps executed. Only the owner 
 setting on their account, and payment settings are outside what this agent may touch. The last hosted run was the
 exact-main verification of `bf381e7`.
 
+**CORRECTED 2026-07-28 23:35 — two things I recorded here earlier were wrong.** (a) The zero-run observation was NOT
+all billing: `ci.yml` runs on `pull_request` and `push: [main]` only, and five of the six branches have no PR, so
+they were never going to produce a run. The billing block is proven on `p5-014` (PR #62) alone. (b) These are NOT one
+six-deep stack. Verified by `git merge-base --is-ancestor`: there is ONE 4-deep stack (`p5-011` → `p5-006` →
+`p5-007` → `p5-008`) plus TWO INDEPENDENT branches (`p5-014`, `p5-013`), all rooted at current `main`. Nothing sits
+above `p5-014`. Full diagnosis in `AUTONOMOUS-RUN-LOG.md` under "STOPPED — NEEDS OWNER: CI DOWN".
+
+Six branches are complete, reviewed, pushed and unmergeable. Verify and merge BOTTOM-UP in this order:
 **The owner authorised merging on LOCAL verification on 2026-07-29**, one branch at a time, bottom-up, with a full
 local sweep on `main` after each and an instruction to stop dead if any merge turned `main` red. That is what
 happened; nothing was merged on a red or unverified tree.

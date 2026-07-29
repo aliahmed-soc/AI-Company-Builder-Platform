@@ -5,3 +5,5 @@ export * from './runtime.js';
 export * from './research.js';
 // The strategy worker's output contract — WORK-003's "insufficient input = specific request" (ACBP-P5-007).
 export * from './comparison.js';
+// The document worker's output contract — WORK-004's "quality-check fail = draft marked needs-revision" (ACBP-P5-008).
+export * from './document.js';
