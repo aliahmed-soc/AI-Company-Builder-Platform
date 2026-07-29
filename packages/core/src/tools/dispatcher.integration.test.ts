@@ -209,7 +209,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────
   test('an EXTERNAL effect cannot be reported as succeeded without a receipt — and the DB refuses it too', async () => {
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
 
@@ -275,7 +278,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   });
 
   test('a BLANK receipt is not evidence — it is refused and never stored (review pass 1)', async () => {
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded', receiptRef: '   ' })).toEqual({ status: 'receipt_required' });
@@ -358,7 +364,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // receipt rule, and dropping the renamed class from it would have quietly relaxed that rule on the most dangerous
     // class there is. Kept as an over-approximation on purpose — the safe direction.
     await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('purge_everything', 1, 'sensitive_irreversible', 'fixture')`.execute(owner.kysely);
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'purge_everything', args: {}, allowlist: [...allowAll, 'purge_everything'], context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string; externalEffect: boolean } }).call.id;
     expect((call as { call: { externalEffect: boolean } }).call.externalEffect).toBe(true);
