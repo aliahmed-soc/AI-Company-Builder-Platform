@@ -1471,3 +1471,64 @@ managed table") passes on every branch.
 CI remains blocked on the GitHub Actions spending limit — owner-only. Local proof is **not** a substitute: it does
 not exercise the CI service's exact image, and five of six branches still have no PR, so no workflow would run for
 them even if billing were restored.
+
+---
+
+## Window 16 — ACBP-P5-015 Slice E integration; PHASE 5 COMPLETE (2026-07-29, ~19:00-20:00 +03)
+
+**Merged to main on local verification:** `19463e7` (merge), slice commits `29f52b3` (CDR-065), `2ea20ad`
+(journey + suite), `6b7243e` (demo + activity correction), `b36705a` (revision re-execution), `eaed94d` (lint),
+`326f6c5` (review pass 2 + PROJECT-STATE + backlog). Post-merge sweep on main: **211 files / 2731 tests, zero
+failures, zero skips**, postmaster stable throughout. **Locally verified, NOT CI-proven.**
+
+**Phase 5 is complete — all 15 tickets Done.** `ACBP-P5-001` and `ACBP-P5-003` were stale bookkeeping: both were
+already delivered through their ratified a/b/c sub-scopes, and P5-003's row merely *parsed* as unfinished because
+an unquoted comma inside its Definition-of-Ready field shifted every later column. Both are now correct.
+
+### What Slice E is, and what it deliberately is not
+
+The journey (`runSliceEJourney`, shared by `pnpm demo:slice-e` and the CI suite) is 17 steps: 13 positive
+(preflight -> queue -> run -> research document -> provenance -> completion -> settlement -> ledger -> audit ->
+revision -> re-execution) and 4 negatives (no-hollow-success, release-on-failure, fabricated citation,
+unaffordable). Both callers assert the step COUNT, so a truncated run cannot read as a pass.
+
+No production code changed. No migration. No new contract.
+
+### Three findings worth carrying forward
+
+1. **A green demo claimed something false, and the assertion was too weak to notice.** Step 10's first draft
+   asserted the activity feed was non-empty and reported that "activity and audit both record the run". It
+   passed — on the `company.created` event left behind by SEEDING. `ACTIVITY_TYPES` is exactly the four
+   `company.*` events: **no task, run, artifact or credit event reaches the founder-facing feed at all.** The
+   step now asserts the ABSENCE, so widening the taxonomy turns it red rather than quietly restoring the
+   overstatement. P6-008 owns the real fix.
+
+2. **"Both versions retained" was a claim about one document.** The first draft requested a revision and never
+   ran it, so only one artifact ever existed — the assertion would have passed no matter how badly a second
+   version were handled. J-13's own words are "new linked task created -> **re-execution** -> both versions
+   retained". The journey now executes the revision and compares by id AND by title, because distinct ids alone
+   would pass if the worker had written the identical document twice.
+
+3. **The revision's guidance never reaches the worker.** `RunResearchParams` has no guidance field. P5-012
+   validates, stores and audits the founder's words, and then a revision re-runs the SAME question. Step 13
+   therefore proves retention, not steering. Recorded in CDR-065 §5-G10; it belongs to whichever ticket next
+   touches the worker input path.
+
+### Corollary added to the standing rules
+
+**An integration demo asserts what the system does, not what the ticket hoped it would do.** Two of the three
+findings above are the same mistake: a step whose wording was written from the requirement rather than from the
+run. The test for it is mechanical — ask what value would make this assertion pass, and check whether that value
+would satisfy a reader of the step's own text.
+
+### Process defect (mine), fixed
+
+`git add -A tools docs` swept `tools/auto-pm.ps1` and `docs/agent/OWNER-APPROVALS.md` back into tracking — the
+two owner-only files that were deliberately untracked one window earlier. Untracked again in `42f1d91`, files
+untouched on disk, and both are now in `.gitignore` so a broad `git add` cannot repeat it. Separately, a
+`WriteAllLines` on BACKLOG.csv rewrote the working copy to CRLF (the committed content stayed correct because
+git normalises on staging, but it broke the LF-anchored `mark-done.ps1` regex until normalised back).
+
+### Still true
+
+CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence.
