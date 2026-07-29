@@ -1027,6 +1027,27 @@ shape). Only the credit suite was affected.
 negative self-test that fails the build if its own patterns stop matching a known defect — because a checker that
 silently stops matching becomes a checker that always passes, which is this same failure one level up.
 
+**Corollary: a RUNNER that can emit a meaningless red is as dangerous as a test that can emit a meaningless green.**
+On 2026-07-29 a sweep on `main` reported *91 files failed, 32 tests failed, 1095 skipped*. All of it was noise:
+WSL2's idle timeout was tearing the distro down ~18 s after each `wsl` call returned, so PostgreSQL died mid-sweep
+(`received fast shutdown request`, a clean stop — not OOM, memory was 6.3 GB free). **A suite whose `beforeAll`
+throws has its remaining tests reported as SKIPPED**, which is indistinguishable from a suite that was never meant
+to run — so the failure mode looked exactly like the `skipIf(!hasTestDatabase)` suites being switched off.
+
+I misdiagnosed it twice before reading the PostgreSQL log — first blaming concurrent agent sessions, then their
+`alter role acbp_app nologin` teardown. Both were plausible and both were wrong. The log said it in one line.
+
+`.tools/verify-branch.ps1` now carries three guards:
+
+1. **Keep-alive** — hold the WSL distro open for the whole run so the VM cannot idle out under it.
+2. **Void-on-restart** — compare `pg_postmaster_start_time()` before and after; if PostgreSQL restarted, the run
+   exits **4 = VOID**, not red, and says so loudly. Neither a pass nor a failure may be reported from it.
+3. **Single-runner lock** — `acbp_app` is **cluster-wide** and the suites toggle its login in `beforeAll`/`afterAll`,
+   so a fresh *database* does **not** isolate two concurrent runs. A second run now refuses to start.
+
+With the guards in place the same commit swept green: **206 files / 2682 tests, zero skips, 404.8 s**, postmaster
+stable throughout.
+
 ---
 
 ## THE SIX-BRANCH MERGE — 2026-07-29, on local verification, CI still blocked
