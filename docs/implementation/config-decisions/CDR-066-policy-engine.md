@@ -10,7 +10,18 @@ Security: **invariant 5** (the model can never mark its own action approved), **
 
 ## §0 — RESOLVED: a `require_approval` decision could be bypassed
 
-> **OWNER RULING, 2026-07-29: option A — the waiver applies only when policy is `unavailable`.**
+> **OWNER RULING — DIRECT, 2026-07-29.**
+>
+> **Provenance, stated explicitly because it matters who decided this.** The owner ruled this **directly, in
+> session**, in reply to the flag written below. Their words, verbatim and complete:
+>
+> > "Option A — waiver only when policy is unavailable"
+>
+> This is **not** my inference from a prior decision, and not an extrapolation from an accepted ADR. The options and
+> the recommendation below are mine; the choice between them is the owner's, made after reading them. The distinction
+> is the same one CDR-051 §0.3 draws about the unruled third risk class: a decision has to stay traceable to whoever
+> actually made it, and an author's recommendation must never end up recorded as an owner's ruling.
+>
 > Fixed in `packages/contracts/src/tools/dispatch.ts` on this branch, test-first: the failing test was written and
 > observed failing (`expected authorized to deeply equal denied`) before the one-line change. All 81 tool-contract
 > tests pass afterwards, including every pre-existing waiver and injection-boundary test — the Phase 5 informational
@@ -98,6 +109,59 @@ One added conjunct. Two consequences worth naming:
   implies policy answered `allow` (a denial returns earlier, and a waived call cannot reach it), so untrusted
   provenance can no longer be the cause and `approval_required` is the honest reason. That is a proof about the
   control flow, not a simplification — and it is why the branch was deleted rather than left as dead code.
+
+### §0.1 — The unreachability claim, independently verified
+
+Deleting a branch from a security check on the strength of my own reasoning is not good enough here, so **the
+unreachability claim specifically** (not the fix in general) was put to an independent adversarial reviewer whose
+brief was to *refute* it and to default to "refuted" on any doubt. **Verdict: CONFIRMED.**
+
+**The claim.** Whenever `if (approval === 'unavailable' && !waived) return deny('approval_required')` returns, it is
+necessarily true that `policy === 'allow'`.
+
+**The proof.** `gate()` is total onto exactly `{allow, deny, unavailable}` — it returns `kind` only after a strict
+`===` against a string literal, so no `String` object or `Symbol.toPrimitive` can slip through. Then, per policy value:
+
+| `policy` | Can the approval-line denial fire? |
+|---|---|
+| `deny` | No — `policy_denied` returns first. |
+| `unavailable` | No — either `!waived` returns `policy_unavailable`/`untrusted_context` first, or `waived === true`, which makes the approval line's `!waived` false. |
+| `allow` | **Yes, and only here.** `waived` is then necessarily `false`, since its third conjunct requires `policy === 'unavailable'`. |
+
+`waivable` and `untrustedContext` add nothing: both feed only `waived`, which is pinned to `policy === 'unavailable'`.
+
+**Verified by exhaustive sweep, not just by argument.** 4 risk classes + 5 invalid `riskClass` values × 10 gate-input
+shapes (including `undefined`, `null`, `{kind:1}`, `new String('allow')`, a getter) for both gates × 4 stop shapes ×
+3 `untrustedContext` values × 4 allowlists: **378** `approval_required` hits, **zero** with `policy !== 'allow'`, and
+every one invariant under flipping `untrustedContext`. Adversarial probes — a flipping getter on `policy.kind`, and a
+`Proxy` returning different objects on successive reads — both failed to refute: `facts.policy` is read exactly once.
+
+**The reviewer found something stronger than the claim.** Naming that denial `untrusted_context` would have been
+*actively wrong*, not merely lossy. The reason's own definition (dispatch.ts lines 45–47) is "a call that WOULD have
+proceeded on the trusted path" — and with `policy === 'allow'` it would **not** have, because the same call is denied
+identically on the trusted path. And nothing is lost: `DispatchDecision` carries `riskClass`, from which the caller
+can recover `waivable`. `untrusted_context` remains reachable and accurate at its other site (the policy line), where
+`policy === 'unavailable'` and `!waived` together do imply `untrustedContext === true`.
+
+### §0.2 — Invariants this proof depends on (do not break these)
+
+The point of recording these is that the proof is **conditional**. Each of the following is load-bearing; an upstream
+edit that breaks one silently reopens the bypass closed above.
+
+| # | Invariant | What breaks if it goes |
+|---|---|---|
+| **INV-1** | The `policy === 'deny'` and `policy === 'unavailable' && !waived` checks stay **above** the approval check, and the latter keeps its `!waived` guard | Moving the `unavailable` check below the approval gate, or dropping `!waived`, breaks the case split immediately |
+| **INV-2** | `policy` stays **one `const` from one read** of `facts.policy` (same for `facts.untrustedContext` inside `waived`) | Inlining `gate(facts.policy)` at a second site lets a lazy or hostile `facts` object make the two reads disagree |
+| **INV-3** | `waived` keeps `policy === 'unavailable'` as a conjunct | This *is* the §0 fix; removing it restores the bypass |
+| **INV-4** | `gate()` stays total onto the three kinds, with `'unavailable'` as the fallback | A fourth return value breaks the exhaustive case split |
+| **INV-5** | *(not a constraint — a reassurance)* the proof does **not** depend on the contents of `CLASSES_THAT_PROCEED_WITHOUT_A_GATE` | Adding classes to the waiver set cannot break this claim; verified across all four risk classes |
+
+**Test coverage of these invariants, honestly stated.** INV-3 is pinned by the test *"an ENGINE-ALLOWED informational
+call still needs an approval answer"* — it fails the moment the conjunct is removed. INV-1 and INV-4 are exercised
+indirectly by the existing ordering and junk-input tests. **INV-2 is not covered by any test**, because it is a
+property of the code's *shape* rather than its behaviour: a second read only diverges under a hostile `facts` object,
+which no production caller constructs. It is recorded here as a review checkpoint rather than left to be
+rediscovered.
 
 ---
 
