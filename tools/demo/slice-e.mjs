@@ -44,7 +44,7 @@ const OPS = {
 };
 const estimateCost = ({ inputTokens, outputTokens }) => inputTokens + outputTokens;
 
-const EXPECTED_STEPS = 16;
+const EXPECTED_STEPS = 17;
 
 let owner;
 let product;
@@ -91,8 +91,8 @@ try {
   console.log(`\n${steps.length - failures}/${steps.length} steps passed`);
   if (exitCode === 0) {
     console.log('\nSlice E demo PASSED — a research task was priced, run, documented with checked citations, completed, settled and revised; the ledger reconciles and the failure paths refuse honestly.');
-    // Said in the demo output, not only in the CDR: a reader who sees 16 green steps should not conclude more than
-    // the run actually demonstrated (CDR-065 §2-G1, §5-G9).
+    // Said in the demo output, not only in the CDR: a reader who sees seventeen green steps should not conclude more
+    // than the run actually demonstrated (CDR-065 §2-G1, §5-G9).
     console.log('NOTE  the credit here is reserved by the JOURNEY, not automatically by the queue transition — no code wires that yet (CDR-065 §2-G1).');
     console.log('NOTE  this reconciles the credit LEDGER and the AUDIT trail. The founder-facing ACTIVITY feed shows nothing of this run: ACTIVITY_TYPES projects only company.* events (P6-008 owns that, with P6-009 for usage rollups).');
   } else {

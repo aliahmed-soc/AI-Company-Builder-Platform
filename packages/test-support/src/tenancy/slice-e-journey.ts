@@ -147,6 +147,16 @@ const RESEARCH_OUTPUT = JSON.stringify({
   ],
 });
 
+/** What the REVISION run produces — deliberately different text, so "both versions retained" can be checked by value. */
+const REVISED_OUTPUT = JSON.stringify({
+  title: 'UK independent gym market (revised)',
+  summary: 'Revised: regional breakdown added.',
+  claims: [
+    { statement: 'Regional member counts differ materially between north and south.', sources: [cite(SOURCE_B)] },
+    { statement: 'A forward projection is still not supported by the retrieved sources.', unverifiedReason: 'No retrieved source states a forward projection.' },
+  ],
+});
+
 /**
  * The same document, but citing a URL the fetcher NEVER returned. This is the fabricated-citation negative: WORK-002's
  * actual promise is that this cannot reach storage, and a research document whose citations were never checked is
@@ -184,23 +194,42 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
    * the same shape as Slice D's owner-side `failed`. `task_type` is stamped here too: `CreateTaskParams` carries no
    * type, and "pick a research task" has to mean something.
    */
-  const queuedResearchTask = async (title: string): Promise<string | undefined> => {
-    const created = await ops.createTask(product, { ...ids, title });
-    if (created.status !== 'ok' || created.task === undefined) return undefined;
-    const taskId = created.task.taskId;
+  /** Take an EXISTING draft task to `queued`. Split out because a revision's new task is already created. */
+  const queueExistingTask = async (taskId: string): Promise<string | undefined> => {
     const planned = await ops.planTask(product, { ...ids, taskId });
     if (planned.status !== 'ok') return undefined;
     await sql`update tasks set state = 'queued', task_type = ${TASK_TYPE} where id = ${taskId}::uuid`.execute(owner.kysely);
     return taskId;
   };
 
+  const queuedResearchTask = async (title: string): Promise<string | undefined> => {
+    const created = await ops.createTask(product, { ...ids, title });
+    if (created.status !== 'ok' || created.task === undefined) return undefined;
+    return queueExistingTask(created.task.taskId);
+  };
+
+  /**
+   * Start a queued task and reserve its credit — the four calls every run in this journey makes.
+   *
+   * `taskRunning` is the owner-side `queued→running` on the TASK (CDR-065 §3-G5c), kept here so the synthetic step
+   * appears once rather than being re-typed at every call site where it could quietly diverge.
+   */
+  const startAndReserve = async (taskId: string, key: string): Promise<{ runId: string } | { failure: string }> => {
+    const s = await ops.startRun(product, { ...ids, taskId, attempt: 1 });
+    if (s.status !== 'ok' || s.run === undefined) return { failure: `startRun expected ok, got ${s.status}` };
+    await sql`update tasks set state = 'running' where id = ${taskId}::uuid`.execute(owner.kysely);
+    const r = await ops.reserveCredit(product, { ...ids, taskRunId: s.run.id, idempotencyKey: key });
+    if (r.status !== 'ok') return { failure: `reserveCredit expected ok, got ${r.status}` };
+    return { runId: s.run.id };
+  };
+
   const researchParams = (runId: string) => ({ ...ids, runId, taskType: TASK_TYPE, question: QUESTION, workerVersion: 1, modelVersion: 'fake@1' });
   const researchDeps = (behavior: SliceEFakeBehavior) => ({ gateway: makeGateway(behavior), fetcher: makeFetcher(QUESTION, SOURCES), storage: makeStorage() });
 
   // The account needs a balance, and the PRODUCT ROLE HAS NO GRANT PATH — deliberately (CDR-058 §4). Minting on the
-  // owner connection is therefore a precondition, not a demonstration. Two runs' worth: the happy path consumes one,
-  // and the negatives reserve-and-release around the other.
-  const granted = CREDITS_PER_MANUAL_RUN * 2;
+  // owner connection is therefore a precondition, not a demonstration. THREE runs' worth: the original consumes one,
+  // the revision run consumes another, and the negatives reserve-and-release around the third before draining it.
+  const granted = CREDITS_PER_MANUAL_RUN * 3;
   await sql`insert into credit_transactions (account_id, kind, credits) values (${accountId}::uuid, 'grant', ${granted})`.execute(owner.kysely);
 
   // ── 1. preflight: what will this cost, before anything is committed (TASK-004) ──────────────────────────
@@ -333,18 +362,43 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   if (asked.length !== 1 || asked[0]?.newTaskId !== revision.newTaskId) return bail('lineage visible', 'J-13', `expected exactly the one revision just requested, got ${asked.length}`);
   record('the lineage is visible and both versions are retained', 'TASK-005 / J-13', true, `original ${artifact.id} still reads back with no ancestor; 1 revision recorded pointing at task ${revision.newTaskId}`);
 
+  // ── 13. the revision actually RUNS, and BOTH versions survive (J-13) ───────────────────────────────────
+  // Steps 11–12 proved a revision can be ASKED FOR and that its lineage reads back. That is only half of J-13, whose
+  // words are "new linked task created … → re-execution → both versions retained". Without executing the new task
+  // there is no second version, so "both versions retained" would be a claim about one document. This runs it.
+  const revisionQueued = await queueExistingTask(revision.newTaskId);
+  if (revisionQueued === undefined) return bail('the revision re-executes', 'J-13', 'the revision task (created in draft) could not be planned and queued');
+  const revisionRun = await startAndReserve(revision.newTaskId, `slice-e-rev-run-${revision.newTaskId}`);
+  if ('failure' in revisionRun) return bail('the revision re-executes', 'J-13', revisionRun.failure);
+  const revised = await ops.runResearch(product, researchParams(revisionRun.runId), researchDeps({ kind: 'respond', output: REVISED_OUTPUT }));
+  if (revised.status !== 'ok' || revised.artifact === undefined) return bail('the revision re-executes', 'J-13', `expected ok, got ${revised.status}`);
+  const revisedArtifact = revised.artifact;
+
+  // BOTH VERSIONS, by identity AND by value. Distinct ids alone would pass if the worker had written the same
+  // document twice; identical titles would mean the "revision" produced nothing new.
+  if (revisedArtifact.id === artifact.id) return bail('both versions retained', 'J-13', 'the revision overwrote the original artifact instead of producing a new one');
+  if (revisedArtifact.title === artifact.title) return bail('both versions retained', 'J-13', `both artifacts carry the title "${artifact.title}" — the revision did not produce a different document`);
+  // The ORIGINAL must still be readable, unchanged, after the revision ran. This is the half J-13 is protecting.
+  const originalAfter = await ops.listRunArtifacts(product, { ...ids, runId });
+  if (originalAfter === 'forbidden' || originalAfter.length !== 1 || originalAfter[0]?.id !== artifact.id) {
+    return bail('both versions retained', 'J-13', 'the original artifact is no longer readable through its own run after the revision executed');
+  }
+  // …and the NEW artifact's lineage names the original as its ancestor, walked rather than stored (CDR-064 G1).
+  const revisedLineage = await ops.readArtifactLineage(product, { ...ids, artifactId: revisedArtifact.id });
+  if (revisedLineage.status !== 'ok' || revisedLineage.revisedFrom == null) return bail('the revised document knows what it revised', 'J-13', `expected an ancestor on the revised artifact, got ${String(revisedLineage.revisedFrom)}`);
+  if (revisedLineage.revisedFrom.originalArtifactId !== artifact.id) return bail('the revised document knows what it revised', 'J-13', `ancestor points at ${revisedLineage.revisedFrom.originalArtifactId}, expected ${artifact.id}`);
+  record('the revision re-executes and BOTH versions are retained', 'TASK-005 / J-13', true, `original ${artifact.id} ("${artifact.title}") and revised ${revisedArtifact.id} ("${revisedArtifact.title}") both readable; the revised document's ancestor is derived by walking run→task→request, never stored`);
+
   // ══ THE NEGATIVE SET ═══════════════════════════════════════════════════════════════════════════════════
   // Everything above proves the platform does the right thing when it works. These prove it does not LIE when it
   // does not — which is the property the backlog's security column names, and the harder one to keep.
 
   // ── 13. no hollow success: a failed generation produces NO artifact and an honest category ─────────────
   const failTaskId = await queuedResearchTask('Research task that will fail');
-  if (failTaskId === undefined) return bail('no-hollow-success setup', 'TASK-006', 'could not queue the second task');
-  const failRunStart = await ops.startRun(product, { ...ids, taskId: failTaskId, attempt: 1 });
-  if (failRunStart.status !== 'ok' || failRunStart.run === undefined) return bail('no-hollow-success setup', 'TASK-006', `startRun expected ok, got ${failRunStart.status}`);
-  const failRunId = failRunStart.run.id;
-  const failReserve = await ops.reserveCredit(product, { ...ids, taskRunId: failRunId, idempotencyKey: `slice-e-${failRunId}` });
-  if (failReserve.status !== 'ok') return bail('no-hollow-success setup', 'BILL-002', `reserveCredit expected ok, got ${failReserve.status}`);
+  if (failTaskId === undefined) return bail('no-hollow-success setup', 'TASK-006', 'could not queue the failure task');
+  const failStarted = await startAndReserve(failTaskId, `slice-e-fail-${failTaskId}`);
+  if ('failure' in failStarted) return bail('no-hollow-success setup', 'TASK-006', failStarted.failure);
+  const failRunId = failStarted.runId;
 
   const generationFailed = await ops.runResearch(product, researchParams(failRunId), researchDeps({ kind: 'fail', error: 'provider unavailable' }));
   // THE EXACT STATUS, not merely "not ok". `!== 'ok'` would pass for `blank_question` or `invalid_task_type` — i.e.

@@ -92,9 +92,10 @@ describe.skipIf(!hasTestDatabase)('Slice E — safe internal execution E2E (real
     const failures = steps.filter((s) => !s.ok).map((s) => `[${s.requirement}] ${s.step} — ${s.detail}`);
     expect(failures, failures.join('\n')).toHaveLength(0);
     // The journey must actually have run its full sequence — `bail()` returns early, so a short `steps` array is the
-    // signature of a silently truncated run rather than a pass. Twelve positive steps (CDR-065 §1's vertical) plus the
-    // four negatives of §4: no-hollow-success, release-on-failure, fabricated citation, and unaffordable.
-    expect(steps.length).toBe(16);
+    // signature of a silently truncated run rather than a pass. Thirteen positive steps (CDR-065 §1's vertical, ending
+    // with the revision RE-EXECUTING so "both versions retained" is proven by value) plus the four negatives of §4:
+    // no-hollow-success, release-on-failure, fabricated citation, and unaffordable.
+    expect(steps.length).toBe(17);
     expect(steps.every((s) => s.ok)).toBe(true);
   }, 180_000);
 });

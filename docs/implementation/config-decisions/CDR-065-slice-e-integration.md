@@ -214,13 +214,21 @@ is "Ledger reconciles in demo" — the ledger, which exists, not the rollup, whi
 
 ### G10 — revision closes the journey
 
-**Decision.** The journey ends by requesting a revision of the produced document (P5-012) and reading the
-lineage back, asserting **both versions are retained** and the new task is linked to the original artifact.
+**Decision.** The journey requests a revision of the produced document (P5-012), reads the lineage back, **and
+then executes the revision task**, asserting both artifacts exist, differ by id *and* by title, that the
+original is still readable through its own run, and that the revised document's ancestor resolves to the
+original.
 
-**Why.** J-13's own words are "new linked task created (lineage to original) → re-execution → both versions
-retained". The retention half is the part a demo can lose silently, so it is asserted rather than assumed.
-Per CDR-064 G4 the revision request charges **no** credit — the new task meters when it is queued — and the
-journey's ledger assertion must therefore *not* expect a second charge at request time.
+**Why the re-execution is not optional — corrected in review pass 1.** J-13's own words are "new linked task
+created (lineage to original) → **re-execution** → both versions retained". The first draft stopped at the
+request, so only one artifact ever existed: "both versions retained" was a claim about a single document, and
+it would have passed no matter how badly a second version were handled. Asserting different **titles** as well
+as different ids matters for the same reason — distinct ids alone would pass if the worker had written the
+identical document twice.
+
+Per CDR-064 G4 the revision **request** charges no credit (the new task meters when it is queued), so the
+ledger assertion at step 9 must not expect a second charge at request time; the revision **run** reserves and
+consumes one like any other run, which is why the journey grants three credits rather than two.
 
 ---
 
