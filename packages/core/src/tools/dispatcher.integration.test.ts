@@ -15,6 +15,7 @@ import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
+import { initializeCompanyPolicy } from '../policy/index.js';
 import { dispatchToolCall, reportToolCallOutcome, digestToolArguments } from './index.js';
 import { TaskRepository } from '@acbp/database';
 
@@ -78,7 +79,20 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     await register('send_email', 'external_reversible');
     await register('unclassified_tool', null);
     await register('retired_tool', 'informational', 'retired');
+
+    // THE ENGINE NEEDS A POLICY NOW (ACBP-P6-002). The dispatcher consults it internally, so a suite that seeded
+    // none would only ever be testing the no-policy refusal. The owner-ruled default (CDR-066 §3-G10) allows
+    // informational + internal_reversible and requires approval above that — which is exactly the spread of
+    // registered fixture tools below.
+    expect((await initializeCompanyPolicy(product, base())).status).toBe('ok');
   });
+
+  /** Remove the company's policy as the OWNER — there is no product DELETE grant, which is the point (P6-001b). */
+  const removePolicy = () => sql`delete from policies where company_id = ${w.companyA1}::uuid`.execute(owner.kysely);
+
+  /** Add a rule to the active policy as the OWNER. Editing rules is P6-010's product surface, not this ticket's. */
+  const addRule = (rule: string) =>
+    sql`update policies set rules = rules || ${rule}::jsonb where company_id = ${w.companyA1}::uuid and status = 'active'`.execute(owner.kysely);
 
   const allowAll = ['web_research', 'memory_write', 'send_email', 'unclassified_tool', 'retired_tool', 'ghost_tool'];
   const dispatch = (over: Partial<Parameters<typeof dispatchToolCall>[1]> = {}) =>
@@ -117,7 +131,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   test('EVERY outcome writes exactly one row — authorized and refused alike', async () => {
     const attempts: Array<Partial<Parameters<typeof dispatchToolCall>[1]>> = [
       {},                                     // authorized (informational)
-      { toolId: 'memory_write' },             // denied: no policy engine
+      { toolId: 'memory_write' },             // authorized: internal_reversible, which the ruled default allows
       { toolId: 'unclassified_tool' },        // denied: unclassified → most restrictive
       { toolId: 'ghost_tool' },               // denied: not registered
       { allowlist: [] },                      // denied: not allowlisted
@@ -143,18 +157,25 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   });
 
   // ── ACCEPTANCE: fail closed with no engine (IMPLEMENTATION-ROADMAP §M5) ───────────────────────────────────
-  test('with NO policy engine, informational proceeds and everything above it is refused', async () => {
-    expect((await dispatch({ toolId: 'web_research' })).status).toBe('authorized');
-    for (const toolId of ['memory_write', 'send_email', 'unclassified_tool']) {
-      expect(await dispatch({ toolId })).toMatchObject({ status: 'denied', reason: 'policy_unavailable' });
+  test('with NO POLICY CONFIGURED, EVERY class is refused — including the one the Phase 5 waiver spared', async () => {
+    // THE BEHAVIOUR CHANGE ACBP-P6-002 LANDS. This used to assert that informational proceeded when no engine had
+    // answered, which was the IMPLEMENTATION-ROADMAP §M5 envelope. The engine exists now, and a company with no
+    // active policy has permitted nothing (CDR-066 §6-G15) — so the refusal reason is `policy_denied`, not
+    // `policy_unavailable`: the engine ANSWERED, it did not fail to answer.
+    await removePolicy();
+    for (const toolId of ['web_research', 'memory_write', 'send_email', 'unclassified_tool']) {
+      expect(await dispatch({ toolId })).toMatchObject({ status: 'denied', reason: 'policy_denied' });
     }
   });
 
   test('an explicit policy DENY refuses even the informational class, and beats an allowing approval', async () => {
+    // A REAL rule now, not an injected answer: the deny has to travel from stored jsonb through the engine to the
+    // gate. `risk_at_least informational` is the always-firing condition here; the stop ENGINE is P6-007's.
+    await addRule('[{"id":"forbid","dimension":"risk_class","condition":"risk_at_least","operand":"informational","decision":"deny"}]');
     const r = await dispatchToolCall(
       product,
       { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] },
-      { gates: { policy: () => ({ kind: 'deny' }), approval: () => ({ kind: 'allow' }) } },
+      { gates: { approval: () => ({ kind: 'allow' }) } },
     );
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
   });
@@ -166,17 +187,32 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(unreachable).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
   });
 
-  test('a gated class proceeds only when BOTH engines answer allow', async () => {
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+  // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow
+  // — i.e. that an absent approval refused whatever policy said. That was the stand-in for a `GateAnswer` which could
+  // not express `require_approval`: with the middle output flattened onto `allow`, the only way to keep a demanded
+  // approval enforceable was to demand one always. Policy is now the authority, so a policy that ALLOWS does not
+  // conjure an approval requirement, and one that says `require_approval` still refuses without an approval — which
+  // the contract suite pins for every risk class.
+  test('policy decides whether an approval is needed: allow proceeds, require_approval waits', async () => {
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
+    // The ruled default REQUIRES approval for external_reversible, and an approval is offered: authorized.
     const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     expect(ok.status).toBe('authorized');
-    const noApproval = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates: { policy: gates.policy } });
-    expect(noApproval).toMatchObject({ status: 'denied', reason: 'approval_required' });
+    // NO APPROVAL OFFERED for the same call: refused — and the reason names the missing approval rather than blaming
+    // policy, which said its piece perfectly clearly.
+    const demanded = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, {});
+    expect(demanded).toMatchObject({ status: 'denied', reason: 'approval_required' });
+    // …while an INFORMATIONAL call, which the same policy plainly allows, needs no approval at all. THIS is the
+    // loosening, asserted end to end: policy decides, and it did not ask.
+    expect((await dispatch({ toolId: 'web_research' })).status).toBe('authorized');
   });
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────
   test('an EXTERNAL effect cannot be reported as succeeded without a receipt — and the DB refuses it too', async () => {
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
 
@@ -222,8 +258,13 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
 
   test('the key is scoped PER COMPANY and per tool — one tenant\'s key never collides with another\'s', async () => {
     await dispatch({ idempotencyKey: 'shared' });
-    // A different tool, same key: a different call.
-    expect((await dispatch({ toolId: 'memory_write', idempotencyKey: 'shared' })).status).toBe('denied');
+    // A different tool, same key: a DIFFERENT CALL, which is this test's whole subject. It used to assert `denied`
+    // here, but that was piggybacking on `memory_write` being refused for `policy_unavailable` — incidental to the
+    // key scoping and no longer true, since the ruled default allows internal_reversible. What matters is that the
+    // second call is not reported as a duplicate of the first.
+    // EXACT, not `.not.toBe('duplicate')` — review pass 2 pointed out that a negative here also passes for
+    // `forbidden`, `run_not_found` and `idempotency_conflict`, none of which would mean what the test claims.
+    expect((await dispatch({ toolId: 'memory_write', idempotencyKey: 'shared' })).status).toBe('authorized');
     expect(await callRows()).toHaveLength(2);
   });
 
@@ -239,7 +280,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   });
 
   test('a BLANK receipt is not evidence — it is refused and never stored (review pass 1)', async () => {
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded', receiptRef: '   ' })).toEqual({ status: 'receipt_required' });
@@ -322,7 +366,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // receipt rule, and dropping the renamed class from it would have quietly relaxed that rule on the most dangerous
     // class there is. Kept as an over-approximation on purpose — the safe direction.
     await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('purge_everything', 1, 'sensitive_irreversible', 'fixture')`.execute(owner.kysely);
-    const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
+    // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
+    // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
+    // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
+    const gates = { approval: () => ({ kind: 'allow' }) as const };
     const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'purge_everything', args: {}, allowlist: [...allowAll, 'purge_everything'], context: [] }, { gates });
     const callId = (call as { status: 'authorized'; call: { id: string; externalEffect: boolean } }).call.id;
     expect((call as { call: { externalEffect: boolean } }).call.externalEffect).toBe(true);

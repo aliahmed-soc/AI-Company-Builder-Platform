@@ -13,6 +13,7 @@ import { TaskRepository, type DatabaseClient } from '@acbp/database';
 import { wrapUntrusted, detectInjection } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
+import { initializeCompanyPolicy } from '../policy/index.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
@@ -63,6 +64,12 @@ describe.skipIf(!hasTestDatabase)('injection corpus (real PostgreSQL) — ACBP-P
     await truncateFixtures(owner);
     await sql`delete from tool_definitions`.execute(owner.kysely);
     w = await seedTwoTenantWorld(owner, product, SEED_OPS);
+    // A CONFIGURED POLICY IS NOW A PRECONDITION OF DISPATCHING (ACBP-P6-002). The dispatcher consults the engine
+    // itself, and a company with no active policy has permitted nothing (CDR-066 §6-G15) — so without this every
+    // call here would be refused for `policy_denied` and this suite would stop testing its own subject. The
+    // owner-ruled default (CDR-066 §3-G10) allows informational and internal_reversible, which is what these
+    // fixtures dispatch.
+    expect((await initializeCompanyPolicy(product, base())).status).toBe('ok');
 
     const created = await createTask(product, { ...base(), title: 'Research the candle market', description: null, milestoneId: null });
     const taskId = (created as { status: 'ok'; task: { taskId: string } }).task.taskId;

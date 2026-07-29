@@ -151,6 +151,12 @@ export const AUTHZ_ACTIONS = [
   // and puts it beside ADMIN-001: a viewer who could disable the research worker could stop the company's work
   // without being able to start any. Owner-only.
   'worker:control',
+  // Policy configuration (ACBP-P6-001c; CDR-066 §6-G17; ADR-010). OWNER-ONLY, and deliberately NOT folded into
+  // `run:execute`: deciding what a company is allowed to do is a different authority from doing it. A worker holds
+  // `run:execute`, and a worker able to rewrite the policy it is about to be judged by would make the whole
+  // authority chain circular — invariant 5's shape, one layer down. Evaluation itself rides `run:execute`, because
+  // it happens on the execution path on behalf of a run.
+  'policy:manage',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -285,6 +291,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'billing:read': ['owner'],
   'run:cancel': ['owner'],
   'worker:control': ['owner'],
+  // Owner-only (CDR-066 §6-G17). A viewer who could set the policy could widen what the AI may do unsupervised.
+  'policy:manage': ['owner'],
 };
 
 /**

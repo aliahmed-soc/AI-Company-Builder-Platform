@@ -106,6 +106,13 @@ describe('event-name registry (deny unregistered)', () => {
       // Task completion (ACBP-P5-011; TASK-005). Deferred by P5-002 to "the ticket that owns artifacts" and
       // registered there — the row that makes "no artifactless completion" a fact in the record, not a claim.
       'task.completed',
+      // Policy engine (ACBP-P6-001c; CDR-066 §6-G18). `policy.evaluated` + `policy.blocked` are EVENT-CATALOG's own
+      // names; `policy.unavailable` covers the case with no evaluation to point at (§6-G16) and `policy.changed`
+      // carries DATA-ARCHITECTURE's "policy changes audited".
+      'policy.evaluated',
+      'policy.blocked',
+      'policy.unavailable',
+      'policy.changed',
       // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). `tool.call_started` is
       // deliberately NOT here — nothing executes tools yet, so registering it would declare an unemittable event.
       'tool.call_requested',

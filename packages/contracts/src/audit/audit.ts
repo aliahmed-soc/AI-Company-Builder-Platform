@@ -177,6 +177,23 @@ export const AUDIT_EVENTS = {
   // task: a reader asking "what did the chokepoint decide about this call" wants one row per call, and the run and
   // task reach it through the `tool_calls` row. `tool.call_started` is NOT registered — nothing executes tools yet
   // (P5-005 owns the worker runtime), so registering it would declare an event no code can emit.
+  // Policy engine (ACBP-P6-001c; CDR-066 §6-G18). `policy.evaluated` and `policy.blocked` are transcribed from
+  // EVENT-CATALOG L221-222; canon marks the first "is audit-grade (POL-006)". Subject = the EVALUATION, so the
+  // event points at the `policy_evaluations` row rather than restating its detail — the row and the event are
+  // written in one transaction, so they cannot disagree through partial failure.
+  //
+  // `policy.blocked` carries NO subject id when the refusal was "this company has no active policy": there is no
+  // evaluation row to point at, because there were no rules to cite (CDR-066 §6-G16).
+  'policy.evaluated': { schemaVersion: 1, subjectType: 'policy_evaluation' },
+  'policy.blocked': { schemaVersion: 1, subjectType: 'policy_evaluation' },
+  // The engine could not produce an answer at all. SUBJECT = the COMPANY, because there is no evaluation to point
+  // at — which is exactly why this is a separate event rather than a `policy.blocked` with a missing subject.
+  // TOOL-003 gives unavailability its own consequence: *"blocks execution (fail closed), with owner notification"*,
+  // and a notification needs an event to hang off.
+  'policy.unavailable': { schemaVersion: 1, subjectType: 'company' },
+  // Policy CREATION. DATA-ARCHITECTURE requires "policy changes audited" without naming the event, so the name is
+  // derived from canon's own phrase. Subject = the policy version, which is what an owner asks "who changed this".
+  'policy.changed': { schemaVersion: 1, subjectType: 'policy' },
   'tool.call_requested': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_completed': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_failed': { schemaVersion: 1, subjectType: 'tool_call' },
@@ -659,6 +676,65 @@ export function taskCompleted(input: { readonly taskId: string; readonly runId: 
  * counting denials never has to parse metadata to find them. The arguments DIGEST is deliberately absent: it is on
  * the `tool_calls` row, and duplicating it here would put the same fact in two places that can disagree.
  */
+/**
+ * One policy evaluation was recorded (ACBP-P6-001c; CDR-066 §6-G18; POL-006; EVENT-CATALOG L221).
+ *
+ * Metadata is exactly canon's list — evaluation_id is the SUBJECT, and `policy_version`, `decision` and
+ * `evaluation_point` are the scalars. The rule ids are deliberately NOT here: they are on the `policy_evaluations`
+ * row, and copying a list into audit metadata would both breach the scalars-only rule and put the same fact in two
+ * places that can disagree.
+ */
+export function policyEvaluated(input: { readonly evaluationId: string; readonly policyVersion: number; readonly decision: string; readonly evaluationPoint: string }): AuditEvent {
+  return makeEvent('policy.evaluated', input.evaluationId, 'success', {
+    policy_version: input.policyVersion,
+    decision: input.decision,
+    evaluation_point: input.evaluationPoint,
+  });
+}
+
+/**
+ * The policy REFUSED an action (ACBP-P6-001c; EVENT-CATALOG L222).
+ *
+ * Emitted in addition to `policy.evaluated` when the decision is `deny`, because canon routes this one to the
+ * Decision Room and the activity feed (P6-008) while `policy.evaluated` is the record. A reader counting refusals
+ * must not have to parse metadata to find them.
+ *
+ * The evaluation id is REQUIRED. A refusal that cannot name the evaluation that produced it is a different event —
+ * see {@link policyUnavailable} — and collapsing the two would leave a reader unable to tell "the rules said no"
+ * from "there were no rules to ask".
+ */
+export function policyBlocked(input: { readonly evaluationId: string; readonly policyVersion: number; readonly reason: string; readonly evaluationPoint: string }): AuditEvent {
+  return makeEvent('policy.blocked', input.evaluationId, 'blocked', {
+    reason: input.reason,
+    evaluation_point: input.evaluationPoint,
+    policy_version: input.policyVersion,
+  });
+}
+
+/**
+ * The engine could not answer, so execution was refused (ACBP-P6-001c; TOOL-003).
+ *
+ * SUBJECT = the COMPANY. There is no evaluation to point at, which is the whole distinction from
+ * {@link policyBlocked}: this says *"nobody could tell us whether this was allowed"*, and TOOL-003 attaches an owner
+ * notification to precisely that case. Emitted for a company with no active policy and for a rule set that could
+ * not be read — both are refusals the operator needs to see, because neither is a normal outcome.
+ */
+export function policyUnavailable(input: { readonly companyId: string; readonly reason: string; readonly evaluationPoint: string }): AuditEvent {
+  return makeEvent('policy.unavailable', input.companyId, 'blocked', { reason: input.reason, evaluation_point: input.evaluationPoint });
+}
+
+/**
+ * A company's policy changed (ACBP-P6-001c; DATA-ARCHITECTURE *"policy changes audited"*).
+ *
+ * The subject is the POLICY VERSION, which is the thread an owner follows when asking who changed what and when.
+ * The rules themselves never enter metadata: they are the policy's content, and audit metadata is scalars only.
+ */
+export function policyChanged(input: { readonly policyId: string; readonly version: number; readonly baseline: string; readonly ruleCount: number; readonly supersededVersion?: number }): AuditEvent {
+  const metadata: Record<string, string | number | boolean> = { version: input.version, baseline: input.baseline, rule_count: input.ruleCount };
+  if (input.supersededVersion !== undefined) metadata['superseded_version'] = input.supersededVersion;
+  return makeEvent('policy.changed', input.policyId, 'success', metadata);
+}
+
 export function toolCallRequested(input: {
   readonly callId: string;
   readonly toolId: string;

@@ -19,6 +19,7 @@ import {
   hasExternalEffect,
   detectInjection,
   isToolCallOutcome,
+  isToolDenialReason,
   toolCallRequested,
   toolCallCompleted,
   type GateAnswer,
@@ -27,6 +28,7 @@ import {
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
+import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
 import type { Logger } from '@acbp/observability';
 
 /** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is `clear` and the others are not. */
@@ -34,15 +36,22 @@ const CLEAR = (): StopAnswer => ({ kind: 'clear' });
 const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
 
 /**
- * The gates the dispatcher consults. All three are PORTS with fail-closed Phase 5 defaults, because the engines
- * behind them are Phase 6's (`IMPLEMENTATION-ROADMAP §M5`).
+ * The gates the dispatcher consults through PORTS, with fail-closed defaults, because the engines behind them are
+ * still later tickets: `stop` is ACBP-P6-007, `approval` is ACBP-P6-003/004.
  *
- * `stop` defaults to `clear` and the other two to `unavailable`, and the asymmetry is deliberate: with no stop
- * mechanism in existence, no stop CAN be in force, so `clear` is simply true. A policy engine that does not exist has
- * not evaluated anything, which is a missing answer rather than a permissive one.
+ * **THERE IS NO `policy` PORT (ACBP-P6-002; CDR-067 §2-G1/G8).** The dispatcher consults the engine itself, so a
+ * caller cannot supply, override or omit a policy answer — and because the approval REQUIREMENT rides that answer
+ * (`PolicyGateAnswer`), a caller cannot forge the requirement either. `COMPONENT-CATALOG` names this component
+ * *"Trusted — the enforcement chokepoint"* and `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check
+ * **never skippable**: a gate a caller may omit will eventually be omitted, and the omission would be invisible,
+ * because the old default (`unavailable`) *looks* like a deliberate fail-closed answer. `stop` and `approval` become
+ * internal the same way when their engines land.
+ *
+ * `stop` defaults to `clear` and `approval` to `unavailable`, and the asymmetry is deliberate: with no stop mechanism
+ * in existence, no stop CAN be in force, so `clear` is simply true. An approval engine that does not exist has not
+ * approved anything, which is a missing answer rather than a permissive one.
  */
 export interface ToolGates {
-  readonly policy?: () => Promise<GateAnswer> | GateAnswer;
   readonly approval?: () => Promise<GateAnswer> | GateAnswer;
   readonly stop?: () => Promise<StopAnswer> | StopAnswer;
 }
@@ -52,6 +61,11 @@ export interface DispatcherOptions {
   readonly logger?: Logger;
   readonly auditWriter?: typeof writeAuditEvent;
   readonly gates?: ToolGates;
+  /**
+   * The instant handed to the policy engine. CDR-066 §3-G3 keeps the clock an INPUT, never ambient, so a recorded
+   * evaluation's timestamp is assertable and a working-hours decision can be re-derived from its own record.
+   */
+  readonly now?: Date;
 }
 
 export interface DispatchToolCallParams {
@@ -114,6 +128,11 @@ export type DispatchToolCallResult =
   | { readonly status: 'denied'; readonly call: ToolCallDTO; readonly reason: ToolDenialReason }
   // NFR-006: this idempotency key already ran in this company. The first call's record is returned; nothing re-runs.
   | { readonly status: 'duplicate'; readonly call: ToolCallDTO }
+  /**
+   * The idempotency key already names a call with DIFFERENT arguments (CDR-067 §2-G10). Deliberately carries no
+   * `call`: handing back the other call's record is the very confusion this status exists to prevent.
+   */
+  | { readonly status: 'idempotency_conflict' }
   | { readonly status: 'forbidden' }
   | { readonly status: 'run_not_found' }
   // A run that is not `running` has no execution to attach a tool call to — the P5-002 pass-2 lesson, same shape.
@@ -161,9 +180,31 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // Idempotency is checked BEFORE the gates. A duplicate is not a new call to authorize — re-running the gates
       // could even produce a different answer for a call that already happened, which would be a second, contradictory
       // record of one event (NFR-006; FAILURE-AND-RECOVERY row 11).
+      //
+      // THAT REASONING HOLDS ONLY FOR A CALL THAT ACTUALLY HAPPENED (CDR-067 §2-G10). The loosening's independent
+      // review named this the one place the chokepoint is not a chokepoint, because this return precedes the policy
+      // evaluation. Two cases are not duplicates at all, and both are handled before the short circuit:
       if (idempotencyKey !== undefined) {
         const prior = await calls.findByIdempotencyKey(params.toolId, idempotencyKey);
-        if (prior !== undefined) return { status: 'duplicate', call: toDTO(prior) };
+        if (prior !== undefined) {
+          // 1. THE KEY NAMES DIFFERENT ARGUMENTS. Returning the prior record here would answer a request whose
+          //    arguments were never gated and never recorded, with someone else's authorization and someone else's
+          //    digest. A key identifies one call; two argument sets are two calls, and this one has no record.
+          //    (`run_id` is deliberately NOT compared: reusing a key on a later attempt of the same work is exactly
+          //    what a retry after a resume looks like, and refusing that would break the feature.)
+          if (prior.arguments_digest !== argumentsDigest) return { status: 'idempotency_conflict' };
+          // 2. THE PRIOR CALL WAS DENIED, so it never ran and there is nothing to be idempotent about. `duplicate`
+          //    means "already ran in this company"; reporting a refusal that way invites a caller written as
+          //    `if (denied) abort; else proceed;` to treat a laundered denial as permission. The refusal is reported
+          //    from the existing record, so one attempt still leaves exactly one record.
+          if (prior.outcome === 'denied') {
+            // Total over the stored column. A reason outside the closed set means the row is corrupt, and the
+            // fail-closed reading of a corrupt refusal is that the gate could not be established.
+            const reason = isToolDenialReason(prior.denial_reason) ? prior.denial_reason : 'policy_unavailable';
+            return { status: 'denied', call: toDTO(prior), reason };
+          }
+          return { status: 'duplicate', call: toDTO(prior) };
+        }
       }
 
       // The registry: the ACTIVE definition, highest version. `undefined` means unregistered, which the decision
@@ -176,6 +217,33 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         .orderBy('version', 'desc')
         .executeTakeFirst();
 
+      // ── THE POLICY GATE, consulted here and nowhere else (ACBP-P6-002; CDR-067 §2-G1/G2) ────────────────
+      //
+      // Point 3 of APPROVAL-AND-POLICY-ARCHITECTURE §5 — *"immediately before execution … never skippable"*. It runs
+      // in the SCOPE ALREADY OPEN, so the evaluation, the call record and every audit event commit or roll back
+      // together: a call recorded as authorized whose evaluation was rolled back would assert an authorization that
+      // never happened. It also needs no second authorization check — this function already required `run:execute`.
+      //
+      // UNCONDITIONALLY, even for a call that will be refused on some other ground (G4). `decideDispatch` takes the
+      // policy answer as an INPUT, so it cannot be evaluated lazily without inverting the decision function — and
+      // "all checks audited" means a record that the policy WAS consulted is worth having even when the allowlist
+      // refused first.
+      //
+      // THE RISK CLASS IS `registry`-PROVENANCED because it came from `tool_definitions`, not from model text. That
+      // is exactly the distinction CDR-066 §3-G5 draws: a model-suggested class is untrusted and takes the most
+      // restrictive path. Passing `registry` here is a claim about where the value came from, and it is true.
+      const policyResult = await evaluatePolicyInScope(
+        scope,
+        {
+          accountId: params.accountId,
+          companyId: params.companyId,
+          evaluationPoint: 'pre_execution',
+          observations: { risk_class: { value: definition?.risk_class, provenance: 'registry' } },
+          evaluatedAt: options.now ?? new Date(),
+        },
+        opts(options),
+      );
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
@@ -183,7 +251,11 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         allowlist: params.allowlist,
         untrustedContext: untrusted,
         stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
-        policy: (await (options.gates?.policy ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
+        // The engine's OWN mapping, tested beside it, so the translation cannot be got wrong here. It never yields
+        // `unavailable`: a RESULT is an answer, and only a thrown evaluation — which propagates and rolls the whole
+        // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval
+        // demand conditional on POLICY rather than on the risk class (CDR-067 §2-G7).
+        policy: toPolicyGateAnswer(policyResult),
         approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
       });
 
@@ -199,6 +271,9 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         outcome: decision.kind === 'denied' ? 'denied' : 'requested',
         denialReason: decision.kind === 'denied' ? decision.reason : null,
         argumentsDigest,
+        // The evaluation that decided this call (CDR-067 §2-G3). Null when there was no usable policy — the call is
+        // still recorded, as a denial, because TOOL-002 wants 100% of attempts recorded.
+        policyEvalId: policyResult.status === 'decided' ? policyResult.evaluationId : null,
         idempotencyKey: idempotencyKey ?? null,
       });
 
@@ -320,9 +395,13 @@ function completedEvent(row: ToolCallRow) {
 function auditCtx(options: DispatcherOptions): AuditWriteContext {
   return options.correlationId !== undefined ? { correlationId: options.correlationId } : {};
 }
-function opts(options: DispatcherOptions): { correlationId?: string; logger?: Logger } {
-  const o: { correlationId?: string; logger?: Logger } = {};
+function opts(options: DispatcherOptions): { correlationId?: string; logger?: Logger; auditWriter?: typeof writeAuditEvent } {
+  const o: { correlationId?: string; logger?: Logger; auditWriter?: typeof writeAuditEvent } = {};
   if (options.correlationId !== undefined) o.correlationId = options.correlationId;
   if (options.logger !== undefined) o.logger = options.logger;
+  // FORWARDED (review pass 2). Without this the policy engine's own audit events always used the real writer even
+  // when a caller injected one, so a suite asserting "all checks audited" through an injected writer would silently
+  // miss `policy.evaluated` and `policy.blocked` and read that absence as a pass.
+  if (options.auditWriter !== undefined) o.auditWriter = options.auditWriter;
   return o;
 }

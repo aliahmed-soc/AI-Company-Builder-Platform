@@ -49,6 +49,10 @@ import {
   taskStarted,
   taskFailed,
   taskCancelled,
+  policyEvaluated,
+  policyBlocked,
+  policyUnavailable,
+  policyChanged,
   toolCallRequested,
   toolCallCompleted,
   workerStateChanged,
@@ -125,6 +129,15 @@ export const AUDITED_OPERATIONS = {
   // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). `tool.dispatch` covers the
   // REFUSALS as well — a call turned away at the chokepoint is still a call the platform decided about, and
   // TOOL-001 requires the attempt to be audited.
+  // Policy engine (ACBP-P6-001c; CDR-066 §6-G18). Three producing operations, four events: an evaluation that
+  // DENIES emits `policy.blocked` in addition to `policy.evaluated`, because canon routes the two to different
+  // consumers — the record, and the Decision Room + activity feed.
+  'policy.evaluate': 'policy.evaluated',
+  'policy.evaluate.denied': 'policy.blocked',
+  // The engine could not answer at all: no active policy, or a rule set that is not readable. Separate from
+  // `policy.blocked` because "the rules said no" and "there were no rules to ask" are different problems (§6-G16).
+  'policy.evaluate.unavailable': 'policy.unavailable',
+  'policy.initialize': 'policy.changed',
   'tool.dispatch': 'tool.call_requested',
   'tool.complete': 'tool.call_completed',
   'tool.fail': 'tool.call_failed',
@@ -166,6 +179,9 @@ export type BillingAuditedOperation = 'credit.reserve' | 'credit.settle';
 // Artifacts (ACBP-P5-012; CDR-064). Its OWN domain rather than folded into TASK: the subject is an artifact revision,
 // not a task, and BILLING was separated from RUN for the same reason.
 export type ArtifactAuditedOperation = 'artifact.request-revision';
+// Policy engine (ACBP-P6-001c; CDR-066 §6). Its own domain: policy decides ABOUT execution and is deliberately not
+// folded into RUN or TOOL, for the same reason BILLING was separated - a different authority, a different reader.
+export type PolicyAuditedOperation = 'policy.evaluate' | 'policy.evaluate.denied' | 'policy.evaluate.unavailable' | 'policy.initialize';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -184,10 +200,11 @@ export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['too
 export const WORKER_AUDITED_OPERATION_IDS: readonly WorkerAuditedOperation[] = ['worker.set_state', 'worker.run_start', 'worker.run_complete', 'worker.run_fail'];
 export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] = ['credit.reserve', 'credit.settle'];
 export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[] = ['artifact.request-revision'];
+export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -286,6 +303,15 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => taskFailed({ taskId: subjectId, runId: subjectId, attempt: 1, failureCategory: 'worker_lost', retryState: 'retry_eligible' });
     case 'run.cancel':
       return (subjectId) => taskCancelled({ taskId: subjectId, runId: subjectId, phase: 'queued' });
+    case 'policy.evaluate':
+      return (subjectId) => policyEvaluated({ evaluationId: subjectId, policyVersion: 1, decision: 'allow', evaluationPoint: 'pre_execution' });
+    case 'policy.evaluate.denied':
+      return (subjectId) => policyBlocked({ evaluationId: subjectId, policyVersion: 1, reason: 'policy_denied', evaluationPoint: 'pre_execution' });
+    case 'policy.evaluate.unavailable':
+      // SUBJECT = the COMPANY here, not an evaluation — there is none to point at (CDR-066 §6-G16).
+      return (subjectId) => policyUnavailable({ companyId: subjectId, reason: 'no_active_policy', evaluationPoint: 'pre_execution' });
+    case 'policy.initialize':
+      return (subjectId) => policyChanged({ policyId: subjectId, version: 1, baseline: 'allow', ruleCount: 1 });
     case 'tool.dispatch':
       return (subjectId) => toolCallRequested({ callId: subjectId, toolId: 'web_research', toolVersion: 1, riskClass: 'informational', externalEffect: false });
     case 'tool.complete':

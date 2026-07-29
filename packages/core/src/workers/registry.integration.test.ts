@@ -10,6 +10,7 @@ import { WorkerRepository, TaskRepository, type DatabaseClient } from '@acbp/dat
 import { TASK_TYPES, RUN_FAILURE_CATEGORIES, RISK_CLASSES, WORKER_STATES, DEFAULT_MAX_SPEND_MICROS, DEFAULT_MAX_DURATION_MS } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
+import { initializeCompanyPolicy } from '../policy/index.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
@@ -71,6 +72,12 @@ describe.skipIf(!hasTestDatabase)('worker registry (real PostgreSQL, restricted 
     await sql`delete from worker_definitions`.execute(owner.kysely);
     await sql`delete from tool_definitions`.execute(owner.kysely);
     w = await seedTwoTenantWorld(owner, product, SEED_OPS);
+    // A CONFIGURED POLICY IS NOW A PRECONDITION OF DISPATCHING (ACBP-P6-002). The dispatcher consults the engine
+    // itself, and a company with no active policy has permitted nothing (CDR-066 §6-G15) — so without this every
+    // call here would be refused for `policy_denied` and this suite would stop testing its own subject. The
+    // owner-ruled default (CDR-066 §3-G10) allows informational and internal_reversible, which is what these
+    // fixtures dispatch.
+    expect((await initializeCompanyPolicy(product, base())).status).toBe('ok');
     await sql`insert into tool_definitions (tool_id, version, risk_class, description) values ('web_research', 1, 'informational', 'fixture'), ('memory_read', 1, 'internal_reversible', 'fixture'), ('send_email', 1, 'external_reversible', 'fixture')`.execute(owner.kysely);
   });
 

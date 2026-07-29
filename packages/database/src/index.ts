@@ -78,6 +78,9 @@ export { ArtifactRepository } from './artifact-repository.js';
 export { ArtifactRevisionRepository } from './artifact-revision-repository.js';
 export type { ArtifactRevisionExecutor, NewArtifactRevisionInput } from './artifact-revision-repository.js';
 export type { ArtifactExecutor, NewArtifactInput } from './artifact-repository.js';
+// Policy storage + append-only evaluation records (ACBP-P6-001b; CDR-066 §5).
+export { PolicyRepository } from './policy-repository.js';
+export type { PolicyExecutor, NewPolicyInput, NewPolicyEvaluationInput } from './policy-repository.js';
 export { ToolCallRepository } from './tool-call-repository.js';
 export type { ToolCallExecutor, NewToolCallInput, CompleteToolCallInput } from './tool-call-repository.js';
 export { JobRepository } from './job-repository.js';

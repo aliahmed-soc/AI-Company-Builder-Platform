@@ -38,6 +38,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'run.cancel',
       // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002) — deliberately approved additions. `tool.dispatch` covers
       // refusals as well as authorizations; TOOL-001 requires the attempt to be audited either way.
+      'policy.evaluate',
+      'policy.evaluate.denied',
+      'policy.evaluate.unavailable',
+      'policy.initialize',
       'tool.dispatch',
       'tool.complete',
       'tool.fail',
@@ -150,7 +154,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // A failed TOOL CALL is 'blocked' for the same reason. `tool.complete` is only a success when the call actually
       // SUCCEEDED — an `unconfirmed` external effect goes through the same factory and is deliberately NOT a success
       // (TOOL-002: "never 'succeeded'"), which is why the canonical sample here uses the succeeded outcome.
-      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail', 'tool.fail'];
+      // A policy REFUSAL and a policy UNAVAILABILITY are both 'blocked': EVENT-CATALOG reserves denied/blocked for
+      // authorization and policy, and neither is a success by any reading — the action did not happen.
+      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail', 'tool.fail', 'policy.evaluate.denied', 'policy.evaluate.unavailable'];
       expect(event.outcome).toBe(blocked.includes(op) ? 'blocked' : 'success');
     }
   });

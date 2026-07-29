@@ -49,7 +49,7 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
    *
    * settleRun reads the run's own state now (it used to trust a caller-supplied outcome, which meant a succeeded
    * run could be settled as cancelled and the work came out free). So a settlement test has to actually END the run —
-   * asserting "a SUCCEEDED run consumes" against a run still sitting in unning would assert nothing.
+   * asserting "a SUCCEEDED run consumes" against a run still sitting in running would assert nothing.
    */
   async function endRun(runId: string, state: 'succeeded' | 'failed' | 'cancelled'): Promise<void> {
     const row = await new TaskRunRepository(owner.kysely).transition({

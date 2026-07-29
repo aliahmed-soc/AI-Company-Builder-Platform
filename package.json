@@ -17,7 +17,8 @@
     "check:boundaries": "node tools/check-boundaries.mjs",
     "check:reset-lists": "node tools/check-reset-lists.mjs",
     "check:conflict-targets": "node tools/check-conflict-targets.mjs",
-    "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs",
+    "check:approval-port": "node tools/check-approval-port.mjs",
+    "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs",
     "test:config": "vitest run packages/config",
     "test:observability": "vitest run packages/observability",
     "test:database": "vitest run packages/database",
@@ -39,7 +40,7 @@
     "local:db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action start",
     "local:db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action stop",
     "local:db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action status",
-    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run test:boundaries",
+    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run test:boundaries",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm run check:static && pnpm run test"

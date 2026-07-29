@@ -151,6 +151,135 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
   });
 
+  // ── the waiver stands in for a MISSING policy answer, never for a present one (CDR-066 §0; owner ruled option A,
+  // 2026-07-29) ───────────────────────────────────────────────────────────────────────────────────────────────
+  //
+  // THE DEFECT THIS PINS: `GateAnswer` is `allow | deny | unavailable` and cannot express ADR-010's third output,
+  // `require_approval`. So an engine requiring approval must answer the policy gate `allow` (it is not a denial) and
+  // let the APPROVAL gate carry the requirement. Before this fix the waiver applied to the approval gate too, so an
+  // informational call on a trusted path was authorized with no approval — the AI acting without the human okay that
+  // policy had just demanded. Reachable because `require_approval` is not risk-class-derived: a spend cap (POL-001)
+  // or usage limit (NFR-015) requires approval for an ordinary research run.
+  // SUPERSEDED BY THE TYPE, and that is the better fix (ACBP-P6-002; CDR-067 §2-G7).
+  //
+  // This test used to be the CDR-066 §0 bypass proof: policy `allow` + approval `unavailable` + informational +
+  // trusted had to DENY, because an engine requiring approval could only answer `allow` and the waiver then swallowed
+  // the approval demand. The root cause was that `GateAnswer` could not express `require_approval`.
+  //
+  // It can now. An engine requiring approval says so, so the flattening that created the bypass cannot happen, and
+  // policy `allow` genuinely means "no approval needed" — authorizing is correct, not a regression. The equivalent
+  // assertion under the new model is the `require_approval` case below, which denies for EVERY class including the
+  // waivable one. Keeping this test as written would have pinned the old workaround in place forever.
+  test('policy ALLOW on an informational call authorizes — `allow` now means what it says', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
+    expect(d).toEqual({ kind: 'authorized', riskClass: 'informational' });
+  });
+
+  test('the waiver survives exactly where it was meant to: policy unavailable AND approval unavailable', () => {
+    expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
+  });
+
+  // ── INV-2: the SINGLE-READ property (CDR-066 §0.2) ────────────────────────────────────────────────────
+  //
+  // CDR-066 recorded INV-2 as "not covered by any test, because it is a property of the code's SHAPE rather than
+  // its behaviour". That was wrong, and this is the correction: read COUNT is observable from the outside, so the
+  // property is behavioural after all. A getter that counts reads asserts it directly.
+  //
+  // Why it matters: the unreachability proof for `approval_required` depends on `policy` being one const from ONE
+  // read. If anyone re-evaluates `gate(facts.policy)` near the approval check, a lazy or hostile `facts` object can
+  // make the two reads disagree, and the branch that was proven unreachable becomes reachable again.
+  test('INV-2: `facts.policy` is read EXACTLY once, so two reads can never disagree', () => {
+    // THE FIXTURE HAS TO REACH THE APPROVAL LINE, and the first version of this test did not — found by mutation.
+    // With an `informational` class and no engine, `waived` is true, so `!waived` short-circuits before any second
+    // read could happen and a re-reading implementation passed the test unnoticed. A NON-waivable class with policy
+    // ALLOWING and approval ABSENT is the state that actually gets there.
+    let reads = 0;
+    const facts = {
+      ...clear({ riskClass: 'external_reversible', approval: { kind: 'unavailable' } }),
+      get policy() {
+        reads += 1;
+        // `require_approval` FIRST, because that is now what reaches the approval line (CDR-067 §2-G7) — and it is
+        // also the read `approvalRequired` is derived from. Flips after: a second read would see a different answer,
+        // so the REQUIREMENT could disagree with the answer that produced it.
+        return reads === 1 ? ({ kind: 'require_approval' } as const) : ({ kind: 'allow' } as const);
+      },
+    };
+    const decision = decideDispatch(facts);
+    expect(reads).toBe(1);
+    // …and the decision is the one the single read implies.
+    expect(decision).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
+  test('INV-2: `facts.untrustedContext` is read EXACTLY once on the WAIVER path', () => {
+    let reads = 0;
+    const facts = {
+      ...clear({ ...noEngines, riskClass: 'informational' }),
+      get untrustedContext() {
+        reads += 1;
+        return reads !== 1;
+      },
+    };
+    const decision = decideDispatch(facts);
+    expect(reads).toBe(1);
+    // Trusted on the only read, so the waiver applies — a second read seeing `true` would have refused instead.
+    expect(decision).toMatchObject({ kind: 'authorized' });
+  });
+
+  test('INV-2: …and exactly once on the path that reaches the REASON, which the waiver case never touches', () => {
+    // REVIEW PASS 2 FOUND THIS HOLE IN THE TEST ABOVE. That fixture authorizes, so `approvalRequired` is false and
+    // the third read site — the ternary that picks `untrusted_context` over `approval_required` — is never evaluated.
+    // A re-read introduced THERE would not have moved the counter. This fixture reaches it: policy ALLOWS (so the
+    // waiver cannot apply), provenance is untrusted (so an approval is required), and none is offered.
+    let reads = 0;
+    const facts = {
+      ...clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }),
+      get untrustedContext() {
+        reads += 1;
+        return reads === 1;
+      },
+    };
+    const decision = decideDispatch(facts);
+    expect(reads).toBe(1);
+    // A second read returning `false` would have reported `approval_required` — blaming a missing approval for what
+    // was actually the content boundary doing its job.
+    expect(decision).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
+  });
+
+  /**
+   * The hostile shapes both totality tests use. `new String('allow')` is the interesting one: it is an object, not a
+   * primitive, so `=== 'allow'` is false and it must NOT be read as an allow.
+   */
+  const HOSTILE_ANSWERS = [{ kind: 'ALLOW' }, { kind: new String('allow') }, { kind: 4 }, { kind: null }, {}, null, undefined, 'allow', { kind: 'allow ' }, true];
+
+  test('INV-4: `policyGate()` is total onto its FOUR kinds — no fifth value can escape it', () => {
+    // Renamed after review pass 2, which caught that this test's title named `gate()` while its body fed
+    // `facts.policy`, i.e. `policyGate()`. The names matter here: the two functions have different codomains (three
+    // kinds vs four), so a test that claims one and exercises the other leaves the claimed one untested — which is
+    // exactly what had happened, see the companion test below.
+    for (const hostile of HOSTILE_ANSWERS) {
+      const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: hostile as never, approval: { kind: 'allow' } }));
+      // Not `allow`, therefore treated as unavailable → refused for a non-waivable class.
+      expect(d).toMatchObject({ kind: 'denied', reason: 'policy_unavailable' });
+    }
+  });
+
+  test('INV-4: `gate()` is total onto the THREE kinds — a malformed APPROVAL never satisfies a policy demand', () => {
+    // THE GAP REVIEW PASS 2 FOUND, and it is the one that matters most after this ticket's loosening: the approval
+    // gate is now the sole enforcement of `require_approval`, so if `gate()` ever read an unrecognised answer as
+    // `allow`, a malformed approval would satisfy an approval that policy DEMANDED. Nothing tested that.
+    for (const hostile of HOSTILE_ANSWERS) {
+      const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'require_approval' }, approval: hostile as never }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+    }
+  });
+
+  test('INV-4: a malformed approval cannot rescue a call the untrusted boundary demanded one for either', () => {
+    for (const hostile of HOSTILE_ANSWERS) {
+      const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: hostile as never, untrustedContext: true }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
+    }
+  });
+
   test('EVERY class above informational is refused when no engine has answered', () => {
     for (const riskClass of RISK_CLASSES.filter((c) => c !== 'informational')) {
       const d = decideDispatch(clear({ ...noEngines, riskClass }));
@@ -158,9 +287,122 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     }
   });
 
-  test('an absent APPROVAL alone still refuses a gated class, even with policy allowing', () => {
-    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
-    expect(d).toMatchObject({ reason: 'approval_required' });
+  // ── POLICY IS THE AUTHORITY ON WHETHER APPROVAL IS NEEDED (ACBP-P6-002; CDR-067 §2-G7; PM ruling) ──────
+  //
+  // ADR-010's engine output is `allow | require_approval | deny`. Before this, the dispatcher demanded an approval
+  // answer for every non-waived call, which made `allow` indistinguishable from `require_approval` — the engine's
+  // middle output carried no meaning at the gate. Now the POLICY ANSWER ITSELF says whether an approval is required,
+  // so there is no separate boolean anywhere for a caller to supply or forge.
+  //
+  // THIS TEST REPLACED ONE THAT ENCODED THE OLD SEMANTICS. It used to read "an absent APPROVAL alone still refuses a
+  // gated class, EVEN WITH POLICY ALLOWING" and asserted `approval_required`. That expectation was the old stand-in
+  // for a missing engine; with a real engine it would refuse actions the company's own policy permitted.
+  test('policy REQUIRE_APPROVAL with no approval answer refuses — the demand is never skipped', () => {
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }));
+    expect(d).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'external_reversible' });
+  });
+
+  test('policy REQUIRE_APPROVAL with an approval ALLOW proceeds — that is what an approval is for', () => {
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'allow' } }));
+    expect(d).toEqual({ kind: 'authorized', riskClass: 'external_reversible' });
+  });
+
+  test('policy REQUIRE_APPROVAL is never waived, not even for the least restrictive class', () => {
+    // The waiver stands in for a MISSING answer. `require_approval` is an answer, and a demanding one.
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
+  test('policy ALLOW does not spuriously demand an approval — for ANY risk class', () => {
+    // THE LOOSENING, stated as a test. A company whose policy explicitly allows an external action has decided that;
+    // demanding an approval no policy asked for makes ADR-010's `allow` output meaningless.
+    for (const riskClass of RISK_CLASSES) {
+      const d = decideDispatch(clear({ riskClass, policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
+      expect(d).toEqual({ kind: 'authorized', riskClass });
+    }
+  });
+
+  // ── FORGERY: there is no `approvalRequired` input to forge (CDR-067 §2-G8) ──────────────────────────────
+  //
+  // The requirement is DERIVED from the policy answer inside the decision, on the same single-read const INV-2 pins.
+  //
+  // THE COMPILE-TIME HALF IS STRONGER THAN THE RUNTIME HALF, so it comes first. Each `@ts-expect-error` below is a
+  // self-verifying assertion: TypeScript fails the build if the very next line STOPS being an error. So if anyone
+  // widens the facts to accept a caller-supplied requirement, `pnpm typecheck` breaks — no bespoke checker needed,
+  // and nothing to keep in step. The runtime tests after them prove the value would be ignored even if it arrived
+  // through an `as` cast; the type is what makes it unwritable in the first place.
+  test('FORGERY (compile-time): the facts have no field a caller could use to pre-empt the approval demand', () => {
+    const base: DispatchRequestFacts = { ...clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }) };
+    // @ts-expect-error `approvalRequired` is not part of DispatchRequestFacts — it is derived inside the decision.
+    void decideDispatch({ ...base, approvalRequired: false });
+    // @ts-expect-error nor under an alternative spelling.
+    void decideDispatch({ ...base, approval_required: false });
+    // @ts-expect-error `waived` is a local, not an input — a caller cannot pre-waive anything.
+    void decideDispatch({ ...base, waived: true });
+    // @ts-expect-error the policy answer's kinds are CLOSED: no invented kind can smuggle a permissive reading in.
+    void decideDispatch({ ...base, policy: { kind: 'approval_not_needed' } });
+    expect(decideDispatch(base)).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+  test('FORGERY: an extra `approvalRequired: false` property is ignored — the demand still refuses', () => {
+    const forged = {
+      ...clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
+      approvalRequired: false,
+      approval_required: false,
+      requiresApproval: false,
+    } as DispatchRequestFacts;
+    expect(decideDispatch(forged)).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'external_reversible' });
+  });
+
+  test('FORGERY: no extra property can turn a require_approval into an authorization, for any class', () => {
+    for (const riskClass of RISK_CLASSES) {
+      const forged = {
+        ...clear({ riskClass, policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
+        approvalRequired: false,
+        waived: true,
+        approvalWaived: true,
+      } as DispatchRequestFacts;
+      expect(decideDispatch(forged)).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+    }
+  });
+
+  // ── THE HOLE THE LOOSENING OPENED, AND ITS CLOSURE (CDR-067 §2-G9) ──────────────────────────────────────
+  //
+  // Making the approval demand conditional on policy silently disabled the NFR-021 injection boundary: untrusted
+  // provenance used to refuse a call by WITHDRAWING the waiver, which only worked while every non-waived call was
+  // asked for an approval. With policy answering `allow`, `untrustedContext` stopped having any effect at all.
+  //
+  // FOUND BY THE INJECTION CORPUS SUITE, not by reading the diff. These tests exist so it can never come back
+  // silently: they fail if untrusted provenance stops requiring an approval in its own right.
+  test('UNTRUSTED provenance requires an approval EVEN WHEN policy plainly allows', () => {
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+    expect(d).toEqual({ kind: 'denied', reason: 'untrusted_context', riskClass: 'informational' });
+  });
+
+  test('UNTRUSTED provenance requires an approval for EVERY risk class, policy allowing throughout', () => {
+    for (const riskClass of RISK_CLASSES) {
+      const d = decideDispatch(clear({ riskClass, policy: { kind: 'allow' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
+    }
+  });
+
+  test('untrusted provenance does not GRANT anything — an approval still authorizes, and a deny still refuses', () => {
+    // Heightened scrutiny means more refusal, never less: with a real approval the call proceeds, exactly as a
+    // trusted one would, and an explicit refusal still wins.
+    expect(decideDispatch(clear({ policy: { kind: 'allow' }, approval: { kind: 'allow' }, untrustedContext: true })).kind).toBe('authorized');
+    expect(decideDispatch(clear({ policy: { kind: 'allow' }, approval: { kind: 'deny' }, untrustedContext: true }))).toMatchObject({ reason: 'approval_invalid' });
+  });
+
+  test('when policy ALSO required the approval, the reason blames policy — not the content', () => {
+    // `untrusted_context` means "would have proceeded on the trusted path". With policy demanding approval it would
+    // NOT have, so naming provenance would send a reader to quarantine content that was never the problem.
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' }, untrustedContext: true }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
+  test('an EXPLICIT approval deny still refuses even when policy did not require one', () => {
+    // Revocation wins regardless. "No approval was needed" is not a licence to ignore one that says no.
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'deny' } }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_invalid' });
   });
 
   test('the waiver does NOT extend to the stop state — a stop still refuses an informational call', () => {
@@ -230,7 +472,10 @@ describe('decideDispatch — total and deny-by-default', () => {
       clear({ policy: { kind: 'deny' } }),
       clear({ riskClass: 'sensitive_irreversible', policy: { kind: 'unavailable' } }),
       clear({ approval: { kind: 'deny' } }),
-      clear({ riskClass: 'sensitive_irreversible', approval: { kind: 'unavailable' } }),
+      // POLICY MUST DEMAND the approval for its absence to refuse (CDR-067 §2-G7). With `policy: allow` — which
+      // `clear()` supplies — an absent approval is no longer a denial at all, so this entry would have stopped
+      // producing a refusal and quietly contributed nothing to a test about refusal reasons.
+      clear({ riskClass: 'sensitive_irreversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
     ];
     for (const facts of broken) {
       const d = decideDispatch(facts);
