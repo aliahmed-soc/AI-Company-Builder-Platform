@@ -2,7 +2,12 @@
 
 **Requirements:** TOOL-003, APPR-009 · **ADRs:** ADR-009, ADR-010 · **Architecture:**
 `APPROVAL-AND-POLICY-ARCHITECTURE.md §5` · **Security:** invariant 6, trust-critical #8
-**Depends on:** ACBP-P6-001 (a/b/c, all merged on local verification)
+**Depends on:** ACBP-P6-001 (a/b/c)
+
+> **Branch note, corrected.** An earlier revision of this line said P6-001a/b/c were "all merged on local
+> verification". They are not: `main` is at Phase 5 completion, and P6-001a/b/c sit on this same branch ahead of it.
+> One branch therefore carries two tickets, which is a deviation from one-ticket-one-PR. Recorded rather than
+> repaired, because splitting it now means rewriting pushed history.
 
 ---
 
