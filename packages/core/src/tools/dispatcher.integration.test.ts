@@ -166,12 +166,24 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(unreachable).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
   });
 
-  test('a gated class proceeds only when BOTH engines answer allow', async () => {
+  // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow
+  // — i.e. that an absent approval refused whatever policy said. That was the stand-in for a `GateAnswer` which could
+  // not express `require_approval`: with the middle output flattened onto `allow`, the only way to keep a demanded
+  // approval enforceable was to demand one always. Policy is now the authority, so a policy that ALLOWS does not
+  // conjure an approval requirement, and one that says `require_approval` still refuses without an approval — which
+  // the contract suite pins for every risk class.
+  test('a policy ALLOW proceeds without an approval; only a REQUIRE_APPROVAL waits for one', async () => {
     const gates = { policy: () => ({ kind: 'allow' }) as const, approval: () => ({ kind: 'allow' }) as const };
     const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
     expect(ok.status).toBe('authorized');
+    // No approval offered, and policy did not ask for one: authorized, because `allow` means what it says.
     const noApproval = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates: { policy: gates.policy } });
-    expect(noApproval).toMatchObject({ status: 'denied', reason: 'approval_required' });
+    expect(noApproval.status).toBe('authorized');
+    // THE `require_approval` HALF IS NOT ASSERTABLE HERE YET, and the reason is worth recording: `ToolGates.policy`
+    // is typed `() => GateAnswer`, which cannot express `require_approval` at all — the injectable port physically
+    // cannot carry the value. That is not an obstacle, it is the argument for CDR-067 §2-G1: the answer has to come
+    // from the engine, not from a caller. The assertion lands with the wiring commit, once the port is gone and the
+    // dispatcher derives the answer itself. Until then the contract suite pins it for every risk class.
   });
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────
