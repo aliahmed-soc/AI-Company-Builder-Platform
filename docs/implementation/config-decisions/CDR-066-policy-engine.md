@@ -175,8 +175,18 @@ first row above covers the *waivable* class — the only one the waiver could ev
 (`policy === 'unavailable'` inside `waived`) is untouched and still tested; it is simply no longer the *only* thing
 standing between a demanded approval and an unapproved action.
 
-**Mutation-proven, not assumed:** forcing `approvalRequired` false turns four tests red, including the
-never-waived-for-informational row. The ruling's guarantee fails loudly if removed.
+**Mutation-proven, not assumed.** `approvalRequired` is now a disjunction — `policy === 'require_approval' ||
+untrusted` — and the ruling is carried by the FIRST disjunct, so that is the one whose removal must be fatal:
+
+| Mutation of `approvalRequired` | Result |
+|---|---|
+| drop the policy disjunct (`= untrusted`) | **6 red**, including both never-skipped rows above and all three forgery assertions |
+| `= false` | **10 red** |
+| `= true` | 6 red (the other direction: `allow` must not spuriously demand) |
+
+Measured on ACBP-P6-002, each mutation restored byte-identical (`sha256:71d682f50ecdd055`). The ruling's guarantee
+fails loudly if removed, and it fails on the *policy* clause specifically — the untrusted clause cannot stand in for
+it, which is why both disjuncts are mutated separately rather than the line as a whole.
 
 ### §0.2 — Invariants this proof depends on (do not break these)
 
