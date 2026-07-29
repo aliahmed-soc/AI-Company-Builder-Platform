@@ -143,6 +143,41 @@ identically on the trusted path. And nothing is lost: `DispatchDecision` carries
 can recover `waivable`. `untrusted_context` remains reachable and accurate at its other site (the policy line), where
 `policy === 'unavailable'` and `!waived` together do imply `untrustedContext === true`.
 
+### §0.3 — THE OWNER'S OPTION A RULING IS STILL HONOURED (traceability, added ACBP-P6-002)
+
+**The test that used to carry this ruling was superseded. Here is exactly what carries it now.**
+
+The original proof was a test asserting: policy `allow` + approval `unavailable` + `informational` + trusted must
+**DENY**. Under P6-002 that case now **authorizes**, which looks like the ruling being undone. It is not — the
+ruling is enforced somewhere stronger, and this section exists so a future reader can trace it without re-deriving
+the history.
+
+**What the ruling actually protects.** Option A was chosen to stop the Phase 5 waiver from swallowing an approval
+that policy had demanded. The *root cause* was that `GateAnswer` could not express `require_approval`, so an engine
+demanding approval had to answer `allow`, and the waiver then treated that call as needing no approval.
+
+**Why the old test had to change.** With `PolicyGateAnswer` (CDR-067 §2-G7) the engine's demand travels intact, so
+policy `allow` now genuinely means *"no approval needed"* — and denying it would refuse actions the company's own
+policy permits. The old assertion was pinning the *workaround*, not the guarantee.
+
+**The live assertions that carry the ruling now**, all in `packages/contracts/src/tools/dispatch.test.ts`:
+
+| Guarantee | Test |
+|---|---|
+| A demanded approval is never skipped — **for the waivable class too** | *"policy REQUIRE_APPROVAL is never waived, not even for the least restrictive class"* |
+| A demanded approval is never skipped, general case | *"policy REQUIRE_APPROVAL with no approval answer refuses — the demand is never skipped"* |
+| The waiver still requires `policy === 'unavailable'` (INV-3) | *"the waiver survives exactly where it was meant to: policy unavailable AND approval unavailable"* |
+| An explicit refusal wins even when no approval was required | *"an EXPLICIT approval deny still refuses even when policy did not require one"* |
+
+**The replacement is strictly broader.** The old test covered one class (`informational`) in one configuration. The
+first row above covers the *waivable* class — the only one the waiver could ever have spared — and the
+`require_approval` case is additionally asserted across **every** risk class. The conjunct the owner ruled on
+(`policy === 'unavailable'` inside `waived`) is untouched and still tested; it is simply no longer the *only* thing
+standing between a demanded approval and an unapproved action.
+
+**Mutation-proven, not assumed:** forcing `approvalRequired` false turns four tests red, including the
+never-waived-for-informational row. The ruling's guarantee fails loudly if removed.
+
 ### §0.2 — Invariants this proof depends on (do not break these)
 
 The point of recording these is that the proof is **conditional**. Each of the following is load-bearing; an upstream
