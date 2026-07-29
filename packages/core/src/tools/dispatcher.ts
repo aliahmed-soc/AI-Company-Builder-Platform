@@ -395,9 +395,13 @@ function completedEvent(row: ToolCallRow) {
 function auditCtx(options: DispatcherOptions): AuditWriteContext {
   return options.correlationId !== undefined ? { correlationId: options.correlationId } : {};
 }
-function opts(options: DispatcherOptions): { correlationId?: string; logger?: Logger } {
-  const o: { correlationId?: string; logger?: Logger } = {};
+function opts(options: DispatcherOptions): { correlationId?: string; logger?: Logger; auditWriter?: typeof writeAuditEvent } {
+  const o: { correlationId?: string; logger?: Logger; auditWriter?: typeof writeAuditEvent } = {};
   if (options.correlationId !== undefined) o.correlationId = options.correlationId;
   if (options.logger !== undefined) o.logger = options.logger;
+  // FORWARDED (review pass 2). Without this the policy engine's own audit events always used the real writer even
+  // when a caller injected one, so a suite asserting "all checks audited" through an injected writer would silently
+  // miss `policy.evaluated` and `policy.blocked` and read that absence as a pass.
+  if (options.auditWriter !== undefined) o.auditWriter = options.auditWriter;
   return o;
 }

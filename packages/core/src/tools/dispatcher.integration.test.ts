@@ -170,7 +170,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
 
   test('an explicit policy DENY refuses even the informational class, and beats an allowing approval', async () => {
     // A REAL rule now, not an injected answer: the deny has to travel from stored jsonb through the engine to the
-    // gate. `emergency_stop` is a convenient always-firing dimension here; the stop ENGINE is P6-007's.
+    // gate. `risk_at_least informational` is the always-firing condition here; the stop ENGINE is P6-007's.
     await addRule('[{"id":"forbid","dimension":"risk_class","condition":"risk_at_least","operand":"informational","decision":"deny"}]');
     const r = await dispatchToolCall(
       product,
@@ -262,7 +262,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // here, but that was piggybacking on `memory_write` being refused for `policy_unavailable` — incidental to the
     // key scoping and no longer true, since the ruled default allows internal_reversible. What matters is that the
     // second call is not reported as a duplicate of the first.
-    expect((await dispatch({ toolId: 'memory_write', idempotencyKey: 'shared' })).status).not.toBe('duplicate');
+    // EXACT, not `.not.toBe('duplicate')` — review pass 2 pointed out that a negative here also passes for
+    // `forbidden`, `run_not_found` and `idempotency_conflict`, none of which would mean what the test claims.
+    expect((await dispatch({ toolId: 'memory_write', idempotencyKey: 'shared' })).status).toBe('authorized');
     expect(await callRows()).toHaveLength(2);
   });
 

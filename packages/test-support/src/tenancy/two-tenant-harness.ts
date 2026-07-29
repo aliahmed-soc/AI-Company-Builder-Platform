@@ -59,9 +59,10 @@ export const ALL_TABLES = [
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',
   'tool_calls',
-  // AFTER 	ool_calls, and the order is load-bearing (ACBP-P6-002): 	ool_calls.policy_eval_id references
-  // policy_evaluations, so clearing the parent first raises 23503 on a TRUNCATE/DELETE path. check:reset-lists`n  // verifies MEMBERSHIP, not order, so this one is on the reader - it surfaced as every dispatcher test failing in
-  // beforeEach with one FK error.
+  // AFTER tool_calls, and the order is load-bearing (ACBP-P6-002): tool_calls.policy_eval_id references
+  // policy_evaluations, so clearing the parent first raises 23503. `check:reset-lists` verifies MEMBERSHIP, not
+  // order, so this one is on the reader — it surfaced as every dispatcher test failing in beforeEach with one FK
+  // error.
   'policy_evaluations', 'policies',
   'task_runs', 'task_deletions',
   'task_dependencies',

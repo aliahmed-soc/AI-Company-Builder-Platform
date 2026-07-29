@@ -210,7 +210,7 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     expect(decision).toMatchObject({ kind: 'denied', reason: 'approval_required' });
   });
 
-  test('INV-2: `facts.untrustedContext` is read EXACTLY once too — `waived` depends on it', () => {
+  test('INV-2: `facts.untrustedContext` is read EXACTLY once on the WAIVER path', () => {
     let reads = 0;
     const facts = {
       ...clear({ ...noEngines, riskClass: 'informational' }),
@@ -219,17 +219,64 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
         return reads !== 1;
       },
     };
-    decideDispatch(facts);
+    const decision = decideDispatch(facts);
     expect(reads).toBe(1);
+    // Trusted on the only read, so the waiver applies — a second read seeing `true` would have refused instead.
+    expect(decision).toMatchObject({ kind: 'authorized' });
   });
 
-  test('INV-4: `gate()` is total onto the three kinds — no fourth value can escape it', () => {
-    // The exhaustive case split in the proof needs this. Anything unrecognised must land on `unavailable`, which is
-    // the refusing value; a fourth escape hatch would break the split and could carry an unchecked answer through.
-    for (const hostile of [{ kind: 'ALLOW' }, { kind: new String('allow') }, { kind: 4 }, { kind: null }, {}, null, undefined, 'allow']) {
+  test('INV-2: …and exactly once on the path that reaches the REASON, which the waiver case never touches', () => {
+    // REVIEW PASS 2 FOUND THIS HOLE IN THE TEST ABOVE. That fixture authorizes, so `approvalRequired` is false and
+    // the third read site — the ternary that picks `untrusted_context` over `approval_required` — is never evaluated.
+    // A re-read introduced THERE would not have moved the counter. This fixture reaches it: policy ALLOWS (so the
+    // waiver cannot apply), provenance is untrusted (so an approval is required), and none is offered.
+    let reads = 0;
+    const facts = {
+      ...clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }),
+      get untrustedContext() {
+        reads += 1;
+        return reads === 1;
+      },
+    };
+    const decision = decideDispatch(facts);
+    expect(reads).toBe(1);
+    // A second read returning `false` would have reported `approval_required` — blaming a missing approval for what
+    // was actually the content boundary doing its job.
+    expect(decision).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
+  });
+
+  /**
+   * The hostile shapes both totality tests use. `new String('allow')` is the interesting one: it is an object, not a
+   * primitive, so `=== 'allow'` is false and it must NOT be read as an allow.
+   */
+  const HOSTILE_ANSWERS = [{ kind: 'ALLOW' }, { kind: new String('allow') }, { kind: 4 }, { kind: null }, {}, null, undefined, 'allow', { kind: 'allow ' }, true];
+
+  test('INV-4: `policyGate()` is total onto its FOUR kinds — no fifth value can escape it', () => {
+    // Renamed after review pass 2, which caught that this test's title named `gate()` while its body fed
+    // `facts.policy`, i.e. `policyGate()`. The names matter here: the two functions have different codomains (three
+    // kinds vs four), so a test that claims one and exercises the other leaves the claimed one untested — which is
+    // exactly what had happened, see the companion test below.
+    for (const hostile of HOSTILE_ANSWERS) {
       const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: hostile as never, approval: { kind: 'allow' } }));
       // Not `allow`, therefore treated as unavailable → refused for a non-waivable class.
       expect(d).toMatchObject({ kind: 'denied', reason: 'policy_unavailable' });
+    }
+  });
+
+  test('INV-4: `gate()` is total onto the THREE kinds — a malformed APPROVAL never satisfies a policy demand', () => {
+    // THE GAP REVIEW PASS 2 FOUND, and it is the one that matters most after this ticket's loosening: the approval
+    // gate is now the sole enforcement of `require_approval`, so if `gate()` ever read an unrecognised answer as
+    // `allow`, a malformed approval would satisfy an approval that policy DEMANDED. Nothing tested that.
+    for (const hostile of HOSTILE_ANSWERS) {
+      const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'require_approval' }, approval: hostile as never }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+    }
+  });
+
+  test('INV-4: a malformed approval cannot rescue a call the untrusted boundary demanded one for either', () => {
+    for (const hostile of HOSTILE_ANSWERS) {
+      const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: hostile as never, untrustedContext: true }));
+      expect(d).toMatchObject({ kind: 'denied', reason: 'untrusted_context' });
     }
   });
 

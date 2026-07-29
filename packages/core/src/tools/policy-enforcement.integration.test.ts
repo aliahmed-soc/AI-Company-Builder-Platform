@@ -64,6 +64,17 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     return found;
   }
 
+  /** SQLSTATE by walking the cause chain — the driver nests the real code, so a shallow `.code` matches nothing. */
+  const sqlStateOf = (p: Promise<unknown>): Promise<string> =>
+    p.then(() => 'no-error').catch((e: unknown) => {
+      for (let cur: unknown = e, hops = 0; cur !== null && cur !== undefined && hops < 5; hops += 1) {
+        const node = cur as { code?: unknown; cause?: unknown };
+        if (typeof node.code === 'string' && /^[0-9A-Z]{5}$/.test(node.code)) return node.code;
+        cur = node.cause;
+      }
+      return /sqlstate=([0-9A-Z]{5})/.exec(String(e))?.[1] ?? 'unknown';
+    });
+
   const evaluations = async () => owner.kysely.selectFrom('policy_evaluations').selectAll().orderBy('created_at').execute();
   const callRows = async () => owner.kysely.selectFrom('tool_calls').selectAll().orderBy('created_at').execute();
 
@@ -98,8 +109,9 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     const r = await dispatch();
     expect(r.status).toBe('authorized');
 
+    // No `expect(evaluation).toBeDefined()` — `row()` has already thrown if it is not, so the assertion could not
+    // fail and review pass 2 was right to call it noise.
     const evaluation = row(await evaluations());
-    expect(evaluation).toBeDefined();
     expect(evaluation.decision).toBe('allow');
     expect(Number(evaluation.policy_version)).toBe(1);
     expect(evaluation.evaluation_point).toBe('pre_execution');
@@ -194,11 +206,18 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     await isReady;
 
     // IN FLIGHT: the supersession exists but has not committed, so this dispatch sees version 1 and is authorized.
-    const during = await dispatch();
+    //
+    // `finally`, so a THROWN dispatch cannot leak the open transaction. Without it a failure here would leave the
+    // owner transaction holding a row lock on `policies` for the rest of the file, and the next test's
+    // `truncateFixtures` would block rather than fail — a hung CI run instead of a red one.
+    let during;
+    try {
+      during = await dispatch();
+    } finally {
+      release();
+      await superseding;
+    }
     expect(during.status).toBe('authorized');
-
-    release();
-    await superseding;
 
     // The authorized call's evaluation pins the version that authorized it — 1, not the 2 that is now in force.
     const afterFirst = await evaluations();
@@ -221,6 +240,27 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     const calls = await callRows();
     expect(row(calls, 1).policy_eval_id).toBe(row(both, 1).id);
     expect(row(calls).policy_eval_id).not.toBe(row(calls, 1).policy_eval_id);
+  });
+
+  test('a rule on a dimension the dispatcher does NOT observe refuses the call — it does not silently pass', async () => {
+    // RAISED BY REVIEW PASS 2, and it corrected a claim in CDR-067 §1. The dispatcher supplies exactly ONE
+    // observation, `risk_class`. A rule on any other dimension has nothing to read, is UNEVALUABLE, and by
+    // CDR-066 §3-G9 contributes `deny` — so a company that configured a spend cap would have every tool call
+    // REFUSED rather than approval-gated. That is the fail-closed direction and therefore not a hole, but §1 had
+    // described it as "limit … wired here", which claimed a capability that does not exist. This test is what makes
+    // the real behaviour a fact rather than a paragraph, and it will fail the day an observation for this dimension
+    // is supplied — which is the correct moment to revisit §1.
+    await addRule(JSON.stringify([{ id: 'spend-cap', dimension: 'spending_limit', condition: 'at_or_over_limit', operand: 100, decision: 'require_approval' }]));
+
+    const r = await dispatch();
+    expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
+
+    const evaluation = row(await evaluations());
+    expect(evaluation.decision).toBe('deny');
+    // The rule is named as UNEVALUABLE, not as fired — the distinction a reader needs to tell "policy refused you"
+    // from "policy could not be applied to you".
+    expect(evaluation.unevaluable_rule_ids).toContain('spend-cap');
+    expect(evaluation.fired_rule_ids).not.toContain('spend-cap');
   });
 
   // ──────────────── THE IDEMPOTENCY SHORT CIRCUIT IS NOT A WAY PAST THE GATE (CDR-067 §2-G10) ─────────────────
@@ -274,6 +314,58 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
 
     expect(await evaluations()).toHaveLength(0);
     expect(await callRows()).toHaveLength(0);
+  });
+
+  test('a company with an authorized tool call can still be DELETED — the FK cycle does not wedge the cascade', async () => {
+    // RAISED BY REVIEW PASS 2 AS A SUSPICION, tested here rather than reasoned about. Migration 0045 gives
+    // `policy_evaluations.tool_call_id -> tool_calls` and 0046 gives `tool_calls.policy_eval_id ->
+    // policy_evaluations`: a CYCLE. Both cascade from `companies`, both FKs are NO ACTION and NOT DEFERRABLE, and
+    // sibling RI trigger order is not ours to choose — so if the wrong side cascades first, deleting a company with
+    // an authorized call raises 23503 and the company becomes undeletable. That is exactly the kind of thing that is
+    // cheap to assert and expensive to discover from a support ticket.
+    expect((await dispatch()).status).toBe('authorized');
+    expect(await evaluations()).toHaveLength(1);
+    expect(await callRows()).toHaveLength(1);
+
+    await expect(sql`delete from companies where id = ${w.companyA1}::uuid`.execute(owner.kysely)).resolves.toBeDefined();
+    expect(await callRows()).toHaveLength(0);
+    expect(await evaluations()).toHaveLength(0);
+  });
+
+  test("a tool call cannot cite ANOTHER company's policy evaluation (migration 0046, tenant-pinned FK)", async () => {
+    // RAISED BY REVIEW PASS 2. Migration 0046's whole justification is that `tool_calls.policy_eval_id` is pinned to
+    // `(id, company_id)` rather than to `id` alone, because RI checks ALWAYS bypass RLS — so without the company
+    // column in the key, company A's call could name company B's evaluation and the database would agree. The claim
+    // lived in the migration's comment and in no test.
+    //
+    // It lives HERE rather than in the policies suite because `tool_calls.run_id` is NOT NULL: the first attempt
+    // died 23502 before the FK was ever consulted, which would have been a green test proving nothing about 0046.
+    // This suite already has a real running run and a seeded company B.
+    const policyB = (
+      await sql<{ id: string }>`insert into policies (account_id, company_id, version, baseline, rules, status, created_by_user_id)
+           values (${w.accountB}::uuid, ${w.companyB1}::uuid, 1, 'allow', '[]'::jsonb, 'active', ${w.bOwner}::uuid) returning id`.execute(owner.kysely)
+    ).rows[0]!;
+    const evaluationB = (
+      await sql<{ id: string }>`insert into policy_evaluations
+             (account_id, company_id, policy_id, policy_version, evaluation_point, decision, escalate, fired_rule_ids, unevaluable_rule_ids, untrusted_rule_ids, evaluated_at)
+           values (${w.accountB}::uuid, ${w.companyB1}::uuid, ${policyB.id}::uuid, 1, 'pre_execution', 'allow', false, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, now()) returning id`.execute(
+        owner.kysely,
+      )
+    ).rows[0]!;
+
+    const insertCall = (policyEvalId: string) =>
+      sql`insert into tool_calls (account_id, company_id, run_id, tool_id, risk_class, external_effect, outcome, arguments_digest, policy_eval_id)
+          values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, 'web_research', 'informational', false, 'requested', repeat('a', 64), ${policyEvalId}::uuid)`.execute(
+        owner.kysely,
+      );
+
+    // Cross-company: refused by the FK, not by RLS — which is the point, because RI bypasses RLS.
+    expect(await sqlStateOf(insertCall(evaluationB.id))).toBe('23503');
+    // A NON-EXISTENT id is refused identically, so the constraint is not an existence oracle either.
+    expect(await sqlStateOf(insertCall('00000000-0000-4000-8000-000000000000'))).toBe('23503');
+    // …and the SAME-company evaluation is accepted, so the test above is about tenancy and not about the FK simply
+    // rejecting everything.
+    expect((await dispatch()).status).toBe('authorized');
   });
 
   test("company B's policy has no say over company A's call, and vice versa", async () => {

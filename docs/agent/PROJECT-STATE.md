@@ -42,6 +42,55 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-002 Dispatcher enforcement integration — MERGED, BUT THE TICKET IS *NOT* DONE** (CDR-067; PR #64).
+  The policy engine now gates tool calls: `ToolGates.policy` is **deleted** and the dispatcher consults the engine
+  itself inside the scope already open, so the evaluation, the `tool_calls` row and every audit event commit or roll
+  back together. Migration 0046 adds `tool_calls.policy_eval_id` (nullable, tenant-pinned). INV-2 (single-read) and
+  INV-4 (gate totality) are now directly tested, correcting CDR-066 §0.2's claim that INV-2 was untestable.
+  **WHY NOT DONE:** the acceptance row says *"three evaluation points wired"* and **one of three is wired** — point
+  3, the one canon marks *"Never — mandatory (invariant 6)"*. Point 2 needs P6-003/P6-004 to exist. Point 1 needs an
+  **OWNER RULING** (CDR-067 §1): the engine's observations are tool-shaped so a plan-accept evaluation would answer
+  about nothing, and deciding what a point-1 refusal *does* changes P4-002's state machine — under the owner-ruled
+  baseline, planning is internal work allowed by default, so a point-1 gate that refused planning would deny work
+  the company's own policy permits. Safe to proceed past: points 1 and 2 sit strictly *earlier* than point 3 on
+  every path, so their absence cannot let an action through.
+  **A PM RULING, recorded as such (§2-G7):** an approval answer is demanded only when policy returned
+  `require_approval`. This is a LOOSENING of a security check and was proven three ways before landing, including
+  three compile-time `@ts-expect-error` assertions — if a `policy` gate or an `approvalRequired` fact ever becomes
+  expressible, the typecheck fails.
+  **The loosening opened a hole, and a test caught it, not review (§2-G9).** With the demand conditional on policy,
+  an answer of `allow` left `untrustedContext` with no effect at all — the NFR-021 injection boundary went dead and
+  laundered content would have reached tools on a plain `allow`. The boundary had been resting on the very
+  behaviour the loosening removed. Found by the injection corpus (7 failures). Untrusted provenance now requires an
+  approval in its own right; it still cannot grant one.
+  **An adversarial review was commissioned before merge** against one question — *find any path where a call
+  proceeds without an approval that policy demanded*. `decideDispatch` held on all ten attack lines. Two gaps came
+  out anyway, both in code this ticket touched but did not change: `toPolicyGateAnswer` forwarded the decision
+  unvalidated (and an unreadable decision landed on `unavailable`, the one value the waiver spares), and the
+  idempotency short circuit reported a prior *denied* call as `duplicate` and did not bind the key to the
+  arguments. Both fixed and mutation-proven.
+  **STILL OPEN, and the consequence of forgetting it is the AI acting on a forged approval:** `gates.approval` is
+  caller-injectable. Not reachable today (zero non-test callers of `dispatchToolCall` repo-wide; no tool
+  implementation exists) and not introduced by this ticket, but the approval gate is now the *sole* enforcement of
+  `require_approval`. **P6-003/P6-004 must consult the approval store internally and delete the port**, as `policy`
+  was deleted here; same for `gates.stop` and P6-007. Four more residual risks are logged in CDR-067 §2-G10.
+  Locally verified, NOT CI-proven: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL
+  live for the whole sweep).
+
+- **ACBP-P6-001 Deterministic policy engine (a/b/c) — DONE** (CDR-066), merged on local verification with P6-002 on
+  the same branch. Started by finding a **live approval bypass**, not by building a feature: `GateAnswer` could not
+  express `require_approval`, so an engine demanding approval had to answer the policy gate `allow`, and the Phase 5
+  waiver then treated that call as needing none. Owner ruled **option A**; §0.1 records the independently verified
+  unreachability proof for the deleted branch and §0.2 its five invariants. When P6-002's semantics superseded the
+  test carrying that ruling, **§0.3 traces the ruling to the four live assertions that carry it now.**
+  a: pure evaluator — closed ordered vocabulary, most-restrictive-wins, total over `unknown` (junk ranks *most*
+  restrictive so a malformed rule cannot vanish), clock and counters as inputs, model classifications typed
+  untrusted, and a **required** `baseline` that mutation testing forced into existence. The owner-ruled
+  new-company baseline is §3-G10; **AOQ-14's limit values remain unruled and unshipped.**
+  b: migration 0045 — versioned `policies` (partial unique on active, column-scoped UPDATE) and append-only
+  `policy_evaluations` with a composite FK pinning the version to the policy that produced it.
+  c: the service — fail-closed; "no active policy" is an **answer** (deny), not an unavailability.
+
 - **ACBP-P5-015 Slice E integration: safe internal execution — DONE** (CDR-065; M5 milestone exit), merged on
   local verification. **This closes Phase 5.** `runSliceEJourney` in `@acbp/test-support` + `pnpm demo:slice-e` +
   a real-PostgreSQL CI suite, all driving one implementation: preflight → queue → run → research document →

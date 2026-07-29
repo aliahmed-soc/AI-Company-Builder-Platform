@@ -24,12 +24,24 @@ That criterion names four things that change between evaluation points. **Only o
 
 | Change | Engine | Status |
 |---|---|---|
-| **limit** (policy) | P6-001 | **wired here** |
+| **policy**, `risk_class` dimension only | P6-001 | **wired here** — see the correction below |
 | stop-state | P6-007 emergency stop | not built — port stays seamed |
 | revocation | P6-004 payload binding/revocation | not built — port stays seamed |
 | expiry | P6-004 | not built — port stays seamed |
 
-So P6-002 wires the **policy** gate and proves the **re-check timing mechanism** end to end. The mechanism is what
+**CORRECTED AFTER REVIEW PASS 2 — the earlier wording said "limit (policy) … wired here", and that was wrong in a
+way worth spelling out.** The dispatcher supplies the engine exactly ONE observation: `risk_class`, from
+`tool_definitions`. A rule on any other dimension — `spending_limit`, `usage_limit`, `working_hours`,
+`emergency_stop`, `allowed_tools` — has no observation to read, is therefore **unevaluable**, and by CDR-066 §3-G9
+contributes `deny`. So a company whose policy carried a spend cap would have **every tool call refused**, not
+approval-gated. Fail-closed and therefore not a hole, and latent today because no product path writes rules until
+P6-010 — but the previous sentence claimed a capability that does not exist, and §2-G7's motivating example ("a spend
+cap requires approval for an ordinary research run") is **unreachable on the wired path** for the same reason. That
+example is kept there because it is the correct motivation for the RULING; it is not a description of today's
+behaviour. `policy-enforcement.integration.test.ts` now pins the real behaviour with a `spending_limit` rule.
+
+So P6-002 wires the **policy** gate for the risk-class dimension and proves the **re-check timing mechanism** end to
+end. The mechanism is what
 later catches revocation, expiry and stop; it is the same code path, fed by different ports. Recorded as sequencing
 rather than omission — the same reading CDR-051 §1 took of P5-003's declared dependency.
 
@@ -48,8 +60,11 @@ CDR-066 §0.3 for the assertions that carry the owner's ruling under the new sem
 | 2 | Approval requested | **not wireable** — there is no approval request until P6-003/P6-004 |
 | 3 | Immediately before execution (dispatcher) | **WIRED** — and it is the one canon marks *"Never — mandatory (invariant 6)"* |
 
-**Why this is safe, and why it is the reason for proceeding rather than stopping.** Points 1 and 2 sit strictly
-*earlier* than point 3 on every path. Their absence cannot let an action through, because nothing executes without
+**PM RULING, 2026-07-30 — not the owner's.** Do not wire point 1 in P6-002, on the two grounds below, and record the
+safety argument **explicitly** rather than leaving it implied in the fact that nothing broke.
+
+**THE SAFETY ARGUMENT, stated plainly because it is the whole licence for shipping one point of three.** Points 1 and
+2 sit strictly *earlier* than point 3 on every path. Their absence cannot let an action through, because nothing executes without
 passing point 3 — which is unconditional, internal, and now proven against a real supersession. Canon's own column
 agrees: point 1's purpose is *"early honest feedback; avoids wasted work"* and point 2's is *"decision context
 correctness"*; only point 3 is the enforcement point. A missing advisory check costs a user wasted effort. A missing
@@ -180,10 +195,16 @@ own scope, and the requirement is inseparable from the answer that produced it.
 1. **Mutation** — drop the policy clause from the requirement: 6 tests red, including *"policy REQUIRE_APPROVAL with
    no approval answer refuses"* and *"never waived, not even for the least restrictive class"*.
 2. **Mutation** — force the requirement always-true: 6 red, proving `allow` does not spuriously demand.
-3. **Forgery, at COMPILE TIME** — three `@ts-expect-error` assertions covering a `policy` gate, an `approvalRequired`
-   fact, and an extra property on the facts object. These are stronger than runtime tests and need no tooling: if any
-   of those fields ever becomes expressible, the expected error disappears and **the typecheck fails**. Two companion
-   runtime tests confirm an extra property is ignored rather than honoured.
+3. **Forgery, at COMPILE TIME** — **four** `@ts-expect-error` assertions, covering `approvalRequired`,
+   `approval_required`, `waived`, and an invented `kind` on the policy answer. If any of those ever becomes
+   expressible, the expected error disappears and **the typecheck fails** — stronger than a runtime test, and it needs
+   no tooling. Two companion runtime tests confirm an extra property is ignored rather than honoured.
+
+   **Corrected after review pass 2**, which caught this paragraph claiming *three* assertions including one against a
+   `policy` gate. There is no such assertion and there cannot be: §2-G10's own residual table records why — excess
+   property checking does not fire through a variable, so `gates: { policy: … }` typechecks and is simply ignored. The
+   protection against an injected policy answer is structural (there is no port to read), not a compile-time
+   assertion, and saying otherwise overstated it in exactly the direction that matters.
 
 ### G9 — THE HOLE THE LOOSENING OPENED, AND ITS CLOSURE
 
@@ -262,9 +283,30 @@ approval record existing anywhere. Assessing it honestly:
   leaves the approve-and-proceed path unexecuted by any test until P6-003/P6-004 — the same unreachable-path shape as
   the D1 defect, and the exact failure the PM ruling in §2-G7 was chosen to avoid.
 
-**So it is recorded as a required closure, not a resolved one:** P6-003/P6-004 must consult the approval store
-internally and **delete the `approval` port**, the way `policy` was deleted here. The same applies to `gates.stop`
-and P6-007. Recorded prominently because the consequence of forgetting is the AI acting on a forged approval.
+**PM RULING, 2026-07-30 — not the owner's.** Leave the port open, *and make the record load-bearing rather than
+written down.* The reasoning above stands on its own, but the ruling adds a condition: a note in a CDR is what gets
+forgotten, and something that shows up in a run does not.
+
+**The teeth: `tools/check-approval-port.mjs`, in `check:static` and therefore in every `pnpm run check`.** It fails
+the build the moment an approval store exists while `ToolGates` still declares `approval?:`. "A store exists" means
+either `packages/core/src/approvals/index.ts` stops being a scaffold, or any migration creates an `approvals` /
+`approval_*` table (Kysely builder or raw SQL). The failure message names the fix — delete the port, do not delete
+the check.
+
+Three properties make it more than a comment:
+- **It cannot rot into a permanent pass.** It carries a negative self-test on every detector, and if `ToolGates` is
+  renamed or removed it exits **2** — distinctly from both "clean" and "violation" — saying it can no longer see what
+  it guards.
+- **It is itself tested.** `tools/tests/check-approval-port.test.mjs` runs the real checker as a subprocess against
+  six fixture trees, asserting the allowed state, all three store-detection forms, the closed state, and the
+  can't-see-target exit.
+- **It was proven against the real tree**, not just fixtures: making the actual approvals module non-scaffold turns
+  the gate red with the message above; restored byte-identical, gate green again.
+
+**So this is a required closure, not a resolved one:** P6-003/P6-004 must consult the approval store internally and
+**delete the `approval` port**, the way `policy` was deleted here. **Closing it is an ACCEPTANCE CONDITION of
+ACBP-P6-003, not an optional extra.** The same argument applies to `gates.stop` and P6-007 — that port has no marker
+yet, because no stop store exists to detect; P6-007 should add the equivalent detector when it lands.
 
 **Other residual risks the reviewer logged, with disposition:**
 

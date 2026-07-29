@@ -201,8 +201,11 @@ edit that breaks one silently reopens the bypass closed above.
 | **INV-4** | `gate()` stays total onto the three kinds, with `'unavailable'` as the fallback | A fourth return value breaks the exhaustive case split |
 | **INV-5** | *(not a constraint — a reassurance)* the proof does **not** depend on the contents of `CLASSES_THAT_PROCEED_WITHOUT_A_GATE` | Adding classes to the waiver set cannot break this claim; verified across all four risk classes |
 
-**Test coverage of these invariants.** INV-3 is pinned by *"an ENGINE-ALLOWED informational call still needs an
-approval answer"* — it fails the moment the conjunct is removed. INV-1 is exercised by the ordering tests.
+**Test coverage of these invariants.** INV-3 is pinned by *"the waiver survives exactly where it was meant to: policy
+unavailable AND approval unavailable"* — it fails the moment the conjunct is removed. INV-1 is exercised by the
+ordering tests. *(Citation corrected by review pass 2: this line previously named "an ENGINE-ALLOWED informational
+call still needs an approval answer", a test ACBP-P6-002 superseded. §0.3 records why that test had to change; a
+dangling citation to a deleted test is worse than none, because it reads as coverage.)*
 
 > **CORRECTION (ACBP-P6-002).** This section previously said *"INV-2 is not covered by any test, because it is a
 > property of the code's shape rather than its behaviour."* **That was wrong.** Read COUNT is observable from

@@ -144,8 +144,13 @@ export async function evaluateCompanyPolicy(client: DatabaseClient, params: Eval
  * that never happened.
  *
  * IT DOES NO AUTHORIZATION OF ITS OWN. Every caller must already have checked `run:execute` — `evaluateCompanyPolicy`
- * does it above, and the dispatcher does it before anything else. This is why the function is not exported from the
- * module index: an unauthorized caller reaching it would be an evaluation nobody was entitled to.
+ * does it above, and the dispatcher does it before anything else.
+ *
+ * WHAT ACTUALLY PROTECTS IT is that it takes an already-authorized `TenantScope` — a caller cannot reach this
+ * function without having opened one, and opening one is what runs the check. An earlier version of this comment
+ * claimed the protection was that the function is not exported from the module index; review pass 2 correctly
+ * rejected that, because deep cross-module imports are the norm in this codebase (~40 sites) and the very first
+ * consumer, the dispatcher, imports it directly. The index omission is tidiness, not a barrier.
  */
 export async function evaluatePolicyInScope(
   scope: TenantScope,
