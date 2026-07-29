@@ -398,19 +398,19 @@ describe('typed factories', () => {
   });
 
   test('artifactRevisionRequested: carries BOTH ends of the lineage, never the guidance text (TASK-005 / J-13)', () => {
-    const ev = artifactRevisionRequested({ revisionId: 'rev_1', originalArtifactId: 'art_1', runId: 'run_2', hasGuidance: true });
+    const ev = artifactRevisionRequested({ revisionId: 'rev_1', originalArtifactId: 'art_1', newTaskId: 'task_2', hasGuidance: true });
     expect(ev).toEqual({
       name: 'artifact.revision_requested',
       schemaVersion: 1,
       subjectType: 'artifact_revision',
       subjectId: 'rev_1',
       outcome: 'success',
-      metadata: { original_artifact_id: 'art_1', run_id: 'run_2', has_guidance: true },
+      metadata: { original_artifact_id: 'art_1', new_task_id: 'task_2', has_guidance: true },
     });
     // The backlog's audit behaviour for this ticket is literally "lineage audited", so BOTH ends must be present:
-    // what was revised, and the run started to revise it. One without the other is not lineage.
+    // what was revised, and the TASK created to revise it (J-13). One without the other is not lineage.
     expect(ev.metadata?.['original_artifact_id']).toBe('art_1');
-    expect(ev.metadata?.['run_id']).toBe('run_2');
+    expect(ev.metadata?.['new_task_id']).toBe('task_2');
     // `has_guidance` is a BOOLEAN — `task.deleted`'s reason-text precedent. Founder prose is unbounded and
     // PII-adjacent; that a revision was asked for is the auditable fact, the words are in the request row.
     expect(typeof ev.metadata?.['has_guidance']).toBe('boolean');

@@ -144,7 +144,7 @@ export const AUDIT_EVENTS = {
   'task.deleted': { schemaVersion: 1, subjectType: 'task' },
   // A revision was requested for an artifact (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13). AUDITED in-tx with the
   // request row and the credit reservation (ADR-015). Subject = the revision request id; payload =
-  // {original_artifact_id, run_id, has_guidance} — both ends of the lineage, never the guidance text, following
+  // {original_artifact_id, new_task_id, has_guidance} - both ends of the lineage, never the guidance text, following
   // `task.deleted`. The original artifact is untouched: `artifacts` has no UPDATE grant at all.
   'artifact.revision_requested': { schemaVersion: 1, subjectType: 'artifact_revision' },
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4; STRAT-003/005) — the owner selected/edited/combined/rejected a
@@ -542,8 +542,8 @@ export function taskDeleted(input: { readonly taskId: string; readonly stateAtDe
  * request id.
  *
  * THE LINEAGE IS THE POINT — the backlog's audit behaviour for this ticket is literally "lineage audited". So the
- * payload carries both ends: what was being revised (`original_artifact_id`) and the run that was started to do it
- * (`run_id`). Read together with the artifacts table, that is the whole ancestry, and it cannot drift from the
+ * payload carries both ends: what was being revised (`original_artifact_id`) and the TASK created to do it
+ * (`new_task_id`, per J-13). Read together with the artifacts table, that is the whole ancestry, and it cannot drift from the
  * request row because it IS the request row.
  *
  * `has_guidance` is a boolean and the guidance TEXT never enters the payload — `task.deleted`'s reason-text
@@ -554,12 +554,12 @@ export function taskDeleted(input: { readonly taskId: string; readonly stateAtDe
 export function artifactRevisionRequested(input: {
   readonly revisionId: string;
   readonly originalArtifactId: string;
-  readonly runId: string;
+  readonly newTaskId: string;
   readonly hasGuidance: boolean;
 }): AuditEvent {
   return makeEvent('artifact.revision_requested', input.revisionId, 'success', {
     original_artifact_id: input.originalArtifactId,
-    run_id: input.runId,
+    new_task_id: input.newTaskId,
     has_guidance: input.hasGuidance,
   });
 }

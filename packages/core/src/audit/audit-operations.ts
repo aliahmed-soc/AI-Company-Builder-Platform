@@ -100,7 +100,7 @@ export const AUDITED_OPERATIONS = {
   'task.repeat': 'task.repeated',
   'task.delete': 'task.deleted',
   // Revision requests (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13) - the owner asked for a revision, and the
-  // run started to do it is named in the payload. Registered WITH its producing operation: an event in the registry
+  // TASK created to do it is named in the payload (J-13). Registered WITH its producing operation: an event in the registry
   // that no approved operation emits is an orphan, which is exactly what this partition exists to prevent.
   'artifact.request-revision': 'artifact.revision_requested',
   // Strategy option generation (ACBP-P3-001; CDR-034 §4) — options were generated from a confirmed understanding.
@@ -263,7 +263,7 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'task.delete':
       return (subjectId) => taskDeleted({ taskId: subjectId, stateAtDelete: 'planned', hasReason: false });
     case 'artifact.request-revision':
-      return (subjectId) => artifactRevisionRequested({ revisionId: subjectId, originalArtifactId: subjectId, runId: subjectId, hasGuidance: true });
+      return (subjectId) => artifactRevisionRequested({ revisionId: subjectId, originalArtifactId: subjectId, newTaskId: subjectId, hasGuidance: true });
     case 'strategy.generate':
       return (subjectId) => strategyGenerated({ generationId: subjectId, understandingVersion: 1, optionCount: 3, similarityCheckResult: 'pending' });
     case 'strategy.select':

@@ -987,9 +987,13 @@ export interface ArtifactsTable {
  * Artifact revisions (ACBP-P5-012; CDR-064; TASK-005 lineage; J-13). A request for NEW work, never an edit — which is
  * why nothing here writes to `artifacts`, and why every column is `never` on update: the table has no UPDATE grant.
  *
- * THIS ROW IS THE LINEAGE. An artifact is a revision of `original_artifact_id` because its own `run_id` equals the
- * `run_id` here. There is deliberately no `revision_of_artifact_id` column on `artifacts` (CDR-064 G1) — the same
- * fact in two places is a fact that can disagree.
+ * A NEW LINKED TASK, not a new run on the finished original — `MASTER-PRD-v1.md` J-13: *"new linked task created
+ * (lineage to original) → re-execution → both versions retained."* `running→completed` is terminal in the state
+ * machine, so the original task could not be re-opened even in principle.
+ *
+ * THIS ROW IS THE LINEAGE. An artifact is a revision of `original_artifact_id` because the run that produced it
+ * belongs to `new_task_id`. There is deliberately no `revision_of_artifact_id` column on `artifacts` (CDR-064 G1) —
+ * the same fact in two places is a fact that can disagree.
  */
 export interface ArtifactRevisionsTable {
   id: ColumnType<string, string | undefined, never>;
@@ -997,7 +1001,8 @@ export interface ArtifactRevisionsTable {
   company_id: ColumnType<string, string, never>;
   /** BOTH ENDS, both required. A request naming only one of them is not lineage. */
   original_artifact_id: ColumnType<string, string, never>;
-  run_id: ColumnType<string, string, never>;
+  /** The NEW LINKED TASK created to do the revision - J-13, not a new run on the finished original. */
+  new_task_id: ColumnType<string, string, never>;
   /** The founder's instruction. Required: a revision with nothing to change is a re-run that still costs a credit. */
   guidance: ColumnType<string, string, never>;
   idempotency_key: ColumnType<string, string, never>;

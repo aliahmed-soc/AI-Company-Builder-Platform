@@ -64,8 +64,9 @@ export function validateRevisionKey(value: unknown): RevisionKeyResult {
 /**
  * One revision request, as the founder sees it (CDR-064 G1).
  *
- * `runId` is the link that makes lineage derivable: an artifact produced by that run is a revision of
- * `originalArtifactId`, because its own `run_id` is this run. There is deliberately NO `revision_of_artifact_id`
+ * `newTaskId` is the link that makes lineage derivable: an artifact whose run belongs to that TASK is a revision of
+ * `originalArtifactId`. J-13: *"new linked task created (lineage to original) -> re-execution"* - not a new run on
+ * the finished original, which the state machine forbids anyway (`running->completed` is terminal). There is deliberately NO `revision_of_artifact_id`
  * column on `artifacts` — lineage in two places is lineage that can disagree, and a revision run that wrote three
  * artifacts would need it set correctly three times.
  *
@@ -75,7 +76,7 @@ export function validateRevisionKey(value: unknown): RevisionKeyResult {
 export interface ArtifactRevisionDTO {
   readonly revisionId: string;
   readonly originalArtifactId: string;
-  readonly runId: string;
+  readonly newTaskId: string;
   readonly guidance: string;
   readonly requestedAt: string;
 }

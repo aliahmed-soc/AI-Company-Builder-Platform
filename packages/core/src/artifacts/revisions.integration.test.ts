@@ -62,6 +62,25 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
 
   const rows = async () => owner.kysely.selectFrom('artifact_revisions').selectAll().execute();
 
+  /** A task in `draft` - what a revision request creates (J-13: "new linked task created"). */
+  async function newTask(companyId = w.companyA1, userId = w.aOwner, accountId = w.accountA): Promise<string> {
+    const params = { userId, accountId, companyId };
+    const t = await createTask(product, { ...params, title: 'Revise the market research', description: null, milestoneId: null });
+    expect(t.status).toBe('ok');
+    return (t as { status: 'ok'; task: { taskId: string } }).task.taskId;
+  }
+
+  /** Carry an EXISTING task to a running run - the re-execution half of J-13. */
+  async function runOnTask(taskId: string, companyId = w.companyA1, userId = w.aOwner, accountId = w.accountA): Promise<string> {
+    const params = { userId, accountId, companyId };
+    expect((await planTask(product, { ...params, taskId })).status).toBe('ok');
+    const moved = await asRestricted(product, { account: accountId, company: companyId }, (db) => new TaskRepository(db).updateState(taskId, 'planned', 'queued'));
+    expect(moved).toBe(1);
+    const r = await startRun(product, { ...params, taskId, attempt: 1 });
+    expect(r.status).toBe('ok');
+    return (r as { status: 'ok'; run: { id: string } }).run.id;
+  }
+
   /** A task carried to a RUNNING run — what an artifact attaches to. */
   async function runningRun(companyId = w.companyA1, userId = w.aOwner, accountId = w.accountA): Promise<string> {
     const params = { userId, accountId, companyId };
@@ -93,13 +112,13 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     return r.rows[0]?.id ?? '';
   }
 
-  async function insertRevision(originalId: string, runId: string, over: Partial<{ key: string; guidance: string; companyId: string; accountId: string }> = {}) {
+  async function insertRevision(originalId: string, newTaskId: string, over: Partial<{ key: string; guidance: string; companyId: string; accountId: string }> = {}) {
     return asRestricted(product, { account: over.accountId ?? w.accountA, company: over.companyId ?? w.companyA1 }, (db) =>
       new ArtifactRevisionRepository(db).insert({
         accountId: over.accountId ?? w.accountA,
         companyId: over.companyId ?? w.companyA1,
         originalArtifactId: originalId,
-        runId,
+        newTaskId,
         guidance: over.guidance ?? 'Shorten the summary to one page.',
         idempotencyKey: over.key ?? 'rev-1',
         requestedByUserId: w.aOwner,
@@ -118,11 +137,11 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
   test('the restricted role can record a revision request, and it carries BOTH ends of the lineage', async () => {
     const originalRun = await runningRun();
     const original = await seedArtifact(originalRun);
-    const revisionRun = await runningRun();
+    const revisionTask = await newTask();
 
-    const row = await insertRevision(original, revisionRun);
+    const row = await insertRevision(original, revisionTask);
     expect(row?.original_artifact_id).toBe(original);
-    expect(row?.run_id).toBe(revisionRun);
+    expect(row?.new_task_id).toBe(revisionTask);
     expect(row?.guidance).toBe('Shorten the summary to one page.');
   });
 
@@ -134,7 +153,7 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     const original = await seedArtifact(originalRun);
     const before = await owner.kysely.selectFrom('artifacts').selectAll().where('id', '=', original).executeTakeFirst();
 
-    await insertRevision(original, await runningRun());
+    await insertRevision(original, await newTask());
 
     const after = await owner.kysely.selectFrom('artifacts').selectAll().where('id', '=', original).executeTakeFirst();
     expect(after).toEqual(before);
@@ -143,7 +162,7 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
   // ── append-only ───────────────────────────────────────────────────────────────────────────────────────────
   test('the restricted role can INSERT and SELECT, and can NEITHER update NOR delete a revision', async () => {
     const original = await seedArtifact(await runningRun());
-    const row = await insertRevision(original, await runningRun());
+    const row = await insertRevision(original, await newTask());
     const id = row?.id ?? '';
 
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
@@ -169,10 +188,10 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
   // ── idempotency (CDR-064 G3) ──────────────────────────────────────────────────────────────────────────────
   test('ONE REQUEST PER KEY: the same key returns undefined the second time, and writes nothing', async () => {
     const original = await seedArtifact(await runningRun());
-    const first = await insertRevision(original, await runningRun(), { key: 'same-key' });
+    const first = await insertRevision(original, await newTask(), { key: 'same-key' });
     expect(first).toBeDefined();
 
-    const second = await insertRevision(original, await runningRun(), { key: 'same-key' });
+    const second = await insertRevision(original, await newTask(), { key: 'same-key' });
     expect(second).toBeUndefined(); // ON CONFLICT DO NOTHING - a retry, not a fault
     expect(await rows()).toHaveLength(1);
   });
@@ -181,23 +200,24 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     // Rejected alternative in CDR-064 G3: keying on (artifact, guidance). A founder who reads the first result and
     // asks again for the same thing is making a second real request, and collapsing it would refuse them silently.
     const original = await seedArtifact(await runningRun());
-    expect(await insertRevision(original, await runningRun(), { key: 'k1' })).toBeDefined();
-    expect(await insertRevision(original, await runningRun(), { key: 'k2' })).toBeDefined();
+    expect(await insertRevision(original, await newTask(), { key: 'k1' })).toBeDefined();
+    expect(await insertRevision(original, await newTask(), { key: 'k2' })).toBeDefined();
     expect(await rows()).toHaveLength(2);
   });
 
   test('the SAME key in a DIFFERENT company is allowed - the key is company-scoped, not global', async () => {
     const originalA = await seedArtifact(await runningRun());
-    expect(await insertRevision(originalA, await runningRun(), { key: 'shared' })).toBeDefined();
+    expect(await insertRevision(originalA, await newTask(), { key: 'shared' })).toBeDefined();
 
     const runB = await runningRun(w.companyB1, w.bOwner, w.accountB);
     const originalB = await seedArtifact(runB, w.companyB1, w.accountB);
+    const revisionTaskB = await newTask(w.companyB1, w.bOwner, w.accountB);
     const rowB = await asRestricted(product, { account: w.accountB, company: w.companyB1 }, (db) =>
       new ArtifactRevisionRepository(db).insert({
         accountId: w.accountB,
         companyId: w.companyB1,
         originalArtifactId: originalB,
-        runId: runB,
+        newTaskId: revisionTaskB,
         guidance: 'Different company, same key.',
         idempotencyKey: 'shared',
         requestedByUserId: w.bOwner,
@@ -207,22 +227,22 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     expect(await rows()).toHaveLength(2);
   });
 
-  test('ONE REVISION PER RUN - a run cannot be claimed as the revision of two different artifacts', async () => {
-    // Without this the lineage is ambiguous: an artifact produced by that run would have two possible ancestors,
+  test('ONE REVISION PER TASK - a task cannot be claimed as the revision of two different artifacts', async () => {
+    // Without this the lineage is ambiguous: an artifact produced by a run of that task would have two possible ancestors,
     // and the derived link (CDR-064 G1) would have to pick one arbitrarily.
     const first = await seedArtifact(await runningRun());
     const second = await seedArtifact(await runningRun());
-    const sharedRun = await runningRun();
-    expect(await insertRevision(first, sharedRun, { key: 'k1' })).toBeDefined();
-    await expect(insertRevision(second, sharedRun, { key: 'k2' })).rejects.toSatisfy((e: unknown) => sqlState(e) === UNIQUE_VIOLATION);
+    const sharedTask = await newTask();
+    expect(await insertRevision(first, sharedTask, { key: 'k1' })).toBeDefined();
+    await expect(insertRevision(second, sharedTask, { key: 'k2' })).rejects.toSatisfy((e: unknown) => sqlState(e) === UNIQUE_VIOLATION);
   });
 
   // ── the guidance guard ────────────────────────────────────────────────────────────────────────────────────
   test('BLANK guidance is refused by the DATABASE, not only by the contract', async () => {
     const original = await seedArtifact(await runningRun());
-    const run = await runningRun();
+    const task = await newTask();
     for (const blank of ['', '   ']) {
-      await expect(insertRevision(original, run, { guidance: blank })).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
+      await expect(insertRevision(original, task, { guidance: blank })).rejects.toSatisfy((e: unknown) => sqlState(e) === CHECK_VIOLATION);
     }
   });
 
@@ -232,8 +252,8 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     // ~8000 bytes and must still be accepted, because the contract accepts it.
     const original = await seedArtifact(await runningRun());
     const wide = '\u{1F600}'.repeat(REVISION_GUIDANCE_MAX);
-    expect(await insertRevision(original, await runningRun(), { guidance: wide, key: 'wide' })).toBeDefined();
-    await expect(insertRevision(original, await runningRun(), { guidance: 'x'.repeat(REVISION_GUIDANCE_MAX + 1), key: 'long' })).rejects.toSatisfy(
+    expect(await insertRevision(original, await newTask(), { guidance: wide, key: 'wide' })).toBeDefined();
+    await expect(insertRevision(original, await newTask(), { guidance: 'x'.repeat(REVISION_GUIDANCE_MAX + 1), key: 'long' })).rejects.toSatisfy(
       (e: unknown) => sqlState(e) === CHECK_VIOLATION,
     );
   });
@@ -244,60 +264,74 @@ describe.skipIf(!hasTestDatabase)('artifact revisions (real PostgreSQL, restrict
     // policy-checked. The whole value of this row is the link; a link that can leave the tenant is worse than none.
     const runB = await runningRun(w.companyB1, w.bOwner, w.accountB);
     const foreignArtifact = await seedArtifact(runB, w.companyB1, w.accountB);
-    await expect(insertRevision(foreignArtifact, await runningRun())).rejects.toSatisfy((e: unknown) => sqlState(e) === FK_VIOLATION);
+    await expect(insertRevision(foreignArtifact, await newTask())).rejects.toSatisfy((e: unknown) => sqlState(e) === FK_VIOLATION);
   });
 
-  test('TENANT-PINNED: a revision cannot cite a run from another company', async () => {
+  test('TENANT-PINNED: a revision cannot cite a TASK from another company', async () => {
     const original = await seedArtifact(await runningRun());
-    const foreignRun = await runningRun(w.companyB1, w.bOwner, w.accountB);
-    await expect(insertRevision(original, foreignRun)).rejects.toSatisfy((e: unknown) => sqlState(e) === FK_VIOLATION);
+    const foreignTask = await newTask(w.companyB1, w.bOwner, w.accountB);
+    await expect(insertRevision(original, foreignTask)).rejects.toSatisfy((e: unknown) => sqlState(e) === FK_VIOLATION);
   });
 
   // ── RLS ───────────────────────────────────────────────────────────────────────────────────────────────────
   test('another COMPANY sees none of it, and cannot write into it', async () => {
     const original = await seedArtifact(await runningRun());
-    await insertRevision(original, await runningRun());
+    await insertRevision(original, await newTask());
 
     await asRestricted(product, { account: w.accountA, company: w.companyA2 }, async (db) => {
       expect(await new ArtifactRevisionRepository(db).listForArtifact(original, 50)).toEqual([]);
     });
+    // WELL-FORMED IN EVERY OTHER RESPECT, so RLS is the only thing left that can refuse it — the D11 lesson. A row
+    // reusing an artifact id as the task id would die on the composite FK instead, and the test could not tell the
+    // difference between "the tenant boundary held" and "the fixture was malformed".
+    const taskInA1 = await newTask();
     await asRestricted(product, { account: w.accountA, company: w.companyA2 }, async (db) => {
       await expect(
-        sql`insert into artifact_revisions (account_id, company_id, original_artifact_id, run_id, guidance, idempotency_key, requested_by_user_id)
-            values (${w.accountA}, ${w.companyA1}, ${original}::uuid, ${original}::uuid, 'x', 'k', ${w.aOwner})`.execute(db),
+        sql`insert into artifact_revisions (account_id, company_id, original_artifact_id, new_task_id, guidance, idempotency_key, requested_by_user_id)
+            values (${w.accountA}, ${w.companyA1}, ${original}::uuid, ${taskInA1}::uuid, 'Cross-company write.', 'k-cross', ${w.aOwner})`.execute(db),
       ).rejects.toSatisfy((e: unknown) => sqlState(e) === RLS_VIOLATION);
     });
   });
 
   test('FAIL CLOSED without the company key: account scope alone sees nothing and cannot insert', async () => {
     const original = await seedArtifact(await runningRun());
-    await insertRevision(original, await runningRun());
+    await insertRevision(original, await newTask());
     await asRestricted(product, { account: w.accountA }, async (db) => {
       expect(await new ArtifactRevisionRepository(db).listForArtifact(original, 50)).toEqual([]);
     });
   });
 
   // ── the lineage lookup (CDR-064 G1) ───────────────────────────────────────────────────────────────────────
-  test('LINEAGE IS DERIVED: the run answers "what was this a revision of"', async () => {
+  test('LINEAGE IS DERIVED end to end: artifact -> run -> task -> the revision it answers', async () => {
+    // THE WHOLE POINT OF G1. Nothing on `artifacts` says "I am a revision of X". The chain is walked instead, so it
+    // cannot drift, and a revision run that wrote three artifacts gives all three the same honest ancestor for free.
     const original = await seedArtifact(await runningRun());
-    const revisionRun = await runningRun();
-    await insertRevision(original, revisionRun);
+    const revisionTask = await newTask();
+    await insertRevision(original, revisionTask);
 
-    // An artifact produced BY that run is a revision of the original - without any column on `artifacts` saying so.
+    // J-13's "re-execution": the NEW task runs, and its output is the new version.
+    const revisionRun = await runOnTask(revisionTask);
     const produced = await seedArtifact(revisionRun);
+
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
       const producedRow = await db.selectFrom('artifacts').selectAll().where('id', '=', produced).executeTakeFirstOrThrow();
-      const ancestor = await new ArtifactRevisionRepository(db).findByRun(producedRow.run_id);
+      const runRow = await db.selectFrom('task_runs').select('task_id').where('id', '=', producedRow.run_id).executeTakeFirstOrThrow();
+      const ancestor = await new ArtifactRevisionRepository(db).findByTask(runRow.task_id);
       expect(ancestor?.original_artifact_id).toBe(original);
     });
+
+    // BOTH VERSIONS RETAINED (the backlog's acceptance criterion): two artifacts, neither overwriting the other.
+    const all = await owner.kysely.selectFrom('artifacts').select('id').execute();
+    expect(all.map((a) => a.id).sort()).toEqual([original, produced].sort());
   });
 
   test('an artifact with NO revision has no ancestor - the lookup is honest about absence', async () => {
     const run = await runningRun();
-    await seedArtifact(run);
+    const artifact = await seedArtifact(run);
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
-      expect(await new ArtifactRevisionRepository(db).findByRun(run)).toBeUndefined();
-      expect(await new ArtifactRevisionRepository(db).countForArtifact(run)).toBe(0);
+      const runRow = await db.selectFrom('task_runs').select('task_id').where('id', '=', run).executeTakeFirstOrThrow();
+      expect(await new ArtifactRevisionRepository(db).findByTask(runRow.task_id)).toBeUndefined();
+      expect(await new ArtifactRevisionRepository(db).countForArtifact(artifact)).toBe(0);
     });
   });
 });

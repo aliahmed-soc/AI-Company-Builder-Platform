@@ -1,7 +1,7 @@
 // @acbp/database — artifact revision requests (ACBP-P5-012; CDR-064; TASK-005 lineage; J-13).
 //
 // APPEND-ONLY: there is no update and no delete here, because the table grants neither. A revision request is a
-// record that the owner asked for something at a moment in time; the run it started is the lineage.
+// record that the owner asked for something at a moment in time; the TASK it created is the lineage (J-13).
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 import type { DatabaseSchema, ArtifactRevisionRow } from './schema.js';
@@ -12,7 +12,8 @@ export interface NewArtifactRevisionInput {
   readonly accountId: string;
   readonly companyId: string;
   readonly originalArtifactId: string;
-  readonly runId: string;
+  /** The NEW LINKED TASK created for the revision (J-13) - not a run on the finished original. */
+  readonly newTaskId: string;
   /** Already trimmed and bounded by `validateRevisionGuidance` — this layer stores what it is given. */
   readonly guidance: string;
   readonly idempotencyKey: string;
@@ -48,7 +49,7 @@ export class ArtifactRevisionRepository {
         account_id: input.accountId,
         company_id: input.companyId,
         original_artifact_id: input.originalArtifactId,
-        run_id: input.runId,
+        new_task_id: input.newTaskId,
         guidance: input.guidance,
         idempotency_key: input.idempotencyKey,
         requested_by_user_id: input.requestedByUserId,
@@ -69,13 +70,13 @@ export class ArtifactRevisionRepository {
   }
 
   /**
-   * The revision request that started a run, if any.
+   * The revision request that created a task, if any.
    *
-   * THIS IS THE LINEAGE LOOKUP (CDR-064 G1). Given an artifact, its `run_id` answers "what was this a revision of" —
-   * derived rather than duplicated onto `artifacts`, so it cannot drift.
+   * THIS IS THE LINEAGE LOOKUP (CDR-064 G1). Given an artifact, the TASK its run belongs to answers "what was this a
+   * revision of" — derived rather than duplicated onto `artifacts`, so it cannot drift.
    */
-  findByRun(runId: string): Promise<ArtifactRevisionRow | undefined> {
-    return this.#db.selectFrom('artifact_revisions').selectAll().where('run_id', '=', runId).executeTakeFirst();
+  findByTask(newTaskId: string): Promise<ArtifactRevisionRow | undefined> {
+    return this.#db.selectFrom('artifact_revisions').selectAll().where('new_task_id', '=', newTaskId).executeTakeFirst();
   }
 
   /** Every revision asked of one artifact, newest first — the founder-facing "versions" list. */

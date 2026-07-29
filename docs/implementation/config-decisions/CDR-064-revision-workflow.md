@@ -86,13 +86,34 @@ consequences taken deliberately:
 `artifact:revise` is a new authz action, **owner-only**. Members read documents; the owner spends credits. This
 mirrors `strategy:select` (P3-004), which is owner-only for the same reason: it commits the company to work.
 
-### G6 — The task must be able to take another run
+### G6 — RESOLVED: a revision creates a NEW LINKED TASK. It does not touch the finished one.
 
-A revision starts a new run on the task that produced the original. The task has finished, so this is the first
-place in the system that starts a run on a **completed** task. Whether that is a new attempt on the same task or a
-transition back into a runnable state is a **state-machine question owned by WORKFLOW-STATE-MACHINES**, and it is
-resolved in slice 3 against the real state machine rather than guessed at here. The contracts in slice 1 do not
-assume an answer: they name the original artifact and the guidance, and nothing about run numbering.
+Slice 1 left this open rather than guess. Canon answers it outright, in `MASTER-PRD-v1.md`:
+
+> **J-13 Request revision.** Actor: owner. Pre: J-12. Trigger: revision request with guidance. Flow: **new linked
+> task created (lineage to original)** → re-execution → both versions retained. Accept: revision lineage visible;
+> original never overwritten silently.
+
+Three independent confirmations that this is right:
+
+1. **The state machine forbids the alternative.** `WORKFLOW-STATE-MACHINES` §4 marks `running→completed ⏹` as
+   TERMINAL. There is no transition out of `completed`, so the original task cannot be re-opened even in principle.
+2. **P4-005 set the precedent.** `repeatTask` — "do this again" — mints a NEW linked task rather than reviving a
+   finished one. A revision is the same shape with guidance attached.
+3. **It removes an impossibility.** At request time there is no run yet: the run comes later, when the new task is
+   queued. A schema requiring a `run_id` at request time could never be satisfied honestly.
+
+**A conflict in canon, resolved by the priority order.** `AI-AND-WORKER-ARCHITECTURE.md:13` summarises J-13 as
+"revisions create lineage-linked new **runs**", and slice 1's CDR took that at face value. It is loosely true — a run
+does happen — but less precise, and it led slice 2's first draft to model `run_id`. `CLAUDE.md`'s canonical source
+priority puts **PRD acceptance criteria (#4) above architecture documents (#5)**, so J-13's wording governs and the
+column is `new_task_id`.
+
+**Consequence for G4.** The credit is NOT reserved by `requestRevision`. `WORKFLOW-STATE-MACHINES` §4 puts the
+credit check on `planned→queued` ("preflight shown + credit check (TASK-004)"), which is the existing run path. The
+backlog's "new run metered" is therefore satisfied by machinery that already exists; adding a second reservation
+here would charge twice for one revision. `requestRevision` creates the linked task and records the lineage — the
+metering happens when that task is queued, like any other task.
 
 ### G7 — Guidance is validated, bounded, and never audited verbatim
 
