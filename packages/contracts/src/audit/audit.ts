@@ -178,6 +178,12 @@ export const AUDIT_EVENTS = {
   'worker.started': { schemaVersion: 1, subjectType: 'worker_run' },
   'worker.completed': { schemaVersion: 1, subjectType: 'worker_run' },
   'worker.failed': { schemaVersion: 1, subjectType: 'worker_run' },
+  // The credit ledger (ACBP-P5-014; CDR-058; BILL-002). DELIBERATE ADDITIONS: unlike the worker events above, these
+  // two are NOT in EVENT-CATALOG, which names usage.recorded and usage.limit_reached but no credit event. Subject is
+  // the LEDGER ENTRY, because the entry is the durable money fact and a reader tracing where a credit went follows
+  // entries, not runs.
+  'credit.reserved': { schemaVersion: 1, subjectType: 'credit_transaction' },
+  'credit.settled': { schemaVersion: 1, subjectType: 'credit_transaction' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -617,6 +623,37 @@ export function toolCallCompleted(input: { readonly callId: string; readonly too
  */
 export function workerStateChanged(input: { readonly workerId: string; readonly state: string; readonly hasReason: boolean }): AuditEvent {
   return makeEvent('worker.state_changed', input.workerId, 'success', { state: input.state, has_reason: input.hasReason });
+}
+
+/**
+ * A credit was reserved for a run (ACBP-P5-014; CDR-058; BILL-002; TASK-004). Subject = the LEDGER ENTRY.
+ *
+ * `balance_after` is carried so a reader never has to re-derive a historical balance by replaying the ledger — and so
+ * that if a derived balance ever disagreed with the audit trail, the disagreement itself would be visible.
+ */
+export function creditReserved(input: { readonly txnId: string; readonly runId: string; readonly credits: number; readonly balanceAfter: number }): AuditEvent {
+  return makeEvent('credit.reserved', input.txnId, 'success', { run_id: input.runId, credits: input.credits, balance_after: input.balanceAfter });
+}
+
+/**
+ * A reservation was consumed or released (ACBP-P5-014; `USAGE-AND-BILLING §4`). Subject = the SETTLEMENT entry.
+ *
+ * `settlement` distinguishes the two, because "the run ended" is not the same fact as "the founder was charged", and
+ * canon's charging rules mean most endings are NOT charges.
+ */
+export function creditSettled(input: {
+  readonly txnId: string;
+  readonly runId: string;
+  readonly settlement: string;
+  readonly credits: number;
+  readonly balanceAfter: number;
+}): AuditEvent {
+  return makeEvent('credit.settled', input.txnId, 'success', {
+    run_id: input.runId,
+    settlement: input.settlement,
+    credits: input.credits,
+    balance_after: input.balanceAfter,
+  });
 }
 
 /**

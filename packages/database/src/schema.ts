@@ -425,6 +425,11 @@ export interface UsageEventsTable {
   estimated_cost_micros: ColumnType<number, number, never>;
   fallback_used: ColumnType<boolean, boolean, never>;
   /**
+   * The worker run that caused this call (ACBP-P5-014; the link CDR-057 section 4 deferred to P5-014). Nullable:
+   * calls made outside a worker run - planning, strategy, the interview - legitimately have none.
+   */
+  worker_run_id: ColumnType<string | null, string | null | undefined, never>;
+  /**
    * WHY the call fell over to the secondary provider (ACBP-P5-009; NFR-019). The normalized category, never raw
    * provider text. A reason never appears without a fallover (DB CHECK); the converse is guaranteed by the writer
    * rather than the schema, because rows predating migration 0030 carry `fallback_used = true` with no reason.
@@ -951,6 +956,26 @@ export interface WorkerRunsTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
+/**
+ * Credit transactions (ACBP-P5-014; CDR-058; BILL-002; invariant 10). APPEND-ONLY: every field is `never` on update,
+ * because the table has no UPDATE grant at all. ACCOUNT-owned with COMPANY attribution — the balance is per account
+ * (ADR-003) while each spend records which company burned it, so RLS keys on `account_id` alone.
+ * There is NO balance column: canon says the balance is always DERIVED, and `credits` is SIGNED so the sum is it.
+ */
+export interface CreditTransactionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  /** Attribution, not isolation. NULL only for account-level grants. */
+  company_id: ColumnType<string | null, string | null | undefined, never>;
+  kind: ColumnType<string, string, never>;
+  /** SIGNED whole credits: grants and releases positive, reservations and consumptions negative. */
+  credits: ColumnType<number, number, never>;
+  run_id: ColumnType<string | null, string | null | undefined, never>;
+  references_txn_id: ColumnType<string | null, string | null | undefined, never>;
+  idempotency_key: ColumnType<string | null, string | null | undefined, never>;
+  created_by_user_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
 export interface DatabaseSchema {
   users: UsersTable;
   identity_webhook_receipts: IdentityWebhookReceiptsTable;
@@ -996,6 +1021,7 @@ export interface DatabaseSchema {
   worker_definitions: WorkerDefinitionsTable;
   company_worker_states: CompanyWorkerStatesTable;
   worker_runs: WorkerRunsTable;
+  credit_transactions: CreditTransactionsTable;
 }
 
 // Repository-facing row shapes.
@@ -1086,4 +1112,5 @@ export type ToolCallRow = Selectable<ToolCallsTable>;
 export type WorkerDefinitionRow = Selectable<WorkerDefinitionsTable>;
 export type CompanyWorkerStateRow = Selectable<CompanyWorkerStatesTable>;
 export type WorkerRunRow = Selectable<WorkerRunsTable>;
+export type CreditTransactionRow = Selectable<CreditTransactionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

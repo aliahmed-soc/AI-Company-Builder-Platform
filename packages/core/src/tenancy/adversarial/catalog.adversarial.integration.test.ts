@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'credit_transactions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -107,6 +107,10 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // is COLUMN-level. Tenancy and worker_id stay immutable, so a pause cannot be re-pointed after the fact.
   company_worker_states: ['INSERT', 'SELECT'],
   worker_runs: ['INSERT', 'SELECT'],
+  // The credit ledger (ACBP-P5-014; CDR-058; invariant 10): SELECT + INSERT and NOTHING else - no table UPDATE, no
+  // COLUMN update (asserted below), no DELETE. Append-only is a property of these grants rather than of anyone's
+  // restraint, which is what makes "corrections use compensating entries" true instead of merely intended.
+  credit_transactions: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -282,12 +286,15 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // id and version - and the SNAPSHOT bounds are all immutable, so a run can never be re-attributed to a different
     // worker nor re-judged against a budget it was not given. Review pass 2 caught that this table was missing from
     // the catalog entirely: the local test listed forbidden columns but never the EXACT allowed set, so widening the
-    // grant to ccount_id or max_duration_ms would have passed in silence.
+    // grant to account_id or max_duration_ms would have passed in silence.
     const workerRuns = byTable.get('worker_runs') ?? [];
     expect([...workerRuns].sort()).toEqual(['ended_at', 'failure_category', 'halt_reason', 'outcome', 'spend_micros', 'steps_completed', 'updated_at']);
     for (const forbidden of ['id', 'account_id', 'company_id', 'task_run_id', 'worker_id', 'worker_version', 'max_spend_micros', 'max_duration_ms', 'started_at', 'created_at']) {
       expect(workerRuns).not.toContain(forbidden);
     }
+    // The credit ledger holds NO column-level UPDATE either. A single column slipping into that list would make some
+    // part of a ledger row rewritable, and invariant 10 forbids editing any of it - a correction is a NEW row.
+    expect(byTable.get('credit_transactions') ?? []).toEqual([]);
     // worker_definitions is GLOBAL platform config with NO write path at all - the tool_definitions precedent.
     expect(byTable.get('worker_definitions') ?? []).toEqual([]);
 

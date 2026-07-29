@@ -47,7 +47,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
 
   beforeAll(async () => {
     su = superuserClient();
-    for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(su);
@@ -64,7 +64,7 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
       } catch {
         /* best effort */
       }
-      for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await su.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(su);
     }
   });
@@ -175,23 +175,29 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     expect(still.rows[0]).toMatchObject({ status: 'invited', member_user_id: null });
   });
 
-  // ── Catalog: the three functions have exactly the intended security properties ─────────────────────
-  test('catalog: exactly three acbp_ functions, all SECURITY DEFINER with a fixed search_path, not owned by acbp_app', async () => {
+  // ── Catalog: exactly three SECURITY DEFINER functions, and every acbp_ function unowned by the app role ──
+  test('catalog: exactly three SECURITY DEFINER functions with a fixed search_path; no acbp_ function is owned by acbp_app', async () => {
     const fns = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null; owner: string }>`
       select p.proname, p.prosecdef, p.proconfig, (select rolname from pg_roles where oid = p.proowner) as owner
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and p.proname like 'acbp\\_%'
       order by p.proname
     `.execute(su.kysely);
+    // D2 — the SECURITY DEFINER allowlist is what must stay closed at three. `acbp_check_credit_settlement`
+    // (migration 0041) is a plain trigger function and deliberately NOT SECURITY DEFINER, so comparing EVERY `acbp_`
+    // function against the bootstrap list reported a breach where no privilege was escalated. Named explicitly rather
+    // than filtered away, so a genuinely new non-definer function still has to be admitted here on purpose.
     const names = fns.rows.map((r) => r.proname);
-    expect(names).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
-    for (const f of fns.rows) {
+    expect(names).toEqual(['acbp_accept_invite', 'acbp_check_credit_settlement', 'acbp_provision_account', 'acbp_resolve_own_membership']);
+    expect(fns.rows.filter((r) => r.prosecdef).map((r) => r.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
+    for (const f of fns.rows.filter((r) => r.prosecdef)) {
       expect(f.prosecdef).toBe(true);
       // pg_catalog FIRST (so no pg_temp object can shadow a built-in); pg_temp pinned last, no writable schema.
       const sp = (f.proconfig ?? []).find((c) => c.toLowerCase().startsWith('search_path='));
       expect(sp?.replace(/\s/g, '').toLowerCase()).toBe('search_path=pg_catalog,pg_temp');
-      expect(f.owner).not.toBe('acbp_app');
     }
+    // OWNERSHIP applies to EVERY acbp_ function, definer or not: a function the app role owns is one it can replace.
+    for (const f of fns.rows) expect(f.owner).not.toBe('acbp_app');
   });
 
   test('catalog: only the restricted app role has EXECUTE; PUBLIC does not', async () => {

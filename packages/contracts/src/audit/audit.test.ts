@@ -113,6 +113,9 @@ describe('event-name registry (deny unregistered)', () => {
       'worker.started',
       'worker.completed',
       'worker.failed',
+      // The credit ledger (ACBP-P5-014; CDR-058) - deliberate additions, NOT in EVENT-CATALOG.
+      'credit.reserved',
+      'credit.settled',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.

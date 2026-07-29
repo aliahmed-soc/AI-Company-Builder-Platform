@@ -140,6 +140,7 @@ export const AUTHZ_ACTIONS = [
   // must be able to start, heartbeat and finish a run, and must NEVER be able to cancel one - cancellation is the
   // owner's decision (API-CONTRACTS: run control is 'Owner/operator'). One action could not express that.
   'run:execute',
+  'billing:read',
   'run:cancel',
   // Worker pause/disable per company (ACBP-P5-004; CDR-056; WORK-006). Canon calls it 'granular EMERGENCY control'
   // and puts it beside ADMIN-001: a viewer who could disable the research worker could stop the company's work
@@ -268,6 +269,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // what it receives - and run:cancel is precisely what it must not: cancelling is the owner's decision, and a
   // worker able to cancel its own run could hide work it had been told to stop.
   'run:execute': ['owner'],
+  // The credit ledger read (ACBP-P5-014; CDR-058 §2). OWNER-ONLY, and for a reason specific to this table: the
+  // ledger is ACCOUNT-scoped, so it spans every company in the account. A company-scoped operator reading it would
+  // learn what the account's OTHER companies have been spending. The RLS predicate cannot stop that — it is keyed on
+  // the account deliberately — so this action is the only control, and it is the strict one.
+  'billing:read': ['owner'],
   'run:cancel': ['owner'],
   'worker:control': ['owner'],
 };

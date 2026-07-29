@@ -956,3 +956,42 @@ The one place a pure rename would have changed behaviour was TOOL-002's receipt 
 
 **ACBP-P5-005 (worker runtime)** — unblocked by P5-002/003/004, and the ticket that stamps a worker onto a run and so
 closes WORK-006's *"disable during execution triggers safe-stop"*, recorded as unmet in `CDR-056 §6`.
+
+---
+
+## STANDING RULE (owner instruction, 2026-07-29) — a guard's commit must include a test that FAILS without it
+
+**Not a test that passes while the guard is present — one that fails when it is gone.** Whenever a commit adds a
+guard, constraint, allowlist, privilege posture or invariant, the same commit carries a test that has been
+*demonstrated* to fail with that guard removed. Demonstrated, not assumed: remove it, watch the test go red, restore
+it, watch it go green, and confirm the source file is byte-identical to what was committed.
+
+This exists because eight defects in one stack were guards that were written, believed, and never exercised:
+
+| | The guard | Why the suite still looked green |
+| --- | --- | --- |
+| D1 | the partial unique index for BILL-002 | every idempotency test short-circuited before the INSERT |
+| D3 | revoke of the default PUBLIC EXECUTE | nothing asserted the new function's ACL |
+| D9 | one-credit-per-run charging | a **passing** test asserted the double charge as correct |
+| D10 | `lockAccountForSpend` serialisation | the FK's own KEY SHARE lock blocked anyway, so "something blocked" proved nothing |
+| D11 | the no-minting RLS policy | the `correction` case died on an unrelated CHECK, and the assertion accepted that |
+
+Three failure shapes to test against explicitly, all of which occurred here:
+
+1. **The guard is unreachable.** Something earlier returns, refuses or short-circuits first, so the guarded line never
+   runs. Ask: what is the *only* input shape that reaches this line, and is that shape in the suite?
+2. **Something else does the guard's job.** A foreign key, a CHECK, a NOT NULL — a neighbouring constraint refuses the
+   row for its own reasons and the test cannot tell the difference. Assert *which* mechanism refused, not merely that
+   something did: the exact SQLSTATE, the exact statement, the exact policy.
+3. **The fixture agrees with the bug.** The expected value was copied from the observed value. When two tests in one
+   file disagree about the same arithmetic, one of them is wrong — and it is usually the one that passes.
+
+**Corollary: a poll or retry budget must be strictly less than the timeout that bounds it.** `waitForBlockedBy` polled
+400 × 25 ms inside a 10 s test timeout, so its own diagnostic — *"the race was not reproduced"* — could never print
+and every failure looked like a bare timeout. Audited repo-wide 2026-07-29: `coordinator.integration.test.ts` polls
+5 s inside 10 s (safe); the model gateway applies its timeout **per attempt** rather than as a shared budget (not this
+shape). Only the credit suite was affected.
+
+**Corollary: a checker needs the same treatment as the code it checks.** `tools/check-conflict-targets.mjs` carries a
+negative self-test that fails the build if its own patterns stop matching a known defect — because a checker that
+silently stops matching becomes a checker that always passes, which is this same failure one level up.

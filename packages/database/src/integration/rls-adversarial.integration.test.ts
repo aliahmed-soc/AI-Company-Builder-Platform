@@ -40,7 +40,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
 
   beforeAll(async () => {
     admin = su();
-    for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
+    for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', 'kysely_migration', 'kysely_migration_lock']) {
       await admin.kysely.schema.dropTable(t).ifExists().cascade().execute();
     }
     const r = await migrateToLatest(admin);
@@ -56,7 +56,7 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
       } catch {
         /* best effort */
       }
-      for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await admin.kysely.schema.dropTable(t).ifExists().cascade().execute();
+      for (const t of ['usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users']) await admin.kysely.schema.dropTable(t).ifExists().cascade().execute();
       await closeDatabase(admin);
     }
   });
@@ -115,8 +115,16 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
 
   // ── Catalog: bootstrap functions ────────────────────────────────────────────────────────────────────
   test('exactly three SECURITY DEFINER functions, each with a fixed search_path and no PUBLIC execute', async () => {
-    const fns = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null }>`select p.proname, p.prosecdef, p.proconfig from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'acbp\\_%' order by p.proname`.execute(admin.kysely);
-    expect(fns.rows.map((x) => x.proname)).toEqual([...BOOTSTRAP_FNS]);
+    const all = await sql<{ proname: string; prosecdef: boolean; proconfig: string[] | null }>`select p.proname, p.prosecdef, p.proconfig from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname like 'acbp\\_%' order by p.proname`.execute(admin.kysely);
+    // D2 — THE ALLOWLIST IS ABOUT SECURITY DEFINER, and this compared EVERY `acbp_` function against it. Migration
+    // 0041 adds `acbp_check_credit_settlement`, a plain trigger function that is deliberately NOT SECURITY DEFINER,
+    // and the old shape failed on it — which reads as "the closed allowlist was breached" when nothing was escalated.
+    // Split so each claim is checked against the right set: the DEFINER set stays exactly three, and the non-definer
+    // functions are named too, so a genuinely new one still has to be added here consciously.
+    expect(all.rows.filter((x) => x.prosecdef).map((x) => x.proname)).toEqual([...BOOTSTRAP_FNS]);
+    expect(all.rows.filter((x) => !x.prosecdef).map((x) => x.proname)).toEqual(['acbp_check_credit_settlement']);
+
+    const fns = { rows: all.rows.filter((x) => x.prosecdef) };
     for (const f of fns.rows) {
       expect(f.prosecdef).toBe(true);
       const sp = (f.proconfig ?? []).find((c) => c.toLowerCase().startsWith('search_path='));
@@ -131,6 +139,16 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     const grantees = new Set(grants.rows.map((x) => x.grantee));
     expect(grantees.has('acbp_app')).toBe(true);
     expect(grantees.has('PUBLIC')).toBe(false);
+    // D3 — PER FUNCTION, not just "PUBLIC appears nowhere in the set". `CREATE FUNCTION` grants EXECUTE to PUBLIC by
+    // default, so a future migration that adds a function and forgets the revoke must fail HERE. Checked name by name
+    // so one function's missing revoke cannot hide behind the others.
+    //
+    // NOT asserted as "every grantee is acbp_app": the function OWNER holds its own EXECUTE and appears in this view
+    // too (`acbp_dev` locally, the CI superuser in CI), so that shape fails on a correct database.
+    for (const fn of all.rows.map((x) => x.proname)) {
+      expect(grants.rows.filter((g) => g.routine_name === fn).map((g) => g.grantee)).not.toContain('PUBLIC');
+    }
+    expect(all.rows.map((x) => x.proname)).toContain('acbp_check_credit_settlement'); // the D3 function is in scope above
   });
 
   // ── Adversarial: unfiltered access / fail-closed ────────────────────────────────────────────────────
