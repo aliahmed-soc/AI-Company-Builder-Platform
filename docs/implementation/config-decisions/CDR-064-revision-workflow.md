@@ -48,10 +48,24 @@ API-CONTRACTS says the revision request is idempotent. Requesting twice with one
 run and **one** charge; the second call returns the first request rather than an error, because a retried request is
 an ordinary client behaviour and not a fault.
 
-Enforced by a partial unique index on `(account_id, idempotency_key)` — **and targeted by INFERENCE, never by
-`ON CONFLICT ON CONSTRAINT`**. That form accepts only a real table CONSTRAINT, and a partial unique index is not one;
-naming it raised `42704` on every reservation in P5-014 (D1) and killed the money path until a real database ran it.
-`tools/check-conflict-targets.mjs` now fails the build on the whole class.
+**REVISED IN SLICE 2, and the revision is the point.** Slice 1 planned a *partial* unique index targeted by
+inference, copying P5-014. Writing the migration showed that was the wrong lesson to copy: `idempotency_key` is
+**NOT NULL** on this table, because a revision request without a key is not a thing. P5-014's guard had to be
+partial (`WHERE kind = 'reservation' AND idempotency_key IS NOT NULL`) only because there just *some* rows carry a
+key — and PostgreSQL unique CONSTRAINTS cannot be partial, which is precisely how D1 happened.
+
+Here the predicate is unnecessary, so `addUniqueConstraint('artifact_revisions_company_key_uq', ...)` is available,
+and a **real named constraint is strictly better**: it is a legal `ON CONFLICT ON CONSTRAINT` target, so the D1 class
+cannot arise at all. `tools/check-conflict-targets.mjs` agrees — it flags `.constraint(...)` only when the name
+belongs to an index, and stays silent here.
+
+The coupling also fails in the *safe* direction. Removing the constraint makes **every** insert raise `42704`
+immediately and unmissably — demonstrated in slice 2. D1's danger was the opposite: a name that never existed,
+failing only on a real database, on the money path.
+
+**Scoped to the COMPANY, not the account.** The operation is company-scoped and the RLS is dual-keyed, so a key means
+"this request, in the company I am acting in". Account-scoping would refuse a second company's legitimate reuse of a
+client-chosen string.
 
 **Not idempotent by `(artifact, guidance)` content.** Two genuinely separate revision requests with the same guidance
 ("make it shorter") are a real thing a founder does after reading the first result, and collapsing them would silently

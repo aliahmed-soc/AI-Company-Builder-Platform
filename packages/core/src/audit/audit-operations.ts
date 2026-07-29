@@ -37,6 +37,7 @@ import {
   taskCreated,
   taskRepeated,
   taskDeleted,
+  artifactRevisionRequested,
   strategyGenerated,
   strategySelected,
   decisionRecorded,
@@ -98,6 +99,10 @@ export const AUDITED_OPERATIONS = {
   // Task detail controls (ACBP-P4-005; CDR-043 §4-G10; TASK-008 "Controls audited").
   'task.repeat': 'task.repeated',
   'task.delete': 'task.deleted',
+  // Revision requests (ACBP-P5-012; CDR-064; TASK-005 lineage / J-13) - the owner asked for a revision, and the
+  // run started to do it is named in the payload. Registered WITH its producing operation: an event in the registry
+  // that no approved operation emits is an orphan, which is exactly what this partition exists to prevent.
+  'artifact.request-revision': 'artifact.revision_requested',
   // Strategy option generation (ACBP-P3-001; CDR-034 §4) — options were generated from a confirmed understanding.
   'strategy.generate': 'strategy.generated',
   // Owner strategy decision (ACBP-P3-004; CDR-037 §4) — select/edit/combine/reject.
@@ -158,6 +163,9 @@ export type RunAuditedOperation = 'run.start' | 'run.fail' | 'run.cancel';
 export type ToolAuditedOperation = 'tool.dispatch' | 'tool.complete' | 'tool.fail';
 export type WorkerAuditedOperation = 'worker.set_state' | 'worker.run_start' | 'worker.run_complete' | 'worker.run_fail';
 export type BillingAuditedOperation = 'credit.reserve' | 'credit.settle';
+// Artifacts (ACBP-P5-012; CDR-064). Its OWN domain rather than folded into TASK: the subject is an artifact revision,
+// not a task, and BILLING was separated from RUN for the same reason.
+export type ArtifactAuditedOperation = 'artifact.request-revision';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -175,10 +183,11 @@ export const RUN_AUDITED_OPERATION_IDS: readonly RunAuditedOperation[] = ['run.s
 export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['tool.dispatch', 'tool.complete', 'tool.fail'];
 export const WORKER_AUDITED_OPERATION_IDS: readonly WorkerAuditedOperation[] = ['worker.set_state', 'worker.run_start', 'worker.run_complete', 'worker.run_fail'];
 export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] = ['credit.reserve', 'credit.settle'];
+export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[] = ['artifact.request-revision'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -253,6 +262,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => taskRepeated({ newTaskId: subjectId, sourceTaskId: subjectId, sourceState: 'completed' });
     case 'task.delete':
       return (subjectId) => taskDeleted({ taskId: subjectId, stateAtDelete: 'planned', hasReason: false });
+    case 'artifact.request-revision':
+      return (subjectId) => artifactRevisionRequested({ revisionId: subjectId, originalArtifactId: subjectId, runId: subjectId, hasGuidance: true });
     case 'strategy.generate':
       return (subjectId) => strategyGenerated({ generationId: subjectId, understandingVersion: 1, optionCount: 3, similarityCheckResult: 'pending' });
     case 'strategy.select':

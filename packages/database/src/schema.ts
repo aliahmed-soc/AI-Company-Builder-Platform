@@ -984,6 +984,28 @@ export interface ArtifactsTable {
 }
 
 /**
+ * Artifact revisions (ACBP-P5-012; CDR-064; TASK-005 lineage; J-13). A request for NEW work, never an edit — which is
+ * why nothing here writes to `artifacts`, and why every column is `never` on update: the table has no UPDATE grant.
+ *
+ * THIS ROW IS THE LINEAGE. An artifact is a revision of `original_artifact_id` because its own `run_id` equals the
+ * `run_id` here. There is deliberately no `revision_of_artifact_id` column on `artifacts` (CDR-064 G1) — the same
+ * fact in two places is a fact that can disagree.
+ */
+export interface ArtifactRevisionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** BOTH ENDS, both required. A request naming only one of them is not lineage. */
+  original_artifact_id: ColumnType<string, string, never>;
+  run_id: ColumnType<string, string, never>;
+  /** The founder's instruction. Required: a revision with nothing to change is a re-run that still costs a credit. */
+  guidance: ColumnType<string, string, never>;
+  idempotency_key: ColumnType<string, string, never>;
+  requested_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
  * Credit transactions (ACBP-P5-014; CDR-058; BILL-002; invariant 10). APPEND-ONLY: every field is `never` on update,
  * because the table has no UPDATE grant at all. ACCOUNT-owned with COMPANY attribution — the balance is per account
  * (ADR-003) while each spend records which company burned it, so RLS keys on `account_id` alone.
@@ -1049,6 +1071,7 @@ export interface DatabaseSchema {
   company_worker_states: CompanyWorkerStatesTable;
   worker_runs: WorkerRunsTable;
   artifacts: ArtifactsTable;
+  artifact_revisions: ArtifactRevisionsTable;
   credit_transactions: CreditTransactionsTable;
 }
 
@@ -1141,6 +1164,8 @@ export type WorkerDefinitionRow = Selectable<WorkerDefinitionsTable>;
 export type CompanyWorkerStateRow = Selectable<CompanyWorkerStatesTable>;
 export type WorkerRunRow = Selectable<WorkerRunsTable>;
 export type ArtifactRow = Selectable<ArtifactsTable>;
+export type ArtifactRevisionRow = Selectable<ArtifactRevisionsTable>;
+export type NewArtifactRevision = Insertable<ArtifactRevisionsTable>;
 export type NewArtifact = Insertable<ArtifactsTable>;
 export type CreditTransactionRow = Selectable<CreditTransactionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

@@ -75,6 +75,8 @@ export type { CreditExecutor, NewCreditEntryInput } from './credit-repository.js
 export { WorkerRunRepository } from './worker-run-repository.js';
 export type { WorkerRunExecutor, NewWorkerRunInput, FinishWorkerRunInput } from './worker-run-repository.js';
 export { ArtifactRepository } from './artifact-repository.js';
+export { ArtifactRevisionRepository } from './artifact-revision-repository.js';
+export type { ArtifactRevisionExecutor, NewArtifactRevisionInput } from './artifact-revision-repository.js';
 export type { ArtifactExecutor, NewArtifactInput } from './artifact-repository.js';
 export { ToolCallRepository } from './tool-call-repository.js';
 export type { ToolCallExecutor, NewToolCallInput, CompleteToolCallInput } from './tool-call-repository.js';
@@ -235,6 +237,9 @@ export type {
   ArtifactsTable,
   ArtifactRow,
   NewArtifact,
+  ArtifactRevisionsTable,
+  ArtifactRevisionRow,
+  NewArtifactRevision,
   NewTaskDeletion,
 } from './schema.js';
 
