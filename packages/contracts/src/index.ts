@@ -32,3 +32,5 @@ export * from './runs/index.js';
 // Worker definitions: versioned configuration and the per-company pause state (ACBP-P5-004; CDR-056).
 export * from './workers/index.js';
 export * from './billing/index.js';
+// Policy engine: the ordered decision vocabulary and most-restrictive-wins combination (ACBP-P6-001a; CDR-066).
+export * from './policy/index.js';
