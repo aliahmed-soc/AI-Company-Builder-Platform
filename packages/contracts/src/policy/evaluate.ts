@@ -120,6 +120,47 @@ export interface PolicyEvaluation {
   readonly untrustedRuleIds: readonly string[];
 }
 
+/**
+ * The policy a newly provisioned company starts with (CDR-066 §3-G10). **OWNER-RULED, 2026-07-29** — the value is
+ * the owner's decision, not this module's default:
+ *
+ *   *"informational and internal-reversible actions are allowed by default; anything at a higher risk class requires
+ *   approval; nothing is denied outright by the baseline alone (specific deny rules can still be added on top)."*
+ *
+ * The owner's reasoning, recorded so a later reader can weigh a change against it: a new company should be able to do
+ * useful internal work — research, drafting, planning — on day one without configuration, but nothing that reaches
+ * outside the platform or spends money should happen without a human saying yes.
+ *
+ * WHY A CONSTANT AND NOT A PARAGRAPH IN THE CDR. P6-001b/c would otherwise re-implement this from prose, and the
+ * wrong threshold class would silently let external writes through unapproved. Here it is executable and tested.
+ *
+ * THIS IS NOT AOQ-14. The owner has ruled the baseline POSTURE; the specific limit values (spending, message, usage,
+ * working hours) remain unruled and are deliberately absent — there is no numeric threshold on any limit dimension
+ * below, and a test asserts it.
+ *
+ * The threshold names `external_reversible`, which is the one place CDR-051 §0.3's unruled class split appears. The
+ * comparison is ORDINAL, so collapsing that split back to canon's plain `external` would be a rename here and would
+ * not change which actions are gated.
+ */
+export const DEFAULT_NEW_COMPANY_POLICY: PolicyRuleSet = {
+  version: 1,
+  // Permissive, deliberately: the RULE below is what withholds the risky classes. Denial is left entirely to rules a
+  // company adds on top, which is exactly what "nothing is denied outright by the baseline alone" means.
+  baseline: 'allow',
+  rules: [
+    {
+      id: 'baseline-risk-approval',
+      dimension: 'risk_class',
+      condition: 'risk_at_least',
+      // Fires for external_reversible and sensitive_irreversible, and nothing below — "anything at a higher risk
+      // class". An UNCLASSIFIED action resolves to the most restrictive class (TOOL-001) and so fires too, which is
+      // the safe reading and needs no rule of its own.
+      operand: 'external_reversible',
+      decision: 'require_approval',
+    },
+  ],
+};
+
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 function isRuleSet(value: unknown): value is PolicyRuleSet {

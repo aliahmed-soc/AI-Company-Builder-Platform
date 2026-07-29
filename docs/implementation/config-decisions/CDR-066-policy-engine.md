@@ -302,10 +302,49 @@ There are **three** distinct ways a rule becomes unevaluable — malformed rule,
 undecidable condition — and each needed its own permissive-baseline test. Covering two of the three was not enough:
 a mutation targeting the third still passed. All three are now individually proven by mutation.
 
-> **OWNER QUESTION, flagged not answered.** *What baseline does a newly provisioned company get?* This is adjacent to
-> **AOQ-14** and has the same character: it is a statement about what the AI may do without being asked. P6-001a
-> ships no default and does not need one — the evaluator refuses a rule set that lacks a baseline. **P6-001b or c
-> will need this answered** before a company can be provisioned with a working policy.
+### G10 — the newly-provisioned company baseline (OWNER-RULED)
+
+> **OWNER RULING — DIRECT, 2026-07-29.**
+>
+> **Provenance, on the same discipline as §0.** The question was raised by the PM (me) as an open flag; the options
+> and the recommendation to keep it configured rather than defaulted were mine. **The choice of value is the
+> owner's**, ruled directly in session. Their words:
+>
+> > "informational and internal-reversible actions are allowed by default; anything at a higher risk class requires
+> > approval; nothing is denied outright by the baseline alone (specific deny rules can still be added on top)."
+>
+> **Owner's recorded reasoning, verbatim:** *"a new company should be able to do useful internal work — research,
+> drafting, planning — on day one without configuration, but nothing that reaches outside the platform or spends
+> money should happen without a human saying yes. This matches the risk-class ordering already in the system and the
+> approve-before-external-write posture in canon."*
+
+**How it is expressed — and note that it needed no contract change.** The ruling is a `baseline` of `allow` plus
+exactly one rule:
+
+```ts
+{ dimension: 'risk_class', condition: 'risk_at_least', operand: 'external_reversible', decision: 'require_approval' }
+```
+
+`risk_at_least` compares on the ordered set, so it fires for `external_reversible` and `sensitive_irreversible` and
+not below — which is precisely "anything at a higher risk class". No rule yields `deny`, so nothing is refused
+outright by the baseline alone, exactly as ruled; a company may add deny rules on top and they win under POL-005.
+
+**An unclassified action requires approval, and that falls out rather than being special-cased.** `resolveRiskClass`
+maps anything unclassified to the most restrictive class (TOOL-001), which is above the threshold, so the rule fires.
+
+**Shipped as executable data, not prose.** `DEFAULT_NEW_COMPANY_POLICY` is a tested constant. A ruling that lived
+only in this document would be re-implemented by P6-001b/c from a paragraph, and a paragraph is exactly the kind of
+thing that gets implemented *slightly* wrong — the wrong threshold class here would silently let external writes
+through unapproved.
+
+**The one place CDR-051 §0.3's unruled name appears.** The threshold operand must name a class, so it names
+`external_reversible`. Because the comparison is ordinal (G7), collapsing that split back to canon's plain
+`external` would be a **rename of this operand only** — it would not change which actions are gated. Recorded so the
+dependency is visible rather than discovered later.
+
+**AOQ-14 is untouched.** This rules the *baseline posture*. The **specific limit values** — spending, message,
+usage, working-hours — remain unruled and unshipped. `DEFAULT_NEW_COMPANY_POLICY` contains no numeric threshold on
+any limit dimension, and a test asserts that it does not.
 
 ---
 

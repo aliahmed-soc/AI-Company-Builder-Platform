@@ -10,6 +10,7 @@ import {
   TRUST_CRITICAL_DIMENSIONS,
   POLICY_CONDITIONS,
   FACT_PROVENANCES,
+  DEFAULT_NEW_COMPANY_POLICY,
   evaluatePolicy,
   type PolicyRuleSet,
   type PolicyObservations,
@@ -298,10 +299,62 @@ describe('combination and escalation across rules (POL-005)', () => {
   });
 });
 
-describe('no default limits are shipped (G8, AOQ-14 is the owner\'s)', () => {
-  test('the module exports no default limit values of any kind', async () => {
-    const mod: Record<string, unknown> = await import('./evaluate.js');
-    const suspicious = Object.keys(mod).filter((k) => /DEFAULT|LIMIT_|_LIMIT$|MAX_SPEND|CAP/i.test(k));
-    expect(suspicious).toEqual([]);
+describe('no default LIMIT VALUES are shipped (G8; AOQ-14 is the owner\'s)', () => {
+  // This guard used to be a name regex banning anything matching /DEFAULT|LIMIT|CAP/. That was a blunt proxy: it
+  // would have banned the owner-RULED baseline policy (G10) while still permitting a rule literally named
+  // `spendRule` carrying a threshold of 500. It now asserts what G8 actually says — no numeric threshold on a
+  // limit dimension — which is the thing AOQ-14 reserves to the owner.
+  const LIMIT_DIMENSIONS = ['spending_limit', 'message_limit', 'usage_limit', 'working_hours'] as const;
+
+  test('the shipped default policy carries no numeric threshold on any limit dimension', () => {
+    for (const rule of DEFAULT_NEW_COMPANY_POLICY.rules) {
+      if ((LIMIT_DIMENSIONS as readonly string[]).includes(rule.dimension)) {
+        expect(typeof rule.operand).not.toBe('number');
+      }
+    }
+  });
+});
+
+describe('the owner-ruled new-company baseline (G10, ruled 2026-07-29)', () => {
+  // "informational and internal-reversible actions are allowed by default; anything at a higher risk class requires
+  // approval; nothing is denied outright by the baseline alone."
+  const decideFor = (riskClass: unknown) => evaluatePolicy(DEFAULT_NEW_COMPANY_POLICY, { risk_class: fromRegistry(riskClass) }).decision;
+
+  test('informational and internal_reversible are ALLOWED — a new company can do useful internal work on day one', () => {
+    expect(decideFor('informational')).toBe('allow');
+    expect(decideFor('internal_reversible')).toBe('allow');
+  });
+
+  test('everything above internal_reversible REQUIRES APPROVAL — nothing external or costly happens unasked', () => {
+    expect(decideFor('external_reversible')).toBe('require_approval');
+    expect(decideFor('sensitive_irreversible')).toBe('require_approval');
+  });
+
+  test('an UNCLASSIFIED action requires approval — it resolves to the most restrictive class', () => {
+    for (const junk of [null, undefined, '', 'made_up_class', 42]) expect(decideFor(junk)).toBe('require_approval');
+  });
+
+  test('the baseline alone NEVER denies — deny is reserved for rules a company adds on top', () => {
+    expect(DEFAULT_NEW_COMPANY_POLICY.baseline).toBe('allow');
+    for (const rule of DEFAULT_NEW_COMPANY_POLICY.rules) expect(rule.decision).not.toBe('deny');
+    for (const riskClass of ['informational', 'internal_reversible', 'external_reversible', 'sensitive_irreversible']) {
+      expect(decideFor(riskClass)).not.toBe('deny');
+    }
+  });
+
+  test('a company-added deny rule still wins over the permissive baseline (POL-005)', () => {
+    const withDeny: PolicyRuleSet = { ...DEFAULT_NEW_COMPANY_POLICY, rules: [...DEFAULT_NEW_COMPANY_POLICY.rules, STOP_RULE] };
+    expect(evaluatePolicy(withDeny, { risk_class: fromRegistry('informational'), emergency_stop: structured(true) }).decision).toBe('deny');
+  });
+
+  test('the default policy is itself a well-formed, versioned rule set', () => {
+    const r = evaluatePolicy(DEFAULT_NEW_COMPANY_POLICY, { risk_class: fromRegistry('informational') });
+    expect(r.policyVersion).toBe(DEFAULT_NEW_COMPANY_POLICY.version);
+    expect(r.unevaluableRuleIds).toEqual([]);
+  });
+
+  test('a MODEL-sourced risk class cannot buy the permissive path', () => {
+    // risk_class is trust-critical, so a model claiming "informational" fires the rule anyway (G5).
+    expect(evaluatePolicy(DEFAULT_NEW_COMPANY_POLICY, { risk_class: fromModel('informational') }).decision).toBe('require_approval');
   });
 });
