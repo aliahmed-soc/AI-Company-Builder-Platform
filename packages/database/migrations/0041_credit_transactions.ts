@@ -53,10 +53,19 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addCheckConstraint('credit_transactions_kind_valid', sql`kind in ('grant', 'reservation', 'consumption', 'release', 'correction')`)
     // THE SIGN CONVENTION, ENFORCED. A negative grant would be a spend wearing a grant's name; a positive reservation
     // would mint. The database refuses both rather than trusting every future writer to get the sign right.
+    // A CONSUMPTION MAY BE ZERO, and under the flat-rate MVP always is (D9). Consuming does not move credits — the
+    // reservation already took them — so a succeeded run's settlement records that the hold became a real spend and
+    // changes the balance by nothing. Requiring `< 0` here forced a SECOND debit and made a succeeded run cost two
+    // credits against canon's "one manual task run = one credit", while a failed run cost none.
+    //
+    // `<= 0` rather than `= 0` because D-02 (usage billing) is OPEN and canon requires this ledger to support flat,
+    // usage and hybrid pricing "without schema change" — a metered consumption that debits a real overage must stay
+    // expressible. The MVP's exact zero is pinned in `settlementMagnitude` and its tests, not by narrowing this.
     .addCheckConstraint(
       'credit_transactions_sign_valid',
       sql`(kind in ('grant', 'release') and credits > 0)
-          or (kind in ('reservation', 'consumption') and credits < 0)
+          or (kind = 'reservation' and credits < 0)
+          or (kind = 'consumption' and credits <= 0)
           or (kind = 'correction' and credits <> 0)`,
     )
     // A composite FK is MATCH SIMPLE: if ANY column is NULL it is not enforced at all. Without this, a row with a

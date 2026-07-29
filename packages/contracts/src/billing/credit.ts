@@ -70,7 +70,11 @@ export function signedAmount(kind: unknown, credits: number): number {
   // A correction carries its own sign — that is what compensating in either direction means.
   if (kind === 'correction') return requireWholeCredits(credits, true);
   const magnitude = requireWholeCredits(credits, false);
-  return isCreditGrantKind(kind) ? magnitude : -magnitude;
+  const signed = isCreditGrantKind(kind) ? magnitude : -magnitude;
+  // Normalise `-0` to `0`. A zero-magnitude spend is legitimate (a consumption finalises a hold without moving
+  // credits — D9), and `-0` would sum correctly but compare unequal under `Object.is`, so it would read as a
+  // different number in exactly the assertions meant to police this.
+  return signed === 0 ? 0 : signed;
 }
 
 // NO `deriveBalance` HERE, deliberately. An earlier version had one and it was both DEAD and WRONG: the repository
@@ -111,4 +115,25 @@ export function decideRunSettlement(outcome: unknown): RunSettlement {
   if (outcome === 'cancelled') return { kind: 'release' };
   if (outcome === 'failed') return { kind: 'release' };
   return { kind: 'hold' };
+}
+
+/**
+ * The MAGNITUDE a settlement row contributes, given what its reservation reserved.
+ *
+ * D9 — A CONSUMPTION MOVES NO CREDITS. The reservation already debited them; that is what reserving IS. Settling a
+ * succeeded run only records that the hold became a real spend, so its magnitude is **zero** and the balance is
+ * unchanged by it. Before this, `consumption` took the reservation's magnitude with a spend's negative sign, so a
+ * SUCCEEDED run wrote `reservation -1` AND `consumption -1` and cost **two** credits against canon's
+ * *"one manual task run = one credit"* — while a FAILED run correctly cost none. Succeeding was the expensive outcome.
+ *
+ * A release, by contrast, genuinely moves credits: it returns exactly what was held.
+ *
+ * Not folded into {@link signedAmount}: that function's job is the SIGN of a kind and it is used for grants and
+ * corrections that have no reservation at all. This is the separate question of how much a SETTLEMENT is worth, and
+ * keeping them apart is what stops a future usage-billing consumption (D-02) from silently inheriting a rule written
+ * for the flat-rate MVP.
+ */
+export function settlementMagnitude(kind: unknown, reservedMagnitude: number): number {
+  const reserved = requireWholeCredits(reservedMagnitude, false);
+  return kind === 'consumption' ? 0 : reserved;
 }

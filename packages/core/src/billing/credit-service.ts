@@ -7,7 +7,7 @@
 // THE BALANCE IS DERIVED, ALWAYS. There is no counter to drift, no cache to invalidate, and no reconciliation between
 // two numbers that could disagree. `SUM(credits)` is the balance because the amounts are signed.
 import { CreditRepository, TaskRunRepository, resolveOwnMembershipBootstrap, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type CreditTransactionRow } from '@acbp/database';
-import { signedAmount, canAfford, decideRunSettlement, CREDITS_PER_MANUAL_RUN, creditReserved, creditSettled, type RiskClass } from '@acbp/contracts';
+import { signedAmount, settlementMagnitude, canAfford, decideRunSettlement, CREDITS_PER_MANUAL_RUN, creditReserved, creditSettled, type RiskClass } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { runInAccountScope } from '../tenancy/account-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -232,11 +232,13 @@ export async function settleRun(client: DatabaseClient, params: SettleRunParams,
       // A release returns EXACTLY what was reserved — `-reservation.credits`, not a recomputed cost. Recomputing
       // would let a changed price refund more than was ever taken.
       const magnitude = Math.abs(reservation.credits);
+      // D9. A CONSUMPTION MOVES NO CREDITS — the reservation already took them. Passing `magnitude` here made a
+      // succeeded run write a second debit, so it cost TWO credits while a failed run cost none.
       const entry = await credits.insert({
         accountId: scope.tenant.accountId,
         companyId: reservation.company_id ?? scope.tenant.companyId,
         kind,
-        credits: signedAmount(kind, magnitude),
+        credits: signedAmount(kind, settlementMagnitude(kind, magnitude)),
         runId: params.taskRunId,
         referencesTxnId: reservation.id,
         createdByUserId: params.userId,

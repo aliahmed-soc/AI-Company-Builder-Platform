@@ -332,9 +332,34 @@ describe.skipIf(!hasTestDatabase)('credit service (real PostgreSQL, restricted r
     await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' });
     await endRun(runId, 'succeeded');
     const settled = await settleRun(product, { ...base(), taskRunId: runId });
-    expect(settled).toMatchObject({ status: 'ok', settlement: 'consume', balanceAfter: 1 });
+    // D9. This asserted `balanceAfter: 1` — 3 granted, 2 gone for ONE run — and so encoded the double charge as the
+    // expected answer. The reservation is the debit; consuming only finalises it, and moves nothing.
+    expect(settled).toMatchObject({ status: 'ok', settlement: 'consume', balanceAfter: 2 });
     expect((await rows()).map((x) => x.kind).sort()).toEqual(['consumption', 'grant', 'reservation']);
-    expect((await auditRows()).find((a) => a.name === 'credit.settled')?.payload).toMatchObject({ settlement: 'consume', balance_after: 1 });
+    expect((await rows()).find((x) => x.kind === 'consumption')?.credits).toBe(0);
+    expect((await auditRows()).find((a) => a.name === 'credit.settled')?.payload).toMatchObject({ settlement: 'consume', balance_after: 2 });
+  });
+
+  test('A SUCCEEDED RUN COSTS EXACTLY ONE CREDIT — reserving and consuming are ONE charge, not two', async () => {
+    // THE GUARD FOR D9, stated as canon states it: "one manual task run = one credit" (USAGE-AND-BILLING §1). Written
+    // against the LEDGER SUM rather than against either row, so it fails whichever way the arithmetic is broken —
+    // a consumption that debits again, or a reservation that stops debiting.
+    //
+    // It was reachable all along; nothing asserted it. `a SUCCEEDED run consumes` agreed with the bug, and
+    // `SETTLING TWICE` disagreed with it — the suite contradicted itself and the failing one was right.
+    const granted = 5;
+    await grant(granted);
+    const runId = await runningRun();
+    expect((await reserveCredit(product, { ...base(), taskRunId: runId, idempotencyKey: 'k1' })).status).toBe('ok');
+    await endRun(runId, 'succeeded');
+    expect((await settleRun(product, { ...base(), taskRunId: runId })).status).toBe('ok');
+
+    const sum = (await rows()).reduce((acc, x) => acc + x.credits, 0);
+    expect(sum).toBe(granted - CREDITS_PER_MANUAL_RUN);
+    // And the same number the founder is actually shown, derived the way production derives it.
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
+      expect(await new CreditRepository(db).deriveBalance(w.accountA)).toBe(granted - CREDITS_PER_MANUAL_RUN);
+    });
   });
 
   test('a FAILED run RELEASES — the founder ends up exactly where they started', async () => {

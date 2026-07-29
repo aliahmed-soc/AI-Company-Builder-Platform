@@ -8,6 +8,7 @@ import {
   isCreditEntryKind,
   CREDITS_PER_MANUAL_RUN,
   signedAmount,
+  settlementMagnitude,
   decideRunSettlement,
   canAfford,
   isCreditGrantKind,
@@ -31,6 +32,28 @@ describe('entry kinds', () => {
   });
 });
 
+describe('settlementMagnitude — a consumption moves no credits (D9)', () => {
+  test('consuming is worth ZERO however much was reserved — the reservation already charged', () => {
+    // The defect this pins: consuming took the reservation's magnitude with a spend's sign, so a succeeded run wrote
+    // `reservation -1` AND `consumption -1` and cost TWO credits against canon's "one manual task run = one credit",
+    // while a failed run cost none. Succeeding was the expensive outcome.
+    expect(settlementMagnitude('consumption', 1)).toBe(0);
+    expect(settlementMagnitude('consumption', 7)).toBe(0);
+  });
+
+  test('releasing returns EXACTLY what was reserved', () => {
+    expect(settlementMagnitude('release', 1)).toBe(1);
+    expect(settlementMagnitude('release', 7)).toBe(7);
+  });
+
+  test('a negative reserved magnitude is refused rather than flipped', () => {
+    // The caller passes an absolute magnitude. A negative one means it read a signed row and forgot, and inventing a
+    // sign here would settle the wrong direction on the money path.
+    expect(() => settlementMagnitude('release', -1)).toThrow();
+    expect(() => settlementMagnitude('consumption', -1)).toThrow();
+  });
+});
+
 describe('signedAmount — the sign convention IS the arithmetic', () => {
   test('grants and releases are positive; reservations and consumptions are negative', () => {
     // Signed amounts mean the balance is SUM(amount), full stop. If the sign lived in the reader instead, every future
@@ -44,6 +67,14 @@ describe('signedAmount — the sign convention IS the arithmetic', () => {
   test('a correction carries its own sign, because it compensates in either direction', () => {
     expect(signedAmount('correction', 5)).toBe(5);
     expect(signedAmount('correction', -5)).toBe(-5);
+  });
+
+  test('a ZERO magnitude spend is plain 0, never -0 (D9)', () => {
+    // A consumption finalises a hold without moving credits, so zero is a legitimate spend magnitude. `-0` sums
+    // identically but compares unequal under Object.is, so it would read as a different number in exactly the
+    // assertions meant to police the one-credit-per-run rule.
+    expect(Object.is(signedAmount('consumption', 0), 0)).toBe(true);
+    expect(Object.is(signedAmount('reservation', 0), 0)).toBe(true);
   });
 
   test('a NEGATIVE magnitude on a non-correction is refused, not silently flipped', () => {
