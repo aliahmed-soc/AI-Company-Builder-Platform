@@ -103,14 +103,36 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     // A table-level INSERT grant cannot express "these kinds only"; an RLS WITH CHECK can, which is what makes the
     // no-minting rule structural rather than a convention someone could forget. A `correction` is included because
     // it may be POSITIVE — the safer reading, taken deliberately (CDR-058 §4).
-    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
-      for (const kind of ['grant', 'correction']) {
+    // D11 — ONE TRANSACTION PER EXPECTED FAILURE. Both kinds used to be attempted inside a SINGLE transaction: the
+    // first refusal aborted it, so the second could only ever raise `25P02 current transaction is aborted` instead of
+    // the RLS violation being asserted. `correction` — the kind that matters most here, because it may be POSITIVE and
+    // so is the real minting path — was therefore never actually exercised, in a test whose name promises both.
+    // EACH ATTEMPT MUST BE WELL-FORMED IN EVERY OTHER RESPECT, so the ONLY thing left that can refuse it is the
+    // policy. `correction` was previously written with a NULL reference, which `credit_transactions_reference_shape`
+    // rejects outright — so the row died on a CHECK and never reached RLS, and the assertion accepted CHECK_VIOLATION
+    // too, which hid that. Proof it was hiding something: with `correction` ADDED to the insert policy the test still
+    // passed. A correction must point at its original, so it gets a real reservation to point at.
+    const seeded = await sql<{ id: string }>`
+      insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key)
+      values (${w.accountA}, ${w.companyA1}, 'reservation', -1, 'fixture-mint-guard') returning id
+    `.execute(owner.kysely);
+    const reservationId = seeded.rows[0]?.id ?? '';
+    expect(reservationId).not.toBe('');
+
+    for (const [kind, reference] of [
+      ['grant', null],
+      ['correction', reservationId],
+    ] as const) {
+      await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
         await expect(
-          sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, ${kind}, 5, null)`.execute(db),
-        ).rejects.toSatisfy((e: unknown) => sqlState(e) === RLS_VIOLATION || sqlState(e) === CHECK_VIOLATION);
-      }
-    });
-    expect(await rows()).toHaveLength(0);
+          sql`insert into credit_transactions (account_id, company_id, kind, credits, references_txn_id) values (${w.accountA}, ${w.companyA1}, ${kind}, 5, ${reference})`.execute(db),
+          // THE RLS POLICY SPECIFICALLY (42501), not "refused somehow". Anything looser cannot distinguish the
+          // no-minting rule from an unrelated constraint, which is exactly how the correction case went unproven.
+        ).rejects.toSatisfy((e: unknown) => sqlState(e) === RLS_VIOLATION);
+      });
+    }
+    // The seeded reservation and nothing else: neither minting kind reached the table.
+    expect((await rows()).map((r) => r.kind)).toEqual(['reservation']);
   });
 
   test('the product role CAN write the three run-lifecycle kinds', async () => {
@@ -266,7 +288,9 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     // The A/C decision made observable (CDR-058 §2). Reading with company A1's GUC still sees a spend attributed to
     // A2, because the balance is per ACCOUNT — a company-keyed predicate would make an owner's own balance invisible.
     await grant(w.accountA, 10);
-    await sql`insert into credit_transactions (account_id, company_id, kind, credits) values (${w.accountA}, ${w.companyA2}, 'reservation', -3)`.execute(owner.kysely);
+    // D4 — the key is REQUIRED on a reservation (`credit_transactions_reservation_needs_key`), so omitting it here
+    // made this insert die on that CHECK before the RLS behaviour under test was ever reached.
+    await sql`insert into credit_transactions (account_id, company_id, kind, credits, idempotency_key) values (${w.accountA}, ${w.companyA2}, 'reservation', -3, 'fixture-span-a2')`.execute(owner.kysely);
     await asRestricted(product, { account: w.accountA, company: w.companyA1 }, async (db) => {
       expect(await new CreditRepository(db).deriveBalance(w.accountA)).toBe(7);
     });
@@ -312,8 +336,11 @@ describe.skipIf(!hasTestDatabase)('credit ledger (real PostgreSQL, restricted ro
     // RI checks always bypass RLS, so a single-column FK would let an entry point at another company's run and never
     // be policy-checked. The `run_needs_company` CHECK is what stops the pin being skipped via a NULL company.
     await grant(w.accountA, 5);
+    // D4 — WITHOUT the idempotency key this raised `credit_transactions_reservation_needs_key` (a CHECK) rather than
+    // the composite FK, so it asserted a refusal that had nothing to do with the tenant pin it claims to prove. The
+    // key is supplied so the FK is genuinely the thing that refuses.
     await expect(
-      sql`insert into credit_transactions (account_id, company_id, kind, credits, run_id) values (${w.accountA}, ${w.companyA1}, 'reservation', -1, '00000000-0000-4000-8000-000000000000')`.execute(owner.kysely),
+      sql`insert into credit_transactions (account_id, company_id, kind, credits, run_id, idempotency_key) values (${w.accountA}, ${w.companyA1}, 'reservation', -1, '00000000-0000-4000-8000-000000000000', 'fixture-pin')`.execute(owner.kysely),
     ).rejects.toSatisfy((e: unknown) => sqlState(e) === FK_VIOLATION);
     await expect(
       sql`insert into credit_transactions (account_id, kind, credits, run_id) values (${w.accountA}, 'grant', 1, '00000000-0000-4000-8000-000000000000')`.execute(owner.kysely),
