@@ -104,7 +104,10 @@ export class TaskRunRepository {
     return this.#db.selectFrom('task_runs').selectAll().where('id', '=', runId).executeTakeFirst();
   }
 
-  /** A task's attempts, newest first. RLS confines this to the caller's company. */
+  /**
+   * A task's attempts, newest ATTEMPT NUMBER first (not newest by time - startRun takes the attempt from the
+   * caller, so the two can differ). RLS confines this to the caller's company.
+   */
   listForTask(taskId: string): Promise<TaskRunRow[]> {
     return this.#db.selectFrom('task_runs').selectAll().where('task_id', '=', taskId).orderBy('attempt', 'desc').execute();
   }

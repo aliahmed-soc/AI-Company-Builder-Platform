@@ -13,6 +13,8 @@ import {
   microsecondEpochToIso,
   ACTIVITY_PAGE_SIZE_DEFAULT,
   ACTIVITY_PAGE_SIZE_MAX,
+  ACTIVITY_TYPES_IN_DATABASE_CHECK,
+  activityTypesMatchDatabase,
   type ActivityCursor,
 } from './index.js';
 
@@ -39,6 +41,8 @@ describe('exact temporal serialization', () => {
 
 describe('activity taxonomy (company events only)', () => {
   test('the visible types are exactly the four company events', () => {
+    // The set is CLOSED. P5-013 widened it for ACT-005, then reverted: the contracts set and the database CHECK
+    // had diverged, and the fail-closed projector would have turned that into failures rolling back their own audits.
     expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated']);
     for (const t of ACTIVITY_TYPES) expect(isActivityType(t)).toBe(true);
   });
@@ -163,5 +167,22 @@ describe('activity cursor (opaque base64url; versioned; account+company bound; a
     expect(decodeActivityCursor(acct, co, tamperedAfter)).toEqual({ after: { occurredAt: '2026-01-01T00:00:00.000Z', eventId: CUR.after.eventId }, upper: CUR.upper });
     const tamperedUpper = encObj({ ...base, ue: '01ARZ3NDEKTSV4RRFFQ69G5FA2' });
     expect(decodeActivityCursor(acct, co, tamperedUpper)?.upper.eventId).toBe('01ARZ3NDEKTSV4RRFFQ69G5FA2');
+  });
+});
+
+describe('ACT-005 is DEFERRED, and the taxonomy matches the database (ACBP-P5-013)', () => {
+  test('task.failed is NOT projectable — the widening was reverted, not completed', () => {
+    // P5-013 added it, then found the widening was half a feature: no migration widened the
+    // activity_events_type_valid CHECK, nothing projects on the failure path, and the projector is FAIL-CLOSED, so
+    // the first correct wiring would have made every run failure roll back its own audit write.
+    expect(isProjectableActivity('task.failed')).toBe(false);
+    expect(ACTIVITY_TYPES).not.toContain('task.failed');
+  });
+
+  test('THE CONTRACTS TAXONOMY AND THE DATABASE CHECK PERMIT THE SAME SET', () => {
+    // The guard that makes the divergence impossible to reintroduce silently. If someone widens ACTIVITY_TYPES
+    // without a migration, this fails immediately instead of at the moment a failure tries to project.
+    expect(activityTypesMatchDatabase()).toBe(true);
+    expect([...ACTIVITY_TYPES].sort()).toEqual([...ACTIVITY_TYPES_IN_DATABASE_CHECK].sort());
   });
 });

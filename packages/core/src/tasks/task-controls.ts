@@ -9,19 +9,49 @@
 // DELETE IS NOT A `DELETE`. `tasks` carries no DELETE grant and its column UPDATE is pinned to (state, updated_at);
 // widening either to make this convenient would destroy the audit trail TASK-008 itself demands (CDR-043 §3). So a
 // deletion is a row in the append-only `task_deletions` table and every product read excludes it.
-import { TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRow } from '@acbp/database';
+import { TaskRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRow, type TaskRunExecutor } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
-import { buildTaskDetail, controlAvailability, taskRepeated, taskDeleted, isTaskState, type ControlUnavailableReason, type TaskDetailDTO, type TaskDTO, type TaskState } from '@acbp/contracts';
+import { buildTaskDetail, controlAvailability, describeRunFailure, taskRepeated, taskDeleted, isTaskState, type RunFailureDetail, type ControlUnavailableReason, type TaskDetailDTO, type TaskDTO, type TaskState } from '@acbp/contracts';
 import { toTaskDTO, type TaskOptions } from './task-management.js';
 import type { Logger } from '@acbp/observability';
 
 /** The owner's optional note on a deletion. Bounded here to match the DB CHECK, so an over-long note is `invalid`. */
 export const TASK_DELETE_REASON_MAX = 2_000;
 
-/** Assemble the detail DTO from a row. The control set is derived from the row's own state, never stored. */
-function toTaskDetailDTO(row: TaskRow): TaskDetailDTO {
-  return buildTaskDetail(toTaskDTO(row), { rationale: row.rationale, repeatedFromTaskId: row.repeated_from_task_id });
+/**
+ * Assemble the detail DTO from a row. The control set is derived from the row's own state, never stored — and so is
+ * the failure detail (ACBP-P5-013): both are computed from facts the row already carries, so neither can go stale.
+ */
+function toTaskDetailDTO(row: TaskRow, latestFailure: RunFailureDetail | null): TaskDetailDTO {
+  return buildTaskDetail(toTaskDTO(row), { rationale: row.rationale, repeatedFromTaskId: row.repeated_from_task_id, latestFailure });
+}
+
+/**
+ * The failure detail of a task's most recent run, or `null` if it has none or the latest did not fail.
+ *
+ * THE LATEST RUN ONLY. A task that failed twice and then succeeded has not failed — showing the older failure would
+ * be a stale answer to "what is wrong with this task", and TASK-006 is about the founder's current picture.
+ * `listForTask` returns newest first (P5-002), and RLS confines it to the caller's company.
+ */
+async function latestFailureFor(db: TaskRunExecutor, taskId: string, taskState: string): Promise<RunFailureDetail | null> {
+  const runs = await new TaskRunRepository(db).listForTask(taskId);
+  const latest = runs[0];
+  const fromLatest = latest === undefined ? null : describeRunFailure({ state: latest.state, failureCategory: latest.failure_category, attempt: latest.attempt });
+  if (fromLatest !== null) return fromLatest;
+
+  // A FAILED TASK ALWAYS EXPLAINS ITSELF. Review pass 1: nothing ties `tasks.state = 'failed'` to a failed RUN —
+  // `running → failed` is a legal task transition on its own, a task can fail with no run at all, and a later
+  // attempt may be queued or cancelled. Every one of those put a task in the board's `failed` bucket with a blank
+  // explanation, which is the single thing TASK-006 forbids. So the task's own state is the backstop: if it says
+  // failed and no run accounts for it, the cause is genuinely unknown and we say so.
+  if (taskState !== 'failed') return null;
+  const failedRun = runs.find((r) => r.state === 'failed');
+  return describeRunFailure({
+    state: 'failed',
+    failureCategory: failedRun?.failure_category ?? null,
+    attempt: failedRun?.attempt ?? runs[0]?.attempt ?? 1,
+  });
 }
 
 // ── getTaskDetail ────────────────────────────────────────────────────────────────────────────────────────
@@ -47,7 +77,9 @@ export async function getTaskDetail(client: DatabaseClient, params: GetTaskDetai
     async (scope, role): Promise<GetTaskDetailResult> => {
       if (checkAuthorization(role, 'task:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const row = await new TaskRepository(scope.db).findLive(params.taskId);
-      return row === undefined ? { status: 'not_found' } : { status: 'ok', task: toTaskDetailDTO(row) };
+      if (row === undefined) return { status: 'not_found' };
+      // TASK-006: the failure a founder needs to see belongs to the RUN, and this is where they look for it.
+      return { status: 'ok', task: toTaskDetailDTO(row, await latestFailureFor(scope.db, params.taskId, row.state)) };
     },
     opts(options),
   );

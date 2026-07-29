@@ -9,6 +9,8 @@
 // typed factory. The account, actor, event id, and timestamp are bound SERVER-SIDE by the writer from the
 // caller's validated AccountScope — never accepted here — so they cannot be forged through this contract.
 import { validationError } from '../errors.js';
+import type { RunFailureCategory } from '../runs/run.js';
+import type { NextAttempt } from '../runs/failure-detail.js';
 import type { CompanyCreationMode } from '../company/company.js';
 
 /** Actor types (EVENT-CATALOG `actor.type`). `worker` actors can never appear on approval decisions (inv. 5). */
@@ -159,7 +161,9 @@ export const AUDIT_EVENTS = {
   // on it ("no artifactless completion", TASK-005), and a run succeeding is not the same fact as a task completing -
   // the task completes when its artifact is persisted, which belongs to the ticket that owns artifacts.
   'task.started': { schemaVersion: 1, subjectType: 'task' },
-  'task.failed': { schemaVersion: 1, subjectType: 'task' },
+  // VERSION 2 (ACBP-P5-013): retry_state joined the payload. P5-002 registered v1 and named this ticket as the
+  // owner of the addition rather than guessing the field into existence early.
+  'task.failed': { schemaVersion: 2, subjectType: 'task' },
   'task.cancelled': { schemaVersion: 1, subjectType: 'task' },
   'job.dead_lettered': { schemaVersion: 1, subjectType: 'job' },
   // Tool calls (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). The subject is the CALL, not the
@@ -548,11 +552,31 @@ export function taskStarted(input: { readonly taskId: string; readonly runId: st
 /**
  * A run failed (ACBP-P5-002; TASK-006 "no blank failures" - which means a CATEGORY, never a stack trace).
  *
- * EVENT-CATALOG also lists `retry_state`; that is TASK-010 retry VISIBILITY, owned by ACBP-P5-013, and will arrive as
- * schema version 2 rather than being guessed at here.
+ * SCHEMA VERSION 2 (ACBP-P5-013): `retry_state` has arrived, on the terms P5-002 set when it registered v1 and named
+ * this ticket as the addition's owner. It is TASK-010's retry visibility, and it comes from `describeRunFailure` —
+ * the same function the task detail read uses, so the trail and the screen cannot disagree about whether another
+ * attempt is possible.
  */
-export function taskFailed(input: { readonly taskId: string; readonly runId: string; readonly attempt: number; readonly failureCategory: string }): AuditEvent {
-  return makeEvent('task.failed', input.taskId, 'blocked', { run_id: input.runId, attempt: input.attempt, failure_category: input.failureCategory });
+export function taskFailed(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly attempt: number;
+  /**
+   * The CLOSED set, not a bare string. Review pass 1: `describeRunFailure` refuses to echo an unrecognised category,
+   * while this factory would have echoed whatever it was handed — and both keys are allowlisted into the feed
+   * summary, so a caller passing a short provider message would have put it in front of a founder. The asymmetry was
+   * the tell.
+   */
+  readonly failureCategory: RunFailureCategory;
+  /** TASK-010 retry visibility — the value `describeRunFailure` produces, from its closed set. */
+  readonly retryState: NextAttempt;
+}): AuditEvent {
+  return makeEvent('task.failed', input.taskId, 'blocked', {
+    run_id: input.runId,
+    attempt: input.attempt,
+    failure_category: input.failureCategory,
+    retry_state: input.retryState,
+  });
 }
 
 /**

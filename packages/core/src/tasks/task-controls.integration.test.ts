@@ -13,7 +13,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { TASK_CONTROLS } from '@acbp/contracts';
+import { TASK_CONTROLS, NEXT_ATTEMPT_VALUES } from '@acbp/contracts';
 import { createTask, planTask, addTaskDependency, getTask, listTasks, getTaskDetail, repeatTask, deleteTask, getTaskBoard, TASK_DELETE_REASON_MAX } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -350,4 +350,77 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
   async function stateOf(id: string): Promise<string | undefined> {
     return (await sql<{ state: string }>`select state from tasks where id = ${id}::uuid`.execute(owner.kysely)).rows[0]?.state;
   }
+
+  // ── FAILURE DETAIL (ACBP-P5-013; TASK-006 "no blank failures") ────────────────────────────────────────────
+  describe('the detail carries the latest run failure', () => {
+    /** A run for this task, ended in the given state as the OWNER role. */
+    async function runEndedAs(taskId: string, state: string, category: string | null, attempt = 1): Promise<void> {
+      await sql`
+        insert into task_runs (account_id, company_id, task_id, attempt, state, failure_category, started_at, ended_at)
+        values (${w.accountA}, ${w.companyA1}, ${taskId}::uuid, ${attempt}, ${state}, ${category}, now(), now())
+      `.execute(owner.kysely);
+    }
+
+    test('a FAILED run renders a COMPLETE detail — category, summary, attempts, retry safety', async () => {
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', 'timeout', 2);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      // D5. This expected `'scheduled'`, a value the contract does not have. `NextAttempt` was renamed to
+      // `retry_eligible` during P5-013's own review, precisely because nothing re-runs a failed task yet — no retry
+      // trigger exists and `startRun` has no production caller — so `scheduled` would promise the founder a future
+      // event that never arrives (CDR-059 G4, "honest about the future"). The product was corrected; this was not.
+      // `toMatchObject` compares a plain literal, so nothing type-checked the stale value against `NextAttempt`.
+      expect(failure).toMatchObject({ category: 'timeout', attemptsUsed: 2, retrySafety: 'safe', nextAttempt: 'retry_eligible' });
+      // Pin MEMBERSHIP of the closed set too, so the next invented value fails here rather than in a reviewer's eye.
+      expect(NEXT_ATTEMPT_VALUES).toContain((failure as unknown as { nextAttempt: string }).nextAttempt);
+      expect((failure?.summary ?? '').length).toBeGreaterThan(10);
+    });
+
+    test('A FAILED RUN WITH NO RECORDED CATEGORY IS unknown, NOT BLANK — the whole point of TASK-006', async () => {
+      // The row a crash between the transition and the category write leaves behind. It is reachable in production,
+      // so it is reachable here: written directly, because no use case would produce it deliberately.
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', null);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('unknown');
+      expect(failure?.summary ?? '').not.toBe('');
+    });
+
+    test('a task whose LATEST run succeeded has NO failure detail, even if an earlier one failed', async () => {
+      // Showing the old failure would answer "what is wrong with this task" with something that is no longer true.
+      const taskId = await taskInState('completed');
+      await runEndedAs(taskId, 'failed', 'provider_error', 1);
+      await runEndedAs(taskId, 'succeeded', null, 2);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
+    });
+
+    test('a NON-FAILED task with no runs has no failure detail', async () => {
+      const r = await getTaskDetail(product, { ...base(), taskId: await taskInState('draft') });
+      expect((r as { task: { latestFailure: unknown } }).task.latestFailure).toBeNull();
+    });
+
+    test('A FAILED TASK WITH NO RUN AT ALL STILL EXPLAINS ITSELF - the case the first test dodged', async () => {
+      // Review pass 1 caught this precisely: the original test used 'draft', so the task-state/run-state pairing was
+      // never checked for absence. One word - 'failed' - exposes it. A task can reach 'failed' with no run (the
+      // transition is legal on its own), and that put it in the board's failed bucket with a blank explanation.
+      const r = await getTaskDetail(product, { ...base(), taskId: await taskInState('failed') });
+      const failure = (r as { task: { latestFailure: { category: string; summary: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('unknown');
+      expect(failure?.summary ?? '').not.toBe('');
+    });
+
+    test('a FAILED task whose latest run is still RUNNING explains itself from the failed attempt', async () => {
+      // attempt 1 failed, attempt 2 is in flight. listForTask orders by attempt desc, so runs[0] is the RUNNING one
+      // and the naive read returned null - a blank failure on a task the board shows as failed.
+      const taskId = await taskInState('failed');
+      await runEndedAs(taskId, 'failed', 'provider_error', 1);
+      await sql`insert into task_runs (account_id, company_id, task_id, attempt, state, started_at) values (${w.accountA}, ${w.companyA1}, ${taskId}::uuid, 2, 'running', now())`.execute(owner.kysely);
+      const r = await getTaskDetail(product, { ...base(), taskId });
+      const failure = (r as { task: { latestFailure: { category: string } | null } }).task.latestFailure;
+      expect(failure?.category).toBe('provider_error');
+    });
+  });
 });
