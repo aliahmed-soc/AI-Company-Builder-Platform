@@ -153,6 +153,71 @@ that removal, which is why it is corrected rather than quietly left.
   dedupes per **run**, so two successful attempts of one task consume twice. Canon assigns that dedupe to the charging
   **views**, which are P6-009's — recorded here so that owner sees it rather than rediscovering it.
 
+## 4.1 Post-implementation corrections (2026-07-29) — found only when a real database first ran these suites
+
+Recorded because each was a guard that existed and did not work, and the reasoning is not re-derivable from the
+diff alone.
+
+### D1 — `ON CONFLICT` must target the reservation index by INFERENCE, never by name
+
+`credit_transactions_reservation_key_uq` is a **partial** unique index (`WHERE kind = 'reservation' AND
+idempotency_key IS NOT NULL`). `CreditRepository.insert` targeted it with `ON CONFLICT ON CONSTRAINT <name>`, which
+PostgreSQL accepts only for a real table CONSTRAINT — so **every reservation raised `42704`**, on the money path, on
+every call.
+
+**Rejected: convert it to a named unique constraint.** PostgreSQL unique *constraints* cannot be partial — there is
+no `WHERE` on `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE`. The predicate is load-bearing: BILL-002 scopes "one spend
+per key" to **reservations**, because the consumption and release that follow legitimately share a run (§G5). Dropping
+the `WHERE` to satisfy `ON CONFLICT` would not fix the bug — it would silently change the rule to "one entry per key
+across all kinds". The trade-off is therefore not a preference between two valid options; only inference preserves
+the semantics.
+
+**Chosen: inference by column list plus predicate**, spelled out at the call site rather than hidden behind a name.
+The predicate must match the index's own `WHERE` for PostgreSQL to infer it, so if the migration's predicate ever
+changes and the call site does not, inference fails **loudly** at the next insert instead of quietly widening what
+gets deduplicated.
+
+Why no test caught it: every idempotency test short-circuits at `findReservationForRun`, which returns
+`run_already_reserved` before the INSERT is attempted. The partial index — the actual BILL-002 guard — was unreachable.
+Two *different* runs sharing one key is the only shape that reaches `ON CONFLICT`, and that is now the test.
+`tools/check-conflict-targets.mjs` makes the class statically impossible to reintroduce.
+
+### D9 — a consumption moves NO credits, and `credits <= 0` rather than `= 0`
+
+`isCreditGrantKind` covers only `grant` and `release`, so `consumption` carried a spend's negative sign and settling a
+succeeded run debited the reservation's amount a second time: `grant +3, reservation -1, consumption -1` → balance 1.
+**Every successful run cost two credits** against canon's *"one manual task run = one credit"*, while a failed run
+correctly cost none — succeeding was the expensive outcome. One passing test (`a SUCCEEDED run consumes`) asserted the
+double charge as expected; the *failing* one (`SETTLING TWICE`) was right.
+
+The reservation is the debit — that is what reserving *is* — so settlement only records that the hold became a real
+spend. `settlementMagnitude` returns 0 for a consumption and the full reserved magnitude for a release.
+
+**Rejected: reservation 0, consumption −1.** That reopens AT-025: if reservations do not decrement, the derived
+balance no longer reflects open holds and two concurrent runs can both see the same last credit. The whole ticket
+exists to close that.
+
+**Rejected: constrain `consumption` to exactly `= 0`.** It is the tighter guard and was considered on that basis, but
+**D-02 is open** and canon requires this ledger to support flat, usage and hybrid pricing *"without schema change"*. A
+metered consumption debiting a real overage must stay expressible, and `= 0` would force a migration to allow it. The
+constraint is therefore `<= 0`; the MVP's exact zero is pinned in `settlementMagnitude` and its tests, which is where
+a pricing rule belongs, rather than in the schema. **Owner-accepted 2026-07-29** — do not reopen without D-02 moving.
+
+### D3 — the trigger function's default PUBLIC EXECUTE
+
+`CREATE FUNCTION` grants EXECUTE to PUBLIC implicitly. `acbp_check_credit_settlement` is deliberately **not**
+SECURITY DEFINER, so this escalates nothing, but it was still callable cluster-wide and the three bootstrap functions
+are explicitly revoked for the same reason. Now revoked, and asserted **per function** in the catalog suites so the
+next missing revoke fails by name.
+
+### D2 — the closed allowlist is about SECURITY DEFINER, not about the `acbp_` prefix
+
+Both catalog suites compared *every* `public.acbp_%` function against the three bootstraps, so a plain trigger
+function read as "the SECURITY DEFINER allowlist was breached" when nothing had been escalated — a false alarm on a
+real security assertion, which is the kind that gets suppressed rather than investigated. Split: the DEFINER set stays
+exactly three; the non-definer set is named explicitly so a new one must still be admitted on purpose; ownership is
+asserted across all of them.
+
 ## 5. Slice plan
 
 1. CDR-058 + branch + draft PR.
