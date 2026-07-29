@@ -46,6 +46,15 @@ export type RequestRevisionResult =
   | { readonly status: 'artifact_not_found' }
   /** The task whose run produced this artifact is gone. There is nothing to re-execute (J-13's "re-execution"). */
   | { readonly status: 'source_task_unavailable' }
+  /**
+   * This key already requested a revision of a DIFFERENT artifact (review pass 2).
+   *
+   * Idempotency means "this exact request already happened", NOT "some request with this key already happened".
+   * Returning the earlier revision would tell the founder their second document was revised when nothing of the sort
+   * occurred, and they would wait for a version that is never coming. An ordinary client mistake deserves a typed
+   * refusal, which is how P5-014 answered the same shape on reservation keys.
+   */
+  | { readonly status: 'key_reused_for_different_artifact' }
   | { readonly status: 'invalid'; readonly reason: RevisionRefusal };
 
 function opts(o: RequestRevisionOptions): { correlationId?: string; logger?: Logger } {
@@ -94,7 +103,13 @@ export async function requestRevision(client: DatabaseClient, params: RequestRev
       // IDEMPOTENCE FIRST (CDR-064 G3). Checked BEFORE the task is created, so a retry cannot leave a second orphan
       // task behind even though the revision row would have been refused. The ON CONFLICT below is the race backstop.
       const already = await revisions.findByKey(scope.tenant.companyId, key.key);
-      if (already !== undefined) return { status: 'ok', revision: toDTO(already), newTaskId: already.new_task_id, deduplicated: true };
+      if (already !== undefined) {
+        // SAME KEY, DIFFERENT ARTIFACT is a client mistake, not an idempotent retry (review pass 2). Handing back the
+        // earlier revision would report success for a document that was never revised, and the founder would wait for
+        // a version that is never coming.
+        if (already.original_artifact_id !== params.artifactId) return { status: 'key_reused_for_different_artifact' };
+        return { status: 'ok', revision: toDTO(already), newTaskId: already.new_task_id, deduplicated: true };
+      }
 
       // RLS-confined: a foreign artifact reads as absent rather than as a refusal that confirms it exists.
       const artifact = await new ArtifactRepository(scope.db).findById(params.artifactId);
@@ -138,6 +153,13 @@ export async function requestRevision(client: DatabaseClient, params: RequestRev
         // request stands and the caller gets it. Throwing would be wrong — the caller's intent was satisfied.
         const winner = await revisions.findByKey(scope.tenant.companyId, key.key);
         if (winner === undefined) throw new Error('revision request was refused but no prior request exists — invariant violated');
+        if (winner.original_artifact_id !== params.artifactId) {
+          // Same key, different artifact, decided by a RACE rather than by the pre-check above. Throwing is
+          // deliberate: it rolls the transaction back, which is the only way to un-create the task we just made. A
+          // typed refusal returned from here would commit that task as an orphan — work nobody asked for. The caller
+          // retries and gets `key_reused_for_different_artifact` from the pre-check, which is the honest answer.
+          throw new Error('revision idempotency key raced against a request for a different artifact — rolled back');
+        }
         return { status: 'ok', revision: toDTO(winner), newTaskId: winner.new_task_id, deduplicated: true };
       }
 

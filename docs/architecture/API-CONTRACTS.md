@@ -53,6 +53,12 @@ Every state-changing request carries / resolves, where applicable:
 <!-- Delivered: create + list = P2-006 (member); filtered list + get + edit(versioned supersede) + delete(soft) = P2-010 (edit/delete owner-only). "Edit version-guarded" = the current-pointer guard (only a not-yet-superseded/deleted row is editable). Deleted items are omitted from list/get. See MEMORY.md, CDR-024/CDR-025. -->
 
 | Documents | list, get (+versions), download, rate usefulness, request revision | revision guidance | documents with provenance (worker, inputs, model version); revision lineage | Member (read), owner (revise) | Revision request idempotent | provenance complete | TASK-005, J-12/J-13 |
+<!-- IMPLEMENTED in part (ACBP-P5-012; CDR-064; J-13): **request revision** and **revision lineage** are built.
+     'Revision request idempotent' is a real named UNIQUE constraint on (company_id, idempotency_key), and 'owner
+     (revise)' is the artifact:revise action; the lineage READ rides task:read, matching 'Member (read)'.
+     A revision creates a NEW LINKED TASK - read J-13 in MASTER-PRD-v1.md, not the AI-AND-WORKER summary, which
+     says 'new runs' and is what led this ticket's first schema astray.
+     STILL OPEN on this row: list / get(+versions) / download HTTP surfaces, and rate usefulness (J-12). -->
 | Usage | get company usage, get account rollup, get ledger | period filters | usage views separating technical usage / provider cost / billable / entitlement / credits (ADR-013 §5) | Owner; account rollup = account owner | n/a (read) | — | USAGE-001/002, BILL-002 |
 | Billing | get subscription, portal handoff link, purchase credits, cancel | — | entitlement view, portal URL | Account owner | Purchase idempotent via provider | billing audits; webhook signature-verified | BILL-001..006 (Phase 7) |
 | Activity | feed (paged, filtered), SSE stream | filters | events with proposed-vs-executed marking (ACT-003) | Company member | n/a (read) | — | ACT-001..005, DEC-001 |

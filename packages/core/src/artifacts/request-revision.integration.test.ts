@@ -166,6 +166,22 @@ describe.skipIf(!hasTestDatabase)('requestRevision (real PostgreSQL, restricted 
     expect((await auditRows()).filter((e) => e.name === 'artifact.revision_requested')).toHaveLength(1);
   });
 
+  test('REUSING one key for a DIFFERENT artifact is REFUSED, not silently answered with the other one', async () => {
+    // Review pass 2. Idempotency means "this exact request already happened" - it does NOT mean "any request with
+    // this key already happened". Returning the first revision here would tell the founder their SECOND document was
+    // revised when nothing of the sort occurred, and they would wait for a version that is never coming. P5-014 hit
+    // the same shape with reservation keys and answered it with a typed refusal; so does this.
+    const first = await seedArtifact((await runningRun()).runId);
+    const second = await seedArtifact((await runningRun()).runId);
+    expect((await requestRevision(product, { ...base(), artifactId: first, guidance: 'Shorten it.', idempotencyKey: 'shared' })).status).toBe('ok');
+
+    expect(await requestRevision(product, { ...base(), artifactId: second, guidance: 'Shorten it.', idempotencyKey: 'shared' })).toEqual({
+      status: 'key_reused_for_different_artifact',
+    });
+    expect(await revisionRows()).toHaveLength(1);
+    expect(await taskRows()).toHaveLength(3); // the two sources and ONE revision task - no task minted for the refusal
+  });
+
   test('a DIFFERENT key is a DIFFERENT request - two revisions of one artifact are both real', async () => {
     const { runId } = await runningRun();
     const artifact = await seedArtifact(runId);
