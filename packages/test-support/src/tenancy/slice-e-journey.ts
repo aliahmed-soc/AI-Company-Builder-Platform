@@ -385,7 +385,7 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   }
   // …and the NEW artifact's lineage names the original as its ancestor, walked rather than stored (CDR-064 G1).
   const revisedLineage = await ops.readArtifactLineage(product, { ...ids, artifactId: revisedArtifact.id });
-  if (revisedLineage.status !== 'ok' || revisedLineage.revisedFrom == null) return bail('the revised document knows what it revised', 'J-13', `expected an ancestor on the revised artifact, got ${String(revisedLineage.revisedFrom)}`);
+  if (revisedLineage.status !== 'ok' || revisedLineage.revisedFrom == null) return bail('the revised document knows what it revised', 'J-13', `expected an ancestor on the revised artifact, got none (lineage read status: ${revisedLineage.status})`);
   if (revisedLineage.revisedFrom.originalArtifactId !== artifact.id) return bail('the revised document knows what it revised', 'J-13', `ancestor points at ${revisedLineage.revisedFrom.originalArtifactId}, expected ${artifact.id}`);
   record('the revision re-executes and BOTH versions are retained', 'TASK-005 / J-13', true, `original ${artifact.id} ("${artifact.title}") and revised ${revisedArtifact.id} ("${revisedArtifact.title}") both readable; the revised document's ancestor is derived by walking run→task→request, never stored`);
 

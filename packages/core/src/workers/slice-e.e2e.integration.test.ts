@@ -8,7 +8,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import type { DatabaseClient } from '@acbp/database';
 import { toModelId } from '@acbp/contracts';
-import type { FetchedSource } from '@acbp/contracts';
 import { FakeModelProvider, InMemoryObjectStorage, InMemoryResearchFetcher, type FakeProviderBehavior } from '@acbp/adapters';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, runSliceEJourney, type SliceEOps, type SliceEFakeBehavior, type SliceESource, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
@@ -82,7 +81,9 @@ describe.skipIf(!hasTestDatabase)('Slice E — safe internal execution E2E (real
   /** A fresh in-memory fetcher seeded with the journey's sources — the read-only research port (CDR-061 §3). */
   const makeFetcher = (question: string, sources: readonly SliceESource[]) => {
     const fetcher = new InMemoryResearchFetcher();
-    fetcher.seed(question, sources as readonly FetchedSource[]);
+    // No cast: `SliceESource` is structurally `FetchedSource`, so the compiler accepts it directly. An assertion here
+    // would be the thing that stopped mattering if the two ever diverged.
+    fetcher.seed(question, sources);
     return fetcher;
   };
   const makeStorage = () => new InMemoryObjectStorage();
