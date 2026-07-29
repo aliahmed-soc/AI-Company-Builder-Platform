@@ -165,11 +165,25 @@ Retention default: activity-projected events with company data; audit-relevant e
      {run_id, attempt}, `task.failed` {run_id, attempt, failure_category, retry_state} (schema v2), `task.cancelled` {run_id, phase}. The
      catalog's `phase (queued/running-safe-stop)` matches `classifyCancellation` exactly, which is a strong independent
      confirmation that the two-operation split is canon's own reading and not an invention.
-     `task.completed` is DELIBERATELY NOT registered: this row requires `artifact_refs[]` ("no artifactless
+     `task.completed` was DELIBERATELY NOT registered here: this row requires `artifact_refs[]` ("no artifactless
      completion", TASK-005), and a RUN succeeding is not the same fact as a TASK completing — the task completes when
-     its artifact is persisted, which belongs to the ticket that owns artifacts.
-     `retry_state` on `task.failed` ARRIVED at schema version 2 in ACBP-P5-013, sourced from `describeRunFailure`.
-etry_state on 	ask.failed ARRIVED at schema version 2 in ACBP-P5-013, from describeRunFailure.
+     its artifact is persisted, which belongs to the ticket that owns artifacts. **ACBP-P5-011 is that ticket and has
+     now registered it** — see the note under the `task.completed` row below. -->
+<!-- IMPLEMENTED (ACBP-P5-011; CDR-060; TASK-005): `task.completed` is registered, and the requirement it carries is
+     enforced in code rather than asserted in prose. `validateCompletionEvidence` admits exactly the two shapes this
+     row's wording permits — one or more artifact refs, OR an explicit no-artifact rationale — and has no third
+     member, so a completion that produced nothing and explained nothing cannot be constructed. An EMPTY artifact
+     list is a refusal, not a synonym for "no artifacts"; that single line is what stops the requirement dying on
+     first contact with a worker that produced nothing.
+     THE PAYLOAD CARRIES `artifact_count` + `no_artifact_rationale`, NOT A LITERAL `artifact_refs[]`, and the
+     difference is deliberate rather than an oversight: audit metadata is a flat map of SCALARS by design (line 18
+     of this file — references and digests only), and a joined string would be an array in disguise. The refs are not
+     lost — every artifact row records the run that produced it and `run_id` is in this payload, so the exact set is
+     one join away and cannot drift from the artifacts table, the same reasoning that kept `cancelled_by` and the
+     tenant ids out of their payloads. What the requirement needs from the audit row is that an artifactless
+     completion be VISIBLE, and `artifact_count: 0` with `no_artifact_rationale: true` says exactly that; the pair
+     `0`/`false` is unreachable. The rationale TEXT is excluded as unbounded caller prose, like `task.deleted`'s.
+     `retry_state` on `task.failed` ARRIVED at schema version 2 in ACBP-P5-013, sourced from `describeRunFailure`,
      rather than being guessed at now. `cancelled_by` is likewise deferred: the actor already reaches the audit row
      through `AuditWriteContext`, and duplicating an identity into the payload would put it in two places that can
      disagree. -->

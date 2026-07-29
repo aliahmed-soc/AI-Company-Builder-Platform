@@ -102,6 +102,9 @@ describe('event-name registry (deny unregistered)', () => {
       'task.started',
       'task.failed',
       'task.cancelled',
+      // Task completion (ACBP-P5-011; TASK-005). Deferred by P5-002 to "the ticket that owns artifacts" and
+      // registered there — the row that makes "no artifactless completion" a fact in the record, not a claim.
+      'task.completed',
       // Tool dispatch (ACBP-P5-003b; CDR-054; TOOL-002 "100% of tool calls have records"). `tool.call_started` is
       // deliberately NOT here — nothing executes tools yet, so registering it would declare an unemittable event.
       'tool.call_requested',

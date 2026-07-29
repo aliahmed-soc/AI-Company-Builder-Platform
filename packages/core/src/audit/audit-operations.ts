@@ -55,6 +55,7 @@ import {
   creditSettled,
   workerRunStarted,
   workerRunFinished,
+  taskCompleted,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -131,6 +132,9 @@ export const AUDITED_OPERATIONS = {
   // The credit ledger (ACBP-P5-014; CDR-058). Reserve and settle - the two durable money facts.
   'credit.reserve': 'credit.reserved',
   'credit.settle': 'credit.settled',
+  // Task completion (ACBP-P5-011; TASK-005). Distinct from `run.*`: a succeeded RUN is not a completed TASK, and this
+  // is the operation that asserts the second fact once an artifact exists to justify it.
+  'task.complete': 'task.completed',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -145,7 +149,7 @@ export type InterviewAuditedOperation = 'interview.start';
 export type MemoryAuditedOperation = 'memory.create' | 'memory.supersede' | 'memory.delete';
 export type UnderstandingAuditedOperation = 'understanding.generate' | 'understanding.review-decision' | 'understanding.confirm' | 'understanding.correct';
 export type ContextAuditedOperation = 'context.flag-conflict';
-export type TaskAuditedOperation = 'task.plan' | 'task.repeat' | 'task.delete';
+export type TaskAuditedOperation = 'task.plan' | 'task.repeat' | 'task.delete' | 'task.complete';
 export type StrategyAuditedOperation = 'strategy.generate' | 'strategy.select';
 export type DecisionAuditedOperation = 'decision.record';
 export type PlanningAuditedOperation = 'roadmap.generate' | 'roadmap.edit' | 'planning.run_record';
@@ -162,7 +166,7 @@ export const INTERVIEW_AUDITED_OPERATION_IDS: readonly InterviewAuditedOperation
 export const MEMORY_AUDITED_OPERATION_IDS: readonly MemoryAuditedOperation[] = ['memory.create', 'memory.supersede', 'memory.delete'];
 export const UNDERSTANDING_AUDITED_OPERATION_IDS: readonly UnderstandingAuditedOperation[] = ['understanding.generate', 'understanding.review-decision', 'understanding.confirm', 'understanding.correct'];
 export const CONTEXT_AUDITED_OPERATION_IDS: readonly ContextAuditedOperation[] = ['context.flag-conflict'];
-export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan', 'task.repeat', 'task.delete'];
+export const TASK_AUDITED_OPERATION_IDS: readonly TaskAuditedOperation[] = ['task.plan', 'task.repeat', 'task.delete', 'task.complete'];
 export const STRATEGY_AUDITED_OPERATION_IDS: readonly StrategyAuditedOperation[] = ['strategy.generate', 'strategy.select'];
 export const DECISION_AUDITED_OPERATION_IDS: readonly DecisionAuditedOperation[] = ['decision.record'];
 export const PLANNING_AUDITED_OPERATION_IDS: readonly PlanningAuditedOperation[] = ['roadmap.generate', 'roadmap.edit', 'planning.run_record'];
@@ -289,6 +293,8 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => workerRunFinished({ workerRunId: subjectId, workerId: 'research', workerVersion: 1, outcome: 'succeeded' });
     case 'worker.run_fail':
       return (subjectId) => workerRunFinished({ workerRunId: subjectId, workerId: 'research', workerVersion: 1, outcome: 'failed', failureCategory: 'policy_blocked', haltReason: 'budget_exhausted' });
+    case 'task.complete':
+      return (subjectId) => taskCompleted({ taskId: subjectId, runId: subjectId, artifactCount: 1, hasNoArtifactRationale: false });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

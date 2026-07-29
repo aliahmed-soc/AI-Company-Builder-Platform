@@ -957,6 +957,33 @@ export interface WorkerRunsTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 /**
+ * Artifacts (ACBP-P5-011; CDR-060; TASK-005; NFR-014). THE METADATA ROW IS THE ARTIFACT: an object no row points at
+ * is unreachable garbage, and a row pointing at an object that was never written is the hollow success TASK-005
+ * forbids. Company-owned, dual-keyed FORCE RLS.
+ *
+ * EVERY COLUMN IS `never` ON UPDATE, because the table has no UPDATE grant at all — not even column-level. The row
+ * records which run, worker and model produced a document, and that is what P5-012's revision workflow reads to know
+ * what it is revising. A superseded artifact is a NEW row.
+ */
+export interface ArtifactsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** DERIVED from the company prefix + the content hash, never caller-supplied (CDR-060 G2). */
+  object_key: ColumnType<string, string, never>;
+  content_hash: ColumnType<string, string, never>;
+  format: ColumnType<string, string, never>;
+  size_bytes: ColumnType<number, number, never>;
+  /** PROVENANCE, all NOT NULL (CDR-060 G6). "Unknown provenance" is not a state this table can represent. */
+  run_id: ColumnType<string, string, never>;
+  worker_id: ColumnType<string, string, never>;
+  worker_version: ColumnType<number, number, never>;
+  model_version: ColumnType<string, string, never>;
+  title: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+}
+
+/**
  * Credit transactions (ACBP-P5-014; CDR-058; BILL-002; invariant 10). APPEND-ONLY: every field is `never` on update,
  * because the table has no UPDATE grant at all. ACCOUNT-owned with COMPANY attribution — the balance is per account
  * (ADR-003) while each spend records which company burned it, so RLS keys on `account_id` alone.
@@ -1021,6 +1048,7 @@ export interface DatabaseSchema {
   worker_definitions: WorkerDefinitionsTable;
   company_worker_states: CompanyWorkerStatesTable;
   worker_runs: WorkerRunsTable;
+  artifacts: ArtifactsTable;
   credit_transactions: CreditTransactionsTable;
 }
 
@@ -1112,5 +1140,7 @@ export type ToolCallRow = Selectable<ToolCallsTable>;
 export type WorkerDefinitionRow = Selectable<WorkerDefinitionsTable>;
 export type CompanyWorkerStateRow = Selectable<CompanyWorkerStatesTable>;
 export type WorkerRunRow = Selectable<WorkerRunsTable>;
+export type ArtifactRow = Selectable<ArtifactsTable>;
+export type NewArtifact = Insertable<ArtifactsTable>;
 export type CreditTransactionRow = Selectable<CreditTransactionsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;
