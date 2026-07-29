@@ -11,6 +11,13 @@ Status: Proposed. Governs WORK-001…006, TOOL-001…003, DISC/UNDER/STRAT gener
 - **Structured-output validation:** every model response validates against the task's declared schema; invalid output → bounded re-ask → normalized failure (never partial silent acceptance).
 - **Output validation (domain):** post-schema checks — e.g., STRAT-001 similarity check, citation presence for research (WORK-002), field-completeness for the 16-field option standard (STRAT-002).
 - **Human feedback / revision:** usefulness ratings (J-12) stored against artifact + worker version; revisions (J-13) create lineage-linked new runs.
+  > **Read J-13 itself, not this summary (noted 2026-07-29, ACBP-P5-012).** "New runs" is loose. `MASTER-PRD-v1.md`
+  > J-13 says: *"Flow: **new linked task created** (lineage to original) → re-execution → both versions retained."*
+  > A revision creates a new **task**; the run follows when that task is queued. The distinction is load-bearing —
+  > `running→completed` is TERMINAL in `WORKFLOW-STATE-MACHINES` §4, so the original task cannot be re-opened, and at
+  > request time no run exists yet to reference. Taking this line at face value led P5-012 to a schema that could not
+  > represent its own workflow. Per `CLAUDE.md`'s canonical source priority, PRD acceptance criteria (#4) outrank
+  > architecture documents (#5). **When a doc summarises a journey, go and read the journey.**
 
 ## 2. Worker definitions (ADR-012)
 
