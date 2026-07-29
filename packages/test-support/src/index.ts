@@ -19,3 +19,6 @@ export { runSliceCJourney } from './tenancy/slice-c-journey.js';
 export type { SliceCOps, SliceCJourneyDeps, SliceCFakeBehavior, SliceCGateway, SliceCValidator, FailingAuditWriter } from './tenancy/slice-c-journey.js';
 export { runSliceDJourney } from './tenancy/slice-d-journey.js';
 export type { SliceDOps, SliceDJourneyDeps, SliceDFakeBehavior, SliceDGateway, SliceDValidator, SliceDBoard, SliceDDetail } from './tenancy/slice-d-journey.js';
+// ACBP-P5-015 / CDR-065 — the Slice E (safe internal execution) journey, shared by `pnpm demo:slice-e` and the CI suite.
+export { runSliceEJourney } from './tenancy/slice-e-journey.js';
+export type { SliceEOps, SliceEJourneyDeps, SliceEFakeBehavior, SliceEGateway, SliceEArtifact, SliceELineageArtifact, SliceESource } from './tenancy/slice-e-journey.js';

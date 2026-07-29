@@ -42,6 +42,26 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P5-015 Slice E integration: safe internal execution — DONE** (CDR-065; M5 milestone exit), merged on
+  local verification. **This closes Phase 5.** `runSliceEJourney` in `@acbp/test-support` + `pnpm demo:slice-e` +
+  a real-PostgreSQL CI suite, all driving one implementation: preflight → queue → run → research document →
+  provenance → completion → settlement → ledger → audit → revision → **re-execution** → 4 negatives. 17 steps,
+  both the suite and the demo assert the count so a truncated run cannot read as a pass. **No production code
+  changed; no migration; no new contract.**
+  **Three limitations are recorded in the CDR and printed by the demo, because seventeen green steps invite
+  over-reading:** (1) the credit is reserved *by the journey* — nothing wires reservation to the queue
+  transition, and `task-management.ts:10` says the execution transitions' effects belong to later tickets;
+  (2) `planned→queued` and `queued→running` are set on the owner connection because no use case implements
+  them — `startRun` advances the *run*, not the *task*; (3) `RunResearchParams` has no guidance field, so a
+  revision re-runs the same question and step 13 proves retention, **not** that revisions are steered.
+  **A finding worth carrying forward:** `ACTIVITY_TYPES` is only the four `company.*` events, so **no execution
+  event reaches the founder-facing activity feed at all**. The first draft of step 10 claimed the feed recorded
+  the run and passed — on the `company.created` event left by seeding. The step now asserts the *absence*, so
+  widening the taxonomy turns it red instead of quietly restoring the overstatement. P6-008 owns the fix.
+  Guard demonstrated, not assumed: feeding the fabricated-citation step a valid document turns it red
+  (`expected uncertified, got ok`).
+  Locally verified, NOT CI-proven.
+
 - **ACBP-P5-012 revision workflow — DONE** (CDR-064; J-13; TASK-005 lineage), merged on local verification.
   Migration 0044 `artifact_revisions` + `requestRevision` + `readArtifactLineage`. **A revision creates a NEW LINKED
   TASK, not a run on the finished one** — `MASTER-PRD-v1.md` J-13 says so outright, `running→completed` is terminal,
