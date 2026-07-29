@@ -176,7 +176,9 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   //
   // THE PROOF IS CONDITIONAL. It holds only while all of these do — CDR-066 §0.2 records why each matters:
   //   INV-1  the two `policy` checks above stay ABOVE this one, and the `unavailable` one keeps its `!waived` guard;
-  //   INV-2  `policy` stays ONE const from ONE read of `facts.policy` (a second read can be made to disagree);
+  //   INV-2  `policy` stays ONE const from ONE read of `facts.policy` (a second read can be made to disagree) —
+  //          DIRECTLY TESTED by the read-counting getter in `dispatch.test.ts`, which fails on a second read even
+  //          when that read changes no decision at all;
   //   INV-3  `waived` keeps `policy === 'unavailable'` as a conjunct — that conjunct IS the bypass fix;
   //   INV-4  `gate()` stays total onto the three kinds with `unavailable` as the fallback.
   // Breaking any of them silently reopens the bypass. If one has to change, restore the `untrusted_context` branch.

@@ -156,12 +156,21 @@ edit that breaks one silently reopens the bypass closed above.
 | **INV-4** | `gate()` stays total onto the three kinds, with `'unavailable'` as the fallback | A fourth return value breaks the exhaustive case split |
 | **INV-5** | *(not a constraint — a reassurance)* the proof does **not** depend on the contents of `CLASSES_THAT_PROCEED_WITHOUT_A_GATE` | Adding classes to the waiver set cannot break this claim; verified across all four risk classes |
 
-**Test coverage of these invariants, honestly stated.** INV-3 is pinned by the test *"an ENGINE-ALLOWED informational
-call still needs an approval answer"* — it fails the moment the conjunct is removed. INV-1 and INV-4 are exercised
-indirectly by the existing ordering and junk-input tests. **INV-2 is not covered by any test**, because it is a
-property of the code's *shape* rather than its behaviour: a second read only diverges under a hostile `facts` object,
-which no production caller constructs. It is recorded here as a review checkpoint rather than left to be
-rediscovered.
+**Test coverage of these invariants.** INV-3 is pinned by *"an ENGINE-ALLOWED informational call still needs an
+approval answer"* — it fails the moment the conjunct is removed. INV-1 is exercised by the ordering tests.
+
+> **CORRECTION (ACBP-P6-002).** This section previously said *"INV-2 is not covered by any test, because it is a
+> property of the code's shape rather than its behaviour."* **That was wrong.** Read COUNT is observable from
+> outside: a getter that counts reads asserts the single-read property directly. INV-2 and INV-4 now have explicit
+> tests in `dispatch.test.ts`.
+>
+> **And the first version of the INV-2 test was vacuous** — found by mutation, not by review. It used an
+> `informational` class with no engine, where `waived` is true, so `!waived` short-circuits *before* any second read
+> can happen; a deliberately re-reading implementation passed it. The fixture now uses a **non-waivable** class with
+> policy allowing and approval absent, which is the state that actually reaches the approval line. The mutation that
+> proves it: adding a second `gate(facts.policy)` that changes **no** decision fails the test with
+> `expected 2 to be 1`. A behaviour-preserving mutation being caught is the whole point — that is precisely the drift
+> INV-2 exists to prevent, and nothing about the decisions would have revealed it.
 
 ---
 

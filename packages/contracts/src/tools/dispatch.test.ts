@@ -169,6 +169,59 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     expect(decideDispatch(clear({ ...noEngines, riskClass: 'informational' }))).toEqual({ kind: 'authorized', riskClass: 'informational' });
   });
 
+  // ── INV-2: the SINGLE-READ property (CDR-066 §0.2) ────────────────────────────────────────────────────
+  //
+  // CDR-066 recorded INV-2 as "not covered by any test, because it is a property of the code's SHAPE rather than
+  // its behaviour". That was wrong, and this is the correction: read COUNT is observable from the outside, so the
+  // property is behavioural after all. A getter that counts reads asserts it directly.
+  //
+  // Why it matters: the unreachability proof for `approval_required` depends on `policy` being one const from ONE
+  // read. If anyone re-evaluates `gate(facts.policy)` near the approval check, a lazy or hostile `facts` object can
+  // make the two reads disagree, and the branch that was proven unreachable becomes reachable again.
+  test('INV-2: `facts.policy` is read EXACTLY once, so two reads can never disagree', () => {
+    // THE FIXTURE HAS TO REACH THE APPROVAL LINE, and the first version of this test did not — found by mutation.
+    // With an `informational` class and no engine, `waived` is true, so `!waived` short-circuits before any second
+    // read could happen and a re-reading implementation passed the test unnoticed. A NON-waivable class with policy
+    // ALLOWING and approval ABSENT is the state that actually gets there.
+    let reads = 0;
+    const facts = {
+      ...clear({ riskClass: 'external_reversible', approval: { kind: 'unavailable' } }),
+      get policy() {
+        reads += 1;
+        // Flips after the first read: a second read would see a DIFFERENT answer, which is precisely the disagreement
+        // the unreachability proof cannot survive.
+        return reads === 1 ? ({ kind: 'allow' } as const) : ({ kind: 'unavailable' } as const);
+      },
+    };
+    const decision = decideDispatch(facts);
+    expect(reads).toBe(1);
+    // …and the decision is the one the single read implies.
+    expect(decision).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
+  test('INV-2: `facts.untrustedContext` is read EXACTLY once too — `waived` depends on it', () => {
+    let reads = 0;
+    const facts = {
+      ...clear({ ...noEngines, riskClass: 'informational' }),
+      get untrustedContext() {
+        reads += 1;
+        return reads !== 1;
+      },
+    };
+    decideDispatch(facts);
+    expect(reads).toBe(1);
+  });
+
+  test('INV-4: `gate()` is total onto the three kinds — no fourth value can escape it', () => {
+    // The exhaustive case split in the proof needs this. Anything unrecognised must land on `unavailable`, which is
+    // the refusing value; a fourth escape hatch would break the split and could carry an unchecked answer through.
+    for (const hostile of [{ kind: 'ALLOW' }, { kind: new String('allow') }, { kind: 4 }, { kind: null }, {}, null, undefined, 'allow']) {
+      const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: hostile as never, approval: { kind: 'allow' } }));
+      // Not `allow`, therefore treated as unavailable → refused for a non-waivable class.
+      expect(d).toMatchObject({ kind: 'denied', reason: 'policy_unavailable' });
+    }
+  });
+
   test('EVERY class above informational is refused when no engine has answered', () => {
     for (const riskClass of RISK_CLASSES.filter((c) => c !== 'informational')) {
       const d = decideDispatch(clear({ ...noEngines, riskClass }));
