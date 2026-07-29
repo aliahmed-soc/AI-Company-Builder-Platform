@@ -1078,6 +1078,55 @@ export interface DatabaseSchema {
   artifacts: ArtifactsTable;
   artifact_revisions: ArtifactRevisionsTable;
   credit_transactions: CreditTransactionsTable;
+  policies: PoliciesTable;
+  policy_evaluations: PolicyEvaluationsTable;
+}
+
+/**
+ * A versioned company policy (ACBP-P6-001b; CDR-066 §5-G11; ADR-010).
+ *
+ * `status` and `superseded_at` are the ONLY updatable columns, matching the column-scoped UPDATE grant — canon's
+ * lifecycle is `active→superseded` and nothing else about a version may change, because an evaluation cites it
+ * forever. Everything else is `never` on update for the same reason.
+ */
+export interface PoliciesTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  version: ColumnType<number, number, never>;
+  /** One of `POLICY_DECISIONS`. Mirrored by a CHECK; a test asserts the two sets agree. */
+  baseline: ColumnType<string, string, never>;
+  /** The contract's `PolicyRule[]`. Validation lives in @acbp/contracts, not in CHECK constraints. */
+  rules: ColumnType<unknown, string, never>;
+  status: ColumnType<string, string | undefined, string>;
+  created_by_user_id: ColumnType<string, string, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  superseded_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+}
+
+/**
+ * An append-only record of one policy evaluation (ACBP-P6-001b; CDR-066 §5-G12; POL-006).
+ *
+ * EVERY column is `never` on update, matching a grant that carries no UPDATE at all. These rows are the evidence of
+ * what the platform allowed, and evidence that can be edited afterwards is not evidence.
+ */
+export interface PolicyEvaluationsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  policy_id: ColumnType<string, string, never>;
+  /** Pinned to `policy_id` by a composite FK, so this copy cannot drift from the policy it names. */
+  policy_version: ColumnType<number, number, never>;
+  evaluation_point: ColumnType<string, string, never>;
+  decision: ColumnType<string, string, never>;
+  escalate: ColumnType<boolean, boolean | undefined, never>;
+  fired_rule_ids: ColumnType<unknown, string | undefined, never>;
+  unevaluable_rule_ids: ColumnType<unknown, string | undefined, never>;
+  untrusted_rule_ids: ColumnType<unknown, string | undefined, never>;
+  /** The instant PASSED TO the evaluator, not when the row was written — that is `created_at`. */
+  evaluated_at: ColumnType<Date, Date | string, never>;
+  tool_call_id: ColumnType<string | null, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
 // Repository-facing row shapes.
@@ -1173,4 +1222,8 @@ export type ArtifactRevisionRow = Selectable<ArtifactRevisionsTable>;
 export type NewArtifactRevision = Insertable<ArtifactRevisionsTable>;
 export type NewArtifact = Insertable<ArtifactsTable>;
 export type CreditTransactionRow = Selectable<CreditTransactionsTable>;
+export type PolicyRow = Selectable<PoliciesTable>;
+export type NewPolicy = Insertable<PoliciesTable>;
+export type PolicyEvaluationRow = Selectable<PolicyEvaluationsTable>;
+export type NewPolicyEvaluation = Insertable<PolicyEvaluationsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

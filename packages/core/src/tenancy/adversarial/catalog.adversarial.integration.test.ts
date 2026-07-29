@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'artifact_revisions', 'credit_transactions'] as const;
+const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'policy_evaluations', 'policies', 'artifact_revisions', 'credit_transactions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -120,6 +120,13 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // the owner asked for something at a moment in time; editing it would rewrite the reason a run exists, which is
   // exactly what the lineage has to carry honestly. No UPDATE, no DELETE.
   artifact_revisions: ['INSERT', 'SELECT'],
+  // Policy engine (ACBP-P6-001b; CDR-066 §5-G11/G12). `policies` shows only INSERT/SELECT here because its ONE
+  // legal mutation — the `active→superseded` transition — is a COLUMN-level UPDATE(status, superseded_at), and
+  // column grants never appear in `role_table_grants`; it is asserted against `column_privileges` below.
+  // `policy_evaluations` has no UPDATE at all, at any level: POL-006 makes these rows the evidence of what the
+  // platform allowed, and evidence that can be edited afterwards is not evidence.
+  policies: ['INSERT', 'SELECT'],
+  policy_evaluations: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -215,6 +222,13 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     for (const forbidden of ['id', 'account_id', 'company_id', 'step', 'step_order']) {
       expect(provisioning).not.toContain(forbidden);
     }
+    // Policies (ACBP-P6-001b; CDR-066 §5-G11): ONLY the two columns that carry `active→superseded`. Everything
+    // else about a version is immutable because an evaluation cites that version forever — if `rules`, `baseline`
+    // or `version` could be edited, an audit trail could be rewritten after the fact by changing what it points at.
+    const policies = byTable.get('policies') ?? [];
+    expect([...policies].sort()).toEqual(['status', 'superseded_at']);
+    // And the evaluation records take NO update grant at all, not even column-level.
+    expect(byTable.get('policy_evaluations')).toBeUndefined();
     // Interview sessions (ACBP-P2-001): only state/started_at/updated_at are updatable; identity columns are not.
     const interview = byTable.get('interview_sessions') ?? [];
     expect(interview.length).toBeGreaterThan(0);

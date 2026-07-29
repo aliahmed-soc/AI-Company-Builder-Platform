@@ -357,7 +357,74 @@ any limit dimension, and a test asserts that it does not.
 
 ---
 
-## §5 Consequences
+## §5 P6-001b — policy storage and append-only evaluation records
+
+Amends §2's scope boundary as promised in §1. Acceptance clause: ***"forbidden beats approval"*** (POL-005).
+
+Canon fixes both shapes in `DATA-ARCHITECTURE`'s entity table:
+
+> | Policy | **C (+G defaults)** | policy_id, version | evaluated per action | **active→superseded** | V | limits config | **Permanent versions** | policy changes audited |
+> | Policy evaluation | C | evaluation_id | links tool call/approval; policy version | recorded (terminal) | **A/I** | — | ≥ audit retention | POL-006 |
+
+### G11 — `policies` is versioned and permanent, and exactly one version is active
+
+**Decision.** `policies` carries `version`, `baseline`, `rules` (jsonb) and a `status` of `active | superseded`.
+`UNIQUE (company_id, version)`; a **partial unique index on `(company_id) WHERE status = 'active'`** allows at most
+one active version per company. Grants are SELECT + INSERT + a **column-scoped `UPDATE (status, superseded_at)`**.
+**No DELETE.**
+
+**Why an explicit status rather than "highest version wins".** Deriving the active version from `max(version)` would
+be strictly append-only and tempting, but canon names the lifecycle `active→superseded`, and a derived answer cannot
+express "this company currently has no active policy" — which is a state P6-001c must be able to see and refuse on.
+The column-scoped UPDATE is the P5-001a precedent: the narrowest grant that permits the one legal transition.
+
+**Why no DELETE.** *"Permanent versions."* An evaluation record cites the version that decided it; deleting that
+version would leave the audit trail pointing at nothing, which is the one thing POL-006 exists to prevent.
+
+**The `(+G defaults)` half.** The global default is `DEFAULT_NEW_COMPANY_POLICY` (G10) — code, not a table. A
+company gets a row seeded from it at provisioning. No global policy table is created: one row per company is simpler
+than a global table plus per-company overrides, and the override-resolution logic is precisely where a policy engine
+can quietly become permissive.
+
+### G12 — `policy_evaluations` is append-only, and its version link cannot drift
+
+**Decision.** SELECT + INSERT only — **no UPDATE, no DELETE at all**, not even column-scoped. The row stores the
+decision, the escalate flag, the three rule-id lists, the evaluating instant, and **both** `policy_id` and
+`policy_version`.
+
+**Why store the version when there is already an FK.** POL-006 wants a record that stands on its own. But a
+denormalized copy that can disagree with its source is worse than no copy, so the FK is **composite over
+`(policy_id, policy_version, company_id)`** against a matching unique on `policies`. The database then refuses a row
+whose stated version is not the version of the policy it names — the copy cannot drift, by construction.
+
+**Why the evaluating instant is stored.** G3 made the clock an input so the evaluator is a function. The record must
+therefore say *which* instant was passed, or a working-hours decision cannot be re-derived from its own record.
+
+### G13 — the evaluation point is recorded, from canon's closed set
+
+**Decision.** `evaluation_point` is one of `proposed | approval_requested | pre_execution`, taken from
+`APPROVAL-AND-POLICY-ARCHITECTURE §5`'s three mandatory points. `tool_call_id` is nullable and tenant-pinned.
+
+**Why nullable.** Only point 3 has a tool call; points 1 and 2 evaluate an action that has not been dispatched. A
+non-null constraint would make the two earlier points unrecordable, and §5 marks point 1 as *not skippable*.
+
+**The approval link is DEFERRED, as sequencing not omission.** Canon says an evaluation "links tool call/approval",
+and approval records are **ACBP-P6-003**. Adding a nullable FK-less `approval_id` now would be the hole CDR-049
+refused for `jobs.company_id`. P6-003 adds the column and its tenant-pinned FK together.
+
+### G14 — "forbidden beats approval" is proven end-to-end, not just in the pure layer
+
+**Decision.** The real-PostgreSQL suite stores a policy containing **both** a `deny` rule and a `require_approval`
+rule, evaluates through the persisted rule set, and asserts the recorded decision is `deny`.
+
+**Why this is not redundant with P6-001a's unit test.** The pure combination is already proven. What this adds is
+that the *stored* representation round-trips faithfully: a rule set that loses its deny rule in serialisation, or an
+evaluation row that records the wrong winner, would pass every unit test in the package and still let a forbidden
+action through. The acceptance clause is about the system, so the proof runs against the system.
+
+---
+
+## §6 Consequences
 
 - A new pure module in `@acbp/contracts` (zero-dep, no framework, no provider) plus its unit tests.
 - No migration, no core use case, no API surface, no authz action, no audit event — all of those belong to b/c.
