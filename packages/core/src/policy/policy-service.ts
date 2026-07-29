@@ -19,6 +19,7 @@ import {
   policyChanged,
   type PolicyDecision,
   type PolicyObservations,
+  type PolicyGateAnswer,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -82,9 +83,14 @@ export type EvaluateCompanyPolicyResult =
  * longer waived once policy has answered. Mapping `require_approval` to `deny` here would refuse actions a human is
  * perfectly entitled to approve.
  */
-export function toPolicyGateKind(result: EvaluateCompanyPolicyResult): 'allow' | 'deny' {
-  if (result.status !== 'decided') return 'deny';
-  return result.decision === 'deny' ? 'deny' : 'allow';
+export function toPolicyGateAnswer(result: EvaluateCompanyPolicyResult): PolicyGateAnswer {
+  // NOT "decided" means the engine found no usable rules, or the caller was not entitled to ask. Both DENY
+  // (CDR-066 s6-G15), and neither is "unavailable" - that value is WAIVABLE at the dispatcher, which is precisely
+  // the mistake that section exists to prevent.
+  if (result.status !== 'decided') return { kind: 'deny' };
+  // The engine's three outputs pass through UNFLATTENED. Collapsing "require_approval" onto "allow" is exactly what
+  // created the CDR-066 s0 bypass; collapsing it onto "deny" would refuse actions a human is entitled to approve.
+  return { kind: result.decision };
 }
 
 function opts(o: PolicyServiceOptions): { correlationId?: string; logger?: Logger } {

@@ -14,7 +14,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { evaluateCompanyPolicy, initializeCompanyPolicy, toPolicyGateKind } from './policy-service.js';
+import { evaluateCompanyPolicy, initializeCompanyPolicy, toPolicyGateAnswer } from './policy-service.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 const AT = new Date('2026-07-29T12:00:00.000Z');
@@ -59,7 +59,7 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       expect(r).toMatchObject({ reason: 'no_active_policy' });
       // THE POINT OF THE WHOLE TICKET: informational + trusted is exactly the shape the dispatcher waiver spares
       // when policy answers `unavailable`. This must be a DENY so the waiver never applies.
-      expect(toPolicyGateKind(r)).toBe('deny');
+      expect(toPolicyGateAnswer(r)).toEqual({ kind: 'deny' });
     });
 
     test('the no-policy refusal is audited as UNAVAILABLE and writes no evaluation row (G16)', async () => {
@@ -78,7 +78,7 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       // decided deny, not an unavailability. This pins the distinction rather than assuming it.
       expect(r.status).toBe('decided');
       expect(r).toMatchObject({ decision: 'deny' });
-      expect(toPolicyGateKind(r)).toBe('deny');
+      expect(toPolicyGateAnswer(r)).toEqual({ kind: 'deny' });
     });
 
     test('a rule set that is not an array at all is UNREADABLE, and is reported as such', async () => {
@@ -88,7 +88,7 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       await sql`update policies set rules = '{"nope":true}'::jsonb where company_id = ${w.companyA1}::uuid`.execute(owner.kysely);
       const r = await evaluate({ risk_class: { value: 'informational', provenance: 'registry' } });
       expect(r).toMatchObject({ status: 'no_usable_policy', reason: 'policy_unreadable' });
-      expect(toPolicyGateKind(r)).toBe('deny');
+      expect(toPolicyGateAnswer(r)).toEqual({ kind: 'deny' });
       expect(await auditNames()).toContain('policy.unavailable');
       // Make the row VALID again before restoring the constraint — re-adding it against the offending row fails
       // with 23514 and would leave the schema permanently missing a guard for every later test in this file.
@@ -117,19 +117,20 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       for (const riskClass of ['informational', 'internal_reversible']) {
         const r = await evaluate({ risk_class: { value: riskClass, provenance: 'registry' } });
         expect(r).toMatchObject({ status: 'decided', decision: 'allow' });
-        expect(toPolicyGateKind(r)).toBe('allow');
+        expect(toPolicyGateAnswer(r)).toEqual({ kind: 'allow' });
       }
     });
 
-    test('higher risk classes REQUIRE APPROVAL — and that maps to allow on the POLICY gate, not deny', async () => {
+    test('higher risk classes REQUIRE APPROVAL — and that passes through to the gate UNFLATTENED', async () => {
       await initializeCompanyPolicy(product, ids());
       for (const riskClass of ['external_reversible', 'sensitive_irreversible']) {
         const r = await evaluate({ risk_class: { value: riskClass, provenance: 'registry' } });
         expect(r).toMatchObject({ status: 'decided', decision: 'require_approval' });
-        // The policy gate is not the approval gate. Refusing here would block actions a human may legitimately
-        // approve; the approval requirement is carried by the approval gate, which is no longer waived once policy
-        // has answered (CDR-066 §0).
-        expect(toPolicyGateKind(r)).toBe('allow');
+        // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7). This used to assert `allow`, because `GateAnswer` could not express
+        // `require_approval` and the middle output had to be flattened onto the permissive one — which is exactly what
+        // created the CDR-066 §0 bypass. The gate answer now carries the requirement itself, so `require_approval`
+        // travels intact and the dispatcher demands an approval BECAUSE policy said to.
+        expect(toPolicyGateAnswer(r)).toEqual({ kind: 'require_approval' });
       }
     });
 
@@ -200,11 +201,11 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       const r = await evaluateCompanyPolicy(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, evaluationPoint: 'proposed', observations: { risk_class: { value: 'informational', provenance: 'registry' } }, evaluatedAt: AT });
       expect(r.status).toBe('forbidden');
       // …and a forbidden evaluation is still a DENY at the gate, never a waivable unavailability.
-      expect(toPolicyGateKind(r)).toBe('deny');
+      expect(toPolicyGateAnswer(r)).toEqual({ kind: 'deny' });
     });
 
     test('a forbidden result still maps to DENY, never to a waivable gate', () => {
-      expect(toPolicyGateKind({ status: 'forbidden' })).toBe('deny');
+      expect(toPolicyGateAnswer({ status: 'forbidden' })).toEqual({ kind: 'deny' });
     });
 
     test('another company\'s policy is invisible — evaluating B1 from A finds no policy', async () => {

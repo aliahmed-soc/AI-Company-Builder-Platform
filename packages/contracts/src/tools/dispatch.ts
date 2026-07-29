@@ -62,6 +62,21 @@ export function isToolDenialReason(value: unknown): value is ToolDenialReason {
 export type GateAnswer = { readonly kind: 'allow' } | { readonly kind: 'deny' } | { readonly kind: 'unavailable' };
 
 /**
+ * What the POLICY engine said. ADR-010's three outputs plus `unavailable` (ACBP-P6-002; CDR-067 §2-G7).
+ *
+ * `require_approval` lives HERE, on the policy answer, and NOT as a separate `approvalRequired` boolean on the facts.
+ * That is the whole design, not a stylistic choice: **there is no separate fact for a caller to supply or forge.**
+ * The requirement is inseparable from the answer that produced it, and the dispatcher derives that answer from the
+ * engine internally — `ToolGates` has no `policy` port to inject through. A gate a caller may omit will eventually be
+ * omitted; a fact a caller may forge will eventually be forged. Neither is expressible here.
+ *
+ * Before this, the dispatcher demanded an approval answer for every non-waived call, which made `allow` and
+ * `require_approval` indistinguishable at the gate — ADR-010's middle output carried no meaning, and its `allow`
+ * output carried none either.
+ */
+export type PolicyGateAnswer = GateAnswer | { readonly kind: 'require_approval' };
+
+/**
  * The emergency-stop state (`DATA-ARCHITECTURE`: *"checked by dispatcher"*).
  *
  * `clear` is a real answer, distinct from `unavailable`: in Phase 5 there is no stop mechanism at all, so no stop CAN
@@ -79,7 +94,8 @@ export interface DispatchRequestFacts {
   /** The worker's tool allowlist. `undefined` means NONE WAS SUPPLIED, which is not the same as an empty one. */
   readonly allowlist: readonly string[] | undefined;
   readonly stop: StopAnswer;
-  readonly policy: GateAnswer;
+  /** The policy engine's answer, which also carries WHETHER an approval is required. See {@link PolicyGateAnswer}. */
+  readonly policy: PolicyGateAnswer;
   readonly approval: GateAnswer;
   /**
    * Was this call proposed while UNTRUSTED content was in the working context? (ACBP-P5-003c; NFR-021.)
@@ -109,6 +125,13 @@ export type DispatchDecision =
  * unreachable. It is deliberately NOT a config value: a knob here would be a knob that turns the chokepoint off.
  */
 export const CLASSES_THAT_PROCEED_WITHOUT_A_GATE: readonly RiskClass[] = ['informational'];
+
+function policyGate(answer: unknown): PolicyGateAnswer['kind'] {
+  const kind = (answer as { kind?: unknown } | undefined)?.kind;
+  // Same deny-by-default rule as gate, widened by exactly one recognised value. Anything unrecognised is 'no
+  // answer', because treating an unreadable value as permission is the one mistake this module must never make.
+  return kind === 'allow' || kind === 'deny' || kind === 'require_approval' ? kind : 'unavailable';
+}
 
 function gate(answer: unknown): GateAnswer['kind'] {
   const kind = (answer as { kind?: unknown } | undefined)?.kind;
@@ -143,7 +166,7 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (stop !== 'clear') return deny('stop_unavailable');
 
   // Policy before approval: POL-005 — "approval cannot override forbidden".
-  const policy = gate(facts.policy);
+  const policy = policyGate(facts.policy);
 
   // The waiver exists ONLY to stand in for a MISSING policy answer on the trusted path. Two things withdraw it:
   //
@@ -165,24 +188,40 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   if (policy === 'deny') return deny('policy_denied');
   if (policy === 'unavailable' && !waived) return deny(gateless());
 
-  const approval = gate(facts.approval);
-  if (approval === 'deny') return deny('approval_invalid');
-  // ALWAYS `approval_required` here, and that is PROVEN, not assumed: reaching this line means policy did not deny
-  // and was not an unwaived `unavailable`, and a waived call cannot get here at all — so `policy === 'allow'`. An
-  // independent adversarial review confirmed it (CDR-066 §0.1) over an exhaustive input sweep: 378 hits on this
-  // denial, none with `policy !== 'allow'`. Naming it `untrusted_context` would be actively WRONG here, not merely
-  // lossy — that reason means "would have proceeded on the trusted path" (see its note above), and this call is
-  // denied identically on the trusted path.
+  // POLICY IS THE AUTHORITY ON WHETHER AN APPROVAL IS NEEDED (ACBP-P6-002; CDR-067 §2-G7; PM ruling 2026-07-29).
   //
-  // THE PROOF IS CONDITIONAL. It holds only while all of these do — CDR-066 §0.2 records why each matters:
-  //   INV-1  the two `policy` checks above stay ABOVE this one, and the `unavailable` one keeps its `!waived` guard;
-  //   INV-2  `policy` stays ONE const from ONE read of `facts.policy` (a second read can be made to disagree) —
-  //          DIRECTLY TESTED by the read-counting getter in `dispatch.test.ts`, which fails on a second read even
-  //          when that read changes no decision at all;
-  //   INV-3  `waived` keeps `policy === 'unavailable'` as a conjunct — that conjunct IS the bypass fix;
-  //   INV-4  `gate()` stays total onto the three kinds with `unavailable` as the fallback.
-  // Breaking any of them silently reopens the bypass. If one has to change, restore the `untrusted_context` branch.
-  if (approval === 'unavailable' && !waived) return deny('approval_required');
+  // Derived from the policy answer, on the same `policy` const INV-2 pins — NOT a fact a caller can supply. There is
+  // no `approvalRequired` input anywhere, so there is nothing to forge: the requirement is inseparable from the
+  // answer that produced it, and the dispatcher builds that answer from the engine (`ToolGates` has no policy port).
+  const approvalRequired = policy === 'require_approval';
+
+  const approval = gate(facts.approval);
+  // AN EXPLICIT REFUSAL ALWAYS WINS, whether or not policy asked for an approval. "No approval was needed" is not a
+  // licence to ignore one that says no — that is how a revocation would get lost.
+  if (approval === 'deny') return deny('approval_invalid');
+  // AN ABSENT APPROVAL REFUSES ONLY WHEN POLICY DEMANDED ONE.
+  //
+  // `approvalRequired` is the whole condition now, and `!waived` is gone from this line deliberately: reaching here
+  // with `approvalRequired` true means `policy === 'require_approval'`, which is an ANSWER — so `waived` is already
+  // false by INV-3 (it requires `policy === 'unavailable'`). Keeping `!waived` would have been dead weight that
+  // reads like a second guard, and a guard that cannot fire is worse than no guard: the next reader trusts it.
+  //
+  // `approval_required` remains the honest reason, and `untrusted_context` remains wrong here for the reason CDR-066
+  // §0.1 established: that reason means "would have proceeded on the trusted path", and a call whose policy demands
+  // approval is refused identically on the trusted path.
+  //
+  // THE INVARIANTS THIS STILL DEPENDS ON — CDR-066 §0.2 records why each matters:
+  //   INV-1  the `policy === 'deny'` and `policy === 'unavailable' && !waived` checks stay ABOVE this one;
+  //   INV-2  `policy` stays ONE const from ONE read of `facts.policy` — `approvalRequired` is derived from THAT const,
+  //          so a second read could make the requirement disagree with the answer that produced it. DIRECTLY TESTED
+  //          by the read-counting getter in `dispatch.test.ts`, which fails on a second read even when that read
+  //          changes no decision at all;
+  //   INV-3  `waived` keeps `policy === 'unavailable'` as a conjunct — that conjunct IS the CDR-066 §0 bypass fix,
+  //          and it is now also what makes `!waived` unnecessary on this line;
+  //   INV-4  `policyGate()` stays total onto its four kinds with `unavailable` as the fallback. It gained exactly one
+  //          recognised value; anything unrecognised must still land on `unavailable`, or an unreadable answer could
+  //          be read as `require_approval` — or worse, as `allow`.
+  if (approval === 'unavailable' && approvalRequired) return deny('approval_required');
 
   return { kind: 'authorized', riskClass };
 }

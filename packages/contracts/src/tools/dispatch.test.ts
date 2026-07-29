@@ -160,9 +160,19 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
   // informational call on a trusted path was authorized with no approval — the AI acting without the human okay that
   // policy had just demanded. Reachable because `require_approval` is not risk-class-derived: a spend cap (POL-001)
   // or usage limit (NFR-015) requires approval for an ordinary research run.
-  test('an ENGINE-ALLOWED informational call still needs an approval answer — the waiver does not cover it', () => {
+  // SUPERSEDED BY THE TYPE, and that is the better fix (ACBP-P6-002; CDR-067 §2-G7).
+  //
+  // This test used to be the CDR-066 §0 bypass proof: policy `allow` + approval `unavailable` + informational +
+  // trusted had to DENY, because an engine requiring approval could only answer `allow` and the waiver then swallowed
+  // the approval demand. The root cause was that `GateAnswer` could not express `require_approval`.
+  //
+  // It can now. An engine requiring approval says so, so the flattening that created the bypass cannot happen, and
+  // policy `allow` genuinely means "no approval needed" — authorizing is correct, not a regression. The equivalent
+  // assertion under the new model is the `require_approval` case below, which denies for EVERY class including the
+  // waivable one. Keeping this test as written would have pinned the old workaround in place forever.
+  test('policy ALLOW on an informational call authorizes — `allow` now means what it says', () => {
     const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
-    expect(d).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'informational' });
+    expect(d).toEqual({ kind: 'authorized', riskClass: 'informational' });
   });
 
   test('the waiver survives exactly where it was meant to: policy unavailable AND approval unavailable', () => {
@@ -188,9 +198,10 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
       ...clear({ riskClass: 'external_reversible', approval: { kind: 'unavailable' } }),
       get policy() {
         reads += 1;
-        // Flips after the first read: a second read would see a DIFFERENT answer, which is precisely the disagreement
-        // the unreachability proof cannot survive.
-        return reads === 1 ? ({ kind: 'allow' } as const) : ({ kind: 'unavailable' } as const);
+        // `require_approval` FIRST, because that is now what reaches the approval line (CDR-067 §2-G7) — and it is
+        // also the read `approvalRequired` is derived from. Flips after: a second read would see a different answer,
+        // so the REQUIREMENT could disagree with the answer that produced it.
+        return reads === 1 ? ({ kind: 'require_approval' } as const) : ({ kind: 'allow' } as const);
       },
     };
     const decision = decideDispatch(facts);
@@ -229,9 +240,88 @@ describe('decideDispatch — the Phase 5 envelope (IMPLEMENTATION-ROADMAP §M5)'
     }
   });
 
-  test('an absent APPROVAL alone still refuses a gated class, even with policy allowing', () => {
-    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
-    expect(d).toMatchObject({ reason: 'approval_required' });
+  // ── POLICY IS THE AUTHORITY ON WHETHER APPROVAL IS NEEDED (ACBP-P6-002; CDR-067 §2-G7; PM ruling) ──────
+  //
+  // ADR-010's engine output is `allow | require_approval | deny`. Before this, the dispatcher demanded an approval
+  // answer for every non-waived call, which made `allow` indistinguishable from `require_approval` — the engine's
+  // middle output carried no meaning at the gate. Now the POLICY ANSWER ITSELF says whether an approval is required,
+  // so there is no separate boolean anywhere for a caller to supply or forge.
+  //
+  // THIS TEST REPLACED ONE THAT ENCODED THE OLD SEMANTICS. It used to read "an absent APPROVAL alone still refuses a
+  // gated class, EVEN WITH POLICY ALLOWING" and asserted `approval_required`. That expectation was the old stand-in
+  // for a missing engine; with a real engine it would refuse actions the company's own policy permitted.
+  test('policy REQUIRE_APPROVAL with no approval answer refuses — the demand is never skipped', () => {
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }));
+    expect(d).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'external_reversible' });
+  });
+
+  test('policy REQUIRE_APPROVAL with an approval ALLOW proceeds — that is what an approval is for', () => {
+    const d = decideDispatch(clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'allow' } }));
+    expect(d).toEqual({ kind: 'authorized', riskClass: 'external_reversible' });
+  });
+
+  test('policy REQUIRE_APPROVAL is never waived, not even for the least restrictive class', () => {
+    // The waiver stands in for a MISSING answer. `require_approval` is an answer, and a demanding one.
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+
+  test('policy ALLOW does not spuriously demand an approval — for ANY risk class', () => {
+    // THE LOOSENING, stated as a test. A company whose policy explicitly allows an external action has decided that;
+    // demanding an approval no policy asked for makes ADR-010's `allow` output meaningless.
+    for (const riskClass of RISK_CLASSES) {
+      const d = decideDispatch(clear({ riskClass, policy: { kind: 'allow' }, approval: { kind: 'unavailable' } }));
+      expect(d).toEqual({ kind: 'authorized', riskClass });
+    }
+  });
+
+  // ── FORGERY: there is no `approvalRequired` input to forge (CDR-067 §2-G8) ──────────────────────────────
+  //
+  // The requirement is DERIVED from the policy answer inside the decision, on the same single-read const INV-2 pins.
+  //
+  // THE COMPILE-TIME HALF IS STRONGER THAN THE RUNTIME HALF, so it comes first. Each `@ts-expect-error` below is a
+  // self-verifying assertion: TypeScript fails the build if the very next line STOPS being an error. So if anyone
+  // widens the facts to accept a caller-supplied requirement, `pnpm typecheck` breaks — no bespoke checker needed,
+  // and nothing to keep in step. The runtime tests after them prove the value would be ignored even if it arrived
+  // through an `as` cast; the type is what makes it unwritable in the first place.
+  test('FORGERY (compile-time): the facts have no field a caller could use to pre-empt the approval demand', () => {
+    const base: DispatchRequestFacts = { ...clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }) };
+    // @ts-expect-error `approvalRequired` is not part of DispatchRequestFacts — it is derived inside the decision.
+    void decideDispatch({ ...base, approvalRequired: false });
+    // @ts-expect-error nor under an alternative spelling.
+    void decideDispatch({ ...base, approval_required: false });
+    // @ts-expect-error `waived` is a local, not an input — a caller cannot pre-waive anything.
+    void decideDispatch({ ...base, waived: true });
+    // @ts-expect-error the policy answer's kinds are CLOSED: no invented kind can smuggle a permissive reading in.
+    void decideDispatch({ ...base, policy: { kind: 'approval_not_needed' } });
+    expect(decideDispatch(base)).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+  });
+  test('FORGERY: an extra `approvalRequired: false` property is ignored — the demand still refuses', () => {
+    const forged = {
+      ...clear({ riskClass: 'external_reversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
+      approvalRequired: false,
+      approval_required: false,
+      requiresApproval: false,
+    } as DispatchRequestFacts;
+    expect(decideDispatch(forged)).toEqual({ kind: 'denied', reason: 'approval_required', riskClass: 'external_reversible' });
+  });
+
+  test('FORGERY: no extra property can turn a require_approval into an authorization, for any class', () => {
+    for (const riskClass of RISK_CLASSES) {
+      const forged = {
+        ...clear({ riskClass, policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
+        approvalRequired: false,
+        waived: true,
+        approvalWaived: true,
+      } as DispatchRequestFacts;
+      expect(decideDispatch(forged)).toMatchObject({ kind: 'denied', reason: 'approval_required' });
+    }
+  });
+
+  test('an EXPLICIT approval deny still refuses even when policy did not require one', () => {
+    // Revocation wins regardless. "No approval was needed" is not a licence to ignore one that says no.
+    const d = decideDispatch(clear({ riskClass: 'informational', policy: { kind: 'allow' }, approval: { kind: 'deny' } }));
+    expect(d).toMatchObject({ kind: 'denied', reason: 'approval_invalid' });
   });
 
   test('the waiver does NOT extend to the stop state — a stop still refuses an informational call', () => {
@@ -301,7 +391,10 @@ describe('decideDispatch — total and deny-by-default', () => {
       clear({ policy: { kind: 'deny' } }),
       clear({ riskClass: 'sensitive_irreversible', policy: { kind: 'unavailable' } }),
       clear({ approval: { kind: 'deny' } }),
-      clear({ riskClass: 'sensitive_irreversible', approval: { kind: 'unavailable' } }),
+      // POLICY MUST DEMAND the approval for its absence to refuse (CDR-067 §2-G7). With `policy: allow` — which
+      // `clear()` supplies — an absent approval is no longer a denial at all, so this entry would have stopped
+      // producing a refusal and quietly contributed nothing to a test about refusal reasons.
+      clear({ riskClass: 'sensitive_irreversible', policy: { kind: 'require_approval' }, approval: { kind: 'unavailable' } }),
     ];
     for (const facts of broken) {
       const d = decideDispatch(facts);
