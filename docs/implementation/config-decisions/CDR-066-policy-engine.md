@@ -277,6 +277,36 @@ owner's. Shipping a plausible-looking default would answer it silently, and a de
 when a founder's money gets spent without asking them. The evaluator is complete without any: a company with no
 configured limit rule simply has no limit rule, and G2 governs what an empty rule set means.
 
+### G9 — the rule set carries an explicit, required BASELINE
+
+**Decision.** `PolicyRuleSet` has a required `baseline: PolicyDecision`. The evaluator seeds the combination with it,
+so rules can only push the result *more* restrictive. An absent or unreadable baseline makes the whole rule set
+unreadable, which denies. **No default baseline value is shipped.**
+
+**Why this was needed — found by mutation testing, not by design.** G2 says an empty set of outcomes denies, and I
+took that to mean an all-quiet rule set denies. But rules only ever *restrict*: a rule that does not fire contributes
+nothing. With no baseline, the engine could therefore **never return `allow`** — which contradicts ADR-010, where
+`allow` is one of three outputs, and would make a company with no restrictions unable to do anything at all.
+
+The baseline resolves it without inventing permission: what a company may do unsupervised is a **configured**
+statement belonging to whoever sets the policy, exactly like the limit values in G8. Making it required rather than
+defaulted means the question cannot be answered by omission.
+
+**A second thing mutation testing caught, worth recording.** Before the baseline existed, "an unevaluable rule
+contributes `deny`" and "an unevaluable rule is silently skipped" were **indistinguishable** in every test — both
+ended at `deny`, one because the guard worked and one because the empty-set rule caught it. A mutation that deleted
+the guard passed the whole suite. Only a *permissive* baseline separates them, because only then does skipping a
+rule actually let the action through.
+
+There are **three** distinct ways a rule becomes unevaluable — malformed rule, missing/unwrapped observation, and an
+undecidable condition — and each needed its own permissive-baseline test. Covering two of the three was not enough:
+a mutation targeting the third still passed. All three are now individually proven by mutation.
+
+> **OWNER QUESTION, flagged not answered.** *What baseline does a newly provisioned company get?* This is adjacent to
+> **AOQ-14** and has the same character: it is a statement about what the AI may do without being asked. P6-001a
+> ships no default and does not need one — the evaluator refuses a rule set that lacks a baseline. **P6-001b or c
+> will need this answered** before a company can be provisioned with a working policy.
+
 ---
 
 ## §4 What P6-001a explicitly does NOT do
