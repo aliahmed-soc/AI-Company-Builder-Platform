@@ -9,7 +9,7 @@
 // `unavailable` policy answer on an informational-class tool over a trusted path is still WAIVED, so modelling a
 // missing policy as unavailability would let a company with no policy run AI actions ungoverned. Unavailability is
 // reserved for "no result was produced at all" — which, in this module, means a thrown error.
-import { PolicyRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext } from '@acbp/database';
+import { PolicyRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TenantScope } from '@acbp/database';
 import {
   DEFAULT_NEW_COMPANY_POLICY,
   evaluatePolicy,
@@ -105,75 +105,96 @@ function auditCtx(o: PolicyServiceOptions): Partial<AuditWriteContext> {
  * a run. Setting the policy is a different authority (`policy:manage`) — see {@link initializeCompanyPolicy}.
  */
 export async function evaluateCompanyPolicy(client: DatabaseClient, params: EvaluateCompanyPolicyParams, options: PolicyServiceOptions = {}): Promise<EvaluateCompanyPolicyResult> {
-  const audit = options.auditWriter ?? writeAuditEvent;
   const ran = await runInCompanyScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<EvaluateCompanyPolicyResult> => {
       if (checkAuthorization(role, 'run:execute', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
-
-      const policies = new PolicyRepository(scope.db);
-      const active = await policies.findActive(scope.tenant.companyId);
-
-      // NO ACTIVE POLICY. A refusal, and one the operator must see — TOOL-003 attaches an owner notification to it.
-      // No `policy_evaluations` row: there were no rules to cite, and the version-pinning FK has nothing to pin to
-      // (CDR-066 §6-G16).
-      if (active === undefined) {
-        await audit(scope, policyUnavailable({ companyId: scope.tenant.companyId, reason: 'no_active_policy', evaluationPoint: params.evaluationPoint }), auditCtx(options));
-        options.logger?.warn('policy.no_active_policy', { metadata: { accountId: params.accountId, companyId: params.companyId } });
-        return { status: 'no_usable_policy', reason: 'no_active_policy' };
-      }
-
-      const ruleSet = { version: active.version, baseline: active.baseline, rules: active.rules };
-      const evaluation = evaluatePolicy(ruleSet, params.observations);
-
-      // `policyVersion === null` means the evaluator could not read the rule set at all — a stored policy that is
-      // not a policy. Distinct from "it evaluated and denied", and it gets the unavailability event for the same
-      // reason as the branch above: someone has to fix it, and nothing about it is a normal outcome.
-      if (evaluation.policyVersion === null) {
-        await audit(scope, policyUnavailable({ companyId: scope.tenant.companyId, reason: 'policy_unreadable', evaluationPoint: params.evaluationPoint }), auditCtx(options));
-        options.logger?.error('policy.unreadable', { metadata: { accountId: params.accountId, companyId: params.companyId, policyVersion: active.version } });
-        return { status: 'no_usable_policy', reason: 'policy_unreadable' };
-      }
-
-      const recorded = await policies.recordEvaluation({
-        accountId: scope.tenant.accountId,
-        companyId: scope.tenant.companyId,
-        policyId: active.id,
-        policyVersion: active.version,
-        evaluationPoint: params.evaluationPoint,
-        decision: evaluation.decision,
-        escalate: evaluation.escalate,
-        firedRuleIds: evaluation.firedRuleIds,
-        unevaluableRuleIds: evaluation.unevaluableRuleIds,
-        untrustedRuleIds: evaluation.untrustedRuleIds,
-        evaluatedAt: params.evaluatedAt,
-        toolCallId: params.toolCallId ?? null,
-      });
-
-      await audit(scope, policyEvaluated({ evaluationId: recorded.id, policyVersion: active.version, decision: evaluation.decision, evaluationPoint: params.evaluationPoint }), auditCtx(options));
-      // A DENIAL gets its own event as well. Canon routes `policy.blocked` to the Decision Room and the activity
-      // feed (P6-008) while `policy.evaluated` is the record, and a reader counting refusals must not have to parse
-      // metadata to find them.
-      if (evaluation.decision === 'deny') {
-        await audit(scope, policyBlocked({ evaluationId: recorded.id, policyVersion: active.version, reason: 'policy_denied', evaluationPoint: params.evaluationPoint }), auditCtx(options));
-      }
-
-      return {
-        status: 'decided',
-        decision: evaluation.decision,
-        escalate: evaluation.escalate,
-        policyVersion: active.version,
-        evaluationId: recorded.id,
-        firedRuleIds: evaluation.firedRuleIds,
-        unevaluableRuleIds: evaluation.unevaluableRuleIds,
-        untrustedRuleIds: evaluation.untrustedRuleIds,
-      };
+      return evaluatePolicyInScope(scope, params, options);
     },
     opts(options),
   );
   // A scope that could not be established is a REFUSAL, never a pass-through.
   return ran.kind === 'ran' ? ran.value : { status: 'forbidden' };
+}
+
+
+/**
+ * Evaluate inside an ALREADY-ESTABLISHED scope (ACBP-P6-002; CDR-067 §2-G2).
+ *
+ * Extracted so the dispatcher — which is already inside `runInCompanyScope` and has already checked the same
+ * `run:execute` action — can consult the engine without opening a transaction inside a transaction. Beyond the
+ * mechanics, sharing one scope is what makes the evaluation, the tool-call record and every audit event commit or
+ * roll back TOGETHER: a call recorded as authorized whose evaluation was rolled back would assert an authorization
+ * that never happened.
+ *
+ * IT DOES NO AUTHORIZATION OF ITS OWN. Every caller must already have checked `run:execute` — `evaluateCompanyPolicy`
+ * does it above, and the dispatcher does it before anything else. This is why the function is not exported from the
+ * module index: an unauthorized caller reaching it would be an evaluation nobody was entitled to.
+ */
+export async function evaluatePolicyInScope(
+  scope: TenantScope,
+  params: Pick<EvaluateCompanyPolicyParams, 'accountId' | 'companyId' | 'evaluationPoint' | 'observations' | 'evaluatedAt' | 'toolCallId'>,
+  options: PolicyServiceOptions = {},
+): Promise<EvaluateCompanyPolicyResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
+  const policies = new PolicyRepository(scope.db);
+  const active = await policies.findActive(scope.tenant.companyId);
+
+  // NO ACTIVE POLICY. A refusal, and one the operator must see — TOOL-003 attaches an owner notification to it.
+  // No `policy_evaluations` row: there were no rules to cite, and the version-pinning FK has nothing to pin to
+  // (CDR-066 §6-G16).
+  if (active === undefined) {
+    await audit(scope, policyUnavailable({ companyId: scope.tenant.companyId, reason: 'no_active_policy', evaluationPoint: params.evaluationPoint }), auditCtx(options));
+    options.logger?.warn('policy.no_active_policy', { metadata: { accountId: params.accountId, companyId: params.companyId } });
+    return { status: 'no_usable_policy', reason: 'no_active_policy' };
+  }
+
+  const ruleSet = { version: active.version, baseline: active.baseline, rules: active.rules };
+  const evaluation = evaluatePolicy(ruleSet, params.observations);
+
+  // `policyVersion === null` means the evaluator could not read the rule set at all — a stored policy that is
+  // not a policy. Distinct from "it evaluated and denied", and it gets the unavailability event for the same
+  // reason as the branch above: someone has to fix it, and nothing about it is a normal outcome.
+  if (evaluation.policyVersion === null) {
+    await audit(scope, policyUnavailable({ companyId: scope.tenant.companyId, reason: 'policy_unreadable', evaluationPoint: params.evaluationPoint }), auditCtx(options));
+    options.logger?.error('policy.unreadable', { metadata: { accountId: params.accountId, companyId: params.companyId, policyVersion: active.version } });
+    return { status: 'no_usable_policy', reason: 'policy_unreadable' };
+  }
+
+  const recorded = await policies.recordEvaluation({
+    accountId: scope.tenant.accountId,
+    companyId: scope.tenant.companyId,
+    policyId: active.id,
+    policyVersion: active.version,
+    evaluationPoint: params.evaluationPoint,
+    decision: evaluation.decision,
+    escalate: evaluation.escalate,
+    firedRuleIds: evaluation.firedRuleIds,
+    unevaluableRuleIds: evaluation.unevaluableRuleIds,
+    untrustedRuleIds: evaluation.untrustedRuleIds,
+    evaluatedAt: params.evaluatedAt,
+    toolCallId: params.toolCallId ?? null,
+  });
+
+  await audit(scope, policyEvaluated({ evaluationId: recorded.id, policyVersion: active.version, decision: evaluation.decision, evaluationPoint: params.evaluationPoint }), auditCtx(options));
+  // A DENIAL gets its own event as well. Canon routes `policy.blocked` to the Decision Room and the activity
+  // feed (P6-008) while `policy.evaluated` is the record, and a reader counting refusals must not have to parse
+  // metadata to find them.
+  if (evaluation.decision === 'deny') {
+    await audit(scope, policyBlocked({ evaluationId: recorded.id, policyVersion: active.version, reason: 'policy_denied', evaluationPoint: params.evaluationPoint }), auditCtx(options));
+  }
+
+  return {
+    status: 'decided',
+    decision: evaluation.decision,
+    escalate: evaluation.escalate,
+    policyVersion: active.version,
+    evaluationId: recorded.id,
+    firedRuleIds: evaluation.firedRuleIds,
+    unevaluableRuleIds: evaluation.unevaluableRuleIds,
+    untrustedRuleIds: evaluation.untrustedRuleIds,
+  };
 }
 
 export interface InitializeCompanyPolicyParams {
