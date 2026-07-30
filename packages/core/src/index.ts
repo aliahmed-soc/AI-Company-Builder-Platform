@@ -27,3 +27,7 @@ export * from './billing/index.js';
 export * from './artifacts/index.js';
 // Policy engine service: evaluate + record, fail closed (ACBP-P6-001c; CDR-066).
 export * from './policy/index.js';
+// The approval engine: request, decide, inbox (ACBP-P6-003c; CDR-068). Reachability is not a nicety — until this
+// line existed the module could not be imported from outside `@acbp/core` at all, which is why every one of its
+// guards survived mutation: nothing could call them.
+export * from './approvals/index.js';

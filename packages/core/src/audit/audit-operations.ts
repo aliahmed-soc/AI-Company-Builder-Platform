@@ -53,6 +53,9 @@ import {
   policyBlocked,
   policyUnavailable,
   policyChanged,
+  approvalRequested,
+  approvalApproved,
+  approvalRejected,
   toolCallRequested,
   toolCallCompleted,
   workerStateChanged,
@@ -138,6 +141,17 @@ export const AUDITED_OPERATIONS = {
   // `policy.blocked` because "the rules said no" and "there were no rules to ask" are different problems (§6-G16).
   'policy.evaluate.unavailable': 'policy.unavailable',
   'policy.initialize': 'policy.changed',
+  // Approvals (ACBP-P6-003c; CDR-068). THREE operations for three events. `approval.decide` and
+  // `approval.decide.rejected` are separate operations rather than one carrying an outcome, mirroring the
+  // `policy.evaluate` / `policy.evaluate.denied` split: the audited operation IS the authorization, so granting it
+  // and withholding it are two different things a reader counts separately.
+  //
+  // The other three decision paths (`schedule`, `batch_approve`, and `edit_then_approve`) map onto
+  // `approval.decide` too — they are approvals carrying their path in metadata, not new events, because canon's
+  // catalogue names three approval events and inventing siblings puts names in the trail nothing is registered for.
+  'approval.request': 'approval.requested',
+  'approval.decide': 'approval.approved',
+  'approval.decide.rejected': 'approval.rejected',
   'tool.dispatch': 'tool.call_requested',
   'tool.complete': 'tool.call_completed',
   'tool.fail': 'tool.call_failed',
@@ -182,6 +196,10 @@ export type ArtifactAuditedOperation = 'artifact.request-revision';
 // Policy engine (ACBP-P6-001c; CDR-066 §6). Its own domain: policy decides ABOUT execution and is deliberately not
 // folded into RUN or TOOL, for the same reason BILLING was separated - a different authority, a different reader.
 export type PolicyAuditedOperation = 'policy.evaluate' | 'policy.evaluate.denied' | 'policy.evaluate.unavailable' | 'policy.initialize';
+// Approvals (ACBP-P6-003c; CDR-068). Its OWN domain, not folded into POLICY: policy decides whether a human is
+// needed, and this is the human deciding. Different authority, different reader — the same reasoning that separated
+// POLICY from RUN and BILLING from RUN.
+export type ApprovalAuditedOperation = 'approval.request' | 'approval.decide' | 'approval.decide.rejected';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -200,11 +218,12 @@ export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['too
 export const WORKER_AUDITED_OPERATION_IDS: readonly WorkerAuditedOperation[] = ['worker.set_state', 'worker.run_start', 'worker.run_complete', 'worker.run_fail'];
 export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] = ['credit.reserve', 'credit.settle'];
 export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[] = ['artifact.request-revision'];
+export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected'];
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -310,6 +329,13 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'policy.evaluate.unavailable':
       // SUBJECT = the COMPANY here, not an evaluation — there is none to point at (CDR-066 §6-G16).
       return (subjectId) => policyUnavailable({ companyId: subjectId, reason: 'no_active_policy', evaluationPoint: 'pre_execution' });
+    case 'approval.request':
+      return (subjectId) =>
+        approvalRequested({ requestId: subjectId, toolId: 'send_email', riskClass: 'external_reversible', scope: 'one_action', policyVersion: 1, estimatedCostCredits: 1 });
+    case 'approval.decide':
+      return (subjectId) => approvalApproved({ requestId: subjectId, path: 'approve', deciderType: 'human', policyVersion: 1 });
+    case 'approval.decide.rejected':
+      return (subjectId) => approvalRejected({ requestId: subjectId, deciderType: 'human', policyVersion: 1 });
     case 'policy.initialize':
       return (subjectId) => policyChanged({ policyId: subjectId, version: 1, baseline: 'allow', ruleCount: 1 });
     case 'tool.dispatch':

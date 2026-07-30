@@ -184,6 +184,20 @@ export const AUDIT_EVENTS = {
   //
   // `policy.blocked` carries NO subject id when the refusal was "this company has no active policy": there is no
   // evaluation row to point at, because there were no rules to cite (CDR-066 §6-G16).
+  // Approvals (ACBP-P6-003c; EVENT-CATALOG L228-229). Canon names `approval.requested` and
+  // `approval.approved / approval.rejected`; the remaining decision paths (`schedule`, `batch_approve`) are
+  // `approval.approved` carrying their path in metadata rather than new event names, because canon's catalogue is
+  // the contract and inventing siblings for it would put names in the trail no consumer is registered for.
+  //
+  // SUBJECT = THE REQUEST in every case, so the event points at the `approval_requests` row rather than restating
+  // its content. The row and the event are written in ONE transaction, so they cannot disagree through partial
+  // failure — the same shape as `policy.evaluated`.
+  //
+  // `payload_hash` and `expiry` appear in canon's payload column and are DELIBERATELY ABSENT here: both are
+  // ADR-009 §2 and ACBP-P6-004. Emitting either now would put a claim in the audit trail that nothing computes.
+  'approval.requested': { schemaVersion: 1, subjectType: 'approval_request' },
+  'approval.approved': { schemaVersion: 1, subjectType: 'approval_request' },
+  'approval.rejected': { schemaVersion: 1, subjectType: 'approval_request' },
   'policy.evaluated': { schemaVersion: 1, subjectType: 'policy_evaluation' },
   'policy.blocked': { schemaVersion: 1, subjectType: 'policy_evaluation' },
   // The engine could not produce an answer at all. SUBJECT = the COMPANY, because there is no evaluation to point
@@ -684,6 +698,64 @@ export function taskCompleted(input: { readonly taskId: string; readonly runId: 
  * row, and copying a list into audit metadata would both breach the scalars-only rule and put the same fact in two
  * places that can disagree.
  */
+/**
+ * A run asked a human to authorize an action (ACBP-P6-003c; APPR-002; EVENT-CATALOG L228).
+ *
+ * NO payload hash and NO expiry, though canon's payload column names both: they are ADR-009 §2 and P6-004. The
+ * fields present are the ones a reader can act on today — what was proposed, how risky, and what it might cost.
+ */
+export function approvalRequested(input: {
+  readonly requestId: string;
+  readonly toolId: string;
+  readonly riskClass: string;
+  readonly scope: string;
+  readonly policyVersion: number;
+  readonly estimatedCostCredits: number;
+}): AuditEvent {
+  return makeEvent('approval.requested', input.requestId, 'success', {
+    tool_id: input.toolId,
+    risk_class: input.riskClass,
+    scope: input.scope,
+    policy_version: input.policyVersion,
+    estimated_cost_credits: input.estimatedCostCredits,
+  });
+}
+
+/**
+ * A human authorized an action (ACBP-P6-003c; APPR-007; EVENT-CATALOG L229).
+ *
+ * `decider_type` is recorded because invariant 5 is the property this event exists to evidence: canon's own payload
+ * column says *"decider (human/delegated only)"*. An audit trail that did not record WHICH kind of actor decided
+ * could not demonstrate the model never did.
+ *
+ * The DECISION PATH rides metadata rather than a separate event name, so `schedule` and `batch_approve` are
+ * visible without adding names canon's catalogue does not have.
+ */
+export function approvalApproved(input: { readonly requestId: string; readonly path: string; readonly deciderType: string; readonly policyVersion: number }): AuditEvent {
+  return makeEvent('approval.approved', input.requestId, 'success', {
+    decision_path: input.path,
+    decider_type: input.deciderType,
+    policy_version: input.policyVersion,
+  });
+}
+
+/**
+ * A human refused an action (ACBP-P6-003c; APPR-007; EVENT-CATALOG L229).
+ *
+ * Outcome `denied`, not `success`: the operation being audited is the authorization, and it was withheld. A reader
+ * counting refusals must not have to parse metadata to find them — the same reasoning `policy.blocked` was given.
+ *
+ * THE REASON TEXT IS NOT CARRIED. It is the founder's own words about their business and belongs in the request
+ * record, not in an audit payload that is read by operators; `AuditMetadata` is flat scalars for exactly this kind
+ * of discipline.
+ */
+export function approvalRejected(input: { readonly requestId: string; readonly deciderType: string; readonly policyVersion: number }): AuditEvent {
+  return makeEvent('approval.rejected', input.requestId, 'denied', {
+    decider_type: input.deciderType,
+    policy_version: input.policyVersion,
+  });
+}
+
 export function policyEvaluated(input: { readonly evaluationId: string; readonly policyVersion: number; readonly decision: string; readonly evaluationPoint: string }): AuditEvent {
   return makeEvent('policy.evaluated', input.evaluationId, 'success', {
     policy_version: input.policyVersion,

@@ -78,6 +78,41 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
   const evaluations = async () => owner.kysely.selectFrom('policy_evaluations').selectAll().orderBy('created_at').execute();
   const callRows = async () => owner.kysely.selectFrom('tool_calls').selectAll().orderBy('created_at').execute();
 
+
+  /**
+   * Seed a REAL human decision for (run, tool) — the only way to satisfy the approval gate now that the caller-
+   * injectable port is gone (CDR-068 §0.1). Inserted as the OWNER, because the product role has no business
+   * writing approvals outside the service.
+   */
+  async function seedDecision(
+    toolId: string,
+    path: 'approve' | 'reject' | 'schedule' | 'edit_then_approve' = 'approve',
+    effectiveFrom?: Date,
+  ): Promise<void> {
+    const policy = await owner.kysely
+      .selectFrom('policies')
+      .select(['id', 'version'])
+      .where('company_id', '=', w.companyA1)
+      .where('status', '=', 'active')
+      .executeTakeFirstOrThrow();
+    const request = (
+      await sql<{ id: string }>`insert into approval_requests
+             (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
+              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version)
+           values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
+                   'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
+                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version})
+           returning id`.execute(owner.kysely)
+    ).rows[0]!;
+    await sql`insert into approval_decisions
+            (account_id, company_id, request_id, path, decider_type, decided_by_user_id, decided_at, reason, effective_from,
+             edited_data)
+          values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${request.id}::uuid, ${path}, 'human', ${w.aOwner}::uuid, now(),
+                  ${path === 'reject' ? 'not now' : null}, ${effectiveFrom ?? null},
+                  ${path === 'edit_then_approve' ? '{"recipients":1}' : null}::jsonb)`.execute(owner.kysely);
+    await sql`update approval_requests set status = 'decided', decided_at = now() where id = ${request.id}::uuid`.execute(owner.kysely);
+  }
+
   /** Add a rule to the active policy AS THE OWNER — rule editing is P6-010's product surface, not this ticket's. */
   const addRule = (rule: string) =>
     sql`update policies set rules = rules || ${rule}::jsonb where company_id = ${w.companyA1}::uuid and status = 'active'`.execute(owner.kysely);
@@ -152,7 +187,8 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
   test('the SAME rule authorizes once an approval answers — policy demanded it, the approval satisfied it', async () => {
     await addRule(alwaysRule('needs-approval', 'require_approval'));
 
-    const ok = await dispatch({}, { gates: { approval: () => ({ kind: 'allow' }) } });
+    await seedDecision('web_research');
+    const ok = await dispatch();
     expect(ok.status).toBe('authorized');
 
     const evaluation = row(await evaluations());
@@ -161,13 +197,71 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
 
   test('a REJECTING approval refuses even when policy only required one — and it is not the policy that refused', async () => {
     await addRule(alwaysRule('needs-approval', 'require_approval'));
-    const r = await dispatch({}, { gates: { approval: () => ({ kind: 'deny' }) } });
+    await seedDecision('web_research', 'reject');
+    const r = await dispatch();
     expect(r).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+  });
+
+  /**
+   * MUTATION-DRIVEN (P6-003c). Mutating `approvalAnswer` to treat `schedule` as instantly authorizing SURVIVED the
+   * whole suite: three of the four branches were pinned, the clock was not. A scheduled approval says "do this LATER",
+   * and acting on it now is exactly the "already done while I deferred it" failure the deferral exists to prevent —
+   * the one direction Phase 6's highest bar says to get wrong safely. So the clock gets its own test, both sides.
+   */
+  test('a SCHEDULED approval does not authorize before its instant — and does at it', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    const effectiveFrom = new Date('2026-08-01T09:00:00.000Z');
+    await seedDecision('web_research', 'schedule', effectiveFrom);
+
+    // BEFORE. Refused as `approval_invalid`, and this expectation was DELIBERATELY REVERSED after review pass 2.
+    // It read `approval_required` on the reasoning that "not yet due" is not "malformed" — good prose, wrong gate
+    // answer: `approval_required` comes from the `unavailable` branch, which refuses only when policy demanded an
+    // approval, so an informational call riding the no-gate waiver executed the deferred action immediately.
+    // A present-but-non-authorizing decision now always denies, and the reason granularity is the price.
+    const early = await dispatch({}, { now: new Date(effectiveFrom.getTime() - 1000) });
+    expect(early).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+
+    // AT the instant — the boundary itself, not a second past it, because `>=` and `>` differ exactly here.
+    expect((await dispatch({}, { now: effectiveFrom })).status).toBe('authorized');
+  });
+
+  /**
+   * REVIEW PASS 2, H1 — the finding that a DEFERRAL was only honoured when policy happened to demand an approval.
+   *
+   * There is deliberately NO `require_approval` rule here. `web_research` is informational, so it rides the
+   * no-gate waiver, and the baseline policy allows it. A human nonetheless said "not yet". Mapping that deferral to
+   * `unavailable` made it indistinguishable from "nobody has answered", and an answer nobody was REQUIRED to give
+   * was waived straight through — the deferred action executed immediately.
+   *
+   * The rule this pins: a decision that EXISTS and does not authorize must never read as a decision that is ABSENT.
+   */
+  test('a DEFERRED decision refuses even when policy never demanded an approval', async () => {
+    const effectiveFrom = new Date('2026-08-01T09:00:00.000Z');
+    await seedDecision('web_research', 'schedule', effectiveFrom);
+
+    const early = await dispatch({}, { now: new Date(effectiveFrom.getTime() - 1000) });
+    expect(early.status).toBe('denied');
+
+    // …and the same call still proceeds once the instant arrives, so this is a deferral and not a block.
+    expect((await dispatch({}, { now: effectiveFrom })).status).toBe('authorized');
+  });
+
+  /**
+   * REVIEW PASS 2, H2 — `edit_then_approve` authorized the ORIGINAL payload. The human refused what was proposed and
+   * offered a substitute; nothing reads `edited_data`, so the gate saw "an approval exists" and ran the payload that
+   * was edited away. Until P6-004 carries the edited payload through, an edit authorizes NOTHING on the old request —
+   * the superseding request has to be approved on its own merits.
+   */
+  test('an EDIT_THEN_APPROVE never authorizes the payload it edited away', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedDecision('web_research', 'edit_then_approve');
+    expect((await dispatch()).status).toBe('denied');
   });
 
   test('an approval CANNOT override a policy DENY (POL-005), and the reason names policy', async () => {
     await addRule(alwaysRule('forbidden', 'deny'));
-    const r = await dispatch({}, { gates: { approval: () => ({ kind: 'allow' }) } });
+    await seedDecision('web_research');
+    const r = await dispatch();
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
 
     const evaluation = row(await evaluations());

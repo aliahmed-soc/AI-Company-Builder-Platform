@@ -1088,6 +1088,8 @@ export interface DatabaseSchema {
   credit_transactions: CreditTransactionsTable;
   policies: PoliciesTable;
   policy_evaluations: PolicyEvaluationsTable;
+  approval_requests: ApprovalRequestsTable;
+  approval_decisions: ApprovalDecisionsTable;
 }
 
 /**
@@ -1110,6 +1112,75 @@ export interface PoliciesTable {
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
   superseded_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+}
+
+/**
+ * An approval request — APPR-002's full content set, and the policy version the human decides under (ACBP-P6-003b;
+ * CDR-068 §1; ADR-009).
+ *
+ * EVERY CONTENT COLUMN IS `never` ON UPDATE, and the product role has no UPDATE grant on them at all. That is the
+ * material-change rule (invariant 7) expressed as a privilege: an edit produces a NEW request via
+ * `edit_then_approve`, never a rewritten one. Only the lifecycle columns are updatable.
+ *
+ * NO PAYLOAD HASH AND NO EXPIRY, deliberately — both are ADR-009 §2 and ACBP-P6-004. A request records what is
+ * proposed; it is not yet a bound, consumable token.
+ */
+export interface ApprovalRequestsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** The run that proposed it (canon §2 binds the requesting worker/run). Tenant-pinned by a composite FK. */
+  run_id: ColumnType<string, string, never>;
+  tool_id: ColumnType<string, string, never>;
+  tool_version: ColumnType<number, number, never>;
+  action: ColumnType<string, string, never>;
+  reason: ColumnType<string, string, never>;
+  expected_result: ColumnType<string, string, never>;
+  data: ColumnType<unknown, string, never>;
+  estimated_cost_credits: ColumnType<number, number, never>;
+  /** One of `RISK_CLASSES`. Mirrored by a CHECK; a test asserts the two sets agree. */
+  risk_class: ColumnType<string, string, never>;
+  /** DERIVED from `risk_class` and CHECKed against it, so a stored row can never present the two in conflict. */
+  reversibility: ColumnType<string, string, never>;
+  preview: ColumnType<string, string, never>;
+  /** One of `APPROVAL_SCOPES` — all four storable, only the two MVP ones accepted by the service. */
+  scope: ColumnType<string, string, never>;
+  /** Version-pinned to `policy_id` by a composite FK: evaluation point 2's record of the decision context. */
+  policy_id: ColumnType<string, string, never>;
+  policy_version: ColumnType<number, number, never>;
+  policy_eval_id: ColumnType<string | null, string | null | undefined, never>;
+  status: ColumnType<string, string | undefined, string>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
+  decided_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  superseded_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  superseded_by_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+/**
+ * A human's decision on an approval request. APPEND-ONLY — every column is `never` on update, and the role has no
+ * UPDATE or DELETE grant at all (ACBP-P6-003b; APPR-007; invariants 5 and 7).
+ *
+ * `decider_type` carries INVARIANT 5 at the schema level: a CHECK confines it to `human | delegated`, so a
+ * worker/model actor cannot be recorded as having approved anything even by a caller that bypasses the contract.
+ */
+export interface ApprovalDecisionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  /** Tenant-pinned to the request, and UNIQUE: one decision per approval ("Decisions idempotent per approval"). */
+  request_id: ColumnType<string, string, never>;
+  /** One of `APPROVAL_DECISION_PATHS`. `revoke` is absent on purpose — that is ADR-009 §2 and P6-004. */
+  path: ColumnType<string, string, never>;
+  /** One of `APPROVAL_DECIDER_TYPES`. The CHECK behind this column IS invariant 5. */
+  decider_type: ColumnType<string, string, never>;
+  decided_by_user_id: ColumnType<string, string, never>;
+  /** The instant PASSED IN, not when the row was written — that is `created_at`. */
+  decided_at: ColumnType<Date, Date | string, never>;
+  reason: ColumnType<string | null, string | null | undefined, never>;
+  edited_data: ColumnType<unknown, string | null | undefined, never>;
+  effective_from: ColumnType<Date | null, Date | string | null | undefined, never>;
+  member_request_ids: ColumnType<unknown, string | null | undefined, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
 /**
@@ -1233,5 +1304,10 @@ export type CreditTransactionRow = Selectable<CreditTransactionsTable>;
 export type PolicyRow = Selectable<PoliciesTable>;
 export type NewPolicy = Insertable<PoliciesTable>;
 export type PolicyEvaluationRow = Selectable<PolicyEvaluationsTable>;
+export type ApprovalRequestRow = Selectable<ApprovalRequestsTable>;
+export type NewApprovalRequest = Insertable<ApprovalRequestsTable>;
+export type ApprovalRequestUpdate = Updateable<ApprovalRequestsTable>;
+export type ApprovalDecisionRow = Selectable<ApprovalDecisionsTable>;
+export type NewApprovalDecision = Insertable<ApprovalDecisionsTable>;
 export type NewPolicyEvaluation = Insertable<PolicyEvaluationsTable>;
 export type NewTaskDeletion = Insertable<TaskDeletionsTable>;

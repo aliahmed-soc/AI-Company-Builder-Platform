@@ -80,6 +80,8 @@ export type { ArtifactRevisionExecutor, NewArtifactRevisionInput } from './artif
 export type { ArtifactExecutor, NewArtifactInput } from './artifact-repository.js';
 // Policy storage + append-only evaluation records (ACBP-P6-001b; CDR-066 §5).
 export { PolicyRepository } from './policy-repository.js';
+export { ApprovalRepository } from './approval-repository.js';
+export type { NewApprovalRequestInput, NewApprovalDecisionInput } from './approval-repository.js';
 export type { PolicyExecutor, NewPolicyInput, NewPolicyEvaluationInput } from './policy-repository.js';
 export { ToolCallRepository } from './tool-call-repository.js';
 export type { ToolCallExecutor, NewToolCallInput, CompleteToolCallInput } from './tool-call-repository.js';
@@ -244,6 +246,13 @@ export type {
   ArtifactRevisionRow,
   NewArtifactRevision,
   NewTaskDeletion,
+  // Approvals (ACBP-P6-003c; CDR-068).
+  ApprovalRequestsTable,
+  ApprovalRequestRow,
+  NewApprovalRequest,
+  ApprovalDecisionsTable,
+  ApprovalDecisionRow,
+  NewApprovalDecision,
 } from './schema.js';
 
 // NOTE: createTenantScope is intentionally NOT exported — a TenantScope must originate from

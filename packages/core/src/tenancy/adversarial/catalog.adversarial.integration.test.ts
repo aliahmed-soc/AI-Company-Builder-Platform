@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'policy_evaluations', 'policies', 'artifact_revisions', 'credit_transactions'] as const;
+const TENANT_TABLES = ['approval_decisions', 'approval_requests', 'accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'policy_evaluations', 'policies', 'artifact_revisions', 'credit_transactions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -127,6 +127,14 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // platform allowed, and evidence that can be edited afterwards is not evidence.
   policies: ['INSERT', 'SELECT'],
   policy_evaluations: ['INSERT', 'SELECT'],
+  // `approval_requests` carries a COLUMN-scoped UPDATE for its lifecycle only (status, decided_at, superseded_at,
+  // superseded_by_request_id), so — like `tool_calls` and `task_runs` — no UPDATE appears here; it is asserted against
+  // `column_privileges` below. The CONTENT columns are deliberately outside that grant: a request whose action or
+  // preview could be edited after a human read it is the material-change hole invariant 7 exists to close.
+  approval_requests: ['INSERT', 'SELECT'],
+  // `approval_decisions` has no UPDATE at all, at any level. It is the record of a human exercising authority, and
+  // canon §2 says an edited approval is superseded, never mutated.
+  approval_decisions: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -229,6 +237,15 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect([...policies].sort()).toEqual(['status', 'superseded_at']);
     // And the evaluation records take NO update grant at all, not even column-level.
     expect(byTable.get('policy_evaluations')).toBeUndefined();
+    // Approval requests (ACBP-P6-003b; CDR-068 §1): ONLY the four lifecycle columns. The CONTENT columns are the
+    // point — `action`, `reason`, `preview`, `risk_class`, `estimated_cost_credits` and the rest must be immutable,
+    // because a request whose content could change after a human read it is exactly the material-change hole
+    // invariant 7 closes. An edit produces a NEW request via `edit_then_approve`, never a rewritten one.
+    const approvalRequests = byTable.get('approval_requests') ?? [];
+    expect([...approvalRequests].sort()).toEqual(['decided_at', 'status', 'superseded_at', 'superseded_by_request_id']);
+    // And a DECISION takes no update grant at all, not even column-level: it is the record of a human exercising
+    // authority, and canon §2 says an edited approval is superseded, never mutated.
+    expect(byTable.get('approval_decisions')).toBeUndefined();
     // Interview sessions (ACBP-P2-001): only state/started_at/updated_at are updatable; identity columns are not.
     const interview = byTable.get('interview_sessions') ?? [];
     expect(interview.length).toBeGreaterThan(0);

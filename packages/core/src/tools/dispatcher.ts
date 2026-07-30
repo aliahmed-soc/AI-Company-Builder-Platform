@@ -10,7 +10,7 @@
 // WHY THE RECORD COMES FIRST. TOOL-002 wants 100% of calls recorded, and a row written after execution cannot exist
 // for a call that died mid-flight — precisely the call worth having a record of. So an authorized call is inserted
 // `requested` before it is handed back, and `reportToolCallOutcome` closes it later.
-import { ToolCallRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { ToolCallRepository, TaskRunRepository, ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
 import { createHash } from 'node:crypto';
 import {
   decideDispatch,
@@ -20,6 +20,7 @@ import {
   detectInjection,
   isToolCallOutcome,
   isToolDenialReason,
+  authorizesExecution,
   toolCallRequested,
   toolCallCompleted,
   type GateAnswer,
@@ -31,28 +32,75 @@ import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
 import type { Logger } from '@acbp/observability';
 
-/** Phase 5 defaults for the three gate ports. See `ToolGates` for why stop is `clear` and the others are not. */
+/**
+ * A stored decision → the approval gate's answer. TOTAL, and refusing by default.
+ *
+ * Three outcomes, and the middle one is the reason this is a function rather than a boolean:
+ *
+ *   NO DECISION → `unavailable`. Nobody has answered. If policy demanded an approval the call is refused with
+ *     `approval_required`, which is the honest reason: one is needed and none exists.
+ *
+ *   AUTHORIZING → `allow`. `approve`, `edit_then_approve`, `batch_approve`, or a `schedule` whose instant has
+ *     arrived — decided by the same pure `authorizesExecution` the service uses, so the gate and the service cannot
+ *     disagree about what a decision meant.
+ *
+ *   DECIDED BUT NOT AUTHORIZING → `deny`. A reject, a schedule whose instant has not arrived, an `edit_then_approve`,
+ *     a corrupt path: all of them refuse, unconditionally.
+ *
+ * THE THIRD CASE USED TO SPLIT ON *WHY*, and that was a real defect (review pass 2, H1). A not-yet-due schedule
+ * mapped to `unavailable` on the reasoning that "not yet" is not "invalid" — true as prose, wrong as a gate answer.
+ * `unavailable` refuses ONLY when policy demanded an approval (`dispatch.ts` §"AN ABSENT APPROVAL"), so for an
+ * informational call riding the no-gate waiver, a human's deliberate deferral was discarded and the action ran
+ * immediately. Measured, not theorised: `informational + no usable policy + stored schedule not yet due` returned
+ * `authorized`. An explicit "no" won unconditionally while an explicit "not yet" was ignored.
+ *
+ * So `unavailable` now means EXACTLY ONE THING: no decision exists. A decision that exists and does not authorize is
+ * never indistinguishable from one nobody made — which is the property the waiver can be reasoned about against.
+ *
+ * The cost is reason granularity: a deferral is reported as `approval_invalid` rather than `approval_required`. That
+ * is the wrong-but-safe direction, it is accurate in the sense that matters (the approval on record does not
+ * authorize THIS execution), and the decision's own path is in the store for anyone asking why.
+ *
+ * `edit_then_approve` is listed above but ALSO refused by name below, because `authorizesExecution` says it
+ * authorizes — correctly, of the SUPERSEDING request. Nothing reads `edited_data` yet (P6-004), so treating it as
+ * authorizing here would run the payload the human edited away. Belt and braces on purpose: the repository already
+ * filters superseded requests out, and this is the layer that holds if that filter is ever loosened.
+ *
+ * `now` is threaded from `DispatcherOptions.now`, never read here, so a scheduled authorization can be re-derived
+ * from its own record — the same discipline CDR-066 §3-G3 applies to the policy clock.
+ */
+function approvalAnswer(decision: { readonly path: unknown; readonly effective_from?: unknown } | undefined, now: Date): GateAnswer {
+  if (decision === undefined) return { kind: 'unavailable' };
+  if (decision.path === 'edit_then_approve') return { kind: 'deny' };
+  return authorizesExecution({ path: decision.path, effectiveFrom: decision.effective_from }, now) ? { kind: 'allow' } : { kind: 'deny' };
+}
+
+/** The remaining Phase 5 gate port's default. See `ToolGates` for why stop is `clear` rather than `unavailable`. */
 const CLEAR = (): StopAnswer => ({ kind: 'clear' });
-const NO_ANSWER = (): GateAnswer => ({ kind: 'unavailable' });
 
 /**
  * The gates the dispatcher consults through PORTS, with fail-closed defaults, because the engines behind them are
- * still later tickets: `stop` is ACBP-P6-007, `approval` is ACBP-P6-003/004.
+ * still a later ticket: `stop` is ACBP-P6-007.
  *
- * **THERE IS NO `policy` PORT (ACBP-P6-002; CDR-067 §2-G1/G8).** The dispatcher consults the engine itself, so a
- * caller cannot supply, override or omit a policy answer — and because the approval REQUIREMENT rides that answer
- * (`PolicyGateAnswer`), a caller cannot forge the requirement either. `COMPONENT-CATALOG` names this component
- * *"Trusted — the enforcement chokepoint"* and `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check
- * **never skippable**: a gate a caller may omit will eventually be omitted, and the omission would be invisible,
- * because the old default (`unavailable`) *looks* like a deliberate fail-closed answer. `stop` and `approval` become
- * internal the same way when their engines land.
+ * **THERE IS NO `policy` PORT (ACBP-P6-002) AND NO `approval` PORT (ACBP-P6-003c; CDR-068 §0.1).** The dispatcher
+ * consults both stores itself, so a caller cannot supply, override or omit either answer — and because the approval
+ * REQUIREMENT rides the policy answer (`PolicyGateAnswer`), a caller cannot forge the requirement either.
+ * `COMPONENT-CATALOG` names this component *"Trusted — the enforcement chokepoint"* and
+ * `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check **never skippable**: a gate a caller may omit
+ * will eventually be omitted, and the omission would be invisible, because the default (`unavailable`) *looks* like a
+ * deliberate fail-closed answer.
  *
- * `stop` defaults to `clear` and `approval` to `unavailable`, and the asymmetry is deliberate: with no stop mechanism
- * in existence, no stop CAN be in force, so `clear` is simply true. An approval engine that does not exist has not
- * approved anything, which is a missing answer rather than a permissive one.
+ * **WHY THE APPROVAL PORT SURVIVED P6-002 AND DIES HERE.** That ticket's adversarial review reported it as a bypass —
+ * a caller passing `approval: () => ({ kind: 'allow' })` could satisfy an approval that policy DEMANDED, with no
+ * approval record consulted anywhere. It was left open for exactly one reason: there was no approval store to consult,
+ * so deleting it would have made every `require_approval` an unconditional deny and left the approve-and-proceed path
+ * unexecuted by any test — the D1 unreachable-path shape. Migration 0047 and the P6-003c service ended that reason,
+ * and `tools/check-approval-port.mjs` has been failing the build ever since to make sure it was not forgotten.
+ *
+ * `stop` remains a port because its engine (P6-007) does not exist, and it defaults to `clear` rather than
+ * `unavailable`: with no stop mechanism in existence, no stop CAN be in force, so `clear` is simply true.
  */
 export interface ToolGates {
-  readonly approval?: () => Promise<GateAnswer> | GateAnswer;
   readonly stop?: () => Promise<StopAnswer> | StopAnswer;
 }
 
@@ -232,6 +280,13 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // THE RISK CLASS IS `registry`-PROVENANCED because it came from `tool_definitions`, not from model text. That
       // is exactly the distinction CDR-066 §3-G5 draws: a model-suggested class is untrusted and takes the most
       // restrictive path. Passing `registry` here is a claim about where the value came from, and it is true.
+      //
+      // ONE CLOCK, READ ONCE, for the same reason INV-2 pins `policy` to one read: the policy evaluation and the
+      // approval's schedule check both need "now", and taking `new Date()` twice let them disagree by however long
+      // the evaluation took. A scheduled approval falling due between the two reads would be judged against a
+      // different instant than the evaluation recorded, making "was this authorized at time T?" unanswerable from
+      // the record — which is the whole reason the clock is an input here rather than ambient.
+      const now = options.now ?? new Date();
       const policyResult = await evaluatePolicyInScope(
         scope,
         {
@@ -239,7 +294,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
           companyId: params.companyId,
           evaluationPoint: 'pre_execution',
           observations: { risk_class: { value: definition?.risk_class, provenance: 'registry' } },
-          evaluatedAt: options.now ?? new Date(),
+          evaluatedAt: now,
         },
         opts(options),
       );
@@ -256,7 +311,17 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval
         // demand conditional on POLICY rather than on the risk class (CDR-067 §2-G7).
         policy: toPolicyGateAnswer(policyResult),
-        approval: (await (options.gates?.approval ?? NO_ANSWER)()) ?? { kind: 'unavailable' },
+        // ── THE APPROVAL GATE, read from the STORE and not from the caller (CDR-068 §0.1) ──────────────────
+        //
+        // Same scope, same transaction. What a human actually decided is a fact in `approval_decisions`; before this
+        // it was whatever the caller passed in.
+        //
+        // THIS IS NOT A CONSUMPTION, and the difference matters enough to say twice. The read answers *what was
+        // decided about this tool on this run*. It does NOT verify that the decision is bound to the exact payload
+        // about to execute, does not check an expiry, does not check a revocation, and does not mark the approval
+        // used. Payload-hash binding, expiry, revocation and single-use consumption are ADR-009 §2 and ACBP-P6-004.
+        // Reading a real decision closes the FORGERY hole; it does not close the material-change hole.
+        approval: approvalAnswer(await new ApprovalRepository(scope.db).findLatestDecisionForCall(scope.tenant.companyId, params.runId, params.toolId), now),
       });
 
       const externalEffect = hasExternalEffect(decision.riskClass);

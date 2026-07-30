@@ -80,6 +80,12 @@ describe('event-name registry (deny unregistered)', () => {
     expect(Object.keys(AUDIT_EVENTS).sort()).toEqual([
       // Platform-administrative access (ACBP-P1-013; CDR-019 §7) — exactly one audit-only admin event.
       'admin.tenant_read',
+      // Approvals (ACBP-P6-003c; EVENT-CATALOG L228-229). Three names, not five: `schedule` and `batch_approve` are
+      // `approval.approved` carrying their path in metadata, because canon's catalogue is the contract and inventing
+      // siblings for it would put names in the trail no consumer is registered for.
+      'approval.approved',
+      'approval.rejected',
+      'approval.requested',
       'company.created',
       'company.paused',
       'company.resumed',

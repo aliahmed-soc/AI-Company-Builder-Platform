@@ -42,13 +42,44 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-003 Human approval engine (a/b/c) — MERGED, NOT DONE; sub-scope (d) is owner-gated** (CDR-068).
+  The approval store exists and the dispatcher reads it. Contracts for the five decision paths, migration 0047
+  (`approval_requests` + append-only `approval_decisions`, dual-keyed FORCE RLS, per-path `iff` CHECKs, the
+  `decider_is_human` CHECK carrying invariant 5 at the schema level), the repository, and the service
+  (`requestApproval` / `decideApproval` / `listApprovalInbox`, `approval.*` audit events in-transaction).
+  **Both carried obligations are met:** the caller-injectable `gates.approval` port is DELETED, and evaluation
+  point 2 is wired — the policy version the human decides under is recorded onto the request.
+  **WHY NOT DONE:** (d), the approval inbox UI, is frontend and sits behind the owner's standing gate. Nothing in
+  a/b/c is blocked on it; the engine is complete and headless.
+  **TWO INDEPENDENT REVIEW PASSES FOUND REAL DEFECTS, and the second measured rather than read.** 35 source
+  mutations, **15 survived** the full 2953-test suite. What that exposed:
+  - `edit_then_approve` **authorized the payload the human edited away** — nothing read `edited_data`, the
+    dispatcher's read had no `r.status` filter, and a superseding decision without a successor was silently
+    downgraded to a plain decision. Fixed at three layers.
+  - A **deferral was only honoured when policy happened to demand an approval**. A not-yet-due `schedule` mapped to
+    `unavailable`, which refuses only when an approval was required, so an informational call riding the no-gate
+    waiver ran the deferred action immediately. `unavailable` now means exactly one thing: no decision exists.
+  - The risk class shown to the human was **caller-supplied while labelled `registry`-provenanced**; it now comes
+    from `tool_definitions`, so the claim is true by construction.
+  - Invariant 5's three layers **all tested the same caller-supplied string**. The decider type is now derived
+    server-side and is not expressible in the caller's type at all.
+  - **The service had zero tests and zero consumers** — `packages/core/src/approvals/` was never re-exported from
+    the core index, so nothing could call it and every guard in it survived mutation. Exported, and covered by 21
+    real-PG tests; 10 of 11 service mutations now die (the survivor is documented at its guard site).
+  - "Latest decision" was ordered by a **caller-supplied timestamp**; now server `created_at` then `id`.
+  **KNOWN AND MARKED, NOT SILENT:** CDR-068 §2-G4 (preview-equals-execution, APPR-010) is **not built** — `preview`
+  is free text with no relationship to `data`. A failing-by-design marker test asserts the gap so it shows up in
+  every run. Payload-hash binding remains ACBP-P6-004 and must not be conflated with it.
+  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **2988 tests / 223 files, ZERO SKIPS** (real PostgreSQL
+  live for the whole sweep; an earlier red run was VOID — WSL had shut the database down mid-run).
+
 - **ACBP-P6-002 Dispatcher enforcement integration — MERGED, BUT THE TICKET IS *NOT* DONE** (CDR-067; PR #64).
   The policy engine now gates tool calls: `ToolGates.policy` is **deleted** and the dispatcher consults the engine
   itself inside the scope already open, so the evaluation, the `tool_calls` row and every audit event commit or roll
   back together. Migration 0046 adds `tool_calls.policy_eval_id` (nullable, tenant-pinned). INV-2 (single-read) and
   INV-4 (gate totality) are now directly tested, correcting CDR-066 §0.2's claim that INV-2 was untestable.
-  **WHY NOT DONE:** the acceptance row says *"three evaluation points wired"* and **one of three is wired** — point
-  3, the one canon marks *"Never — mandatory (invariant 6)"*. Point 2 needs P6-003/P6-004 to exist. Point 1 needs an
+  **WHY NOT DONE:** the acceptance row says *"three evaluation points wired"* and **two of three are wired** —
+  point 3, the one canon marks *"Never — mandatory (invariant 6)"*, and point 2, wired by P6-003c below. Point 1 needs an
   **OWNER RULING** (CDR-067 §1): the engine's observations are tool-shaped so a plan-accept evaluation would answer
   about nothing, and deciding what a point-1 refusal *does* changes P4-002's state machine — under the owner-ruled
   baseline, planning is internal work allowed by default, so a point-1 gate that refused planning would deny work
@@ -69,11 +100,11 @@ ticket without a DONE line above it is genuinely in flight._
   unvalidated (and an unreadable decision landed on `unavailable`, the one value the waiver spares), and the
   idempotency short circuit reported a prior *denied* call as `duplicate` and did not bind the key to the
   arguments. Both fixed and mutation-proven.
-  **STILL OPEN, and the consequence of forgetting it is the AI acting on a forged approval:** `gates.approval` is
-  caller-injectable. Not reachable today (zero non-test callers of `dispatchToolCall` repo-wide; no tool
-  implementation exists) and not introduced by this ticket, but the approval gate is now the *sole* enforcement of
-  `require_approval`. **P6-003/P6-004 must consult the approval store internally and delete the port**, as `policy`
-  was deleted here; same for `gates.stop` and P6-007. Four more residual risks are logged in CDR-067 §2-G10.
+  **CLOSED BY ACBP-P6-003c** (below): `gates.approval` was caller-injectable and is now deleted — the dispatcher
+  reads a real stored decision. `tools/check-approval-port.mjs` fails the build if it comes back, in any of the four
+  field shapes a review pass proved could evade the original pattern. `gates.stop` remains a port until P6-007, for
+  the same reason this one survived P6-002: its engine does not exist. Four more residual risks stay logged in
+  CDR-067 §2-G10.
   Locally verified, NOT CI-proven: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL
   live for the whole sweep).
 

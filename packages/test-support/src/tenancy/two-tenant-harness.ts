@@ -45,14 +45,19 @@ export const hasTestDatabase = typeof url === 'string' && url.length > 0;
 export const APP_ROLE_TEST_PASSWORD = `adv_${randomUUID()}`;
 const ssl = process.env['ACBP_TEST_DATABASE_SSL'] ?? 'disable';
 
-/** Every table the harness touches — drop order is FK-safe (children first). */
 /** Re-export so consumers (notably apps/web tests) never need to import @acbp/database directly. */
 export type AdversarialDatabaseClient = DatabaseClient;
 
+/**
+ * Every table the harness touches — drop order is FK-safe (children first).
+ *
+ * THIS IS THE DROP/RESET LIST, NOT THE TENANCY LIST, and it must name every migrated table regardless of whether
+ * the table holds tenant data. Omitting one lets it survive `resetSchema`, so the next `CREATE TABLE` collides, the
+ * migration aborts, and every downstream suite runs against no tables at all. `tool_definitions` is the standing
+ * example: it is GLOBAL platform config (ACBP-P5-003a) and still belongs here.
+ */
 export const ALL_TABLES = [
-  // GLOBAL platform config, not tenant data (ACBP-P5-003a) — but this is the DROP/RESET list, not the tenancy list,
-  // and it must name every migrated table. Omitting it lets the table survive `resetSchema`, so the next
-  // `CREATE TABLE` collides, the migration aborts, and every downstream suite runs against no tables at all.
+  'approval_decisions', 'approval_requests',
   'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
   'job_checkpoints',
   'jobs',

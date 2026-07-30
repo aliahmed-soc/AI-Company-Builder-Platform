@@ -108,7 +108,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     // THE INSTANT THAT WAS PASSED IN. G3 made the clock an input so the evaluator is a function of its arguments;
     // without recording which instant, a working-hours decision cannot be re-derived from its own record.
     .addColumn('evaluated_at', 'timestamptz', (col) => col.notNull())
-    // POINT 3 IS WHERE THIS IS ALWAYS NULL (corrected by ACBP-P6-002): the pre-execution evaluation runs BEFORE the tool_calls row exists, so the link lives on tool_calls.policy_eval_id instead (migration 0046, CDR-067 s2-G3). This column is for points 1 and 2, which are not wired yet. Nullable, because points 1 and 2 evaluate an action that has not been dispatched — and
+    // POINT 3 IS WHERE THIS IS ALWAYS NULL (corrected by ACBP-P6-002). The pre-execution evaluation runs BEFORE the
+    // `tool_calls` row exists, so on that path the link lives on `tool_calls.policy_eval_id` instead (migration 0046,
+    // CDR-067 §2-G3). This column is for points 1 and 2, which evaluate an action that has not been dispatched — and
     // point 1 is marked NOT skippable, so making it unrecordable would break canon.
     .addColumn('tool_call_id', 'uuid')
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))

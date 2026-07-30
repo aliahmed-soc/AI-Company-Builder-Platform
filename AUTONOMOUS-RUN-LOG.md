@@ -9,14 +9,23 @@ Append-only. One entry per autonomous work window. Never overwrite a prior repor
 These persist across every window and every session, regardless of who prompts, and are not
 superseded by a later instruction to "keep going" or "work through the backlog".
 
-### OWNER STANDING INSTRUCTION — no frontend/UI work without the owner choosing the direction
+### OWNER STANDING INSTRUCTION — FRONTEND/UI
 
-> No frontend/UI work may begin without the owner personally choosing the UI/UX direction
-> first. If the backlog reaches a point where frontend work is the next Ready item, STOP and
-> flag it — do not pick a design direction, do not build screens, do not scaffold a UI.
-> This is a hard gate, same as P2-011 and P7-006.
+> **OWNER STANDING INSTRUCTION — FRONTEND/UI:**
+> No frontend or UI work may begin without the owner personally setting
+> the UI/UX direction first. The owner has strong design skills and holds
+> a high bar for this — the interface is not a checkbox to satisfy or a
+> default template to fall back on. Do not scaffold "something to iterate
+> on later." Do not pick a component library, colour palette, type scale
+> or layout on your own initiative. Do not treat the audit docs' recorded
+> style as pre-approval; it is reference material, not a decision.
+> When frontend work becomes the next Ready item, STOP and flag it. This
+> is a hard gate, same as P2-011 and P7-006.
 
-Recorded 2026-07-28 (window 13). Practically: a ticket whose deliverable is a screen, a
+Recorded 2026-07-28 (window 13); **restated in the owner's own words 2026-07-30 (window 18)**,
+which sharpens three things the earlier wording left room to rationalise around: no scaffolding
+"to iterate on later", no unilateral choice of component library / palette / type scale / layout,
+and the audit documents' recorded style is REFERENCE, not pre-approval. Practically: a ticket whose deliverable is a screen, a
 component, a layout, a style system, or a design choice is BLOCKED even when its
 dependencies are green and its Definition of Ready says Ready. Backend work that a UI will
 later consume — contracts, use cases, API shapes — is not frontend work and continues

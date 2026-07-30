@@ -34,3 +34,6 @@ export * from './workers/index.js';
 export * from './billing/index.js';
 // Policy engine: the ordered decision vocabulary and most-restrictive-wins combination (ACBP-P6-001a; CDR-066).
 export * from './policy/index.js';
+// Approvals: request content (APPR-002), the five decision paths (APPR-007), and the actor-type restriction that
+// makes invariant 5 a type rather than a check (ACBP-P6-003a; CDR-068).
+export * from './approvals/index.js';

@@ -87,6 +87,12 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'worker:control': ['owner'],
   // ACBP-P6-001c / CDR-066 §6-G17: owner-only. Setting the policy decides what the AI may do unsupervised.
   'policy:manage': ['owner'],
+  // ACBP-P6-003c / CDR-068. Requesting rides the execution path; DECIDING is the authority chain's hinge and is
+  // owner-only (invariant 5's role layer, orthogonal to the actor-TYPE restriction the contract and a database CHECK
+  // enforce); reading the inbox is open to viewers, because seeing that a human is needed is not authority to be one.
+  'approval:request': ['owner'],
+  'approval:decide': ['owner'],
+  'approval:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

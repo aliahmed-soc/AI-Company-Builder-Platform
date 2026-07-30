@@ -60,6 +60,14 @@ export type EvaluateCompanyPolicyResult =
       readonly escalate: boolean;
       readonly policyVersion: number;
       readonly evaluationId: string;
+      /**
+       * The policy that decided, reported ALONGSIDE the version because they travel together (ACBP-P6-003c).
+       *
+       * An approval request stores the decision context behind a tenant- AND version-pinned composite FK, so a
+       * consumer holding only the version cannot satisfy it — and re-reading the active policy to recover the id
+       * would reintroduce exactly the drift that composite FK exists to prevent.
+       */
+      readonly policyId: string;
       readonly firedRuleIds: readonly string[];
       readonly unevaluableRuleIds: readonly string[];
       readonly untrustedRuleIds: readonly string[];
@@ -211,6 +219,7 @@ export async function evaluatePolicyInScope(
     escalate: evaluation.escalate,
     policyVersion: active.version,
     evaluationId: recorded.id,
+    policyId: active.id,
     firedRuleIds: evaluation.firedRuleIds,
     unevaluableRuleIds: evaluation.unevaluableRuleIds,
     untrustedRuleIds: evaluation.untrustedRuleIds,

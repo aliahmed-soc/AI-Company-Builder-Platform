@@ -54,17 +54,36 @@ function approvalTablesCreated() {
   return found;
 }
 
-/** Does `ToolGates` still declare an injectable `approval` port? */
+/**
+ * Does an injectable `approval` port still exist?
+ *
+ * THE PATTERN IS DELIBERATELY LOOSE, and the reason is measurement rather than taste. The original guard matched
+ * only `readonly approval?:` — the single shape the port happened to have — and a review pass probed it against
+ * real fixture trees: dropping `readonly`, making the field REQUIRED instead of optional, quoting the key, or
+ * moving the port to `DispatcherOptions` each produced a fully functional caller-injectable port that the guard
+ * declared GONE. Four ways to reintroduce the exact thing it exists to prevent, all silent.
+ *
+ * A checker that stops matching becomes a checker that always passes, which is worse than no checker because
+ * people trust it. So: `readonly` optional, `?` optional, the key optionally quoted, and BOTH declaration sites
+ * scanned. Over-matching here costs a false alarm someone must think about; under-matching costs the guarantee.
+ */
+const APPROVAL_FIELD = /^\s*(?:readonly\s+)?['"`]?approval['"`]?\s*\??\s*:/m;
+
+/** Both places a gate port could live. Missing either one is an error, not a pass — see the exit-2 branch. */
+const PORT_HOSTS = ['ToolGates', 'DispatcherOptions'];
+
 function approvalPortDeclaration(source) {
-  const block = source.match(/export\s+interface\s+ToolGates\s*\{([\s\S]*?)\n\}/);
-  if (block === null) {
-    return { error: 'ToolGates interface not found in the dispatcher — this check can no longer see what it guards.' };
+  for (const host of PORT_HOSTS) {
+    const block = source.match(new RegExp(`export\\s+interface\\s+${host}\\s*\\{([\\s\\S]*?)\\n\\}`));
+    if (block === null) {
+      return { error: `${host} interface not found in the dispatcher — this check can no longer see what it guards.` };
+    }
+    const hit = (block[1] ?? '').match(APPROVAL_FIELD);
+    if (hit !== null) {
+      return { present: true, host, line: source.slice(0, (block.index ?? 0) + (hit.index ?? 0)).split('\n').length };
+    }
   }
-  const body = block[1] ?? '';
-  const hit = body.match(/^\s*readonly\s+approval\s*\?\s*:/m);
-  if (hit === null) return { present: false };
-  const line = source.slice(0, (block.index ?? 0) + (hit.index ?? 0)).split('\n').length;
-  return { present: true, line };
+  return { present: false };
 }
 
 const storeLanded = [];
@@ -107,9 +126,31 @@ if (storeLanded.length > 0 && port.present) {
     moduleIsScaffold('// comment only\nexport {};\n') === true &&
     moduleIsScaffold('/* block */\nexport {};\n') === true &&
     moduleIsScaffold(`export { createApproval } from './approval-service.js';\n`) === false;
-  const probeWithPort = `export interface ToolGates {\n  readonly approval?: () => Promise<GateAnswer> | GateAnswer;\n  readonly stop?: () => StopAnswer;\n}\n`;
-  const probeWithout = `export interface ToolGates {\n  readonly stop?: () => StopAnswer;\n}\n`;
-  const portOk = approvalPortDeclaration(probeWithPort).present === true && approvalPortDeclaration(probeWithout).present === false;
+  // BOTH HOSTS APPEAR IN EVERY PROBE, because a missing host is an ERROR (exit 2), not a pass — the probes have to
+  // be shaped like the file they stand in for.
+  const dispatcherOptions = (extra = '') => `export interface DispatcherOptions {\n  readonly now?: Date;\n${extra}}\n`;
+  const toolGates = (extra = '') => `export interface ToolGates {\n${extra}  readonly stop?: () => StopAnswer;\n}\n`;
+
+  // THE FOUR EVASIONS A REVIEW PASS MEASURED against real fixture trees. Each one was a fully functional
+  // caller-injectable port that the original `readonly approval?:` pattern declared GONE. They are probes now, so
+  // the guard cannot silently lose them again.
+  const evasions = [
+    '  readonly approval?: () => GateAnswer;\n', // the original shape
+    '  approval?: () => GateAnswer;\n', // no `readonly`
+    '  readonly approval: () => GateAnswer;\n', // REQUIRED, not optional
+    `  readonly 'approval'?: () => GateAnswer;\n`, // quoted key
+  ];
+  const portOk =
+    // Every evasion is caught on ToolGates…
+    evasions.every((e) => approvalPortDeclaration(`${toolGates(e)}${dispatcherOptions()}`).present === true) &&
+    // …and on DispatcherOptions, which the original pattern never looked at.
+    evasions.every((e) => approvalPortDeclaration(`${toolGates()}${dispatcherOptions(e)}`).present === true) &&
+    // …while a genuinely closed port still reads as closed, so this is not a detector that fires on everything.
+    approvalPortDeclaration(`${toolGates()}${dispatcherOptions()}`).present === false &&
+    // …and a NEIGHBOURING field whose name merely contains "approval" is not a false positive.
+    approvalPortDeclaration(`${toolGates('  readonly approvalStore?: ApprovalStore;\n')}${dispatcherOptions()}`).present === false &&
+    // …and a vanished host is an ERROR rather than a quiet pass.
+    approvalPortDeclaration(toolGates()).error !== undefined;
   const tableRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?(approvals?(?:_[a-z0-9_]+)?)\b/gi;
   const kyselyRe = /createTable\(\s*['"`](approvals?(?:_[a-z0-9_]+)?)['"`]/g;
   const tableOk =

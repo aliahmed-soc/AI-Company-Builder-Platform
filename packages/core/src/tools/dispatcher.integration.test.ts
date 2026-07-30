@@ -87,6 +87,35 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect((await initializeCompanyPolicy(product, base())).status).toBe('ok');
   });
 
+
+  /**
+   * Seed a REAL human decision for (run, tool) — the only way to satisfy the approval gate now that the caller-
+   * injectable port is gone (CDR-068 §0.1). Inserted as the OWNER, because the product role has no business
+   * writing approvals outside the service.
+   */
+  async function seedDecision(toolId: string, path: 'approve' | 'reject' = 'approve'): Promise<void> {
+    const policy = await owner.kysely
+      .selectFrom('policies')
+      .select(['id', 'version'])
+      .where('company_id', '=', w.companyA1)
+      .where('status', '=', 'active')
+      .executeTakeFirstOrThrow();
+    const request = (
+      await sql<{ id: string }>`insert into approval_requests
+             (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
+              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version)
+           values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
+                   'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
+                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version})
+           returning id`.execute(owner.kysely)
+    ).rows[0]!;
+    await sql`insert into approval_decisions
+            (account_id, company_id, request_id, path, decider_type, decided_by_user_id, decided_at, reason)
+          values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${request.id}::uuid, ${path}, 'human', ${w.aOwner}::uuid, now(),
+                  ${path === 'reject' ? 'not now' : null})`.execute(owner.kysely);
+    await sql`update approval_requests set status = 'decided', decided_at = now() where id = ${request.id}::uuid`.execute(owner.kysely);
+  }
+
   /** Remove the company's policy as the OWNER — there is no product DELETE grant, which is the point (P6-001b). */
   const removePolicy = () => sql`delete from policies where company_id = ${w.companyA1}::uuid`.execute(owner.kysely);
 
@@ -172,11 +201,10 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // A REAL rule now, not an injected answer: the deny has to travel from stored jsonb through the engine to the
     // gate. `risk_at_least informational` is the always-firing condition here; the stop ENGINE is P6-007's.
     await addRule('[{"id":"forbid","dimension":"risk_class","condition":"risk_at_least","operand":"informational","decision":"deny"}]');
-    const r = await dispatchToolCall(
-      product,
-      { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] },
-      { gates: { approval: () => ({ kind: 'allow' }) } },
-    );
+    // A REAL human approval, seeded in the database — the port that used to fake one is gone. POL-005's "forbidden
+    // beats approval" is now proven against an actual recorded decision rather than a lambda that said yes.
+    await seedDecision('web_research');
+    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
   });
 
@@ -194,14 +222,21 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   // conjure an approval requirement, and one that says `require_approval` still refuses without an approval — which
   // the contract suite pins for every risk class.
   test('policy decides whether an approval is needed: allow proceeds, require_approval waits', async () => {
-    const gates = { approval: () => ({ kind: 'allow' }) as const };
-    // The ruled default REQUIRES approval for external_reversible, and an approval is offered: authorized.
-    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
-    expect(ok.status).toBe('authorized');
-    // NO APPROVAL OFFERED for the same call: refused — and the reason names the missing approval rather than blaming
-    // policy, which said its piece perfectly clearly.
-    const demanded = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, {});
+    // ORDER MATTERS NOW, and it did not before. With the port closed there is no such thing as "the same call
+    // without an approval offered" — an approval either exists in the store or it does not. So the ABSENCE is
+    // asserted FIRST, against a genuinely empty `approval_decisions`, and only then is a real decision seeded.
+    // My first rewrite seeded up front and then asserted the same call was refused for lack of an approval, which
+    // could not hold: the sweep caught it.
+    //
+    // NO DECISION EXISTS: the ruled default requires approval for external_reversible, so this is refused — and the
+    // reason names the missing approval rather than blaming policy, which said its piece perfectly clearly.
+    const demanded = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
     expect(demanded).toMatchObject({ status: 'denied', reason: 'approval_required' });
+
+    // A REAL HUMAN DECISION now exists for this run and tool: the same call is authorized.
+    await seedDecision('send_email');
+    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
+    expect(ok.status).toBe('authorized');
     // …while an INFORMATIONAL call, which the same policy plainly allows, needs no approval at all. THIS is the
     // loosening, asserted end to end: policy decides, and it did not ask.
     expect((await dispatch({ toolId: 'web_research' })).status).toBe('authorized');
@@ -212,8 +247,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
     // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
     // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
-    const gates = { approval: () => ({ kind: 'allow' }) as const };
-    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
+    await seedDecision('send_email');
+    await seedDecision('purge_everything');
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
 
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded' })).toEqual({ status: 'receipt_required' });
@@ -283,8 +319,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
     // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
     // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
-    const gates = { approval: () => ({ kind: 'allow' }) as const };
-    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] }, { gates });
+    await seedDecision('send_email');
+    await seedDecision('purge_everything');
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
     const callId = (call as { status: 'authorized'; call: { id: string } }).call.id;
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded', receiptRef: '   ' })).toEqual({ status: 'receipt_required' });
 
@@ -369,8 +406,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // NO `policy` KEY: there is no policy port any more (CDR-067 §2-G1). Leaving a stale one here would still
     // typecheck — excess-property checking does not fire through a variable — and be SILENTLY IGNORED, which is the
     // exact shape the design warns about. Raised by the loosening's independent review (§2-G10).
-    const gates = { approval: () => ({ kind: 'allow' }) as const };
-    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'purge_everything', args: {}, allowlist: [...allowAll, 'purge_everything'], context: [] }, { gates });
+    await seedDecision('send_email');
+    await seedDecision('purge_everything');
+    const call = await dispatchToolCall(product, { ...base(), runId, toolId: 'purge_everything', args: {}, allowlist: [...allowAll, 'purge_everything'], context: [] });
     const callId = (call as { status: 'authorized'; call: { id: string; externalEffect: boolean } }).call.id;
     expect((call as { call: { externalEffect: boolean } }).call.externalEffect).toBe(true);
     expect(await reportToolCallOutcome(product, { ...base(), callId, outcome: 'succeeded' })).toEqual({ status: 'receipt_required' });

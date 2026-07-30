@@ -157,6 +157,15 @@ export const AUTHZ_ACTIONS = [
   // authority chain circular — invariant 5's shape, one layer down. Evaluation itself rides `run:execute`, because
   // it happens on the execution path on behalf of a run.
   'policy:manage',
+  // Approvals (ACBP-P6-003c; CDR-068; APPR-002/003/007; invariant 5). THREE actions, not one, because they answer
+  // three different questions and collapsing them would grant the wrong thing:
+  //   `approval:request` — MAY THIS RUN ASK? It rides the execution path, so it belongs to whoever may execute.
+  //   `approval:decide`  — MAY THIS PERSON AUTHORIZE? This is the authority chain's hinge (invariant 5).
+  //   `approval:read`    — MAY THIS PERSON SEE THE INBOX? A viewer watching what is pending is not a risk; a viewer
+  //                        who could approve it is.
+  'approval:request',
+  'approval:decide',
+  'approval:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -293,6 +302,20 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   'worker:control': ['owner'],
   // Owner-only (CDR-066 §6-G17). A viewer who could set the policy could widen what the AI may do unsupervised.
   'policy:manage': ['owner'],
+  // Requesting rides the EXECUTION path — a run that hits a `require_approval` decision must be able to raise the
+  // request, and the same roles that may execute may raise it. Mirrors `run:execute` deliberately: if these two ever
+  // diverge, a run could be authorized to act but not to ask, which is a deadlock disguised as a permission.
+  'approval:request': ['owner'],
+  // OWNER-ONLY, and this is the line invariant 5 rests on at the role layer. The actor TYPE restriction (human or
+  // delegated) is enforced in the contract and by a database CHECK; this is the orthogonal question of WHICH member
+  // may exercise the authority. A viewer who could decide would be able to authorize spending and external actions
+  // they were never given authority over. Delegation is P6-005's; until it exists, only the owner decides.
+  'approval:decide': ['owner'],
+  // VIEWERS may read the inbox. Seeing what is waiting is how a team knows the AI is blocked, and hiding it would
+  // make the queue invisible to exactly the people wondering why nothing is happening — the same reasoning
+  // `listWorkers` was made viewer-readable on (CDR-056). Reading a pending request is not authority over it: the
+  // decide action above is owner-only, so a viewer can see that something needs a human without being that human.
+  'approval:read': ['owner', 'viewer'],
 };
 
 /**

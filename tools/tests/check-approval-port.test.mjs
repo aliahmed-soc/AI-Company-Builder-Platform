@@ -18,6 +18,9 @@ const SCAFFOLD = `// core/approvals — module public index (scaffold). No imple
 const REAL_MODULE = `export { createApproval } from './approval-service.js';\n`;
 
 const GATES_WITH_PORT = `import type { GateAnswer, StopAnswer } from '@acbp/contracts';
+export interface DispatcherOptions {
+  readonly now?: Date;
+}
 export interface ToolGates {
   readonly approval?: () => Promise<GateAnswer> | GateAnswer;
   readonly stop?: () => Promise<StopAnswer> | StopAnswer;
@@ -26,6 +29,9 @@ export async function dispatchToolCall() {}
 `;
 
 const GATES_WITHOUT_PORT = `import type { StopAnswer } from '@acbp/contracts';
+export interface DispatcherOptions {
+  readonly now?: Date;
+}
 export interface ToolGates {
   readonly stop?: () => Promise<StopAnswer> | StopAnswer;
 }
