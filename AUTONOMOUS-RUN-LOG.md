@@ -1637,3 +1637,84 @@ by a test rather than by a better sentence.
 CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
 free minutes reset, the full suite must be run on `main` at `338ae08` and confirmed** before any of it is treated as
 CI-proven.
+
+---
+
+## Window 18 — 2026-07-30 22:00 → 2026-07-31 02:22 +03:00
+
+**Merged:** `9e339a3` — ACBP-P6-003 human approval engine (sub-scopes a, b, c) squash-merged to `main` from
+`p6-003-approval-engine`. Branch head `cc202f5`, 12 commits.
+
+### What shipped
+
+The approval store exists and the dispatcher reads it. Contracts for the five decision paths; migration 0047
+(`approval_requests` + append-only `approval_decisions`, dual-keyed FORCE RLS, per-path `iff` CHECKs, the
+`decider_is_human` CHECK carrying invariant 5 at the schema level); repository; and the service — `requestApproval`,
+`decideApproval`, `listApprovalInbox`, with `approval.*` audit events in the same transaction as the mutation.
+
+**Both carried obligations are met.** The caller-injectable `gates.approval` port is DELETED, and evaluation point 2
+is wired. Closing the port means the dispatcher reads a real stored decision instead of a caller's lambda — it does
+NOT mean the decision is bound to the payload. That is P6-004 and the record keeps the two apart.
+
+### The reviews are the substance of this window
+
+Two independent passes ran before merge. The second mutation-tested the branch rather than reading it: **35 source
+mutations, 15 survived** the full 2953-test suite. That number is the finding.
+
+- **`edit_then_approve` authorized the payload the human edited away.** Nothing read `edited_data`, the dispatcher's
+  read had no `r.status` filter, and a superseding decision with no successor was silently downgraded to a plain
+  decision on the original request. A human saying "not those 500 recipients, these 3" got the 500. Fixed at three
+  layers: the repository excludes non-`decided` requests, the mapping refuses the path by name, and the service
+  refuses a supersession with nowhere to go.
+- **A deferral was only honoured when policy happened to demand an approval.** A not-yet-due `schedule` mapped to
+  `unavailable`, which refuses only when an approval was required — so an informational call riding the no-gate
+  waiver discarded the human's deferral and ran the action immediately. An explicit "no" won unconditionally while
+  an explicit "not yet" was ignored. `unavailable` now means exactly one thing: no decision exists. The cost is
+  reason granularity, taken deliberately in the safe direction.
+- **The service had zero tests AND zero consumers.** `packages/core/src/approvals/` was never re-exported from the
+  core index, so nothing outside the module could import it. That is why every guard in it survived mutation — the
+  D1 unreachable-path shape, on the ticket's headline module. Now exported, with 21 real-PG tests and a
+  non-skippable unit suite; 10 of 11 service mutations die.
+- **The risk class shown to a human was caller-supplied while labelled `registry`-provenanced.** A model could
+  declare `informational` for a `sensitive_irreversible` action, `reversibilityOf` would derive "reversible" from
+  the lie, and the CHECK would certify the pair as consistent. Now read from `tool_definitions`.
+- **Invariant 5's three layers all tested the same caller-supplied string.** The decider *type* was passed through
+  while the user id was overwritten. Now derived server-side and not expressible in the caller's type.
+- **"Latest decision" was ordered by a caller-supplied timestamp** with no tie-break. Now `created_at` then `id`.
+
+### Guards
+
+`tools/check-approval-port.mjs` had **four measured holes** — dropping `readonly`, making the field required,
+quoting the key, or moving the port to `DispatcherOptions` each produced a working caller-injectable port the guard
+declared GONE. All four are now probes in its own self-test, which runs on every invocation. `tools/check-reset-lists.mjs`
+was rewritten earlier this window to validate every drop list rather than one per file: 58 drop lists across 43 files.
+
+### Recorded, not silent
+
+- **CDR-068 §2-G4 (preview-equals-execution, APPR-010) is NOT BUILT.** `preview` is free text with no relationship
+  to `data`. A failing-by-design marker test asserts the gap so it shows up in every run — the pattern the owner
+  asked for when the approval port was left open.
+- **Scope enforcement and single-use consumption are deferred to P6-004.** `scope` is shown to the deciding human
+  and not applied at the gate; `member_request_ids` is enumerated and never read.
+- **P6-003 is NOT Done**: (d), the approval inbox UI, is frontend and sits behind the owner's standing gate. Setting
+  a ticket Done is an owner gate in its own right, so the backlog row is untouched.
+- **P6-002 remains NOT Done**: two of three evaluation points now wired. Point 1 still needs the owner ruling.
+
+### Evidence
+
+Locally verified, **NOT CI-proven**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `9e339a3` —
+**2989 tests / 223 files, ZERO SKIPS**, real PostgreSQL live throughout.
+
+One full-suite run mid-window came back with 83 failed files and 888 skips. It was **VOID, not a regression**: WSL
+had shut its VM down and taken Postgres with it. Diagnosed from `wsl -l --running` reporting no distributions rather
+than from the failure text, restarted with a 6-hour keepalive, and re-run clean. Same root cause as the earlier
+`ECONNREFUSED` episode.
+
+Disk at window close: C: 7.13 GB free (down from 14.3 GB at run start — the trend continues and is still worth
+watching), E: 81.47 GB.
+
+### Still true
+
+CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
+free minutes reset, the full suite must be run on `main` at `9e339a3` and confirmed** before any of it is treated as
+CI-proven.
