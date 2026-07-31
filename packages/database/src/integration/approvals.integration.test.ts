@@ -183,8 +183,8 @@ describe.skipIf(!hasTestDatabase)('approval_requests + approval_decisions (real 
 
     const mkPolicy = async (account: string, company: string, user: string) =>
       (
-        await sql<{ id: string }>`insert into policies (account_id, company_id, version, baseline, rules, status, created_by_user_id)
-             values (${account}::uuid, ${company}::uuid, 1, 'allow', '[]'::jsonb, 'active', ${user}::uuid) returning id`.execute(su.kysely)
+        await sql<{ id: string }>`insert into policies (account_id, company_id, version, baseline, rules, autonomy_level, status, created_by_user_id)
+             values (${account}::uuid, ${company}::uuid, 1, 'allow', '[]'::jsonb, 2, 'active', ${user}::uuid) returning id`.execute(su.kysely)
       ).rows[0]!.id;
     policyA = await mkPolicy(accountA, companyA, userA);
     policyB = await mkPolicy(accountB, companyB, userB);
