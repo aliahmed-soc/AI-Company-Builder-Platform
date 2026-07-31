@@ -143,4 +143,77 @@ test must stay green.
 
 ## §3 Status
 
-_Written first. Updated against what is built, including anything it got wrong._
+Written first; updated here against what was built.
+
+**ALL SEVEN GATES BUILT.** No gate was dropped and none was reinterpreted after the fact. What follows is the
+evidence and the two things this CDR did not anticipate.
+
+### Where the evidence lives
+
+| Claim | Evidence | Measured how |
+|---|---|---|
+| Unusable level → most restrictive (§2-G4) | `autonomy.test.ts` — 16 unusable values, plus a test that the constant is DERIVED from the list | mutation M1 |
+| Levels 3–5 are never more permissive (§2-G5) | `autonomy.test.ts` — 3, 4 and 5 all yield the level-1 rules | mutation M2 |
+| Level 1 is propose-only across every risk class (§0) | `autonomy.test.ts` — one case per member of `RISK_CLASSES`, plus the unclassified case | mutation M3 |
+| New-company default is 2 and is NOT the restrictive fallback (§2-G3) | `autonomy.test.ts` — including an explicit "these are not the same constant" assertion | mutation M4 |
+| Levels 3–5 are refused, never clamped (§2-G5) | `policy-service.integration.test.ts` — each refusal followed by a read asserting the level is UNCHANGED | mutation M5 |
+| The level composes and can only tighten (§2-G2) | `policy-service.integration.test.ts` — level 1 refuses informational against permissive STORED rules, with a level-2 control that allows it | CI run `30644020898` (see below) |
+| A change is a new version, old version intact (§2-G6) | `policy-service.integration.test.ts` — reads version N back and asserts its level and superseded status | — |
+| Rules carried forward verbatim | same block — version N+1's rules compared to version N's | — |
+| The read reports what the ENGINE applies | same block — a stored level of 4 reads as 4 with `available: false` | — |
+
+**Mutation result: 5 mutations, 0 survivors, sources restored byte-identical.**
+
+### What this CDR did not anticipate
+
+**1. The composition was untestable locally, and nearly shipped inert.** Every policy the platform creates is
+level 2, whose rule duplicates the threshold already in `DEFAULT_NEW_COMPANY_POLICY` — so composing is a no-op on
+every pre-existing test, and `pnpm run check` passed with the composition added and *no new test at all*. Deleting
+it outright would also have passed. The cases that pin it therefore seed states the service itself cannot produce.
+
+The proof arrived by accident and is worth recording as the strongest evidence here: CI run `30644020898` went red
+because `untrustedRuleIds` for a model-sourced risk class grew from `["baseline-risk-approval"]` to include
+`"autonomy-l2-approval-above-internal"`. The level's rule had reached the evaluator and been correctly tainted by
+untrusted provenance. That is a real observable consequence, not an assertion about one.
+
+**2. `Array.isArray` is doing more work than "defensive coding", and proving it needed hosted CI.** `policies.rules`
+is jsonb typed `unknown`. If it is not an array the policy is UNREADABLE and must refuse.
+
+**MEASURED, NOT ARGUED.** The guard was removed and pushed as a labelled mutation probe (`fe85082`), with the
+predicted failure written down *before* the run so the result could not be rationalised afterwards. Result: run
+`30646208952` **RED — 2 failed / 3149 passed**, both failures in `policy-service.integration.test.ts`, and those are
+necessarily the two unreadable-rules cases because nothing else in the suite puts a non-array in `rules`. The guard
+was then restored **byte-identical** to `b063505`.
+
+**The prediction was right about the mechanism and incomplete about the shape**, which is worth recording rather
+than smoothing over:
+
+- a JSON **string** spreads into its CHARACTERS, producing a rule set that IS an array — the evaluator reads it,
+  `policyVersion` is not null, and a policy that must report `policy_unreadable` returns `decided`. That is the
+  silent rescue I predicted.
+- a JSON **object** is not iterable, so the unguarded spread **THROWS**, surfacing as a `PlatformError` out of the
+  transaction. Louder, and it is the one that hit first.
+
+Both kill the mutation; only the first would have been silent in production, which is precisely why the guard exists
+rather than being left to a crash.
+
+**And the finding that matters most for how this repo verifies itself:** `pnpm run check` was **exit 0 with the
+guard removed** — 3151 tests, no failures. The local suite cannot distinguish the guarded code from the unguarded
+code at all, because these cases live behind `describe.skipIf(!hasTestDatabase)`. Any claim that this guard is
+load-bearing, resting on a green local run, would have been worthless.
+
+### What this ticket did NOT do
+
+No UI. §2-G5's read model returns which levels exist, which are available, and each one's plain-language
+consequence — the data a surface would need. **Building that surface is an owner gate**, and nothing was scaffolded
+for it.
+
+No numeric limit values (AOQ-14 untouched). No new audit event, no new authz action, no new table. CDR-051 §0.3
+remains flagged and unruled, and §0 records why it cannot affect this ticket.
+
+### One thing left for the owner
+
+**New companies still start at level 2** — research and internal drafting execute without asking on day one, as
+ruled on 2026-07-29. §2-G3 explains why this ticket did not tighten it unilaterally. If that default should be
+level 1 instead, it is a one-line change to `DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL`, and this section is where the
+decision belongs.
