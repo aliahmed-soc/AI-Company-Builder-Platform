@@ -27,6 +27,30 @@ export function isStopScope(value: unknown): value is StopScope {
   return typeof value === 'string' && (STOP_SCOPES as readonly string[]).includes(value);
 }
 
+/**
+ * Scopes the dispatcher CANNOT resolve yet, and which must therefore be refused at activation (CDR-072 §1-G10).
+ *
+ * The covering relation needs an identity per scope. The tool registry carries `risk_class` and `external_effect`
+ * and NOTHING that identifies a capability or an integration — no column on `tool_registrations`, no call fact. So
+ * a `capability` or `integration` stop cannot be matched against any call today.
+ *
+ * ACCEPTING ONE WOULD BE THE WORST OUTCOME AVAILABLE HERE: the operator activates it, sees it recorded, believes it
+ * is in force — and it can never match a single call. That is CDR-072 §0's failure exactly, introduced by the
+ * ticket meant to prevent it. Refused BY NAME instead, as ACBP-P6-006 refuses autonomy levels 3–5 rather than
+ * clamping them.
+ *
+ * REVERSIBLE IN ONE LINE: when the registry gains a capability/integration identity, empty this list and add the
+ * two matrix cases. `isEnforceableStopScope` is derived from it, so nothing else has to be found and changed.
+ */
+export const NOT_YET_ENFORCEABLE_STOP_SCOPES: readonly StopScope[] = ['capability', 'integration'];
+
+/** The scopes the dispatcher can actually honour. DERIVED, so it cannot drift from the list above. */
+export const ENFORCEABLE_STOP_SCOPES: readonly StopScope[] = STOP_SCOPES.filter((s) => !NOT_YET_ENFORCEABLE_STOP_SCOPES.includes(s));
+
+export function isEnforceableStopScope(value: unknown): value is StopScope {
+  return isStopScope(value) && !NOT_YET_ENFORCEABLE_STOP_SCOPES.includes(value);
+}
+
 /** One activated stop. `targetId` names WHAT is stopped for the identity-based scopes; it is null for the rest. */
 export interface StopRecord {
   readonly scope: StopScope;

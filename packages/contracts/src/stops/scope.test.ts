@@ -8,7 +8,10 @@
 import { describe, test, expect } from 'vitest';
 import {
   STOP_SCOPES,
+  NOT_YET_ENFORCEABLE_STOP_SCOPES,
+  ENFORCEABLE_STOP_SCOPES,
   isStopScope,
+  isEnforceableStopScope,
   evaluateStops,
   type StopScope,
   type StopRecord,
@@ -77,6 +80,33 @@ describe('the scope vocabulary is canon-s, closed, and complete', () => {
 
   test.each(['', 'TASK', 'account', 'everything', null, undefined, 0, {}])('%p is not a scope', (v) => {
     expect(isStopScope(v)).toBe(false);
+  });
+});
+
+describe('CDR-072 §1-G10 — a scope the dispatcher cannot resolve is not activatable', () => {
+  test('capability and integration are NOT yet enforceable — the registry carries no identity for either', () => {
+    expect([...NOT_YET_ENFORCEABLE_STOP_SCOPES].sort()).toEqual(['capability', 'integration']);
+  });
+
+  test('the enforceable set is DERIVED, so it cannot drift from the not-yet list', () => {
+    expect(ENFORCEABLE_STOP_SCOPES).toEqual(STOP_SCOPES.filter((s) => !NOT_YET_ENFORCEABLE_STOP_SCOPES.includes(s)));
+  });
+
+  test('every enforceable scope is a scope, and the two sets partition the seven', () => {
+    expect([...ENFORCEABLE_STOP_SCOPES, ...NOT_YET_ENFORCEABLE_STOP_SCOPES].sort()).toEqual([...STOP_SCOPES].sort());
+  });
+
+  test.each(['capability', 'integration'] as const)('%s is a scope but is not enforceable', (s) => {
+    expect(isStopScope(s)).toBe(true);
+    expect(isEnforceableStopScope(s)).toBe(false);
+  });
+
+  test.each(['task', 'worker', 'company', 'external_actions_only', 'account_wide'] as const)('%s IS enforceable', (s) => {
+    expect(isEnforceableStopScope(s)).toBe(true);
+  });
+
+  test('a non-scope is not enforceable either — the guard does not widen the vocabulary', () => {
+    expect(isEnforceableStopScope('whatever')).toBe(false);
   });
 });
 

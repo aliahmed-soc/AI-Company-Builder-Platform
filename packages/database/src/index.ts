@@ -80,6 +80,9 @@ export type { ArtifactRevisionExecutor, NewArtifactRevisionInput } from './artif
 export type { ArtifactExecutor, NewArtifactInput } from './artifact-repository.js';
 // Policy storage + append-only evaluation records (ACBP-P6-001b; CDR-066 §5).
 export { PolicyRepository } from './policy-repository.js';
+// Emergency-stop state and the held-work queue (ACBP-P6-007; CDR-072; migration 0050).
+export { StopRepository } from './stop-repository.js';
+export type { StopExecutor, EmergencyStopRow, NewEmergencyStopInput, NewHeldWorkInput } from './stop-repository.js';
 export { ApprovalRepository } from './approval-repository.js';
 export type { NewApprovalRequestInput, NewApprovalDecisionInput } from './approval-repository.js';
 export type { PolicyExecutor, NewPolicyInput, NewPolicyEvaluationInput } from './policy-repository.js';

@@ -147,6 +147,30 @@ So: within an activation or a resume, any failure after the first write **throws
 a state someone actually chose. Refusals that happen *before* any write stay typed refusals. Proven the way P6-006
 proved it — force the failure, assert the call rejects **and** that no partial stop state survives.
 
+### G10 — A SCOPE THE DISPATCHER CANNOT RESOLVE IS REFUSED AT ACTIVATION, NEVER SILENTLY INERT
+
+**Found while wiring the dispatcher, and it changes what this ticket may ship.** The covering relation needs an
+identity per scope. The tool registry carries `risk_class` and `external_effect` — and **nothing that identifies a
+capability or an integration**. `tool_registrations` has no such column, and neither does any call fact.
+
+So `capability` and `integration` stops **cannot be matched against any call today**. Shipping them as activatable
+would create a stop the operator activates, sees recorded, believes is in force — and which can never match a
+single call. That is CDR-072 §0's failure in its purest form, and it would be introduced *by this ticket*.
+
+**The safer reading, taken deliberately:** those two scopes are **storable but not activatable**. The service
+refuses them with a typed reason naming them as not yet enforceable, exactly as ACBP-P6-006 refuses autonomy levels
+3–5 by name rather than clamping them. The schema admits all seven so later work stays additive; the enforcement
+surface admits only the five the dispatcher can actually honour.
+
+**REVERSIBLE IN ONE LINE.** When the registry gains a capability/integration identity, remove those scopes from
+`NOT_YET_ENFORCEABLE_STOP_SCOPES` and add their two matrix cases. A test asserts the enforceable set and the
+covering relation agree, so the day the registry gains the field, the omission surfaces rather than persisting.
+
+**FLAGGED FOR THE OWNER**, because it narrows a canon-named control: `diagrams/13` lists seven scopes and this
+ticket makes five of them usable. The alternative — accepting activation for a scope that halts nothing — is worse
+than the narrowing, but it is the owner's call whether the registry work should be pulled forward so all seven ship
+together.
+
 ### G9 — Owner-only, and the stop must be easier to ACTIVATE than to clear
 
 Activating a stop is a safety action; clearing one is an authorization. Both are owner-only (`ADMIN-001`), but the

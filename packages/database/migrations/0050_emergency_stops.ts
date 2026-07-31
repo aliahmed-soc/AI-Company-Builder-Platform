@@ -85,16 +85,19 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addUniqueConstraint('emergency_stops_id_account_uq', ['id', 'account_id'])
     .execute();
 
-  // AT MOST ONE ACTIVE STOP OF A GIVEN SHAPE. `coalesce` because NULL never equals NULL in a unique index, so
-  // without it two identical account-wide stops would both be storable and "clear the stop" would clear one of
-  // them — leaving the platform halted by a record the operator thought they had just removed.
+  // AT MOST ONE ACTIVE STOP OF A GIVEN SHAPE. Without this, two identical account-wide stops would both be storable
+  // and "clear the stop" would clear one of them — leaving the platform halted by a record the operator believed
+  // they had just removed.
+  //
+  // `NULLS NOT DISTINCT` (PostgreSQL 15+; CI runs 16) rather than `coalesce(...)` sentinels, and the reason is not
+  // style. A partial unique index over EXPRESSIONS cannot be targeted by `ON CONFLICT` inference, and
+  // `ON CONFLICT ON CONSTRAINT` accepts only a real table CONSTRAINT — which a partial index is not — so the
+  // expression form left no way to write the upsert that did not fail at runtime with 42704. Plain columns keep the
+  // index inferable. `tools/check-conflict-targets.mjs` caught the first version; this is what it was asking for.
   await sql`
-    create unique index emergency_stops_active_uq on public.emergency_stops (
-      account_id,
-      coalesce(company_id, '00000000-0000-0000-0000-000000000000'::uuid),
-      scope,
-      coalesce(target_id, '')
-    ) where status = 'active'
+    create unique index emergency_stops_active_uq on public.emergency_stops (account_id, company_id, scope, target_id)
+      nulls not distinct
+      where status = 'active'
   `.execute(db);
 
   // The read the dispatcher makes before EVERY tool call (invariant 14), so it is indexed for exactly that shape:
