@@ -294,6 +294,71 @@ describe.skipIf(!hasTestDatabase)('approval service (real PostgreSQL, restricted
     expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', successor).executeTakeFirst())?.status).toBe('pending');
   });
 
+  // ══════════ ACBP-P6-005 / CDR-070 §1-G2 — the edit must PROVE its successor carries it ══════════
+
+  test('an EDIT whose successor is NOT bound to the edited payload is refused', async () => {
+    const original = await okRequestId();
+    // A successor bound to the ORIGINAL payload, not the edit. Before this guard, `supersededByRequestId` was
+    // accepted with no check at all — so the human's "not those three, this one" could point at anything.
+    const wrongSuccessor = await okRequestId();
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: wrongSuccessor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+
+    // NOTHING MOVED. The original still awaits a human and the successor is untouched — a refused edit must not
+    // half-apply, or the trail would show a supersession that never happened.
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', original).executeTakeFirst())?.status).toBe('pending');
+    expect(await owner.kysely.selectFrom('approval_decisions').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('an EDIT whose successor IS bound to the edited payload supersedes — the control', async () => {
+    const original = await okRequestId();
+    // Raised with the edited payload, so its stored binding is the hash of exactly what the human edited to.
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r.status).toBe('ok');
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', original).executeTakeFirst())?.status).toBe('superseded');
+    // The successor is still PENDING: rebinding creates a new approval, it does not grant one.
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', successor).executeTakeFirst())?.status).toBe('pending');
+  });
+
+  test('a successor for a DIFFERENT tool is not an edit — it is a different action', async () => {
+    const original = await okRequestId();
+    const otherTool = await okRequestId({ toolId: 'wipe_everything', data: { recipients: 1 } });
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: otherTool,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
+  test('an ALREADY-DECIDED successor cannot receive an edit — the rebind needs a live request', async () => {
+    const original = await okRequestId();
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+    await decide(successor);
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
   test('a request from ANOTHER company reads as absent, not as someone else’s approval', async () => {
     const id = await okRequestId();
     const r = await decideApproval(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, requestId: id, decision: { path: 'approve', decidedAt: new Date() } });

@@ -316,6 +316,43 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
         return { status: 'invalid', reason: 'superseded_by_request_id_required' };
       }
 
+      // ── THE EDIT MUST PROVE ITS SUCCESSOR CARRIES IT (ACBP-P6-005; CDR-070 §1-G2; APPR-007) ──────────────
+      //
+      // `supersededByRequestId` was accepted with NO check on it: any pending request in the company satisfied it,
+      // including one bound to a completely different action. So the sentence a human relies on — *"not those 500
+      // recipients, these 3"* — held only because callers were expected to behave, while APPR-007 states the
+      // mechanism as "Edit rebinds hash". An unverified rebinding is not a rebinding.
+      //
+      // Recomputed with the SAME `computePayloadBinding` the dispatcher's gate uses, against the successor's own
+      // tool, version and cost bound. If the hash of what the human says they edited to does not equal what the
+      // successor is actually bound to, this is not an edit of this action and the decision is refused whole.
+      //
+      // SAME RUN AND SAME TOOL, because an "edit" that changes the tool is a different action — the material-change
+      // rule already says a changed tool invalidates. PENDING, because a rebind needs a live request to land on;
+      // superseding onto something already decided would point the human's edit at a closed question.
+      if (parsed.decision.supersedes && params.supersededByRequestId !== undefined) {
+        const successor = await approvals.findRequest(params.supersededByRequestId);
+        const expected =
+          successor === undefined
+            ? undefined
+            : computePayloadBinding({
+                toolId: successor.tool_id,
+                toolVersion: Number(successor.tool_version),
+                payload: parsed.decision.editedData,
+                costBoundCredits: Number(successor.estimated_cost_credits),
+              });
+        const bound =
+          successor !== undefined &&
+          successor.status === 'pending' &&
+          successor.run_id === request.run_id &&
+          successor.tool_id === request.tool_id &&
+          successor.id !== request.id &&
+          expected !== undefined &&
+          successor.payload_hash === expected.hash &&
+          Number(successor.binding_version) === expected.version;
+        if (!bound) return { status: 'invalid', reason: 'successor_not_bound_to_edit' };
+      }
+
       // THE UPDATE COUNT IS CHECKED, AND THE ORDER IS WHY IT CAN BE. Both transitions are `where status = 'pending'`,
       // so a zero-row result means another writer moved this request between the read above and here. Doing this
       // BEFORE the insert means the loser of that race writes NOTHING: were the decision inserted first, returning a

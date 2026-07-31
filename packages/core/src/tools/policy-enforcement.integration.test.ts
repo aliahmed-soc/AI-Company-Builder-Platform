@@ -392,6 +392,61 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_required' });
   });
 
+  // ══════════ ACBP-P6-005 / CDR-070 — LAUNCH GATE 4, trust-critical #6 ══════════
+  //
+  // `TEST-AND-VERIFICATION-STRATEGY.md` §Trust-critical, item 6, verbatim: *"Editing a material approved payload
+  // invalidates approval."* M6's user-visible criterion is *"modified approved payload requires reapproval"*.
+  //
+  // ONE CASE PER BOUND ELEMENT, not one case for "a change". `APPROVAL-AND-POLICY-ARCHITECTURE §2`'s
+  // material-change rule names payload, tool, destination and cost bound; P6-004 binds three of those plus the
+  // tool VERSION, and destination has no representation yet so it travels inside the payload. A single
+  // changed-payload test would pass while three of the four did nothing — which is not hypothetical: P6-004's
+  // review found the tool-version component inert precisely because no test varied it.
+  //
+  // EVERY CASE ENDS AT THE DISPATCHER. `bindingMatches` returning false is a unit fact; gate 4's claim is that the
+  // modified action DOES NOT RUN.
+  describe('gate 4 — a material edit invalidates the approval', () => {
+    beforeEach(async () => {
+      await addRule(alwaysRule('needs-approval', 'require_approval'));
+      await seedDecision('web_research');
+    });
+
+    /** THE CONTROL. Without it, a suite that refused everything would pass every negative below. */
+    test('the UNCHANGED action still runs — the suite is not simply refusing everything', async () => {
+      expect((await dispatch()).status).toBe('authorized');
+    });
+
+    test.each([
+      ['the PAYLOAD gains a field', { args: { to: 'someone@example.test' } }],
+      ['the PAYLOAD changes a value', { args: { q: 'different' } }],
+      ['the TOOL is different', { toolId: 'send_email' }],
+    ])('%s → refused, and the approval is NOT burned', async (_what, over) => {
+      expect(await dispatch(over)).toMatchObject({ status: 'denied' });
+      // NOT CONSUMED. A refusal that burned the approval would deny the modified call and the legitimate one
+      // alike — the human would have to re-approve because someone else tampered, which is a denial of service
+      // wearing a security control's clothes.
+      expect(row(await requestRows()).status).toBe('decided');
+      // …proven by the legitimate call still working afterwards.
+      expect((await dispatch()).status).toBe('authorized');
+    });
+
+    test('the TOOL VERSION moves → refused (the element P6-004 shipped inert)', async () => {
+      await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+                values ('web_research', 2, 'informational', 'fixture tool v2', 'active')`.execute(owner.kysely);
+      expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+      expect(row(await requestRows()).status).toBe('decided');
+    });
+
+    test('a CHANGED COST BOUND breaks the binding — proven at the contract, since the dispatcher has no cost input', () => {
+      // NAMED LIMIT, and tested where it CAN be tested. CDR-069 §3 records that `dispatchToolCall` takes no cost,
+      // so it recomputes with the request's own stored bound and cannot detect cost drift; canon's "execution
+      // exceeding bound limit fails closed" is the worker runtime's check (P5-005). The BINDING itself does cover
+      // cost, and that is what this asserts — so when P5-005 gains a preflight cost, the hash is already ready.
+      const bound = { toolId: 'web_research', toolVersion: 1, payload: {}, costBoundCredits: 1 };
+      expect(computePayloadBinding({ ...bound, costBoundCredits: 2 }).hash).not.toBe(computePayloadBinding(bound).hash);
+    });
+  });
+
   test('an approval CANNOT override a policy DENY (POL-005), and the reason names policy', async () => {
     await addRule(alwaysRule('forbidden', 'deny'));
     await seedDecision('web_research');
