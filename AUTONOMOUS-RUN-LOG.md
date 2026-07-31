@@ -1718,3 +1718,105 @@ watching), E: 81.47 GB.
 CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
 free minutes reset, the full suite must be run on `main` at `9e339a3` and confirmed** before any of it is treated as
 CI-proven.
+
+---
+
+## Window 19 — 2026-07-31 02:22 → 15:48 +03:00
+
+**Merged:** `7a5a9ea` — ACBP-P6-004 (payload binding, expiry, revocation, single-use consumption) squash-merged to
+`main` from `p6-004-binding-and-consumption`. Branch head `17ae742`, 6 commits.
+
+### What shipped
+
+ADR-009's title, built: *"payload-hash-bound, expiring, revocable, single-use approvals enforced at the tool
+dispatcher."* P6-003 made the gate read a real human decision; this makes that decision bind to a specific payload,
+expire, be revocable, and be spendable exactly once. Migration 0048, `verifyAndConsume` as one conditional UPDATE,
+`revokeApproval` with its own owner-only authority, and three audit events.
+
+It also closes P6-003's `scope` gap: one `approve` on a `one_action` request authorized unlimited calls for the
+run's lifetime. Single-use consumption IS that enforcement — the two were always one problem.
+
+**Expiry ships as a mechanism with NO values.** ADR-009 §15 leaves per-risk-class defaults an open owner question
+(AOQ-14-adjacent), so `expires_at` is NOT NULL, caller-supplied, and defaulted nowhere in the stack. A nullable
+"no expiry" column was rejected: it would make the ABSENCE of an owner decision read as permission to never expire.
+
+### The system caught more than the reviews did, and earlier
+
+Two design errors were caught by the existing suite and the database within minutes of being written:
+
+- **Reading only the REQUEST made a rejected approval authorize.** A reject is `decided` too, as is a not-yet-due
+  `schedule` and an `edit_then_approve`. Seven tests across the P6-002 and P6-003 suites went red immediately —
+  which is what those suites are for.
+- **Consumption was specified to run BEFORE the call was recorded.** `consumed_by_call_id` is a real foreign key,
+  so the database refused it outright. The reasoning behind the ordering was also unnecessary: both statements are
+  in one transaction, so nothing commits separately.
+
+The second was diagnosed by MEASURING rather than theorising. Seven tests failed with "denied, expected authorized"
+and the obvious hypothesis was a hash mismatch; a temporary debug print showed the binding matched and the gate
+answered `allow`, which killed every hashing theory at once and left the FK as the only candidate.
+
+A third error came from reading one migration file instead of measuring the schema: 0048 tried to add
+`tool_calls_id_company_uq`, which 0045 already created.
+
+### The reviews — 33 mutations, 10 survivors, two executed probes
+
+- **A SPENT APPROVAL POISONED ITS TOOL FOREVER.** The read matched `decided | consumed | revoked`, so after
+  consumption a row always stood, the gate read it as an explicit refusal, and EVERY later call was denied —
+  including calls policy allows outright and which never needed an approval. Proven by dispatching an
+  informational tool a third time. A terminal approval is absent, not refusing.
+- **THE SPEND STATEMENT DID NOT MATCH ITS OWN SPECIFICATION.** CDR-069 §1-G5 says `where id = $id`; the code
+  matched `(company, run, tool, …)` with no id, and `UPDATE` has no `LIMIT`. Two decided requests for one action
+  both matched, both took the same consuming call, and the unique index raised 23505 — throwing out of
+  `dispatchToolCall`, whose docblock says it never throws for a refusal, and rolling back so no call record and no
+  audit event survived the attempt. A TOOL-002 violation on the calls most worth recording, and permanent.
+- **The `tool_version` binding component was inert**, recomputed from the approval's own stored value.
+- **Nothing at the dispatcher tested consumption**: `spend=false`, hashing a constant, dropping the usability half,
+  deleting the `approval.consumed` audit, and deleting the lost-race correction all left the suite green.
+- **CDR-069 §1-G6's compensating alert was specified and never built** — a sentence I wrote and did not implement.
+  Now `approval.revoke_failed`, outcome `blocked`, carrying `compensation_required`.
+- Plus `0048.down()` failing on any database holding a spent approval, `expiresAt` being the one unvalidated date
+  in the stack, and a fractional cost estimate reaching the driver instead of being refused.
+
+Nine new dispatcher tests; 7 of 8 mutations now die. The eighth is an EQUIVALENT mutant — dropping the usability
+half changes which layer refuses, not the outcome, because the conditional UPDATE re-checks everything — and is
+recorded at the guard site rather than papered over with a contrived test.
+
+### Guards
+
+Six existing guards fired on this ticket and every one was right: the exhaustive authz role-map, the exact
+registered-event-name list, the no-orphan-events check, the compile-time exhaustive audit factory switch, the
+catalog adversarial column-grant assertion, and the typecheck refusing `node:crypto` in the zero-dep contracts
+package. The last one caught a real boundary error in seconds.
+
+### Recorded, not silent
+
+`approval.consumed` is NOT in EVENT-CATALOG and was registered anyway, on source priority (the backlog outranks the
+architecture docs). `approval.expired` IS in the catalogue and stays unregistered, because nothing sweeps expiry.
+The dispatcher cannot detect COST drift — no cost input, so it recomputes with the request's own stored cost;
+execution-time enforcement is P5-005's. Consumption at authorization burns the approval even if the call never
+runs. CDR-068 §2-G4 preview-equals-execution is still unbuilt, marker test intact.
+
+**FLAGGED FOR THE OWNER:** `DispatcherOptions.now` is caller-supplied and now governs approval EXPIRY and schedule
+due-ness, not just the policy evaluation. Reachability is nil today (no production caller of `dispatchToolCall`),
+and it was kept injectable because making it server-only would gut deterministic testing of both. But it is the
+same SHAPE as the caller-injectable approval port P6-003 deleted, so before the first HTTP caller lands, that clock
+needs a decision.
+
+### Evidence
+
+Locally verified, **NOT CI-proven**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `7a5a9ea` —
+**3053 tests / 225 files, ZERO SKIPS**, real PostgreSQL live for the whole sweep.
+
+The database died once mid-window (WSL idle shutdown again, same signature) and was restarted with an 8-hour
+keepalive; the affected run was VOID, not a regression, and was re-run clean. One review pass could not run the DB
+suites locally at all — two hung backends from another process held locks — and said so plainly rather than
+reporting skipped suites as passing.
+
+Disk at window close: C: 7.57 GB free (recovered slightly from 7.12), E: 81.46 GB.
+
+### Still true
+
+CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When
+the free minutes reset, the full suite must be run on `main` at `7a5a9ea` and confirmed** before any of it is
+treated as CI-proven. Phase 6: 001, 002 (open clause), 003 (a/b/c), 004 merged; 005/006/007 unblocked; P6-003d
+remains behind the frontend gate.
