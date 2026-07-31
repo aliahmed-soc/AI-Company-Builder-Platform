@@ -206,7 +206,7 @@ export async function evaluatePolicyInScope(
   // an `any` into the rule set. Narrowed to `unknown[]` instead: the evaluator validates every rule anyway, and
   // anything it cannot read contributes DENY rather than being skipped.
   const storedRules: unknown = active.rules;
-  const composedRules: unknown = Array.isArray(storedRules) ? [...levelRules, ...(storedRules as readonly unknown[])] : storedRules;
+  const composedRules: unknown = [...levelRules, ...(storedRules as readonly unknown[])];
   const ruleSet = { version: active.version, baseline: active.baseline, rules: composedRules };
   const evaluation = evaluatePolicy(ruleSet, params.observations);
 
