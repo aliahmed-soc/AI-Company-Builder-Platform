@@ -12,9 +12,12 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
   // Approvals (ACBP-P6-003c; CDR-068). Deciding and REJECTING are separate operations, mirroring the
   // `policy.evaluate` / `policy.evaluate.denied` split: the audited operation is the authorization, so granting it and
   // withholding it are two things a reader counts separately.
+  'approval.consume',
   'approval.decide',
   'approval.decide.rejected',
   'approval.request',
+  'approval.revoke',
+  'approval.revoke_failed',
       'company.create',
       'company.pause',
       'company.resume',
@@ -162,13 +165,13 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // (TOOL-002: "never 'succeeded'"), which is why the canonical sample here uses the succeeded outcome.
       // A policy REFUSAL and a policy UNAVAILABILITY are both 'blocked': EVENT-CATALOG reserves denied/blocked for
       // authorization and policy, and neither is a success by any reading — the action did not happen.
-      const blocked = ['provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail', 'tool.fail', 'policy.evaluate.denied', 'policy.evaluate.unavailable'];
+      const blocked = ['approval.revoke_failed', 'provisioning.step_fail', 'context.flag-conflict', 'job.dead_letter', 'run.fail', 'tool.fail', 'policy.evaluate.denied', 'policy.evaluate.unavailable'];
       // A HUMAN REFUSAL IS `denied`, NOT `blocked`, and the distinction is the authority chain's (ACBP-P6-003c).
       // `blocked` is what the PLATFORM does when a rule or a failure stops something; `denied` is what a PERSON does
       // when they decline to authorize it. EVENT-CATALOG reserves both for authorization and policy, and collapsing
       // them would make "did a human say no, or did a rule?" unanswerable from the outcome column — which is exactly
       // the question the approval trail exists to answer.
-      const denied = ['approval.decide.rejected'];
+      const denied = ['approval.decide.rejected', 'approval.revoke'];
       expect(event.outcome).toBe(blocked.includes(op) ? 'blocked' : denied.includes(op) ? 'denied' : 'success');
     }
   });

@@ -38,6 +38,20 @@ export interface NewToolCallInput {
   /** sha256 hex. Never the arguments. */
   readonly argumentsDigest: string;
   readonly idempotencyKey?: string | null;
+  /**
+   * The call's id, supplied by the caller instead of defaulted by the table.
+   *
+   * ACBP-P6-004 needs it: single-use consumption records WHICH call spent the approval, and the conditional UPDATE
+   * that spends it must commit BEFORE the call is recorded as authorized — otherwise a lost race would leave an
+   * authorized row beside an unspent approval. Knowing the id up front makes the order consume-then-insert, which
+   * needs one write per call instead of an insert followed by a corrective update.
+   */
+  readonly id?: string;
+}
+
+export interface MarkToolCallDeniedInput {
+  readonly callId: string;
+  readonly reason: string;
 }
 
 export interface CompleteToolCallInput {
@@ -63,6 +77,7 @@ export class ToolCallRepository {
     return this.#db
       .insertInto('tool_calls')
       .values({
+        ...(input.id === undefined ? {} : { id: input.id }),
         account_id: input.accountId,
         company_id: input.companyId,
         run_id: input.runId,
@@ -79,6 +94,27 @@ export class ToolCallRepository {
       .onConflict((oc) => oc.columns(['company_id', 'tool_id', 'idempotency_key']).where('idempotency_key', 'is not', null).doNothing())
       .returningAll()
       .executeTakeFirst();
+  }
+
+  /**
+   * Turn a just-inserted `requested` call into a DENIAL (ACBP-P6-004).
+   *
+   * The dispatcher records the call before spending its approval, because `approval_requests.consumed_by_call_id` is
+   * a real foreign key — consuming first would reference a row that does not exist yet. If that spend then loses its
+   * race, this is how the record is made honest before the transaction commits. Both statements are inside one
+   * transaction, so no reader ever observes the intermediate `requested` state.
+   *
+   * `where outcome = 'requested'` keeps it to the narrow case it exists for: a call that already reported an outcome
+   * is history, and history is not editable here.
+   */
+  async markDenied(input: MarkToolCallDeniedInput): Promise<number> {
+    const r = await this.#db
+      .updateTable('tool_calls')
+      .set({ outcome: 'denied', denial_reason: input.reason })
+      .where('id', '=', input.callId)
+      .where('outcome', '=', 'requested')
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows);
   }
 
   /** The call that already claimed this key, when one did. RLS-confined, so it can only ever be this company's. */

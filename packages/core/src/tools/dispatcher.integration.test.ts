@@ -16,6 +16,7 @@ import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { initializeCompanyPolicy } from '../policy/index.js';
+import { computePayloadBinding } from '../approvals/binding.js';
 import { dispatchToolCall, reportToolCallOutcome, digestToolArguments } from './index.js';
 import { TaskRepository } from '@acbp/database';
 
@@ -103,10 +104,12 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     const request = (
       await sql<{ id: string }>`insert into approval_requests
              (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
-              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version)
+              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version,
+              payload_hash, binding_version, expires_at)
            values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
                    'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
-                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version})
+                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
+                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
            returning id`.execute(owner.kysely)
     ).rows[0]!;
     await sql`insert into approval_decisions

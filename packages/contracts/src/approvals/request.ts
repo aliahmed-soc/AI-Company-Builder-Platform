@@ -160,7 +160,10 @@ export function buildApprovalRequest(input: ApprovalRequestInput): BuildApproval
   if (isBlank(input.reason)) missing.push('reason');
   if (isBlank(input.expectedResult)) missing.push('expectedResult');
   if (input.data === null || typeof input.data !== 'object' || Array.isArray(input.data)) missing.push('data');
-  if (typeof input.estimatedCostCredits !== 'number' || !Number.isFinite(input.estimatedCostCredits) || input.estimatedCostCredits < 0) missing.push('estimatedCostCredits');
+  // WHOLE CREDITS, and `Number.isInteger` is the part review pass 1 found missing: the column is `integer`, so a
+  // fractional estimate passed this check and then died in the driver with a raw 22P02 instead of the typed
+  // refusal every other malformed field gets. The contract and the column now agree about what a credit is.
+  if (typeof input.estimatedCostCredits !== 'number' || !Number.isInteger(input.estimatedCostCredits) || input.estimatedCostCredits < 0) missing.push('estimatedCostCredits');
   if (isBlank(input.preview)) missing.push('preview');
   if (missing.length > 0) return { status: 'incomplete', missing };
 

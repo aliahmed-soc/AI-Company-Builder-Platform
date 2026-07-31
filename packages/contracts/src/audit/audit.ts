@@ -193,11 +193,33 @@ export const AUDIT_EVENTS = {
   // its content. The row and the event are written in ONE transaction, so they cannot disagree through partial
   // failure — the same shape as `policy.evaluated`.
   //
-  // `payload_hash` and `expiry` appear in canon's payload column and are DELIBERATELY ABSENT here: both are
-  // ADR-009 §2 and ACBP-P6-004. Emitting either now would put a claim in the audit trail that nothing computes.
+  // `payload_hash` and `expiry` appear in canon's payload column. They are computed as of ACBP-P6-004 and STILL not
+  // emitted: a hash in the audit trail is a value someone will compare against, and the trail is not where a
+  // binding should be verified — `approval_requests` holds it, under a column with no UPDATE grant. The event
+  // points at the row; the row holds the fact.
   'approval.requested': { schemaVersion: 1, subjectType: 'approval_request' },
   'approval.approved': { schemaVersion: 1, subjectType: 'approval_request' },
   'approval.rejected': { schemaVersion: 1, subjectType: 'approval_request' },
+  // REVOCATION (ACBP-P6-004; APPR-006; EVENT-CATALOG L225). Canon's payload is `approval_id, (revoked_by)`, and
+  // both are carried below.
+  'approval.revoked': { schemaVersion: 1, subjectType: 'approval_request' },
+  // CONSUMPTION. NOT in EVENT-CATALOG, and registered anyway on the source-priority rule: the ACBP-P6-004 backlog
+  // row's audit behaviour is *"Consumption audited"*, and the backlog outranks the architecture docs. Spending an
+  // approval is the moment an authorization becomes an action — the single most consequential transition in the
+  // whole chain — and leaving it inferable only from a column would make "when was this used, and by what?" a
+  // question answered by joins rather than by the trail.
+  'approval.consumed': { schemaVersion: 1, subjectType: 'approval_request' },
+  // THE COMPENSATING ALERT (ACBP-P6-004; APPR-006; CDR-069 §1-G6). Canon §2 permits a revoke-vs-execute race to
+  // resolve *"in favour of revocation OR produce a compensating alert"*; once consumption has committed, only the
+  // second is truthful — nothing can un-authorize an action that is already authorized and may have run. A human
+  // reaching for the brake and finding it already spent is exactly the event an operator must be able to alarm on,
+  // and returning `already_consumed` in an API response leaves no durable trace to alarm from.
+  'approval.revoke_failed': { schemaVersion: 1, subjectType: 'approval_request' },
+  // `approval.expired` IS DELIBERATELY UNREGISTERED, on this file's own precedent for `tool.call_started`:
+  // registering an event no code can emit declares something the trail will never contain. Expiry is EVALUATED at
+  // the gate, not swept by anything, so there is no instant at which an approval "becomes" expired to report — and
+  // emitting one per refused dispatch would produce a stream of duplicates describing a single lapse. When a
+  // sweeper exists, it brings the event with it.
   'policy.evaluated': { schemaVersion: 1, subjectType: 'policy_evaluation' },
   'policy.blocked': { schemaVersion: 1, subjectType: 'policy_evaluation' },
   // The engine could not produce an answer at all. SUBJECT = the COMPANY, because there is no evaluation to point
@@ -754,6 +776,47 @@ export function approvalRejected(input: { readonly requestId: string; readonly d
     decider_type: input.deciderType,
     policy_version: input.policyVersion,
   });
+}
+
+/**
+ * A human took an authorization back (ACBP-P6-004; APPR-006; EVENT-CATALOG L225).
+ *
+ * Outcome `denied`, matching `approval.rejected`: what is being audited is an authorization, and this one ends
+ * withheld. A reader counting "actions a human stopped" wants both without parsing metadata.
+ *
+ * `revoked_by` is canon's own payload field. NO REASON TEXT, for the same discipline `approval.rejected` follows.
+ */
+export function approvalRevoked(input: { readonly requestId: string; readonly revokedByUserId: string }): AuditEvent {
+  return makeEvent('approval.revoked', input.requestId, 'denied', { revoked_by: input.revokedByUserId });
+}
+
+/**
+ * An approval was SPENT on a specific tool call (ACBP-P6-004; APPR-009; backlog "Consumption audited").
+ *
+ * Outcome `success`, and it is the only `approval.*` event that is one: requesting is neutral, approving and
+ * rejecting are decisions about a future action, and this is the moment the authorization actually became an
+ * action. Single-use means this event can appear AT MOST ONCE per approval — a second would mean the constraint
+ * that makes single-use true had failed, which is worth being able to detect by counting.
+ *
+ * `call_id` is what makes the trail answerable in the direction people actually ask: not "was this approved?" but
+ * "what did this approval authorize?".
+ */
+export function approvalConsumed(input: { readonly requestId: string; readonly callId: string; readonly toolId: string }): AuditEvent {
+  return makeEvent('approval.consumed', input.requestId, 'success', { call_id: input.callId, tool_id: input.toolId });
+}
+
+/**
+ * A human tried to revoke an approval that had already been spent (ACBP-P6-004; APPR-006; CDR-069 §1-G6).
+ *
+ * Outcome `blocked`, not `denied`, and the distinction is the one this registry already draws: `denied` is what a
+ * PERSON does when they decline to authorize; `blocked` is what the PLATFORM does when it cannot carry something
+ * out. Here a person tried to stop an action and the platform could not — the authorization was already spent.
+ *
+ * `compensation_required` is the flag an operator alarms on. This is the only `approval.*` event that asks for a
+ * human to go and do something about an action that has ALREADY been authorized.
+ */
+export function approvalRevokeFailed(input: { readonly requestId: string; readonly attemptedByUserId: string }): AuditEvent {
+  return makeEvent('approval.revoke_failed', input.requestId, 'blocked', { attempted_by: input.attemptedByUserId, compensation_required: true });
 }
 
 export function policyEvaluated(input: { readonly evaluationId: string; readonly policyVersion: number; readonly decision: string; readonly evaluationPoint: string }): AuditEvent {

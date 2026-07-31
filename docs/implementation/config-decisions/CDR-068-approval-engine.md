@@ -146,10 +146,11 @@ A **failing-by-design marker test** in `packages/contracts/src/approvals/request
 appears in every run rather than resting here; implementing the derivation breaks that test on purpose and brings
 whoever does it back to this section.
 
-**NOT IMPLEMENTED, DELIBERATELY: scope enforcement and single-use consumption.** `scope` is stored and shown to the
-deciding human but not applied at the gate, and `member_request_ids` is enumerated and never read — so a
-`batch_approve` authorizes only its own request. Both are ADR-009 §2 / P6-004. Recorded here because a constraint
-presented to a human that the system does not apply is worse than one never shown.
+**~~NOT IMPLEMENTED: scope enforcement and single-use consumption.~~ CLOSED BY ACBP-P6-004** (CDR-069). `scope` was
+stored and shown to the deciding human but not applied at the gate — one `approve` on a `one_action` request
+authorized unlimited calls for the run's lifetime. Single-use consumption is that enforcement; the two were always
+the same problem. `member_request_ids` is still enumerated and never read, so a `batch_approve` authorizes only its
+own request — under-permissive, and therefore not a hole.
 
 **NOT DONE: P6-003d, the approval inbox UI** — frontend, behind the owner's standing gate.
 

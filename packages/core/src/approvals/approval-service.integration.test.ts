@@ -31,7 +31,7 @@ import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { initializeCompanyPolicy } from '../policy/index.js';
-import { requestApproval, decideApproval, listApprovalInbox } from './index.js';
+import { requestApproval, decideApproval, revokeApproval, listApprovalInbox } from './index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
@@ -54,8 +54,15 @@ describe.skipIf(!hasTestDatabase)('approval service (real PostgreSQL, restricted
 
   const base = () => ({ userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 });
 
-  /** The content half of a request. Complete on purpose — incompleteness is its own test. */
+  /**
+   * The content half of a request. Complete on purpose — incompleteness is its own test.
+   *
+   * `expiresAt` IS STATED EXPLICITLY, and it has to be: ACBP-P6-004 ships the expiry mechanism with no default
+   * value anywhere, because ADR-009 §15 leaves per-risk-class defaults an open owner question. A test that could
+   * omit it would mean the platform was quietly answering that question somewhere.
+   */
   const content = () => ({
+    expiresAt: new Date(Date.now() + 3_600_000),
     scope: 'one_action' as const,
     action: 'Email three suppliers',
     reason: 'Outreach is the next planned step',
@@ -291,6 +298,91 @@ describe.skipIf(!hasTestDatabase)('approval service (real PostgreSQL, restricted
     const id = await okRequestId();
     const r = await decideApproval(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, requestId: id, decision: { path: 'approve', decidedAt: new Date() } });
     expect(r.status).toBe('not_found');
+  });
+
+  // ─────────────────────────────── REVOCATION (ACBP-P6-004; APPR-006; CDR-069 §1-G4/G6) ───────────────────────
+
+  const decide = async (id: string): Promise<void> => {
+    expect((await decideApproval(product, { ...base(), requestId: id, decision: { path: 'approve', decidedAt: new Date() } })).status).toBe('ok');
+  };
+
+  test('REVOKING is owner-only — a viewer cannot take back an authorization they could not grant', async () => {
+    const id = await okRequestId();
+    await decide(id);
+    const r = await revokeApproval(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, requestId: id });
+    expect(r.status).toBe('forbidden');
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', id).executeTakeFirst())?.status).toBe('decided');
+  });
+
+  test('an owner REVOKES a decided approval, and the event names who did it', async () => {
+    const id = await okRequestId();
+    await decide(id);
+    expect((await revokeApproval(product, { ...base(), requestId: id })).status).toBe('ok');
+
+    const row = await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', id).executeTakeFirst();
+    expect(row?.status).toBe('revoked');
+    expect(row?.revoked_by_user_id).toBe(w.aOwner);
+
+    const events = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'approval.revoked').execute();
+    expect(events).toHaveLength(1);
+    // `denied`, matching `approval.rejected`: what is audited is an authorization, and this one ends withheld.
+    expect(events[0]?.outcome).toBe('denied');
+  });
+
+  test('a PENDING request cannot be revoked — there is no authorization to withdraw', async () => {
+    const id = await okRequestId();
+    const r = await revokeApproval(product, { ...base(), requestId: id });
+    expect(r).toMatchObject({ status: 'not_revocable', currentStatus: 'pending' });
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'approval.revoked').execute()).toHaveLength(0);
+  });
+
+  test('revoking TWICE is refused the second time, and writes one event, not two', async () => {
+    const id = await okRequestId();
+    await decide(id);
+    expect((await revokeApproval(product, { ...base(), requestId: id })).status).toBe('ok');
+    expect(await revokeApproval(product, { ...base(), requestId: id })).toMatchObject({ status: 'not_revocable', currentStatus: 'revoked' });
+    expect(await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'approval.revoked').execute()).toHaveLength(1);
+  });
+
+  test('a revocation that LOSES to a consumption leaves a compensating alert (CDR-069 §1-G6)', async () => {
+    const id = await okRequestId();
+    await decide(id);
+    // Spend it out from under the revoker, exactly as a dispatch would: a real call row, then the consumption.
+    const callId = (
+      await sql<{ id: string }>`insert into tool_calls (account_id, company_id, run_id, tool_id, risk_class, external_effect, outcome, arguments_digest)
+             values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, 'send_email', 'external_reversible', true, 'requested', ${'c'.repeat(64)})
+           returning id`.execute(owner.kysely)
+    ).rows[0]!.id;
+    await sql`update approval_requests set status='consumed', consumed_at=now(), consumed_by_call_id=${callId}::uuid where id=${id}::uuid`.execute(owner.kysely);
+
+    const r = await revokeApproval(product, { ...base(), requestId: id });
+    // The API is honest — it does not claim a revocation that did not happen.
+    expect(r).toMatchObject({ status: 'already_consumed' });
+
+    // …and the attempt is DURABLE. A human reaching for the brake and finding it already spent is the event an
+    // operator must be able to alarm on, and a response nobody stored is not one.
+    const alerts = await events('approval.revoke_failed');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.outcome).toBe('blocked');
+    // No revocation was recorded, because none happened.
+    expect(await events('approval.revoked')).toHaveLength(0);
+  });
+
+  test('a FRACTIONAL cost estimate is refused as incomplete, not thrown at the driver', async () => {
+    // The column is `integer`; the contract now agrees about what a credit is.
+    expect(await request({ estimatedCostCredits: 1.5 })).toMatchObject({ status: 'incomplete', missing: ['estimatedCostCredits'] });
+  });
+
+  test('an UNREADABLE expiry is refused as incomplete — the one date with no guard until review pass 2', async () => {
+    expect(await request({ expiresAt: new Date('nonsense') })).toMatchObject({ status: 'incomplete', missing: ['expiresAt'] });
+    expect(await request({ expiresAt: 'tomorrow' })).toMatchObject({ status: 'incomplete', missing: ['expiresAt'] });
+    expect(await owner.kysely.selectFrom('approval_requests').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('another company’s approval reads as absent, not as something to revoke', async () => {
+    const id = await okRequestId();
+    await decide(id);
+    expect((await revokeApproval(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, requestId: id })).status).toBe('not_found');
   });
 
   // ─────────────────────────────────────── THE INBOX (mutations: no authz, unbounded) ──────────────────────────

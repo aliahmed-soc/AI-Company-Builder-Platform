@@ -92,6 +92,9 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // enforce); reading the inbox is open to viewers, because seeing that a human is needed is not authority to be one.
   'approval:request': ['owner'],
   'approval:decide': ['owner'],
+  // Revoking sits at the SAME level as deciding (ACBP-P6-004): whoever can grant an authorization can take it back,
+  // which is what makes an approval retractable rather than a one-way door.
+  'approval:revoke': ['owner'],
   'approval:read': ['owner', 'viewer'],
 };
 

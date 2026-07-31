@@ -16,6 +16,7 @@ import { pauseCompany } from '../company/company-lifecycle.js';
 import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { initializeCompanyPolicy } from '../policy/index.js';
+import { computePayloadBinding } from '../approvals/binding.js';
 import { dispatchToolCall } from './index.js';
 import { TaskRepository } from '@acbp/database';
 
@@ -84,6 +85,32 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
    * injectable port is gone (CDR-068 §0.1). Inserted as the OWNER, because the product role has no business
    * writing approvals outside the service.
    */
+  /**
+   * A PENDING request with a real binding and no decision — the state a human has not answered yet.
+   *
+   * Split out of `seedDecision` for review pass 2's F5: `findConsumableForCall` is narrowed to `status='decided'`,
+   * and the other side of that filter needs its own test. A question nobody has answered must not read as an answer.
+   */
+  async function seedRequestOnly(toolId: string): Promise<string> {
+    const policy = await owner.kysely
+      .selectFrom('policies')
+      .select(['id', 'version'])
+      .where('company_id', '=', w.companyA1)
+      .where('status', '=', 'active')
+      .executeTakeFirstOrThrow();
+    return (
+      await sql<{ id: string }>`insert into approval_requests
+             (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
+              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version,
+              payload_hash, binding_version, expires_at)
+           values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
+                   'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
+                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
+                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
+           returning id`.execute(owner.kysely)
+    ).rows[0]!.id;
+  }
+
   async function seedDecision(
     toolId: string,
     path: 'approve' | 'reject' | 'schedule' | 'edit_then_approve' = 'approve',
@@ -98,10 +125,12 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     const request = (
       await sql<{ id: string }>`insert into approval_requests
              (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
-              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version)
+              estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version,
+              payload_hash, binding_version, expires_at)
            values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
                    'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
-                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version})
+                   'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
+                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
            returning id`.execute(owner.kysely)
     ).rows[0]!;
     await sql`insert into approval_decisions
@@ -256,6 +285,111 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     await addRule(alwaysRule('needs-approval', 'require_approval'));
     await seedDecision('web_research', 'edit_then_approve');
     expect((await dispatch()).status).toBe('denied');
+  });
+
+  // ══════════ ACBP-P6-004 / CDR-069 — BINDING AND SINGLE-USE, AT THE DISPATCHER ══════════
+  //
+  // Review pass 2 measured five surviving mutations here and named the gap exactly: the primitives are well tested
+  // in isolation, but APPR-004 ("bound to these bytes") and APPR-009 ("single-use") are claimed *enforced at the
+  // tool dispatcher* and nothing at the dispatcher proved either. `spend = false`, hashing a constant instead of
+  // the real arguments, dropping the usability half of the gate, deleting the `approval.consumed` audit, and
+  // deleting the lost-race correction ALL left the suite green.
+
+  const requestRows = async () => owner.kysely.selectFrom('approval_requests').selectAll().orderBy('created_at').execute();
+
+  test('an authorized call SPENDS its approval — and the next identical call is refused (APPR-009)', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedDecision('web_research');
+
+    const first = await dispatch();
+    expect(first.status).toBe('authorized');
+
+    const spent = row(await requestRows());
+    expect(spent.status).toBe('consumed');
+    // The approval names the call that spent it — "what did this authorize?" answered by the row, not by a join.
+    expect(spent.consumed_by_call_id).toBe((first as { call: { id: string } }).call.id);
+    const consumedEvents = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'approval.consumed').execute();
+    expect(consumedEvents).toHaveLength(1);
+
+    // SINGLE-USE. The approval is gone, policy still demands one, so the second call is refused for the honest
+    // reason: none stands against it. Not `approval_invalid` — a spent approval is absent, not a refusal.
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_required' });
+  });
+
+  test('a MISMATCHED PAYLOAD is refused, and does NOT burn the approval (APPR-004)', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedDecision('web_research');
+
+    // The approval was bound to `{}`. These are different bytes, so it authorizes nothing.
+    expect(await dispatch({ args: { to: 'attacker@example.test' } })).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+    expect(row(await requestRows()).status).toBe('decided');
+
+    // …and the human's actual approval still works, which is what makes the refusal a mismatch rather than a loss.
+    expect((await dispatch()).status).toBe('authorized');
+  });
+
+  /**
+   * REVIEW PASS 1, #2 — the binding element that did nothing.
+   *
+   * The expected hash was recomputed with `standing.tool_version`, read from the very row it is compared against,
+   * so the tool VERSION could never mismatch. A human approves `web_research` while v1 is active, an active v2
+   * lands, and v2 runs under v1's approval — while `APPROVAL-AND-POLICY §2` and CDR-069 §1-G1 both name tool
+   * version as bound. The version now comes from the registry, which is the version the call will actually execute.
+   */
+  test('a NEW ACTIVE TOOL VERSION invalidates an approval bound to the old one', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedDecision('web_research');
+    // The approval is live and would authorize — proven by the sibling tests — until the registry moves.
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+              values ('web_research', 2, 'informational', 'fixture tool v2', 'active')`.execute(owner.kysely);
+
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+    // The approval is NOT burned: a human can still be asked about v2, and the v1 record stands unspent.
+    expect(row(await requestRows()).status).toBe('decided');
+  });
+
+  test('a REVOKED approval refuses a call that policy demanded one for', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedDecision('web_research');
+    await sql`update approval_requests set status='revoked', revoked_at=now(), revoked_by_user_id=${w.aOwner}::uuid`.execute(owner.kysely);
+
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_required' });
+  });
+
+  /**
+   * REVIEW PASS 2, F2 — the permanent denial of service I introduced, and the reason the read is narrow.
+   *
+   * `findConsumableForCall` once matched `decided | consumed | revoked`, so a spent approval stood against its
+   * `(run, tool)` FOREVER: the gate read it as an explicit refusal and denied every later call — including calls
+   * the company's own policy allows outright and which never needed an approval at all. A terminal approval is
+   * ABSENT, not refusing.
+   */
+  test('a SPENT approval does not poison the tool: a call policy allows outright still proceeds', async () => {
+    // No `require_approval` rule. `web_research` is informational and the baseline policy allows it, so this call
+    // needs no approval — but one exists, is spent by the first dispatch, and must not block anything afterwards.
+    await seedDecision('web_research');
+    expect((await dispatch()).status).toBe('authorized');
+    expect(row(await requestRows()).status).toBe('consumed');
+
+    expect((await dispatch()).status).toBe('authorized');
+    expect((await dispatch()).status).toBe('authorized');
+  });
+
+  test('a REVOKED approval does not poison the tool either — revocation withdraws an approval, it does not ban the action', async () => {
+    await seedDecision('web_research');
+    await sql`update approval_requests set status='revoked', revoked_at=now(), revoked_by_user_id=${w.aOwner}::uuid`.execute(owner.kysely);
+    // Policy allows this call outright, so the withdrawn approval is simply not needed.
+    expect((await dispatch()).status).toBe('authorized');
+  });
+
+  /**
+   * REVIEW PASS 2, F5 — `findConsumableForCall`'s status filter, from the other side. A merely PENDING request must
+   * not stand against a call: it is a question nobody has answered, not an answer.
+   */
+  test('a PENDING request is not a refusal — the reason is `approval_required`, not `approval_invalid`', async () => {
+    await addRule(alwaysRule('needs-approval', 'require_approval'));
+    await seedRequestOnly('web_research');
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'approval_required' });
   });
 
   test('an approval CANNOT override a policy DENY (POL-005), and the reason names policy', async () => {

@@ -42,6 +42,30 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-004 Payload binding, expiry, revocation, single-use consumption — MERGED** (CDR-069; APPR-004/005/006/009).
+  ADR-009's title, built: *"payload-hash-bound, expiring, revocable, single-use approvals enforced at the tool
+  dispatcher."* The gate no longer asks "did a human decide something about this tool on this run?" — it asks "is
+  there a live, unrevoked, unspent approval bound to THESE bytes, and did a human say yes?", and then spends it.
+  Migration 0048 (binding hash + normalization version, required expiry, revocation and consumption columns, a
+  CHECK making `revoked` and `consumed` mutually exclusive), `verifyAndConsume` as ONE conditional UPDATE,
+  `revokeApproval` with its own owner-only `approval:revoke`, and the `approval.revoked` / `approval.consumed`
+  events.
+  **THIS ALSO CLOSES P6-003's `scope` GAP.** One `approve` on a `one_action` request authorized unlimited calls for
+  the run's lifetime; single-use consumption IS that enforcement, which is why the two were always one problem.
+  **EXPIRY SHIPS AS A MECHANISM WITH NO VALUES.** ADR-009 §15 leaves per-risk-class defaults an OPEN OWNER
+  QUESTION (AOQ-14-adjacent), so `expires_at` is NOT NULL, caller-supplied, and defaulted nowhere in the stack. A
+  nullable "no expiry" column was rejected: it would make the ABSENCE of an owner decision read as permission to
+  never expire.
+  **TWO DESIGN ERRORS, BOTH CAUGHT BY THE SYSTEM RATHER THAN BY REVIEW.** Reading only the REQUEST made a rejected
+  approval authorize (a reject is `decided` too) — seven existing tests went red. And consumption was specified to
+  run BEFORE the call was recorded; `consumed_by_call_id` is a real FK, so the database refused it, and the
+  reasoning was unnecessary anyway because both statements are in one transaction.
+  **NAMED LIMITS, NOT OVERLOOKED ONES:** the dispatcher cannot detect COST drift (it has no cost input, so it
+  recomputes with the request's own stored cost — execution-time enforcement is P5-005); consumption at
+  authorization BURNS the approval even if the call never runs (fail-closed, revisit when P5-005 gives a true
+  execution instant); `approval.expired` stays unregistered because nothing sweeps expiry.
+  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **3042 tests / 225 files, ZERO SKIPS**.
+
 - **ACBP-P6-003 Human approval engine (a/b/c) — MERGED, NOT DONE; sub-scope (d) is owner-gated** (CDR-068).
   The approval store exists and the dispatcher reads it. Contracts for the five decision paths, migration 0047
   (`approval_requests` + append-only `approval_decisions`, dual-keyed FORCE RLS, per-path `iff` CHECKs, the
@@ -67,9 +91,9 @@ ticket without a DONE line above it is genuinely in flight._
     the core index, so nothing could call it and every guard in it survived mutation. Exported, and covered by 21
     real-PG tests; 10 of 11 service mutations now die (the survivor is documented at its guard site).
   - "Latest decision" was ordered by a **caller-supplied timestamp**; now server `created_at` then `id`.
-  **KNOWN AND MARKED, NOT SILENT:** CDR-068 §2-G4 (preview-equals-execution, APPR-010) is **not built** — `preview`
-  is free text with no relationship to `data`. A failing-by-design marker test asserts the gap so it shows up in
-  every run. Payload-hash binding remains ACBP-P6-004 and must not be conflated with it.
+  **KNOWN AND MARKED, NOT SILENT:** CDR-068 §2-G4 (preview-equals-execution, APPR-010) is **still not built** —
+  `preview` is free text with no relationship to `data`, and its failing-by-design marker test remains. P6-004 bound
+  the PAYLOAD; deriving the PREVIEW from it is the other half and the two must not be conflated.
   Locally verified, NOT CI-proven: `pnpm run check` exit 0; **2988 tests / 223 files, ZERO SKIPS** (real PostgreSQL
   live for the whole sweep; an earlier red run was VOID — WSL had shut the database down mid-run).
 

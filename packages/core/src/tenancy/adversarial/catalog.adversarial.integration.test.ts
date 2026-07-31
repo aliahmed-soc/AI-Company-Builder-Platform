@@ -237,12 +237,29 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     expect([...policies].sort()).toEqual(['status', 'superseded_at']);
     // And the evaluation records take NO update grant at all, not even column-level.
     expect(byTable.get('policy_evaluations')).toBeUndefined();
-    // Approval requests (ACBP-P6-003b; CDR-068 §1): ONLY the four lifecycle columns. The CONTENT columns are the
-    // point — `action`, `reason`, `preview`, `risk_class`, `estimated_cost_credits` and the rest must be immutable,
-    // because a request whose content could change after a human read it is exactly the material-change hole
-    // invariant 7 closes. An edit produces a NEW request via `edit_then_approve`, never a rewritten one.
+    // Approval requests (ACBP-P6-003b/P6-004b; CDR-068 §1, CDR-069): ONLY the LIFECYCLE columns. The CONTENT
+    // columns are the point — `action`, `reason`, `preview`, `risk_class`, `estimated_cost_credits` and the rest
+    // must be immutable, because a request whose content could change after a human read it is exactly the
+    // material-change hole invariant 7 closes. An edit produces a NEW request via `edit_then_approve`.
+    //
+    // P6-004 ADDED FOUR AND WITHHELD THREE, and the withheld ones matter more than the added ones:
+    // `payload_hash`, `binding_version` and `expires_at` are absent from this list DELIBERATELY. An approval whose
+    // hash could be re-pointed at a different payload, or whose expiry could be pushed out, after a human read it
+    // would defeat the entire binding ticket from inside the product role. They are content, not lifecycle.
     const approvalRequests = byTable.get('approval_requests') ?? [];
-    expect([...approvalRequests].sort()).toEqual(['decided_at', 'status', 'superseded_at', 'superseded_by_request_id']);
+    expect([...approvalRequests].sort()).toEqual([
+      'consumed_at',
+      'consumed_by_call_id',
+      'decided_at',
+      'revoked_at',
+      'revoked_by_user_id',
+      'status',
+      'superseded_at',
+      'superseded_by_request_id',
+    ]);
+    for (const bound of ['payload_hash', 'binding_version', 'expires_at']) {
+      expect(approvalRequests, `${bound} is BOUND CONTENT — granting UPDATE on it would defeat ACBP-P6-004`).not.toContain(bound);
+    }
     // And a DECISION takes no update grant at all, not even column-level: it is the record of a human exercising
     // authority, and canon §2 says an edited approval is superseded, never mutated.
     expect(byTable.get('approval_decisions')).toBeUndefined();

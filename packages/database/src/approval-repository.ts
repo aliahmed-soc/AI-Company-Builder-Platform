@@ -29,6 +29,11 @@ export interface NewApprovalRequestInput {
   readonly policyId: string;
   readonly policyVersion: number;
   readonly policyEvalId?: string | null;
+  /** THE BINDING (ACBP-P6-004; APPR-004). Set once, at insert — there is no UPDATE grant for either column. */
+  readonly payloadHash: string;
+  readonly bindingVersion: number;
+  /** EXPIRY (APPR-005). Required, with no default anywhere in the stack — ADR-009 §15 is an open owner question. */
+  readonly expiresAt: Date;
 }
 
 export interface NewApprovalDecisionInput {
@@ -75,6 +80,9 @@ export class ApprovalRepository {
         policy_id: input.policyId,
         policy_version: input.policyVersion,
         policy_eval_id: input.policyEvalId ?? null,
+        payload_hash: input.payloadHash,
+        binding_version: input.bindingVersion,
+        expires_at: input.expiresAt,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -193,6 +201,139 @@ export class ApprovalRepository {
       .set({ status: 'superseded', superseded_at: at, superseded_by_request_id: supersededBy })
       .where('id', '=', requestId)
       .where('status', '=', 'pending')
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows);
+  }
+
+  /**
+   * The DECIDED approval standing against this call, if any — the row `verifyAndConsume` will try to spend.
+   *
+   * READ-ONLY, AND IT AUTHORIZES NOTHING. Its purpose is to produce an honest REASON (`approvalUsability` turns it
+   * into `expired` / `payload_mismatch` / …) and to tell the caller whether there is anything to spend at all. The
+   * decision to proceed is made by the conditional UPDATE, which re-checks every condition atomically — so a race
+   * between this read and that UPDATE loses the race, it does not slip through it.
+   *
+   * `status = 'decided'` ONLY, AND THAT NARROWNESS IS LOAD-BEARING (review pass 2, F2). It once also matched
+   * `consumed` and `revoked`, to give the gate a precise reason. The cost was a PERMANENT DENIAL OF SERVICE: once
+   * an approval was spent, a row stood against that `(run, tool)` forever, the gate read it as an explicit refusal,
+   * and every later call was denied — including calls the company's own policy allows outright, which never needed
+   * an approval at all. Proven by dispatching an informational tool a third time.
+   *
+   * A TERMINAL APPROVAL IS ABSENT, NOT REFUSING. That is the honest reading: a spent approval has been used up and
+   * a revoked one has been withdrawn, and neither is a human saying "no" to the call being made now. If policy
+   * demands an approval, absence refuses it (`approval_required`) — which is single-use enforced. If policy allows
+   * the call outright, absence is simply true.
+   *
+   * Matches the partial index `approval_requests_consumable_idx`, which 0048 built on `status = 'decided'` for
+   * exactly this query.
+   *
+   * Ordered by the server clock, then id. `decided_at` is caller-supplied and must never order anything.
+   */
+  findConsumableForCall(companyId: string, runId: string, toolId: string): Promise<ApprovalRequestRow | undefined> {
+    return this.#db
+      .selectFrom('approval_requests')
+      .selectAll()
+      .where('company_id', '=', companyId)
+      .where('run_id', '=', runId)
+      .where('tool_id', '=', toolId)
+      .where('status', '=', 'decided')
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+  }
+
+  /**
+   * VERIFY AND CONSUME, ATOMICALLY — ADR-009's *"verify-and-consume atomically at the execution instant"*, and the
+   * single most load-bearing statement in the approval system (CDR-069 §1-G5).
+   *
+   * IT IS ONE STATEMENT, AND THAT IS THE ENTIRE POINT. A read followed by a write would let two dispatches both
+   * observe `decided` and both proceed — the double-execution that single-use exists to prevent. Here the row lock
+   * taken by the UPDATE serialises every concurrent consumer, so exactly one can move the row out of `decided`.
+   *
+   * IT NAMES THE REQUEST IT SPENDS (review pass 2, F1 — and CDR-069 §1-G5 specified `where id = $id` all along).
+   * Without it the predicate matched `(company, run, tool, …)`, and `UPDATE` has no `LIMIT`: two decided requests
+   * for the same action — a reject and an approve, or an ordinary duplicate submission — BOTH matched, both were
+   * stamped with the same consuming call, and `approval_requests_consumed_call_uq` raised 23505. That threw out of
+   * `dispatchToolCall`, which its own docblock says never happens for a refusal, rolling back the transaction so
+   * no `tool_calls` row and no audit event survived the attempt — a TOOL-002 violation on exactly the calls most
+   * worth recording, and permanent, because every retry reproduced it.
+   *
+   * It also makes "the request the gate evaluated is the request that gets spent" TRUE. The dispatcher judges one
+   * specific row's binding, expiry and decision; spending a different row would be judging one thing and consuming
+   * another. Single-use now rests on this statement, as designed, rather than on a unique index turning a logic
+   * error into an exception.
+   *
+   * EVERY CONDITION IS IN THE PREDICATE, not checked before it:
+   *   - `id = $requestId`      — the row the caller evaluated, and only that row.
+   *   - `status = 'decided'`   — not pending, not superseded, and NOT ALREADY CONSUMED (single-use).
+   *   - `revoked_at is null`   — DEFENCE IN DEPTH, and labelled as such because it cannot fire today (review pass 2,
+   *                              F10). `approval_requests_status_consistent` makes `status='decided' AND
+   *                              revoked_at IS NOT NULL` unrepresentable, so `status='decided'` alone is what
+   *                              actually resolves the revoke-vs-consume race. Kept rather than deleted — unlike
+   *                              the hex-shape check this ticket removed — because it guards against a DIFFERENT
+   *                              layer being changed: drop that CHECK and this clause is the only thing left. A
+   *                              reader must not mistake it for the mechanism, which is why it says so here.
+   *   - `expires_at > now`     — strictly greater, so the expiry instant itself does not authorize; clock ambiguity
+   *                              resolves to expired (canon §2).
+   *   - `payload_hash = ...`   — the binding. A mismatch consumes nothing and authorizes nothing (APPR-004).
+   *   - `binding_version = ...`— an approval bound under a ruleset we cannot recompute is not verifiable, so it is
+   *                              not usable. This is what makes the pre-binding backfill (version 0) inert.
+   * A separate check for any of these would be a separate instant, and the gap between instants is the whole
+   * vulnerability class.
+   *
+   * ZERO ROWS IS THE REFUSAL. There is no boolean to misread and no exception to swallow: either this returns the
+   * row it just consumed, or the call is not authorized. The CALLER cannot tell WHY from this alone — that is
+   * deliberate, and `approvalUsability` in @acbp/contracts answers the "why" for the audit record without ever
+   * being the thing that authorizes.
+   *
+   * `now` and the expected binding are INPUTS. Reading the clock inside the statement would make "was this valid at
+   * time T?" unanswerable from the record, the same discipline the policy and schedule clocks follow.
+   */
+  async verifyAndConsume(input: {
+    /** The row the caller evaluated. Without it the statement can spend more than one approval — see above. */
+    readonly requestId: string;
+    readonly companyId: string;
+    readonly runId: string;
+    readonly toolId: string;
+    readonly payloadHash: string;
+    readonly bindingVersion: number;
+    readonly callId: string;
+    readonly now: Date;
+  }): Promise<ApprovalRequestRow | undefined> {
+    return this.#db
+      .updateTable('approval_requests')
+      .set({ status: 'consumed', consumed_at: input.now, consumed_by_call_id: input.callId })
+      .where('id', '=', input.requestId)
+      .where('company_id', '=', input.companyId)
+      .where('run_id', '=', input.runId)
+      .where('tool_id', '=', input.toolId)
+      .where('status', '=', 'decided')
+      .where('revoked_at', 'is', null)
+      .where('expires_at', '>', input.now)
+      .where('payload_hash', '=', input.payloadHash)
+      .where('binding_version', '=', input.bindingVersion)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  /**
+   * REVOKE a decided approval — APPR-006, as a lifecycle transition rather than a sixth decision path (CDR-069 §1-G4).
+   *
+   * `status = 'decided'` is the whole race resolution. It excludes `consumed`, so a revocation arriving after the
+   * approval was spent updates ZERO rows and the caller learns the truth: the action was already authorized and may
+   * already have run. Canon §2 permits either "resolve in favour of revocation" or "produce a compensating alert",
+   * and only the second is honest once consumption has committed — nothing can un-authorize what already went.
+   *
+   * It also excludes `pending`: a request nobody has approved has no authorization to withdraw. The answer there is
+   * to reject it, which is a decision, and decisions are the other function.
+   */
+  async revoke(requestId: string, revokedByUserId: string, at: Date): Promise<number> {
+    const r = await this.#db
+      .updateTable('approval_requests')
+      .set({ status: 'revoked', revoked_at: at, revoked_by_user_id: revokedByUserId })
+      .where('id', '=', requestId)
+      .where('status', '=', 'decided')
       .executeTakeFirst();
     return Number(r.numUpdatedRows);
   }

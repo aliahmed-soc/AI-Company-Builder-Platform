@@ -56,6 +56,9 @@ import {
   approvalRequested,
   approvalApproved,
   approvalRejected,
+  approvalRevoked,
+  approvalRevokeFailed,
+  approvalConsumed,
   toolCallRequested,
   toolCallCompleted,
   workerStateChanged,
@@ -152,6 +155,13 @@ export const AUDITED_OPERATIONS = {
   'approval.request': 'approval.requested',
   'approval.decide': 'approval.approved',
   'approval.decide.rejected': 'approval.rejected',
+  // ACBP-P6-004. Revoking is its OWN operation, not a decision path: deciding answers a question that was asked,
+  // revoking withdraws an answer already given. Consuming is the moment an authorization becomes an action, which is
+  // the transition a reader most often needs to locate.
+  'approval.revoke': 'approval.revoked',
+  // The compensating alert when a revocation loses to a consumption (CDR-069 §1-G6).
+  'approval.revoke_failed': 'approval.revoke_failed',
+  'approval.consume': 'approval.consumed',
   'tool.dispatch': 'tool.call_requested',
   'tool.complete': 'tool.call_completed',
   'tool.fail': 'tool.call_failed',
@@ -199,7 +209,7 @@ export type PolicyAuditedOperation = 'policy.evaluate' | 'policy.evaluate.denied
 // Approvals (ACBP-P6-003c; CDR-068). Its OWN domain, not folded into POLICY: policy decides whether a human is
 // needed, and this is the human deciding. Different authority, different reader — the same reasoning that separated
 // POLICY from RUN and BILLING from RUN.
-export type ApprovalAuditedOperation = 'approval.request' | 'approval.decide' | 'approval.decide.rejected';
+export type ApprovalAuditedOperation = 'approval.request' | 'approval.decide' | 'approval.decide.rejected' | 'approval.revoke' | 'approval.revoke_failed' | 'approval.consume';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -218,7 +228,7 @@ export const TOOL_AUDITED_OPERATION_IDS: readonly ToolAuditedOperation[] = ['too
 export const WORKER_AUDITED_OPERATION_IDS: readonly WorkerAuditedOperation[] = ['worker.set_state', 'worker.run_start', 'worker.run_complete', 'worker.run_fail'];
 export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] = ['credit.reserve', 'credit.settle'];
 export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[] = ['artifact.request-revision'];
-export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected'];
+export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected', 'approval.revoke', 'approval.revoke_failed', 'approval.consume'];
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
@@ -336,6 +346,12 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => approvalApproved({ requestId: subjectId, path: 'approve', deciderType: 'human', policyVersion: 1 });
     case 'approval.decide.rejected':
       return (subjectId) => approvalRejected({ requestId: subjectId, deciderType: 'human', policyVersion: 1 });
+    case 'approval.revoke_failed':
+      return (subjectId) => approvalRevokeFailed({ requestId: subjectId, attemptedByUserId: subjectId });
+    case 'approval.revoke':
+      return (subjectId) => approvalRevoked({ requestId: subjectId, revokedByUserId: subjectId });
+    case 'approval.consume':
+      return (subjectId) => approvalConsumed({ requestId: subjectId, callId: subjectId, toolId: 'send_email' });
     case 'policy.initialize':
       return (subjectId) => policyChanged({ policyId: subjectId, version: 1, baseline: 'allow', ruleCount: 1 });
     case 'tool.dispatch':

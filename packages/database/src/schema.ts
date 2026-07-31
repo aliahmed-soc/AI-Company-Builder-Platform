@@ -1149,11 +1149,32 @@ export interface ApprovalRequestsTable {
   policy_id: ColumnType<string, string, never>;
   policy_version: ColumnType<number, number, never>;
   policy_eval_id: ColumnType<string | null, string | null | undefined, never>;
+  /**
+   * THE BINDING (ACBP-P6-004; APPR-004). sha256 over the canonical material in @acbp/contracts, plus the
+   * normalization ruleset it was taken under. `never` on update, and NOT in the product role's column-scoped
+   * UPDATE grant: an approval whose hash could be re-pointed at a different payload after a human read it is the
+   * material-change hole invariant 7 exists to close. Version `0` is the pre-binding backfill sentinel, which the
+   * contract refuses as an unknown ruleset.
+   */
+  payload_hash: ColumnType<string, string, never>;
+  binding_version: ColumnType<number, number, never>;
+  /**
+   * EXPIRY (APPR-005). NOT NULL with NO default anywhere — ADR-009 §15 leaves per-risk-class defaults an open
+   * owner question, so the mechanism ships and the values do not. Also `never` on update and outside the UPDATE
+   * grant: an expiry that could be pushed out later is not an expiry.
+   */
+  expires_at: ColumnType<Date, Date | string, never>;
   status: ColumnType<string, string | undefined, string>;
   created_at: ColumnType<Date, Date | string | undefined, never>;
   decided_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   superseded_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   superseded_by_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** REVOCATION (APPR-006) — a lifecycle transition, not a sixth decision path. See CDR-069 §1-G4 for why. */
+  revoked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  revoked_by_user_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** SINGLE-USE CONSUMPTION (APPR-009). Set by the one conditional UPDATE that decides whether an action runs. */
+  consumed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  consumed_by_call_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**

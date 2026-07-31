@@ -214,18 +214,28 @@ describe.skipIf(!hasTestDatabase)('approval_requests + approval_decisions (real 
       policy_id: policyA,
       policy_version: 1,
       policy_eval_id: evalA,
+      // ACBP-P6-004: every request is BOUND and EXPIRING. Defaults here are fixture convenience only — the column
+      // itself carries no default, and the service requires the caller to state an expiry.
+      payload_hash: 'f'.repeat(64),
+      binding_version: 1,
+      expires_at: new Date(Date.now() + 3_600_000),
       ...over,
     };
     return asApp(scope(account, company), (k) =>
       sql<{ id: string }>`insert into approval_requests
           (account_id, company_id, run_id, tool_id, tool_version, action, reason, expected_result, data,
-           estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version, policy_eval_id)
+           estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version, policy_eval_id,
+           payload_hash, binding_version, expires_at)
         values (${account}::uuid, ${company}::uuid, ${v.run_id}::uuid, ${v.tool_id}, ${v.tool_version}, ${v.action}, ${v.reason},
                 ${v.expected_result}, ${v.data}::jsonb, ${v.estimated_cost_credits}, ${v.risk_class}, ${v.reversibility},
-                ${v.preview}, ${v.scope}, ${v.policy_id}::uuid, ${v.policy_version}, ${v.policy_eval_id}::uuid)
+                ${v.preview}, ${v.scope}, ${v.policy_id}::uuid, ${v.policy_version}, ${v.policy_eval_id}::uuid,
+                ${v.payload_hash}, ${v.binding_version}, ${v.expires_at})
         returning id`.execute(k),
     ).then((r) => r.rows[0]!.id);
   };
+
+  /** Read a request AS THE SUPERUSER — asserting on stored state, not on what the product role is allowed to see. */
+  const rowOf = (id: string) => su.kysely.selectFrom('approval_requests').selectAll().where('id', '=', id).executeTakeFirst();
 
   /** Insert a decision AS THE PRODUCT ROLE. */
   const insertDecision = (requestId: string, over: Record<string, unknown> = {}, account = accountA, company = companyA) => {
@@ -541,15 +551,210 @@ describe.skipIf(!hasTestDatabase)('approval_requests + approval_decisions (real 
     expect(await asApp(scope(accountA, companyA), (k) => repo(k).markSuperseded(request, successor, new Date()))).toBe(0);
   });
 
-  test('there is NO payload-hash and NO expiry column — that is ADR-009 §2 and P6-004', async () => {
-    // Asserting an absence on purpose. A hash column added here would invite the belief that an approval is bound to
-    // the exact bytes, which is the distinction CDR-068 §0.1 exists to keep sharp: closing the dispatcher's approval
-    // port makes the gate read a real DECISION, not a hash-bound token.
-    const columns = (
-      await sql<{ column_name: string }>`select column_name from information_schema.columns where table_name in ('approval_requests', 'approval_decisions')`.execute(su.kysely)
-    ).rows.map((r) => r.column_name);
-    for (const forbidden of ['payload_hash', 'content_hash', 'expires_at', 'expiry_ms', 'revoked_at', 'consumed_at']) {
-      expect(columns, `${forbidden} belongs to P6-004`).not.toContain(forbidden);
+  // ══════════ ACBP-P6-004 / CDR-069 — BINDING, EXPIRY, REVOCATION, SINGLE-USE CONSUMPTION ══════════
+
+  const HASH_A = 'a'.repeat(64);
+  const HASH_B = 'b'.repeat(64);
+
+  /** A request bound to `HASH_A`, decided, and live for an hour — the state consumption expects to find. */
+  const consumable = async (over: Record<string, unknown> = {}): Promise<string> => {
+    const id = await insertRequest({ tool_id: 'send_email', payload_hash: HASH_A, binding_version: 1, expires_at: new Date(Date.now() + 3_600_000), ...over });
+    await asApp(scope(accountA, companyA), (k) => sql`update approval_requests set status='decided', decided_at=now() where id=${id}::uuid`.execute(k));
+    return id;
+  };
+
+  /** A real `tool_calls` row to consume onto — the FK is tenant-pinned, so a fabricated id will not do. */
+  const mkCall = async (company = companyA, account = accountA, run = runA): Promise<string> =>
+    (
+      await sql<{ id: string }>`insert into tool_calls (account_id, company_id, run_id, tool_id, risk_class, external_effect, outcome, arguments_digest)
+           values (${account}::uuid, ${company}::uuid, ${run}::uuid, 'send_email', 'external_reversible', true, 'requested', ${'c'.repeat(64)}) returning id`.execute(su.kysely)
+    ).rows[0]!.id;
+
+  const consume = (id: string, over: Record<string, unknown> = {}) =>
+    asApp(scope(accountA, companyA), async (k) =>
+      new ApprovalRepository(k).verifyAndConsume({
+        // The row the caller evaluated. Without it the statement matched `(company, run, tool, …)` and could spend
+        // more than one approval at a time — review pass 2, F1.
+        requestId: id,
+        companyId: companyA,
+        runId: runA,
+        toolId: 'send_email',
+        payloadHash: HASH_A,
+        bindingVersion: 1,
+        callId: await mkCall(),
+        now: new Date(),
+        ...over,
+      }),
+    ).then((r) => ({ consumed: r !== undefined, id }));
+
+  test('the BINDING and EXPIRY columns exist, are NOT NULL, and carry no default', async () => {
+    // No default anywhere: ADR-009 §15 leaves per-risk-class expiry defaults an OPEN OWNER QUESTION, so a database
+    // default would be the platform answering it. A required column with no default is the mechanism without values.
+    const cols = await sql<{ column_name: string; is_nullable: string; column_default: string | null }>`
+      select column_name, is_nullable, column_default from information_schema.columns
+       where table_name = 'approval_requests' and column_name in ('payload_hash', 'binding_version', 'expires_at')
+       order by column_name`.execute(su.kysely);
+    expect(cols.rows.map((r) => r.column_name)).toEqual(['binding_version', 'expires_at', 'payload_hash']);
+    for (const r of cols.rows) {
+      expect(r.is_nullable).toBe('NO');
+      expect(r.column_default).toBeNull();
+    }
+  });
+
+  test('a payload hash that is not a sha256 digest is refused by the table', async () => {
+    for (const bad of ['', 'not-a-hash', 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(65)]) {
+      expect(await sqlStateOf(insertRequest({ payload_hash: bad, binding_version: 1, expires_at: new Date() }))).toBe(CHECK_VIOLATION);
+    }
+  });
+
+  test('the BINDING and EXPIRY are NOT updatable by the product role — an approval cannot be re-pointed', async () => {
+    // The material-change hole invariant 7 exists to close, expressed as a privilege: if the hash could be moved to
+    // a different payload, or the expiry pushed out, after a human read the request, the binding would be theatre.
+    const id = await consumable();
+    for (const stmt of [
+      sql`update approval_requests set payload_hash = ${HASH_B} where id = ${id}::uuid`,
+      sql`update approval_requests set binding_version = 99 where id = ${id}::uuid`,
+      sql`update approval_requests set expires_at = now() + interval '10 years' where id = ${id}::uuid`,
+    ]) {
+      expect(await sqlStateOf(asApp(scope(accountA, companyA), (k) => stmt.execute(k)))).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+  });
+
+  test('CONSUMPTION is single-use: the first call takes it, the second gets nothing', async () => {
+    const id = await consumable();
+    expect((await consume(id)).consumed).toBe(true);
+    // THE SECOND ATTEMPT IS THE WHOLE POINT (APPR-009). `status` is no longer `decided`, so the predicate matches
+    // zero rows — and zero rows IS the refusal, with no boolean to misread.
+    expect((await consume(id)).consumed).toBe(false);
+
+    const row = await rowOf(id);
+    expect(row?.status).toBe('consumed');
+    expect(row?.consumed_at).not.toBeNull();
+    expect(row?.consumed_by_call_id).not.toBeNull();
+  });
+
+  test('a MISMATCHED PAYLOAD consumes nothing and leaves the approval untouched', async () => {
+    const id = await consumable();
+    expect((await consume(id, { payloadHash: HASH_B })).consumed).toBe(false);
+    // Still spendable by the payload it was actually bound to — a mismatch must not burn the approval either.
+    expect((await rowOf(id))?.status).toBe('decided');
+    expect((await consume(id)).consumed).toBe(true);
+  });
+
+  test('an approval bound under an UNKNOWN normalization version cannot be consumed', async () => {
+    // This is what makes the pre-binding backfill (`binding_version = 0`) inert rather than dangerous.
+    const id = await consumable({ binding_version: 0 });
+    expect((await consume(id, { bindingVersion: 1 })).consumed).toBe(false);
+    expect((await consume(id, { bindingVersion: 0 })).consumed).toBe(true);
+  });
+
+  test('an EXPIRED approval consumes nothing — and the expiry instant itself does not authorize', async () => {
+    const at = new Date();
+    const id = await consumable({ expires_at: at });
+    // `expires_at > now`, strictly: clock ambiguity resolves to expired (canon §2), so the boundary is not live.
+    expect((await consume(id, { now: at })).consumed).toBe(false);
+    expect((await consume(id, { now: new Date(at.getTime() + 1000) })).consumed).toBe(false);
+    expect((await consume(id, { now: new Date(at.getTime() - 1000) })).consumed).toBe(true);
+  });
+
+  test('an approval for another RUN or another TOOL is not consumable by this call', async () => {
+    const id = await consumable();
+    // The id alone is not enough: the run and tool are in the predicate too, so an approval cannot be spent on a
+    // call it was not raised for even when the caller names it directly.
+    expect((await consume(id, { runId: runA2 })).consumed).toBe(false);
+    expect((await consume(id, { toolId: 'wipe_everything' })).consumed).toBe(false);
+    expect((await consume(id)).consumed).toBe(true);
+  });
+
+  test('NAMING A DIFFERENT APPROVAL does not spend it — one call consumes exactly the row it evaluated', async () => {
+    // Review pass 2, F1, from the other direction. Two decided approvals for the same run and tool with identical
+    // bindings — an ordinary duplicate submission. Spending must take ONE, chosen by the caller, not both: the
+    // predicate once matched on `(company, run, tool, …)` with no id, and `UPDATE` has no `LIMIT`.
+    const first = await consumable();
+    const second = await consumable();
+
+    expect((await consume(second)).consumed).toBe(true);
+    expect((await rowOf(second))?.status).toBe('consumed');
+    // The one the caller did NOT name is untouched, and still spendable on its own terms.
+    expect((await rowOf(first))?.status).toBe('decided');
+    expect((await consume(first)).consumed).toBe(true);
+  });
+
+  test('REVOCATION blocks consumption, and only a DECIDED approval can be revoked', async () => {
+    const id = await consumable();
+    expect(await asApp(scope(accountA, companyA), (k) => new ApprovalRepository(k).revoke(id, userA, new Date()))).toBe(1);
+    expect((await consume(id)).consumed).toBe(false);
+    expect((await rowOf(id))?.status).toBe('revoked');
+
+    // A PENDING request has no authorization to withdraw — the answer there is to reject it, which is a decision.
+    const pending = await insertRequest({ payload_hash: HASH_A, binding_version: 1, expires_at: new Date(Date.now() + 3_600_000) });
+    expect(await asApp(scope(accountA, companyA), (k) => new ApprovalRepository(k).revoke(pending, userA, new Date()))).toBe(0);
+  });
+
+  test('REVOKE-vs-CONSUME: whoever wins the row, the other gets nothing — and both cannot happen', async () => {
+    // CDR-069 §1-G6. Consume first, then revoke: the revocation updates ZERO rows, which is the honest answer —
+    // the action was already authorized and may already have run, and nothing can un-authorize it. Reporting a
+    // successful revocation here would be a lie about the world.
+    const id = await consumable();
+    expect((await consume(id)).consumed).toBe(true);
+    expect(await asApp(scope(accountA, companyA), (k) => new ApprovalRepository(k).revoke(id, userA, new Date()))).toBe(0);
+
+    const row = await rowOf(id);
+    expect(row?.status).toBe('consumed');
+    // The CHECK makes the contradictory row unrepresentable, not merely unwritten.
+    expect(row?.revoked_at).toBeNull();
+  });
+
+  test('the STATUS and its new timestamps cannot disagree — revoked and consumed are mutually exclusive', async () => {
+    const id = await consumable();
+    for (const stmt of [
+      // consumed without a consuming call
+      sql`update approval_requests set status='consumed', consumed_at=now() where id=${id}::uuid`,
+      // revoked without a revoker
+      sql`update approval_requests set status='revoked', revoked_at=now() where id=${id}::uuid`,
+      // both at once — the state CDR-069 §1-G6 says exactly one operation may reach
+      sql`update approval_requests set status='consumed', consumed_at=now(), revoked_at=now(), revoked_by_user_id=${userA}::uuid where id=${id}::uuid`,
+      // consumed while still pending: an authorization spent before anyone granted it
+      sql`update approval_requests set status='consumed', consumed_at=now(), decided_at=null where id=${id}::uuid`,
+    ]) {
+      expect(await sqlStateOf(asApp(scope(accountA, companyA), (k) => stmt.execute(k)))).toBe(CHECK_VIOLATION);
+    }
+  });
+
+  test('one approval cannot be spent on TWO tool calls, even by a caller writing SQL directly', async () => {
+    const first = await consumable();
+    const second = await consumable();
+    const call = await mkCall();
+    await asApp(scope(accountA, companyA), (k) => sql`update approval_requests set status='consumed', consumed_at=now(), consumed_by_call_id=${call}::uuid where id=${first}::uuid`.execute(k));
+    // The partial unique index is single-use as a CONSTRAINT rather than as a code path — without it, "single" would
+    // rest entirely on the conditional UPDATE being written correctly forever.
+    expect(
+      await sqlStateOf(
+        asApp(scope(accountA, companyA), (k) => sql`update approval_requests set status='consumed', consumed_at=now(), consumed_by_call_id=${call}::uuid where id=${second}::uuid`.execute(k)),
+      ),
+    ).toBe(UNIQUE_VIOLATION);
+  });
+
+  test('an approval cannot be consumed by ANOTHER company’s tool call (RI bypasses RLS)', async () => {
+    const id = await consumable();
+    const foreign = await mkCall(companyB, accountB, runB);
+    expect(
+      await sqlStateOf(
+        asApp(scope(accountA, companyA), (k) => sql`update approval_requests set status='consumed', consumed_at=now(), consumed_by_call_id=${foreign}::uuid where id=${id}::uuid`.execute(k)),
+      ),
+    ).toBe(FK_VIOLATION);
+  });
+
+  test('the DECISION table gained nothing — binding lives on the request, where the human read it', async () => {
+    // P6-003b asserted the ABSENCE of all of these, deliberately, so nobody would believe an approval was bound to
+    // exact bytes before it was. P6-004 makes them exist — but only on `approval_requests`. A decision is still
+    // exactly what a human said about a proposal, and it stayed append-only through a ticket that changed the
+    // request's whole lifecycle. Inverting the old assertion rather than deleting it keeps that boundary asserted.
+    const decisionColumns = (await sql<{ column_name: string }>`select column_name from information_schema.columns where table_name = 'approval_decisions'`.execute(su.kysely)).rows.map(
+      (r) => r.column_name,
+    );
+    for (const belongsToTheRequest of ['payload_hash', 'binding_version', 'expires_at', 'revoked_at', 'consumed_at', 'consumed_by_call_id']) {
+      expect(decisionColumns, `${belongsToTheRequest} binds the REQUEST, not the decision`).not.toContain(belongsToTheRequest);
     }
   });
 });

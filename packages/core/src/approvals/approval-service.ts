@@ -1,8 +1,10 @@
 // @acbp/core — the approval engine (ACBP-P6-003c; CDR-068; APPR-002/003/007; ADR-009; invariant 5).
 //
-// THREE OPERATIONS, THREE AUTHORITIES. Requesting rides the execution path (`approval:request`); deciding is the
-// authority chain's hinge and is owner-only (`approval:decide`); reading the inbox is open to viewers
-// (`approval:read`), because seeing that a human is needed is not authority to be one.
+// FOUR OPERATIONS, FOUR AUTHORITIES. Requesting rides the execution path (`approval:request`); deciding is the
+// authority chain's hinge and is owner-only (`approval:decide`); REVOKING is owner-only too (`approval:revoke`),
+// because whoever can grant an authorization must be able to take it back or an approval is a one-way door; and
+// reading the inbox is open to viewers (`approval:read`), because seeing that a human is needed is not authority
+// to be one.
 //
 // EVALUATION POINT 2 LIVES HERE (CDR-068 §0.2). `APPROVAL-AND-POLICY-ARCHITECTURE §5` point 2 is *"approval
 // requested → decision context correctness (policy version recorded into the approval)"*. Its purpose is precise and
@@ -10,21 +12,28 @@
 // decided under, so the decision stays explicable when the policy later changes. Point 3 re-checks at execution;
 // point 2 is what makes the decision itself readable afterwards.
 //
-// WHAT THIS MODULE DOES NOT DO. It does not bind an approval to a payload hash, expire it, revoke it, or consume it
-// single-use. Those are ADR-009 §2 and ACBP-P6-004. A decision here says WHAT A HUMAN DECIDED about a proposed
-// action; it does not certify that the bytes about to execute are the bytes they saw.
+// BINDING AND EXPIRY ARE SET HERE (ACBP-P6-004; APPR-004/005). A request is written with the hash of the exact
+// action it describes and the instant it dies, both computed from the values the human will actually be shown.
+// Neither column is in the product role's UPDATE grant, so what is bound at insert stays bound.
+//
+// WHAT THIS MODULE STILL DOES NOT DO: verify or consume. The gate is one atomic conditional UPDATE at the
+// dispatcher (CDR-069 §1-G5) — checking usability here and executing there would be exactly the read-then-write
+// window that lets two dispatches both proceed.
 import {
   buildApprovalRequest,
   parseApprovalDecision,
   approvalRequested,
   approvalApproved,
   approvalRejected,
+  approvalRevoked,
+  approvalRevokeFailed,
   authorizesExecution,
   type ApprovalRequestInput,
   type ApprovalDecisionInput,
   type ApprovalScope,
 } from '@acbp/contracts';
 import { ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ApprovalRequestRow, type ApprovalDecisionRow } from '@acbp/database';
+import { computePayloadBinding } from './binding.js';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope } from '../policy/policy-service.js';
@@ -70,6 +79,17 @@ export interface RequestApprovalParams {
   readonly data: Readonly<Record<string, unknown>>;
   readonly estimatedCostCredits: number;
   readonly preview: string;
+  /**
+   * WHEN THIS APPROVAL DIES (APPR-005). REQUIRED, and there is no default anywhere in the stack.
+   *
+   * ADR-009 §15 leaves *"expiry defaults per risk class"* an OPEN OWNER QUESTION (AOQ-14-adjacent), so this ticket
+   * ships the mechanism and none of the values. Every caller states an expiry explicitly; when the owner sets
+   * per-risk-class defaults they land in one place and change no enforcement code.
+   *
+   * Optional-with-a-fallback was rejected in CDR-069 §1-G3: a default here would be the platform quietly answering
+   * a question that is the owner's, and the absence of their decision would read as permission to never expire.
+   */
+  readonly expiresAt: Date;
   /** The instant handed to the policy engine. An INPUT, never ambient (CDR-066 §3-G3). */
   readonly evaluatedAt?: Date;
 }
@@ -109,6 +129,14 @@ export async function requestApproval(client: DatabaseClient, params: RequestApp
         .orderBy('version', 'desc')
         .executeTakeFirst();
       if (definition === undefined) return { status: 'tool_not_registered' };
+
+      // `expiresAt` IS VALIDATED HERE because nothing else validates it (review pass 2, F9). `decidedAt` and
+      // `effectiveFrom` are guarded by `parseApprovalDecision`, and the read side is guarded by `isExpired` — this
+      // was the one date in the approval stack with no gate, so an `Invalid Date` reached the driver and came back
+      // as a raw 22007 instead of the typed refusal every sibling path returns.
+      if (!(params.expiresAt instanceof Date) || !Number.isFinite(params.expiresAt.getTime())) {
+        return { status: 'incomplete', missing: ['expiresAt'] };
+      }
 
       const input: ApprovalRequestInput = {
         toolId: params.toolId,
@@ -154,11 +182,24 @@ export async function requestApproval(client: DatabaseClient, params: RequestApp
         return { status: 'no_usable_policy', reason: evaluation.status === 'no_usable_policy' ? evaluation.reason : 'forbidden' };
       }
 
+      // THE BINDING (ACBP-P6-004; APPR-004), computed from the SAME values that are stored on the row and shown to
+      // the human — `built.request`, not `params`. Hashing the caller's input instead would let the request display
+      // one thing and bind another, which is the drift this hash exists to make impossible.
+      const binding = computePayloadBinding({
+        toolId: built.request.toolId,
+        toolVersion: built.request.toolVersion,
+        payload: built.request.data,
+        costBoundCredits: built.request.estimatedCostCredits,
+      });
+
       const approvals = new ApprovalRepository(scope.db);
       const request = await approvals.insertRequest({
         accountId: scope.tenant.accountId,
         companyId: scope.tenant.companyId,
         runId: params.runId,
+        payloadHash: binding.hash,
+        bindingVersion: binding.version,
+        expiresAt: params.expiresAt,
         toolId: built.request.toolId,
         toolVersion: built.request.toolVersion,
         action: built.request.action,
@@ -325,6 +366,83 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
       // about the request just decided, and the human refused that one. Reporting `true` would be the same
       // conflation that let the gate run the payload the human edited away.
       return { status: 'ok', decision, authorizes: !parsed.decision.supersedes && authorizesExecution(parsed.decision, parsed.decision.decidedAt) };
+    },
+    opts(options),
+  );
+  return ran.kind === 'ran' ? ran.value : { status: 'forbidden' };
+}
+
+export interface RevokeApprovalParams {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  readonly requestId: string;
+  /** The instant of the revocation. An INPUT, never ambient — the same discipline every clock in this stack follows. */
+  readonly revokedAt?: Date;
+}
+
+export type RevokeApprovalResult =
+  | { readonly status: 'ok' }
+  | { readonly status: 'forbidden' }
+  | { readonly status: 'not_found' }
+  /**
+   * THE RACE THIS TICKET IS ABOUT (CDR-069 §1-G6). The approval was already spent on a tool call, so the action is
+   * authorized and may already have run. Nothing can un-authorize it, and reporting a successful revocation would
+   * be a lie about the world — canon permits either "resolve in favour of revocation" or "produce a compensating
+   * alert", and once consumption has committed only the second is truthful.
+   */
+  | { readonly status: 'already_consumed' }
+  /** Nothing to withdraw: a request nobody decided has no authorization, and one already revoked has none left. */
+  | { readonly status: 'not_revocable'; readonly currentStatus: string };
+
+/**
+ * Take an authorization back before it is spent (APPR-006; ACBP-P6-004).
+ *
+ * A LIFECYCLE TRANSITION, NOT A SIXTH DECISION PATH, and CDR-069 §1-G4 records why: `approval_decisions` has
+ * UNIQUE(request_id), so a revocation — necessarily a second statement about an already-decided request — cannot be
+ * a decision row without destroying the constraint that makes "one decision per approval" true. It is also the
+ * honest model. A decision is what a human said about a proposal; a revocation withdraws an answer already given.
+ *
+ * THE RACE IS RESOLVED BY THE ROW LOCK, not by this function. `revoke` is `where status = 'decided'`, so if a
+ * dispatch consumed the approval first, this updates zero rows and returns `already_consumed`. If this commits
+ * first, the dispatch's own conditional UPDATE finds nothing and the call is refused. Exactly one wins, and the row
+ * records which.
+ */
+export async function revokeApproval(client: DatabaseClient, params: RevokeApprovalParams, options: ApprovalServiceOptions = {}): Promise<RevokeApprovalResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
+  const ran = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<RevokeApprovalResult> => {
+      // Owner-only, checked before the lookup: a caller who may not revoke learns only that, not whether the
+      // request exists — the same ordering `decideApproval` uses, and for the same reason.
+      if (checkAuthorization(role, 'approval:revoke', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+
+      const approvals = new ApprovalRepository(scope.db);
+      const request = await approvals.findRequest(params.requestId);
+      // RLS-confined, so another company's request reads as absent rather than as someone else's approval.
+      if (request === undefined) return { status: 'not_found' };
+
+      const at = params.revokedAt ?? new Date();
+      if ((await approvals.revoke(request.id, params.userId, at)) === 0) {
+        // Re-read rather than trusting the pre-read: the row moved between them, and WHICH way it moved is the
+        // answer the caller needs. `consumed` is the compensating-alert case; anything else is simply not revocable.
+        const now = await approvals.findRequest(params.requestId);
+        if (now?.status !== 'consumed') return { status: 'not_revocable', currentStatus: now?.status ?? 'unknown' };
+
+        // THE COMPENSATING ALERT (CDR-069 §1-G6), which this branch promised and did not emit until review pass 2
+        // measured its absence. The approval was spent before the human reached it: the action is authorized and
+        // may already have run, so there is nothing to undo and no honest way to report success. What CAN be done
+        // is leave a durable, alarmable trace — an API response nobody stored is not one.
+        await audit(scope, approvalRevokeFailed({ requestId: request.id, attemptedByUserId: params.userId }), auditCtx(options));
+        return { status: 'already_consumed' };
+      }
+
+      // In the SAME transaction as the transition — audit-or-nothing (ADR-015). `revoked_by` is canon's own payload
+      // field; the human's reason, if they gave one, is not carried here for the same discipline `approval.rejected`
+      // follows.
+      await audit(scope, approvalRevoked({ requestId: request.id, revokedByUserId: params.userId }), auditCtx(options));
+      return { status: 'ok' };
     },
     opts(options),
   );

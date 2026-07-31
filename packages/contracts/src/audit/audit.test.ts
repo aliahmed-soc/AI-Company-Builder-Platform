@@ -84,8 +84,15 @@ describe('event-name registry (deny unregistered)', () => {
       // `approval.approved` carrying their path in metadata, because canon's catalogue is the contract and inventing
       // siblings for it would put names in the trail no consumer is registered for.
       'approval.approved',
+      // ACBP-P6-004. `approval.consumed` is NOT in EVENT-CATALOG and is registered on the source-priority rule —
+      // the ticket's backlog row says "Consumption audited", and the backlog outranks the architecture docs.
+      // `approval.expired` IS in the catalogue and is deliberately NOT registered: nothing sweeps expiry, so no
+      // code could emit it honestly.
+      'approval.consumed',
       'approval.rejected',
       'approval.requested',
+      'approval.revoke_failed',
+      'approval.revoked',
       'company.created',
       'company.paused',
       'company.resumed',

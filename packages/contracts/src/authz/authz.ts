@@ -163,8 +163,12 @@ export const AUTHZ_ACTIONS = [
   //   `approval:decide`  — MAY THIS PERSON AUTHORIZE? This is the authority chain's hinge (invariant 5).
   //   `approval:read`    — MAY THIS PERSON SEE THE INBOX? A viewer watching what is pending is not a risk; a viewer
   //                        who could approve it is.
+  //   `approval:revoke`  — MAY THIS PERSON TAKE AN AUTHORIZATION BACK? Separate from `decide` because it is a
+  //                        different act at a different time: deciding answers a question that was asked, revoking
+  //                        withdraws an answer already given (ACBP-P6-004; APPR-006).
   'approval:request',
   'approval:decide',
+  'approval:revoke',
   'approval:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
@@ -311,6 +315,12 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // may exercise the authority. A viewer who could decide would be able to authorize spending and external actions
   // they were never given authority over. Delegation is P6-005's; until it exists, only the owner decides.
   'approval:decide': ['owner'],
+  // OWNER-ONLY, for the same reason and one more. Revocation is the only way to take back an authorization that has
+  // not yet been spent, so a role that could revoke could halt work the owner authorized — and a role that could
+  // NOT revoke while being able to decide would be able to authorize irreversibly. Keeping the two at the same
+  // level means whoever can grant can also withdraw, which is the property that makes an approval retractable
+  // rather than a one-way door.
+  'approval:revoke': ['owner'],
   // VIEWERS may read the inbox. Seeing what is waiting is how a team knows the AI is blocked, and hiding it would
   // make the queue invisible to exactly the people wondering why nothing is happening — the same reasoning
   // `listWorkers` was made viewer-readable on (CDR-056). Reading a pending request is not authority over it: the

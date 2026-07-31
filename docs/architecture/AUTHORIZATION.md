@@ -194,6 +194,19 @@ trusted core/use-case seam:
   The decision records a SELECTION only — it neither writes the immutable Decision record (P3-005) nor unlocks planning
   (the P4 boundary). DISTINCT closed action, deny-by-default; not granted to a viewer, an account owner without company
   membership, nor via forged provider claims. See `CDR-037`.
+- **P6-003c** (human approval engine) adds `approval:request` (**`owner`**, mirroring `run:execute` — raising an
+  approval rides the execution path), `approval:decide` (**`owner`-only** — the authority chain's hinge, invariant 5)
+  and `approval:read` (**`owner|viewer`** — seeing that a human is needed is not authority to be one, the
+  `listWorkers` precedent). The actor-TYPE restriction (human or delegated) is orthogonal and enforced in the
+  contract, in a runtime guard, and by a database CHECK; these actions answer the separate question of WHICH member
+  may act. See `CDR-068`.
+- **P6-004** (binding, expiry, revocation, consumption) adds `approval:revoke`, **`owner`-only** — deliberately at
+  the SAME level as `approval:decide`. Whoever can grant an authorization must be able to withdraw it, or an
+  approval is a one-way door; and a role that could revoke without deciding could halt work the owner authorized.
+  Revocation is a request LIFECYCLE transition, not a sixth decision path (`approval_decisions` has
+  `UNIQUE(request_id)`, so a withdrawal cannot be a second decision without destroying the constraint that makes
+  "one decision per approval" true). DISTINCT closed action, deny-by-default; not granted to a viewer, an account
+  owner without company membership, nor via forged provider claims. See `CDR-069 §1-G4`.
 - **P5-012** (revision workflow) adds `artifact:revise`, **`owner`-only** — `API-CONTRACTS.md:55` scopes the
   Documents row explicitly (*"Member (read), owner (revise)"*), so unlike `task:delete` this is not a case where canon
   is silent and restricting would invent a requirement. It also commits the company to work: the new task it creates

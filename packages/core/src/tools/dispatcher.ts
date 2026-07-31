@@ -11,7 +11,7 @@
 // for a call that died mid-flight — precisely the call worth having a record of. So an authorized call is inserted
 // `requested` before it is handed back, and `reportToolCallOutcome` closes it later.
 import { ToolCallRepository, TaskRunRepository, ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   decideDispatch,
   canonicalizeToolArguments,
@@ -20,60 +20,33 @@ import {
   detectInjection,
   isToolCallOutcome,
   isToolDenialReason,
+  approvalUsability,
   authorizesExecution,
+  approvalConsumed,
   toolCallRequested,
   toolCallCompleted,
-  type GateAnswer,
   type StopAnswer,
   type ToolDenialReason,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
+import { computePayloadBinding } from '../approvals/binding.js';
 import type { Logger } from '@acbp/observability';
 
 /**
- * A stored decision → the approval gate's answer. TOTAL, and refusing by default.
+ * `approvalAnswer` LIVED HERE and is gone (ACBP-P6-004). It mapped a stored DECISION to a gate answer; the gate now
+ * asks `approvalUsability` about a stored REQUEST, which knows about the payload binding, the expiry and the
+ * revocation as well as the decision. Deleting it rather than keeping it beside the new path is the point: two
+ * functions answering "does this approval authorize?" would eventually disagree, and the one that got consulted
+ * would be whichever the next reader happened to find.
  *
- * Three outcomes, and the middle one is the reason this is a function rather than a boolean:
- *
- *   NO DECISION → `unavailable`. Nobody has answered. If policy demanded an approval the call is refused with
- *     `approval_required`, which is the honest reason: one is needed and none exists.
- *
- *   AUTHORIZING → `allow`. `approve`, `edit_then_approve`, `batch_approve`, or a `schedule` whose instant has
- *     arrived — decided by the same pure `authorizesExecution` the service uses, so the gate and the service cannot
- *     disagree about what a decision meant.
- *
- *   DECIDED BUT NOT AUTHORIZING → `deny`. A reject, a schedule whose instant has not arrived, an `edit_then_approve`,
- *     a corrupt path: all of them refuse, unconditionally.
- *
- * THE THIRD CASE USED TO SPLIT ON *WHY*, and that was a real defect (review pass 2, H1). A not-yet-due schedule
- * mapped to `unavailable` on the reasoning that "not yet" is not "invalid" — true as prose, wrong as a gate answer.
- * `unavailable` refuses ONLY when policy demanded an approval (`dispatch.ts` §"AN ABSENT APPROVAL"), so for an
- * informational call riding the no-gate waiver, a human's deliberate deferral was discarded and the action ran
- * immediately. Measured, not theorised: `informational + no usable policy + stored schedule not yet due` returned
- * `authorized`. An explicit "no" won unconditionally while an explicit "not yet" was ignored.
- *
- * So `unavailable` now means EXACTLY ONE THING: no decision exists. A decision that exists and does not authorize is
- * never indistinguishable from one nobody made — which is the property the waiver can be reasoned about against.
- *
- * The cost is reason granularity: a deferral is reported as `approval_invalid` rather than `approval_required`. That
- * is the wrong-but-safe direction, it is accurate in the sense that matters (the approval on record does not
- * authorize THIS execution), and the decision's own path is in the store for anyone asking why.
- *
- * `edit_then_approve` is listed above but ALSO refused by name below, because `authorizesExecution` says it
- * authorizes — correctly, of the SUPERSEDING request. Nothing reads `edited_data` yet (P6-004), so treating it as
- * authorizing here would run the payload the human edited away. Belt and braces on purpose: the repository already
- * filters superseded requests out, and this is the layer that holds if that filter is ever loosened.
- *
- * `now` is threaded from `DispatcherOptions.now`, never read here, so a scheduled authorization can be re-derived
- * from its own record — the same discipline CDR-066 §3-G3 applies to the policy clock.
+ * The property it earned the hard way is carried forward verbatim — `unavailable` means EXACTLY ONE THING, that no
+ * approval stands against this call. Every other state denies. A not-yet-due schedule once mapped to `unavailable`
+ * on the reasoning that "not yet" is not "invalid": true as prose, wrong as a gate answer, because `unavailable`
+ * refuses only when policy demanded an approval, so an informational call riding the no-gate waiver executed a
+ * human's deliberate deferral immediately.
  */
-function approvalAnswer(decision: { readonly path: unknown; readonly effective_from?: unknown } | undefined, now: Date): GateAnswer {
-  if (decision === undefined) return { kind: 'unavailable' };
-  if (decision.path === 'edit_then_approve') return { kind: 'deny' };
-  return authorizesExecution({ path: decision.path, effectiveFrom: decision.effective_from }, now) ? { kind: 'allow' } : { kind: 'deny' };
-}
 
 /** The remaining Phase 5 gate port's default. See `ToolGates` for why stop is `clear` rather than `unavailable`. */
 const CLEAR = (): StopAnswer => ({ kind: 'clear' });
@@ -299,6 +272,80 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         opts(options),
       );
 
+      // ── THE APPROVAL, BOUND (ACBP-P6-004; CDR-069) ─────────────────────────────────────────────────────────
+      //
+      // P6-003 made the gate read a real human decision instead of a caller's lambda. This makes that decision bind
+      // to THIS payload, expire, and be spendable exactly once.
+      //
+      // Two steps, and the split is deliberate. The READ produces an honest REASON — expired, revoked, mismatched —
+      // for the record and the caller. The CONSUME below is what actually authorizes, and it re-checks every one of
+      // those conditions inside a single conditional UPDATE. A race between the two loses the race rather than
+      // slipping through it: the UPDATE matches zero rows and the call is refused.
+      //
+      // THE COST BOUND IS RECOMPUTED FROM THE STORED REQUEST, and that is a real limit worth naming rather than
+      // hiding. `dispatchToolCall` has no cost input, so there is nothing to compare a stored cost against; the
+      // cost component of the hash is bound at creation and verified by anyone recomputing from the request, but
+      // the dispatcher cannot detect cost drift because it never sees a second cost. Canon's "execution exceeding
+      // bound limit fails closed" is the worker runtime's check at execution (P5-005), not this one.
+      const approvals = new ApprovalRepository(scope.db);
+      const standing = await approvals.findConsumableForCall(scope.tenant.companyId, params.runId, params.toolId);
+      const expected =
+        standing === undefined
+          ? undefined
+          : computePayloadBinding({
+              toolId: params.toolId,
+              // FROM THE REGISTRY, NOT FROM THE APPROVAL (review pass 1). This was `standing.tool_version` — read
+              // from the very row the hash is compared against, so the version component could never mismatch and
+              // the binding element canon names was inert. A human approves under v1, an active v2 lands, and v2
+              // runs under v1's approval. `definition.version` is the version this call will actually execute, so
+              // a version change now produces a mismatch and demands a fresh human decision, which is the
+              // material-change rule doing its job.
+              toolVersion: Number(definition?.version ?? -1),
+              payload: params.args,
+              // THE COST BOUND IS STILL THE APPROVAL'S OWN, and that is a NAMED LIMIT rather than an oversight:
+              // `dispatchToolCall` has no cost input, so there is no second value to compare against. Canon's
+              // "execution exceeding bound limit fails closed" is the worker runtime's check at execution
+              // (P5-005). Recorded in CDR-069 §3.
+              costBoundCredits: Number(standing.estimated_cost_credits),
+            });
+      const usability =
+        standing === undefined || expected === undefined
+          ? undefined
+          : approvalUsability(
+              { status: standing.status, revokedAt: standing.revoked_at, expiresAt: standing.expires_at, binding: { hash: standing.payload_hash, version: Number(standing.binding_version) } },
+              expected.hash,
+              now,
+            );
+
+      // THE REQUEST'S STATE IS NOT THE WHOLE ANSWER — the DECISION still has to authorize.
+      //
+      // A rejected request is `decided` too, as is one whose `schedule` has not come due, as is an
+      // `edit_then_approve` whose successor carries the real payload. Checking only the request would have made all
+      // three authorize, which is precisely the regression the P6-002 and P6-003 suites caught the moment this was
+      // rewritten. Both halves are required: the REQUEST says the approval is live and bound to these bytes, the
+      // DECISION says a human actually said yes.
+      //
+      // READING THE DECISION ONCE IS SAFE, unlike reading the request once. `approval_decisions` is append-only with
+      // UNIQUE(request_id), so a decision cannot change after it exists — there is no race to lose. Everything that
+      // CAN change between the read and the write (consumption, revocation, expiry) is re-checked atomically by the
+      // conditional UPDATE below.
+      const decisionRow = standing === undefined ? undefined : await approvals.findDecisionForRequest(standing.id);
+      const decisionAuthorizes =
+        decisionRow !== undefined &&
+        // `edit_then_approve` authorizes its SUCCESSOR, never the request it replaced — nothing reads `edited_data`.
+        decisionRow.path !== 'edit_then_approve' &&
+        authorizesExecution({ path: decisionRow.path, effectiveFrom: decisionRow.effective_from }, now);
+      // HONEST NOTE ON EVIDENCE: dropping `usability?.usable === true` from this line is an EQUIVALENT MUTATION —
+      // it leaves every test green, and that is the design working rather than a gap. `verifyAndConsume` re-checks
+      // the binding, the expiry and the status atomically, so a call this half would have refused is refused there
+      // instead, with the same outcome. What this half actually buys is the REASON (`expired` vs `payload_mismatch`
+      // vs …, logged below) and one avoided round trip. CDR-069 §1-G5 says the conditional UPDATE is the
+      // enforcement; this measurement is what that sentence looks like when it is true.
+      //
+      // The DECISION half is NOT equivalent — dropping it turns four tests red, because no SQL predicate knows that
+      // a `reject` is also `decided`.
+      const approved = usability?.usable === true && decisionAuthorizes;
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
@@ -311,21 +358,26 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval
         // demand conditional on POLICY rather than on the risk class (CDR-067 §2-G7).
         policy: toPolicyGateAnswer(policyResult),
-        // ── THE APPROVAL GATE, read from the STORE and not from the caller (CDR-068 §0.1) ──────────────────
+        // ── THE APPROVAL GATE, read from the STORE and BOUND to this payload (CDR-068 §0.1; CDR-069) ───────
         //
-        // Same scope, same transaction. What a human actually decided is a fact in `approval_decisions`; before this
-        // it was whatever the caller passed in.
-        //
-        // THIS IS NOT A CONSUMPTION, and the difference matters enough to say twice. The read answers *what was
-        // decided about this tool on this run*. It does NOT verify that the decision is bound to the exact payload
-        // about to execute, does not check an expiry, does not check a revocation, and does not mark the approval
-        // used. Payload-hash binding, expiry, revocation and single-use consumption are ADR-009 §2 and ACBP-P6-004.
-        // Reading a real decision closes the FORGERY hole; it does not close the material-change hole.
-        approval: approvalAnswer(await new ApprovalRepository(scope.db).findLatestDecisionForCall(scope.tenant.companyId, params.runId, params.toolId), now),
+        // Same scope, same transaction. `unavailable` means exactly one thing — no approval stands against this
+        // call — and every other state (expired, revoked, already spent, bound to different bytes) DENIES rather
+        // than reading as absence. That distinction was a measured defect once already: an answer that merely
+        // "isn't there" can ride the no-gate waiver, and an explicit refusal must not.
+        approval: standing === undefined ? { kind: 'unavailable' } : approved ? { kind: 'allow' } : { kind: 'deny' },
       });
+
+      // The call's id, generated here rather than defaulted by the table, so `consumed_by_call_id` can reference a
+      // row that exists by the time the approval is spent below. (An earlier draft of this file argued the reverse
+      // order — consume first — and the FK refused it; the superseded rationale is gone rather than left to
+      // confuse the next reader. CDR-069 §3 records the correction.)
+      const callId = randomUUID();
+      const spend = decision.kind === 'authorized' && approved;
+      const denialReason: ToolDenialReason | null = decision.kind === 'denied' ? decision.reason : null;
 
       const externalEffect = hasExternalEffect(decision.riskClass);
       const inserted = await calls.insert({
+        id: callId,
         accountId: scope.tenant.accountId,
         companyId: scope.tenant.companyId,
         runId: params.runId,
@@ -333,8 +385,8 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         toolVersion: definition?.version ?? null,
         riskClass: decision.riskClass,
         externalEffect,
-        outcome: decision.kind === 'denied' ? 'denied' : 'requested',
-        denialReason: decision.kind === 'denied' ? decision.reason : null,
+        outcome: denialReason === null ? 'requested' : 'denied',
+        denialReason,
         argumentsDigest,
         // The evaluation that decided this call (CDR-067 §2-G3). Null when there was no usable policy — the call is
         // still recorded, as a denial, because TOOL-002 wants 100% of attempts recorded.
@@ -350,14 +402,85 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         return { status: 'duplicate', call: toDTO(winner) };
       }
 
-      await audit(scope, requestedEvent(inserted, decision.kind === 'denied' ? decision.reason : null, signals), auditCtx(options));
-      if (decision.kind === 'denied') {
+      // ── SPEND THE APPROVAL (CDR-069 §1-G5/G7) ──────────────────────────────────────────────────────────────
+      //
+      // AFTER the insert, because `approval_requests.consumed_by_call_id` is a real foreign key and consuming first
+      // would reference a row that does not exist yet — the database said so, which is a better argument than the
+      // one this code originally had. Order inside the transaction is invisible anyway: nothing commits separately,
+      // so the only state anyone observes is the final one.
+      //
+      // WE SPEND WHAT AUTHORIZED THE CALL. If nothing stands against it, or what stands is unusable, there is
+      // nothing to consume.
+      //
+      // A STANDING APPROVAL IS SPENT EVEN WHEN POLICY WOULD HAVE ALLOWED THE CALL ANYWAY, and an earlier comment
+      // here claimed the opposite (review pass 2, F8). Keeping it: the approval was raised and decided for THIS
+      // action, so spending it on the action it was raised for is what single-use means. Not spending it would
+      // leave a decided approval lying around for a later call the policy might NOT allow — which is the more
+      // dangerous direction. Nothing is lost either way, because a call policy allows proceeds with or without one.
+      //
+      // A LOST RACE DENIES. `verifyAndConsume` re-checks status, revocation, expiry and the binding atomically. If
+      // another dispatch spent it, or a human revoked it, in the moment since the read above, this returns nothing
+      // and the call is corrected to DENIED before commit — never authorized-but-unspent.
+      //
+      // CONSUMPTION HAPPENS AT AUTHORIZATION, WHICH BURNS THE APPROVAL EVEN IF THE CALL NEVER RUNS. There is no
+      // execution instant yet — the worker runtime is P5-005 — so this is the only chokepoint that exists. It is the
+      // fail-closed direction (the alternative leaves an unspent approval available for a second dispatch) and a
+      // real cost: a human must approve again. CDR-069 §1-G7 records it as the decision to revisit.
+      let finalReason = denialReason;
+      let finalRow = inserted;
+      if (spend) {
+        const consumed = await approvals.verifyAndConsume({
+          // THE ROW THE GATE JUDGED. `standing` is defined whenever `spend` is true, because `approved` is derived
+          // from it — spending any other row would mean judging one approval and consuming another.
+          requestId: standing?.id ?? '',
+          companyId: scope.tenant.companyId,
+          runId: params.runId,
+          toolId: params.toolId,
+          payloadHash: expected?.hash ?? '',
+          bindingVersion: expected?.version ?? -1,
+          callId: inserted.id,
+          now,
+        });
+        if (consumed === undefined) {
+          // `approval_invalid` rather than `approval_required`: an approval DID stand against this call a moment
+          // ago, and "none exists" would send a reader to raise another one instead of looking for who spent or
+          // revoked this one.
+          finalReason = 'approval_invalid';
+          // THE ROW COUNT IS CHECKED. This is a security-critical correction — the difference between a call
+          // recorded as authorized and one recorded as refused — and reporting an unapplied write as applied is
+          // exactly the shape review passes keep finding. It cannot fail today (the row was inserted `requested`
+          // in this same transaction), which is why one `if` makes it provably honest rather than merely likely.
+          if ((await calls.markDenied({ callId: inserted.id, reason: finalReason })) !== 1) {
+            throw new Error('tool call denial correction updated no row — the authorized record would have survived a refused spend');
+          }
+          finalRow = { ...inserted, outcome: 'denied', denial_reason: finalReason };
+        } else {
+          // IN THE SAME TRANSACTION as the spend, so the event and the `consumed_at` column cannot disagree through
+          // partial failure — audit-or-nothing (ADR-015), the same shape every other write in this file follows.
+          await audit(scope, approvalConsumed({ requestId: consumed.id, callId: inserted.id, toolId: params.toolId }), auditCtx(options));
+        }
+      }
+
+      await audit(scope, requestedEvent(finalRow, finalReason, signals), auditCtx(options));
+      if (finalReason !== null) {
         // Logged at WARN because a refusal at the chokepoint is the signal the platform alarms on (TOOL-003 asks for
         // owner notification on gate unavailability). Metadata is scalars only — no arguments, no digest.
-        options.logger?.warn('tool.call_denied', { metadata: { companyId: params.companyId, toolId: params.toolId, reason: decision.reason, riskClass: decision.riskClass } });
-        return { status: 'denied', call: toDTO(inserted), reason: decision.reason };
+        // `approvalDetail` carries WHY the approval failed — `expired`, `revoked`, `consumed`, `payload_mismatch`.
+        // The `tool_calls` row records only `approval_invalid`, because the denial-reason vocabulary is a closed
+        // contract; without this an operator could not tell an expired approval from a tampered payload. Review
+        // pass 1 was right that the code computed the reason and threw it away while a comment claimed otherwise.
+        options.logger?.warn('tool.call_denied', {
+          metadata: {
+            companyId: params.companyId,
+            toolId: params.toolId,
+            reason: finalReason,
+            riskClass: decision.riskClass,
+            ...(usability !== undefined && !usability.usable ? { approvalDetail: usability.reason } : {}),
+          },
+        });
+        return { status: 'denied', call: toDTO(finalRow), reason: finalReason };
       }
-      return { status: 'authorized', call: toDTO(inserted) };
+      return { status: 'authorized', call: toDTO(finalRow) };
     },
     opts(options),
   );

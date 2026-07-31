@@ -15,3 +15,8 @@ export {
 export type { ApprovalScope, Reversibility, ApprovalRequestContentField, ApprovalRequestInput, ApprovalRequestContent, BuildApprovalRequestResult } from './request.js';
 export { APPROVAL_DECISION_PATHS, APPROVAL_DECIDER_TYPES, isApprovalDecisionPath, isApprovalDeciderType, parseApprovalDecision, authorizesExecution } from './decision.js';
 export type { ApprovalDecisionPath, ApprovalDeciderType, ApprovalDecider, ApprovalDecisionInput, ApprovalDecision, ParseApprovalDecisionResult } from './decision.js';
+// Binding, expiry and usability (ACBP-P6-004; CDR-069). Exported from the index at the same moment they are
+// written — P6-003's service was invisible outside its own package for a whole ticket because this step was
+// missed, and every guard in it survived mutation as a result.
+export { BINDING_NORMALIZATION_VERSION, bindingMaterial, bindingMatches, isExpired, approvalUsability } from './binding.js';
+export type { ApprovalBindingInput, PayloadBinding, ApprovalUsabilityState, ApprovalUnusableReason, ApprovalUsability } from './binding.js';
