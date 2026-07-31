@@ -13,6 +13,8 @@ import { PolicyRepository, writeAuditEvent, type DatabaseClient, type AuditWrite
 import {
   DEFAULT_NEW_COMPANY_POLICY,
   DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL,
+  autonomyLevelRules,
+  resolveAutonomyLevel,
   evaluatePolicy,
   resolvePolicyDecision,
   policyEvaluated,
@@ -179,7 +181,27 @@ export async function evaluatePolicyInScope(
     return { status: 'no_usable_policy', reason: 'no_active_policy' };
   }
 
-  const ruleSet = { version: active.version, baseline: active.baseline, rules: active.rules };
+  // THE AUTONOMY LEVEL IS COMPOSED IN, NOT SUBSTITUTED (ACBP-P6-006; CDR-071 §2-G2). The level's rules are
+  // evaluated ALONGSIDE the company's stored rules, and `evaluatePolicy` combines verdicts most-restrictive-wins —
+  // so a level can only ever tighten. Prepended rather than appended only for readability of `firedRuleIds`; the
+  // combination is order-independent by construction.
+  //
+  // `resolveAutonomyLevel` collapses an absent, corrupt or out-of-range column to the most restrictive level rather
+  // than trusting it (§2-G4). The column is NOT NULL with a CHECK, so this should be unreachable — which is exactly
+  // why it is here: the one path where being wrong means an action running without a human saying yes.
+  //
+  // THE `Array.isArray` GUARD IS LOAD-BEARING AND NOT DEFENSIVE CLUTTER. If the stored `rules` are not an array the
+  // policy is UNREADABLE, and the branch below turns that into a refusal. Spreading level rules onto a non-array
+  // would either throw or — far worse — produce a readable rule set containing ONLY the level's rules, quietly
+  // converting a policy that refuses everything into one that permits informational work at level 2. An unreadable
+  // policy must stay unreadable.
+  const levelRules = autonomyLevelRules(resolveAutonomyLevel(active.autonomy_level));
+  // `active.rules` is `unknown` (jsonb), and `Array.isArray` narrows it to `any[]` — spreading that would launder
+  // an `any` into the rule set. Narrowed to `unknown[]` instead: the evaluator validates every rule anyway, and
+  // anything it cannot read contributes DENY rather than being skipped.
+  const storedRules: unknown = active.rules;
+  const composedRules: unknown = Array.isArray(storedRules) ? [...levelRules, ...(storedRules as readonly unknown[])] : storedRules;
+  const ruleSet = { version: active.version, baseline: active.baseline, rules: composedRules };
   const evaluation = evaluatePolicy(ruleSet, params.observations);
 
   // `policyVersion === null` means the evaluator could not read the rule set at all — a stored policy that is

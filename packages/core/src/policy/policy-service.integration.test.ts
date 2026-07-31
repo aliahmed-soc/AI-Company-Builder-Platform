@@ -142,6 +142,62 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
     });
   });
 
+  // ── ACBP-P6-006 / CDR-071 §2-G2: the autonomy level COMPOSES with stored rules ────────────────────────────
+  //
+  // WHY THESE CASES EXIST AT ALL. Every policy the platform creates is level 2, and level 2's rule is the same
+  // threshold `DEFAULT_NEW_COMPANY_POLICY` already carries — so composing it is a NO-OP on every existing test, and
+  // deleting the composition outright would leave the whole suite green. That is the inert-element defect ACBP-P6-005
+  // was spent on. These cases seed states the service itself never produces, so only composition can satisfy them.
+  describe('the autonomy level composes with stored rules (CDR-071 §2-G2)', () => {
+    // A policy whose STORED rules permit everything. Written with the owner client because no product path can
+    // create this — which is the point: the level must hold even when the rules do not.
+    const seedLevel = async (level: number, rules = '[]') => {
+      await sql`update public.policies set status = 'superseded', superseded_at = now()
+                where company_id = ${w.companyA1}::uuid and status = 'active'`.execute(owner.kysely);
+      await sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id)
+                values (${w.accountA}::uuid, ${w.companyA1}::uuid, 99, 'allow', ${rules}::jsonb, ${level}, ${w.aOwner}::uuid)`.execute(owner.kysely);
+    };
+
+    test('LEVEL 1 REFUSES an informational action even though the stored rules permit everything', async () => {
+      await initializeCompanyPolicy(product, ids());
+      await seedLevel(1);
+      const r = await evaluate({ risk_class: { value: 'informational', provenance: 'registry' } });
+      expect(r).toMatchObject({ status: 'decided', decision: 'require_approval' });
+    });
+
+    test('THE CONTROL: level 2 with the SAME permissive stored rules allows it', async () => {
+      // Without this, "refuses everything" would pass the case above just as well.
+      await initializeCompanyPolicy(product, ids());
+      await seedLevel(2);
+      const r = await evaluate({ risk_class: { value: 'informational', provenance: 'registry' } });
+      expect(r).toMatchObject({ status: 'decided', decision: 'allow' });
+    });
+
+    test('the evaluation record NAMES the level rule that refused, so the reason survives in the audit trail', async () => {
+      await initializeCompanyPolicy(product, ids());
+      await seedLevel(1);
+      const r = await evaluate({ risk_class: { value: 'informational', provenance: 'registry' } });
+      expect(r).toMatchObject({ firedRuleIds: ['autonomy-l1-approval-for-every-class'] });
+    });
+
+    test('level 2 still requires approval above internal-reversible when stored rules are empty', async () => {
+      await initializeCompanyPolicy(product, ids());
+      await seedLevel(2);
+      const r = await evaluate({ risk_class: { value: 'external_reversible', provenance: 'registry' } });
+      expect(r).toMatchObject({ status: 'decided', decision: 'require_approval' });
+    });
+
+    test('UNREADABLE STORED RULES STAY UNREADABLE — composition must not rescue a broken policy into a usable one', async () => {
+      // The `Array.isArray` guard in the service. Spreading the level's rules onto a non-array would produce a
+      // READABLE rule set containing only those rules, silently converting a policy that refuses everything into one
+      // that permits informational work. Fail-closed is preserved: this stays `policy_unreadable`.
+      await initializeCompanyPolicy(product, ids());
+      await seedLevel(2, '"not-an-array"');
+      const r = await evaluate({ risk_class: { value: 'informational', provenance: 'registry' } });
+      expect(r).toMatchObject({ status: 'no_usable_policy', reason: 'policy_unreadable' });
+    });
+  });
+
   // ── recording ────────────────────────────────────────────────────────────────────────────────────────────
   describe('the evaluation record (POL-006)', () => {
     test('every evaluation writes a row citing the policy version, and audits it', async () => {
