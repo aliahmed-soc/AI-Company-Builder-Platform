@@ -75,8 +75,8 @@ describe.skipIf(!hasTestDatabase)('policies + policy_evaluations (real PostgreSQ
 
   const repoFor = (a: string, c: string) => <T,>(fn: (repo: PolicyRepository) => Promise<T>): Promise<T> => asApp(scope(a, c), (k) => fn(new PolicyRepository(k)));
 
-  const seedPolicy = (company: string, version = 1, rules: unknown = FORBIDDEN_AND_APPROVAL_RULES, baseline = 'allow', account = accountA) =>
-    repoFor(account, company)((repo) => repo.insert({ accountId: account, companyId: company, version, baseline, rules, createdByUserId: userU }));
+  const seedPolicy = (company: string, version = 1, rules: unknown = FORBIDDEN_AND_APPROVAL_RULES, baseline = 'allow', account = accountA, autonomyLevel = 2) =>
+    repoFor(account, company)((repo) => repo.insert({ accountId: account, companyId: company, version, baseline, rules, autonomyLevel, createdByUserId: userU }));
 
   beforeAll(async () => {
     su = superuserClient();
@@ -213,20 +213,77 @@ describe.skipIf(!hasTestDatabase)('policies + policy_evaluations (real PostgreSQ
 
     test('CHECKs refuse a malformed baseline or non-array rules', async () => {
       const insert = (baseline: string, rules: string) =>
-        sqlStateOf(sql.raw(`insert into public.policies (account_id, company_id, version, baseline, rules, created_by_user_id) values ('${accountA}', '${companyA1}', 9, '${baseline}', '${rules}'::jsonb, '${userU}')`).execute(su.kysely));
+        sqlStateOf(sql.raw(`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id) values ('${accountA}', '${companyA1}', 9, '${baseline}', '${rules}'::jsonb, 2, '${userU}')`).execute(su.kysely));
       expect(await insert('ALLOW', '[]')).toBe('23514');
       expect(await insert('permit', '[]')).toBe('23514');
       expect(await insert('allow', '{}')).toBe('23514');
       expect(await insert('allow', '"nope"')).toBe('23514');
     });
 
+    // ── autonomy_level (ACBP-P6-006; CDR-071; migration 0049) ──────────────────────────────────────────────────
+    //
+    // The column is what decides whether an action runs without a human, so the properties proven here are the ones
+    // that would let it fail open: a row with no level, a row with a level outside the range, and a level that could
+    // be changed after an evaluation cited it.
+
+    test('CDR-071 §2-G5: levels 1-5 are all STORABLE, so a later level needs no migration', async () => {
+      for (const [i, level] of [1, 2, 3, 4, 5].entries()) {
+        const state = await sqlStateOf(
+          sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status, superseded_at)
+              values (${accountA}::uuid, ${companyA1}::uuid, ${200 + i}, 'allow', '[]'::jsonb, ${level}, ${userU}::uuid, 'superseded', now())`.execute(su.kysely),
+        );
+        expect(state).toBe('no-error');
+      }
+    });
+
+    test('the range CHECK refuses a level outside 1-5, including 0 and a negative', async () => {
+      const insert = (level: number) =>
+        sqlStateOf(
+          sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status, superseded_at)
+              values (${accountA}::uuid, ${companyA1}::uuid, ${300 + level}, 'allow', '[]'::jsonb, ${level}, ${userU}::uuid, 'superseded', now())`.execute(su.kysely),
+        );
+      expect(await insert(0)).toBe('23514');
+      expect(await insert(6)).toBe('23514');
+      expect(await insert(99)).toBe('23514');
+    });
+
+    test('a policy row CANNOT exist without a level — no default quietly supplies one', async () => {
+      // 23502 not 23514: the column is NOT NULL and deliberately carries NO DEFAULT, so an insert that forgot the
+      // level fails loudly instead of being handed a permissive one (CDR-071 §2-G5, migration 0049).
+      const state = await sqlStateOf(
+        sql`insert into public.policies (account_id, company_id, version, baseline, rules, created_by_user_id)
+            values (${accountA}::uuid, ${companyA1}::uuid, 400, 'allow', '[]'::jsonb, ${userU}::uuid)`.execute(su.kysely),
+      );
+      expect(state).toBe('23502');
+    });
+
+    test('the product role cannot rewrite the level a past evaluation was decided under', async () => {
+      const policy = await seedPolicy(companyA1);
+      const state = await sqlStateOf(
+        asApp(scope(accountA, companyA1), (k) => sql.raw(`update public.policies set autonomy_level = 5 where id = '${policy!.id}'`).execute(k)),
+      );
+      expect(state).toBe('42501');
+    });
+
+    // MIGRATION 0049'S BACKFILL IS NOT COVERED HERE, AND SAYING SO IS THE POINT. This harness drops every table and
+    // runs migrations from zero, so `policies` is EMPTY when 0049 executes and its `update ... where autonomy_level
+    // is null` touches no rows. A test here asserting "existing rows became level 2" would really be asserting the
+    // seed helper's own default — a case passing for a different reason than its name claims, which is the exact
+    // defect ACBP-P6-005's review found in launch gate 4's evidence.
+    //
+    // What IS proven, and where: the backfill VALUE (level 2, not the most restrictive level) is the owner's ruled
+    // default and is pinned in `packages/contracts/src/policy/autonomy.test.ts` against
+    // `DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL`, including an assertion that it is deliberately NOT
+    // `MOST_RESTRICTIVE_AUTONOMY_LEVEL`. The three-step ALTER itself (add nullable → backfill → set not null) is
+    // proven only by 0049 applying cleanly, which every run of this suite does.
+
     test('the CHECK vocabulary accepts exactly POLICY_DECISIONS', async () => {
       // Duplicated on purpose (contracts + migration) and asserted equal here. The ACTIVITY_TYPES divergence is the
       // precedent: contracts widened without a migration and nothing caught it.
       for (const [i, decision] of POLICY_DECISIONS.entries()) {
         const state = await sqlStateOf(
-          sql`insert into public.policies (account_id, company_id, version, baseline, rules, created_by_user_id, status, superseded_at)
-              values (${accountA}::uuid, ${companyA1}::uuid, ${100 + i}, ${decision}, '[]'::jsonb, ${userU}::uuid, 'superseded', now())`.execute(su.kysely),
+          sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status, superseded_at)
+              values (${accountA}::uuid, ${companyA1}::uuid, ${100 + i}, ${decision}, '[]'::jsonb, 2, ${userU}::uuid, 'superseded', now())`.execute(su.kysely),
         );
         expect(state).toBe('no-error');
       }
@@ -234,13 +291,13 @@ describe.skipIf(!hasTestDatabase)('policies + policy_evaluations (real PostgreSQ
 
     test('status and superseded_at cannot disagree', async () => {
       const active = sqlStateOf(
-        sql`insert into public.policies (account_id, company_id, version, baseline, rules, created_by_user_id, status, superseded_at)
-            values (${accountA}::uuid, ${companyA1}::uuid, 50, 'allow', '[]'::jsonb, ${userU}::uuid, 'active', now())`.execute(su.kysely),
+        sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status, superseded_at)
+            values (${accountA}::uuid, ${companyA1}::uuid, 50, 'allow', '[]'::jsonb, 2, ${userU}::uuid, 'active', now())`.execute(su.kysely),
       );
       expect(await active).toBe('23514');
       const superseded = sqlStateOf(
-        sql`insert into public.policies (account_id, company_id, version, baseline, rules, created_by_user_id, status)
-            values (${accountA}::uuid, ${companyA1}::uuid, 51, 'allow', '[]'::jsonb, ${userU}::uuid, 'superseded')`.execute(su.kysely),
+        sql`insert into public.policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status)
+            values (${accountA}::uuid, ${companyA1}::uuid, 51, 'allow', '[]'::jsonb, 2, ${userU}::uuid, 'superseded')`.execute(su.kysely),
       );
       expect(await superseded).toBe('23514');
     });
@@ -318,7 +375,7 @@ describe.skipIf(!hasTestDatabase)('policies + policy_evaluations (real PostgreSQ
 
     test('a policy cannot be written into another company\'s scope', async () => {
       const state = await sqlStateOf(
-        repoFor(accountA, companyA2)((repo) => repo.insert({ accountId: accountA, companyId: companyA1, version: 1, baseline: 'allow', rules: [], createdByUserId: userU })),
+        repoFor(accountA, companyA2)((repo) => repo.insert({ accountId: accountA, companyId: companyA1, version: 1, baseline: 'allow', rules: [], autonomyLevel: 2, createdByUserId: userU })),
       );
       expect(state).toBe('42501');
     });

@@ -67,7 +67,33 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-005 Approval invalidation on edit — ON BRANCH, awaiting exact-head CI + the owner's merge gate** (CDR-070; APPR-004/007; **launch gate 4**;
+- **ACBP-P6-006 Autonomy levels 1–2 — ON BRANCH, awaiting the owner's merge gate** (CDR-071; APPR-008; PRD §12/§11.5).
+  **THE PLATFORM ALREADY HAD LEVEL 2 AND NOBODY HAD SAID SO.** `DEFAULT_NEW_COMPANY_POLICY` carries the owner's
+  ruling of 2026-07-29 — informational and internal-reversible allowed, anything higher requires approval — which is
+  §12's L2 row behaviour for behaviour. So this ticket NAMES an existing posture and adds the stricter one; the L2
+  rule set is that existing constant, with a test asserting they agree, because two definitions of "what executes
+  without asking" is one too many.
+  **THE LEVEL COMPOSES, IT DOES NOT SELECT.** A policy row carries both a level and stored rules; if the level merely
+  picked a rule set, a company at L1 with permissive stored rules would have two contradictory answers and the wrong
+  one executes. `autonomyLevelRules` returns RULES, not a rule set — rules only restrict, so composition under the
+  existing most-restrictive ordering can only tighten. A rule set carries a baseline, and a baseline REPLACES.
+  **TWO DEFAULTS DECIDED OPPOSITELY:** a new company starts at **2** because the owner ruled that posture (tightening
+  it unilaterally would override an accepted decision under cover of caution); an unreadable or out-of-range stored
+  level collapses to **1** because corrupt data is not a configuration anyone chose. A test asserts they are not the
+  same constant.
+  **LEVELS 3–5 STORABLE, REFUSED BY NAME, NEVER CLAMPED** — each refusal is followed by a read asserting the level is
+  unchanged, so "refused" cannot secretly mean "adjusted". Migration 0049 admits 1–5 so later levels need no
+  migration; the service admits 1–2.
+  **NO UI.** The read model (which levels exist, which are available, each one's plain-language consequence) is in
+  scope; the surface is an owner gate and nothing was scaffolded.
+  5 mutations, 0 survivors, sources byte-identical. Exact-head CI `30645193259` on `b063505`: **226 files / 3151
+  tests, ZERO SKIPS**.
+
+- **ACBP-P6-005 Approval invalidation on edit — DONE** (CDR-070; APPR-004/007; **launch gate 4**; trust-critical #6).
+  Merged as squash `7b4cc32`, PR #65. Exact-head CI `30640559611` on `d6f09bb` and exact-main CI `30641275447` on
+  `7b4cc32` both green with **ZERO SKIPS** (225 files / 3066 tests); branch deleted after the second.
+
+- **ACBP-P6-005 Approval invalidation on edit — working block** (CDR-070; APPR-004/007; **launch gate 4**;
   trust-critical #6). A Testing ticket, and the evidence is the deliverable: canon's clause is *"Editing a material
   approved payload invalidates approval"*, and M6's user-visible criterion is *"modified approved payload requires
   reapproval"*.

@@ -864,9 +864,28 @@ export function policyUnavailable(input: { readonly companyId: string; readonly 
  * The subject is the POLICY VERSION, which is the thread an owner follows when asking who changed what and when.
  * The rules themselves never enter metadata: they are the policy's content, and audit metadata is scalars only.
  */
-export function policyChanged(input: { readonly policyId: string; readonly version: number; readonly baseline: string; readonly ruleCount: number; readonly supersededVersion?: number }): AuditEvent {
+export function policyChanged(input: {
+  readonly policyId: string;
+  readonly version: number;
+  readonly baseline: string;
+  readonly ruleCount: number;
+  readonly supersededVersion?: number;
+  /**
+   * The APPR-008 autonomy level this version carries (ACBP-P6-006; CDR-071 §2-G6).
+   *
+   * ADDED BY REVIEW PASS 2, because without it the event could not answer the question it exists for. A level
+   * change is a new policy version carrying the SAME baseline and the SAME rules, so the event read
+   * `{version: N+1, baseline: 'allow', rule_count: 1}` — indistinguishable from any other change except by version
+   * number. The backlog requires *"level changes audited"*, and an audit record that says a change happened
+   * without saying what it changed TO is not an audit of that change.
+   *
+   * Optional so the shape stays backward-compatible with events already written.
+   */
+  readonly autonomyLevel?: number;
+}): AuditEvent {
   const metadata: Record<string, string | number | boolean> = { version: input.version, baseline: input.baseline, rule_count: input.ruleCount };
   if (input.supersededVersion !== undefined) metadata['superseded_version'] = input.supersededVersion;
+  if (input.autonomyLevel !== undefined) metadata['autonomy_level'] = input.autonomyLevel;
   return makeEvent('policy.changed', input.policyId, 'success', metadata);
 }
 

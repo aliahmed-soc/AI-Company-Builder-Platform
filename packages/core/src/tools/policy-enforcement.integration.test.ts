@@ -548,8 +548,11 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     const superseding = owner.kysely.transaction().execute(async (tx) => {
       await sql`update policies set status = 'superseded', superseded_at = now()
                 where company_id = ${w.companyA1}::uuid and status = 'active'`.execute(tx);
-      await sql`insert into policies (account_id, company_id, version, baseline, rules, status, created_by_user_id)
-                select account_id, company_id, version + 1, 'allow', ${alwaysRule('forbidden-v2', 'deny')}::jsonb, 'active', created_by_user_id
+      // `autonomy_level` carried forward from the row being superseded (ACBP-P6-006): a supersession changes the
+      // RULES, not the company's autonomy, and re-deriving it here would make this fixture disagree with the level
+      // the company actually has.
+      await sql`insert into policies (account_id, company_id, version, baseline, rules, autonomy_level, status, created_by_user_id)
+                select account_id, company_id, version + 1, 'allow', ${alwaysRule('forbidden-v2', 'deny')}::jsonb, autonomy_level, 'active', created_by_user_id
                 from policies where company_id = ${w.companyA1}::uuid and status = 'superseded'`.execute(tx);
       ready();
       await released;
@@ -693,8 +696,8 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     // died 23502 before the FK was ever consulted, which would have been a green test proving nothing about 0046.
     // This suite already has a real running run and a seeded company B.
     const policyB = (
-      await sql<{ id: string }>`insert into policies (account_id, company_id, version, baseline, rules, status, created_by_user_id)
-           values (${w.accountB}::uuid, ${w.companyB1}::uuid, 1, 'allow', '[]'::jsonb, 'active', ${w.bOwner}::uuid) returning id`.execute(owner.kysely)
+      await sql<{ id: string }>`insert into policies (account_id, company_id, version, baseline, rules, autonomy_level, status, created_by_user_id)
+           values (${w.accountB}::uuid, ${w.companyB1}::uuid, 1, 'allow', '[]'::jsonb, 2, 'active', ${w.bOwner}::uuid) returning id`.execute(owner.kysely)
     ).rows[0]!;
     const evaluationB = (
       await sql<{ id: string }>`insert into policy_evaluations
