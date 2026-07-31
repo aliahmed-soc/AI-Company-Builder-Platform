@@ -331,7 +331,8 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
       // rule already says a changed tool invalidates. PENDING, because a rebind needs a live request to land on;
       // superseding onto something already decided would point the human's edit at a closed question.
       if (parsed.decision.supersedes && params.supersededByRequestId !== undefined) {
-        const successor = await approvals.findRequest(params.supersededByRequestId);
+        // LOCKED, so pending is still true when markSuperseded runs below — see indRequestForUpdate.
+        const successor = await approvals.findRequestForUpdate(params.supersededByRequestId);
         const expected =
           successor === undefined
             ? undefined
@@ -346,9 +347,18 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
           successor.status === 'pending' &&
           successor.run_id === request.run_id &&
           successor.tool_id === request.tool_id &&
+          // THE TOOL VERSION MUST MATCH TOO (review pass 1). Without this the version component CANCELLED: the
+          // expected hash is recomputed from the successor's own version, so a successor raised at v2 superseding a
+          // v1 original was accepted. P6-004 put tool version in the binding deliberately, this ticket's own matrix
+          // asserts a version move invalidates an approval, and the guard was silently exempting it.
+          Number(successor.tool_version) === Number(request.tool_version) &&
+          // DEFENCE IN DEPTH, labelled: `approval_requests_no_self_supersede` (0047) already makes self-supersession
+          // unrepresentable, so mutating this to `true` changes no outcome. Kept because it guards a different layer.
           successor.id !== request.id &&
           expected !== undefined &&
           successor.payload_hash === expected.hash &&
+          // DEFENCE IN DEPTH, labelled: `insertRequest` always writes the CURRENT normalization version, so only a
+          // 0048-backfilled version-0 row could differ — and those are inert by construction anyway.
           Number(successor.binding_version) === expected.version;
         if (!bound) return { status: 'invalid', reason: 'successor_not_bound_to_edit' };
       }

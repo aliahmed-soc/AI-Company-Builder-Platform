@@ -73,22 +73,44 @@ G1/G3 are the gate-4 evidence; G4 held (no schema, no events).
 
 ### Where the gate-4 evidence lives
 
-| Claim | Evidence |
-|---|---|
-| A changed PAYLOAD does not run | `packages/core/src/tools/policy-enforcement.integration.test.ts` — `describe('gate 4 …')`, two cases |
-| A changed TOOL does not run | same block |
-| A changed TOOL VERSION does not run | same block — the element P6-004 shipped inert |
-| A changed COST BOUND breaks the binding | same block, asserted at the CONTRACT (see the limit below) |
-| The unchanged action still runs | same block — the mandatory control |
-| A refusal does not BURN the approval | asserted in every negative case, and proven by running the legitimate call after each |
-| An edit REBINDS to a live request carrying it | `packages/core/src/approvals/approval-service.integration.test.ts` — four cases incl. the control |
+**THIS INDEX WAS WRONG IN ITS FIRST VERSION, and the correction matters more than the table.** It claimed a
+not-burned assertion "in every negative case, proven by running the legitimate call after each" — true of three
+cases, not all — and it credited a "changed TOOL" case that, measured, never computed a hash at all. A false
+evidence index on a launch gate is worse than no index: it is believed without being re-derived.
 
-### The one element proven at the contract, not the dispatcher
+| Claim | Evidence | Kills |
+|---|---|---|
+| A changed PAYLOAD does not run | `policy-enforcement.integration.test.ts` — `gate 4`, two cases, reason pinned to `approval_invalid` | payload component inert |
+| A changed TOOL does not run | same block — an approval for `send_email` whose hash was computed for `web_research`, so the tool SCOPING finds it and only the BINDING can refuse it | tool component inert |
+| A changed TOOL VERSION does not run | same block — the element P6-004 shipped inert | version component inert; dispatcher reading the version off the approval |
+| The unchanged action still runs | same block — the mandatory control |  |
+| A NON-EMPTY bound payload authorizes exactly itself | same block — every other dispatcher approval in the repo binds `{}`, so nothing else distinguished "refuses modified payloads" from "only ever authorizes the empty one" | — |
+| A refusal does not BURN the approval | asserted in the **payload and version negatives**; the legitimate call is re-run in the **payload** cases | — |
+| An edit REBINDS to a live request carrying it | `approval-service.integration.test.ts` — seven cases incl. the control | every conjunct of the guard |
 
-The COST BOUND is bound by the hash and asserted there, because `dispatchToolCall` has no cost input and
-recomputes with the request's own stored bound — CDR-069 §3 records this. Canon's *"execution exceeding bound limit
-fails closed"* is the worker runtime's check at execution (P5-005). The binding is ready for it; the dispatcher
-cannot be the place that catches cost drift.
+### What this block CANNOT measure, stated so nobody assumes otherwise
+
+The dispatcher enforces the binding **twice** — the usability pre-check and the atomic conditional UPDATE — and
+measured, **either can be neutralised alone with the whole block green**. They mutually mask. That is defence in
+depth working, not a hole, but it means these cases cannot say WHICH layer refused. The layers are therefore pinned
+individually where they can be: the UPDATE's predicates in the database approvals suite, `bindingMatches` and
+`approvalUsability` in the contracts unit suite.
+
+### The one element with no dispatcher evidence at all
+
+The COST BOUND is covered by the hash and asserted in `packages/contracts/src/approvals/binding.test.ts` — NOT in
+the gate-4 block, and not at the dispatcher. `dispatchToolCall` has no cost input, so it recomputes with the
+request's own stored bound and cannot detect cost drift (CDR-069 §3). Canon's *"execution exceeding bound limit
+fails closed"* is the worker runtime's check at execution (P5-005). An assertion in this block pretending otherwise
+was removed: it was a database-free string comparison inside a `skipIf` suite, which could silently not run.
+
+### The rebind guard does NOT constrain cost either
+
+§1-G2 verifies the successor's payload, tool, tool version, run and pending state. It deliberately does **not**
+require the successor's cost bound to equal the original's: a genuine edit — "not those 500 recipients, these 3" —
+changes the estimate, and requiring equality would refuse exactly the case the path exists for. The consequence,
+stated plainly: an edit may be superseded by a request with a much larger cost bound. Nothing executes on it (the
+successor is `pending` and needs its own approval), but the cost is not part of what "edit rebinds" guarantees.
 
 ### What this ticket did NOT change
 

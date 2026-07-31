@@ -111,10 +111,19 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     ).rows[0]!.id;
   }
 
+  /**
+   * `bind` OVERRIDES WHAT THE APPROVAL IS BOUND TO, and the stored `data` follows it (review pass 2, F1/F4).
+   *
+   * Two things needed this. (a) Every dispatcher-level approval in the repo bound `payload: {}`, so no test could
+   * tell "refuses a modified payload" from "only ever authorizes the empty payload". (b) Proving the TOOL is a
+   * bound element needs an approval that the tool-scoping FINDS but the hash REJECTS — which is only expressible
+   * by binding one tool's hash onto another tool's request.
+   */
   async function seedDecision(
     toolId: string,
     path: 'approve' | 'reject' | 'schedule' | 'edit_then_approve' = 'approve',
     effectiveFrom?: Date,
+    bind?: { toolId: string; toolVersion: number; payload: unknown; costBoundCredits: number },
   ): Promise<void> {
     const policy = await owner.kysely
       .selectFrom('policies')
@@ -128,9 +137,9 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
               estimated_cost_credits, risk_class, reversibility, preview, scope, policy_id, policy_version,
               payload_hash, binding_version, expires_at)
            values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
-                   'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
+                   'fixture reason', 'fixture result', ${JSON.stringify(bind?.payload ?? {})}::jsonb, 1, 'external_reversible', 'reversible',
                    'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
-                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
+                   ${computePayloadBinding(bind ?? { toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
            returning id`.execute(owner.kysely)
     ).rows[0]!;
     await sql`insert into approval_decisions
@@ -405,6 +414,24 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
   //
   // EVERY CASE ENDS AT THE DISPATCHER. `bindingMatches` returning false is a unit fact; gate 4's claim is that the
   // modified action DOES NOT RUN.
+  //
+  // ── HONEST NOTE ON WHAT THIS BLOCK CAN AND CANNOT MEASURE (review pass 2, F2) ───────────────────────────────
+  //
+  // The dispatcher enforces the binding TWICE: the usability pre-check, and the atomic conditional UPDATE in
+  // `verifyAndConsume`. Measured, EITHER can be neutralised alone with every case here still green — they mutually
+  // mask, and only mutating BOTH turns this block red. That is defence in depth working, not a hole, but it means
+  // these cases cannot tell you WHICH layer refused.
+  //
+  // So the layers are pinned where they can be pinned individually, and this block does not pretend otherwise:
+  //   - the UPDATE's predicates (`payload_hash`, `binding_version`, status, revocation, expiry) — pinned in
+  //     `packages/database/src/integration/approvals.integration.test.ts`, one mutation each;
+  //   - `bindingMatches` / `approvalUsability` — pinned in `packages/contracts/src/approvals/binding.test.ts`;
+  //   - `bindingMaterial`'s four components — pinned there too, AND here, at the dispatcher, because a component
+  //     that is inert end-to-end is the defect this whole ticket exists to catch.
+  //
+  // The first version of this block killed NOTHING its siblings had not already killed, and one case passed for a
+  // reason unrelated to its name. Both are fixed below; this note exists so the next person does not have to
+  // re-measure to find out.
   describe('gate 4 — a material edit invalidates the approval', () => {
     beforeEach(async () => {
       await addRule(alwaysRule('needs-approval', 'require_approval'));
@@ -416,18 +443,55 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
       expect((await dispatch()).status).toBe('authorized');
     });
 
+    /**
+     * THE STRONGER CONTROL, and M6's other half (review pass 2, F4).
+     *
+     * Every dispatcher-level approval in this repo bound `payload: {}`, so nothing distinguished "refuses a
+     * modified payload" from "only ever authorizes the EMPTY payload" — a suite that authorized `{}` and refused
+     * everything else would have passed the whole block.
+     *
+     * M6's user-visible criterion is *"modified approved payload requires REAPPROVAL"*, which is two claims. The
+     * negatives below prove the refusal. This proves the other one: an approval bound to a NON-EMPTY payload
+     * authorizes exactly that payload, and refuses its neighbour.
+     */
+    test('an approval bound to a NON-EMPTY payload authorizes that payload — and only that one', async () => {
+      await seedDecision('memory_write', 'approve', undefined, { toolId: 'memory_write', toolVersion: 1, payload: { q: 'alpha' }, costBoundCredits: 1 });
+
+      // The neighbour differs by one character and is refused BY THE BINDING.
+      expect(await dispatch({ toolId: 'memory_write', args: { q: 'beta' } })).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+      // …and the approved payload runs, so the refusal above is about the bytes, not about the tool.
+      expect((await dispatch({ toolId: 'memory_write', args: { q: 'alpha' } })).status).toBe('authorized');
+    });
+
+    // THE REASON IS PINNED PER CASE (review pass 2, F1). Without it, "denied" hides WHICH mechanism refused —
+    // and one case in this block was passing for a completely different reason than its name claimed.
     test.each([
       ['the PAYLOAD gains a field', { args: { to: 'someone@example.test' } }],
       ['the PAYLOAD changes a value', { args: { q: 'different' } }],
-      ['the TOOL is different', { toolId: 'send_email' }],
-    ])('%s → refused, and the approval is NOT burned', async (_what, over) => {
-      expect(await dispatch(over)).toMatchObject({ status: 'denied' });
+    ])('%s → refused as approval_invalid, and the approval is NOT burned', async (_what, over) => {
+      expect(await dispatch(over)).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
       // NOT CONSUMED. A refusal that burned the approval would deny the modified call and the legitimate one
       // alike — the human would have to re-approve because someone else tampered, which is a denial of service
       // wearing a security control's clothes.
       expect(row(await requestRows()).status).toBe('decided');
       // …proven by the legitimate call still working afterwards.
       expect((await dispatch()).status).toBe('authorized');
+    });
+
+    /**
+     * THE TOOL, PROVEN AT THE BINDING (review pass 2, F1 — this case was rewritten).
+     *
+     * It used to dispatch a DIFFERENT tool against an approval seeded for `web_research`, and it passed —
+     * with `approval_required`, because `findConsumableForCall` scopes by tool, found nothing, and never computed
+     * a hash at all. Measured consequence: deleting the `tool=` component from `bindingMaterial` left the entire
+     * policy-enforcement file green. The case proved SCOPING and was labelled as proving the binding.
+     *
+     * So this seeds a DECIDED approval for `send_email` whose stored hash was computed for `web_research`. The
+     * scoping now finds it, the binding is the only thing left to refuse it, and the refusal is `approval_invalid`.
+     */
+    test('the TOOL is a bound element — an approval hashed for another tool is refused BY THE BINDING', async () => {
+      await seedDecision('send_email', 'approve', undefined, { toolId: 'web_research', toolVersion: 1, payload: {}, costBoundCredits: 1 });
+      expect(await dispatch({ toolId: 'send_email' })).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
     });
 
     test('the TOOL VERSION moves → refused (the element P6-004 shipped inert)', async () => {
@@ -437,14 +501,18 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
       expect(row(await requestRows()).status).toBe('decided');
     });
 
-    test('a CHANGED COST BOUND breaks the binding — proven at the contract, since the dispatcher has no cost input', () => {
-      // NAMED LIMIT, and tested where it CAN be tested. CDR-069 §3 records that `dispatchToolCall` takes no cost,
-      // so it recomputes with the request's own stored bound and cannot detect cost drift; canon's "execution
-      // exceeding bound limit fails closed" is the worker runtime's check (P5-005). The BINDING itself does cover
-      // cost, and that is what this asserts — so when P5-005 gains a preflight cost, the hash is already ready.
-      const bound = { toolId: 'web_research', toolVersion: 1, payload: {}, costBoundCredits: 1 };
-      expect(computePayloadBinding({ ...bound, costBoundCredits: 2 }).hash).not.toBe(computePayloadBinding(bound).hash);
-    });
+    // THE COST BOUND IS NOT ASSERTED HERE, and that is deliberate (review pass 2, F8).
+    //
+    // It was — as a pure, database-free hash comparison sitting inside this `describe.skipIf(!hasTestDatabase)`
+    // block, paying for a full two-tenant seed to compare two strings, and silently not running at all on a machine
+    // without PostgreSQL. By this repo's own "skipped ≠ green" rule that is the wrong home for it, and an identical
+    // assertion already lives in `packages/contracts/src/approvals/binding.test.ts`.
+    //
+    // The limit itself is real and recorded in CDR-069 §3: `dispatchToolCall` has NO cost input, so it recomputes
+    // the hash with the request's own stored bound and cannot detect cost drift. Canon's "execution exceeding bound
+    // limit fails closed" is the worker runtime's check at execution (P5-005). The binding covers cost, so the hash
+    // is ready for that check the day a preflight cost exists — but no case in this block can prove it, and one
+    // pretending to would be exactly the overclaim this ticket was written to find.
   });
 
   test('an approval CANNOT override a policy DENY (POL-005), and the reason names policy', async () => {

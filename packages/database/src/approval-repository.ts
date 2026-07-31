@@ -88,6 +88,20 @@ export class ApprovalRepository {
       .executeTakeFirstOrThrow();
   }
 
+  /**
+   * The same read, holding a ROW LOCK until the transaction ends (ACBP-P6-005; review pass 2, F6).
+   *
+   * `edit_then_approve` verifies the successor is `pending` and then supersedes the ORIGINAL. Without a lock those
+   * are two instants: a concurrent decision on the successor between them leaves the old request `superseded`,
+   * pointing at a request that is no longer live — the exact state CDR-070 §1-G2 says must not be recordable.
+   *
+   * `for update` is the smallest fix that makes the check and the write one instant, and it is the same discipline
+   * `verifyAndConsume` states at length: the gap between instants is the whole vulnerability class.
+   */
+  findRequestForUpdate(requestId: string): Promise<ApprovalRequestRow | undefined> {
+    return this.#db.selectFrom('approval_requests').selectAll().where('id', '=', requestId).forUpdate().executeTakeFirst();
+  }
+
   findRequest(requestId: string): Promise<ApprovalRequestRow | undefined> {
     return this.#db.selectFrom('approval_requests').selectAll().where('id', '=', requestId).executeTakeFirst();
   }

@@ -42,7 +42,7 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-005 Approval invalidation on edit — MERGED** (CDR-070; APPR-004/007; **launch gate 4**;
+- **ACBP-P6-005 Approval invalidation on edit — ON BRANCH, awaiting exact-head CI + the owner's merge gate** (CDR-070; APPR-004/007; **launch gate 4**;
   trust-critical #6). A Testing ticket, and the evidence is the deliverable: canon's clause is *"Editing a material
   approved payload invalidates approval"*, and M6's user-visible criterion is *"modified approved payload requires
   reapproval"*.

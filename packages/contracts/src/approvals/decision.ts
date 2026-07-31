@@ -128,7 +128,12 @@ export function parseApprovalDecision(input: ApprovalDecisionInput): ParseApprov
         input.editedData === null ||
         typeof input.editedData !== 'object' ||
         Array.isArray(input.editedData) ||
-        Object.keys(input.editedData).length === 0
+        Object.keys(input.editedData).length === 0 ||
+        // …AND IT MUST SURVIVE SERIALIZATION. `{ only: undefined }` has a key, so the length check above passed,
+        // and then `JSON.stringify` produced `"{}"` and the `edited_is_object` CHECK raised a raw 23514 at the
+        // driver — a thrown error where every sibling malformed field returns a typed refusal. Review pass 1
+        // proved it; it is the same class this repo already fixed for a fractional cost and an unreadable expiry.
+        Object.values(input.editedData).every((v) => v === undefined)
       ) {
         return { status: 'missing_detail', path: input.path, detail: 'editedData' };
       }
