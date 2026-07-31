@@ -1108,6 +1108,14 @@ export interface PoliciesTable {
   baseline: ColumnType<string, string, never>;
   /** The contract's `PolicyRule[]`. Validation lives in @acbp/contracts, not in CHECK constraints. */
   rules: ColumnType<unknown, string, never>;
+  /**
+   * APPR-008 autonomy level (ACBP-P6-006; CDR-071). 1–5 storable, 1–2 accepted by the service.
+   *
+   * `never` on update like every other content column: a level change is a NEW VERSION, so the level a past
+   * evaluation was decided under can never be rewritten. Read back through `resolveAutonomyLevel`, which collapses
+   * anything unusable to the most restrictive level rather than trusting the column (CDR-071 §2-G4).
+   */
+  autonomy_level: ColumnType<number, number, never>;
   status: ColumnType<string, string | undefined, string>;
   created_by_user_id: ColumnType<string, string, never>;
   created_at: ColumnType<Date, Date | string | undefined, never>;

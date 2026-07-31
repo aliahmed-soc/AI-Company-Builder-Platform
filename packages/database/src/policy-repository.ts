@@ -15,6 +15,8 @@ export interface NewPolicyInput {
   readonly baseline: string;
   /** The contract's `PolicyRule[]`, already validated by the caller. */
   readonly rules: unknown;
+  /** APPR-008 autonomy level (ACBP-P6-006; CDR-071). REQUIRED — see the insert below. */
+  readonly autonomyLevel: number;
   readonly createdByUserId: string;
 }
 
@@ -77,6 +79,11 @@ export class PolicyRepository {
         version: input.version,
         baseline: input.baseline,
         rules: JSON.stringify(input.rules),
+        // No `??` fallback here on purpose (CDR-071 §2-G5): a caller that omitted the level would get one silently
+        // supplied, and the wrong one supplied silently is an action running without a human saying yes. The field
+        // is required on the input type, and the column has no default, so omission is a compile error and then a
+        // NOT NULL violation — two loud failures instead of one quiet permission.
+        autonomy_level: input.autonomyLevel,
         created_by_user_id: input.createdByUserId,
       })
       .onConflict((oc) => oc.constraint('policies_company_version_uq').doNothing())

@@ -12,6 +12,7 @@
 import { PolicyRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TenantScope } from '@acbp/database';
 import {
   DEFAULT_NEW_COMPANY_POLICY,
+  DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL,
   evaluatePolicy,
   resolvePolicyDecision,
   policyEvaluated,
@@ -265,6 +266,10 @@ export async function initializeCompanyPolicy(client: DatabaseClient, params: In
         version: DEFAULT_NEW_COMPANY_POLICY.version,
         baseline: DEFAULT_NEW_COMPANY_POLICY.baseline,
         rules: DEFAULT_NEW_COMPANY_POLICY.rules,
+        // The owner's ruled posture, named (CDR-071 §2-G3). `DEFAULT_NEW_COMPANY_POLICY` already implemented this
+        // level before it had a name; recording it makes the company's autonomy legible instead of implied, which is
+        // what PRD principle 2's "granted knowingly" needs to be answerable at all.
+        autonomyLevel: DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL,
         createdByUserId: params.userId,
       });
       if (created === undefined) {
