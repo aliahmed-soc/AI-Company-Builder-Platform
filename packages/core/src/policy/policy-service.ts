@@ -15,6 +15,12 @@ import {
   DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL,
   autonomyLevelRules,
   resolveAutonomyLevel,
+  isAutonomyLevel,
+  isMvpAutonomyLevel,
+  AUTONOMY_LEVELS,
+  AUTONOMY_LEVEL_CONSEQUENCES,
+  type AutonomyLevel,
+  type MvpAutonomyLevel,
   evaluatePolicy,
   resolvePolicyDecision,
   policyEvaluated,
@@ -308,6 +314,162 @@ export async function initializeCompanyPolicy(client: DatabaseClient, params: In
       await audit(scope, policyChanged({ policyId: created.id, version: created.version, baseline: created.baseline, ruleCount: DEFAULT_NEW_COMPANY_POLICY.rules.length }), auditCtx(options));
       options.logger?.info('policy.initialized', { metadata: { accountId: params.accountId, companyId: params.companyId, version: created.version } });
       return { status: 'ok', policyId: created.id, version: created.version };
+    },
+    opts(options),
+  );
+  return ran.kind === 'ran' ? ran.value : { status: 'forbidden' };
+}
+
+// ── ACBP-P6-006: setting and reading the autonomy level (CDR-071; APPR-008) ─────────────────────────────────────
+
+export interface SetCompanyAutonomyLevelParams {
+  readonly userId: string;
+  readonly accountId: string;
+  readonly companyId: string;
+  /** Unvalidated on purpose — this is the boundary where an unavailable or nonsense level is REFUSED, not coerced. */
+  readonly level: unknown;
+  /** The instant, passed in. Nothing here reads a clock (CDR-066 §3-G3). */
+  readonly at: Date;
+}
+
+/** Why a level change was refused. CLOSED — a reason, never an exception message. */
+export const AUTONOMY_REFUSAL_REASONS = ['not_a_level', 'not_available_in_mvp', 'no_active_policy', 'superseded_concurrently'] as const;
+export type AutonomyRefusalReason = (typeof AUTONOMY_REFUSAL_REASONS)[number];
+
+export type SetCompanyAutonomyLevelResult =
+  | { readonly status: 'ok'; readonly policyId: string; readonly version: number; readonly level: MvpAutonomyLevel }
+  /** Already at that level. Idempotent by intent: no new version, because nothing changed. */
+  | { readonly status: 'unchanged'; readonly policyId: string; readonly version: number; readonly level: MvpAutonomyLevel }
+  | { readonly status: 'refused'; readonly reason: AutonomyRefusalReason }
+  | { readonly status: 'forbidden' };
+
+/**
+ * Change a company's autonomy level (CDR-071 §2-G5/G6).
+ *
+ * OWNER-ONLY (`policy:manage`), for the same reason `initializeCompanyPolicy` is: deciding what a company may do
+ * unsupervised is a different authority from doing it. A worker holding `run:execute` raising its own autonomy is
+ * the whole failure this phase exists to prevent.
+ *
+ * A CHANGE IS A NEW POLICY VERSION, NEVER AN IN-PLACE UPDATE. The rules and baseline are carried forward unchanged
+ * and only the level differs, so the old version stays exactly as any past evaluation cited it. There is no UPDATE
+ * grant on the column and this is the only path that can move it.
+ *
+ * LEVELS 3-5 ARE REFUSED BY NAME AND NEVER CLAMPED. A silent clamp to the nearest available level is the worst
+ * outcome available here: a founder who asked for level 4 would be told nothing and would believe they had it.
+ */
+export async function setCompanyAutonomyLevel(
+  client: DatabaseClient,
+  params: SetCompanyAutonomyLevelParams,
+  options: PolicyServiceOptions = {},
+): Promise<SetCompanyAutonomyLevelResult> {
+  const audit = options.auditWriter ?? writeAuditEvent;
+  const ran = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<SetCompanyAutonomyLevelResult> => {
+      if (checkAuthorization(role, 'policy:manage', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+
+      // TWO DISTINCT REFUSALS, and collapsing them would lose the only information the caller can act on: "that is
+      // not a level at all" and "that is a real level this release does not implement" need different answers.
+      if (!isAutonomyLevel(params.level)) return { status: 'refused', reason: 'not_a_level' };
+      if (!isMvpAutonomyLevel(params.level)) return { status: 'refused', reason: 'not_available_in_mvp' };
+
+      const policies = new PolicyRepository(scope.db);
+      const active = await policies.findActive(scope.tenant.companyId);
+      if (active === undefined) return { status: 'refused', reason: 'no_active_policy' };
+
+      // Compared through `resolveAutonomyLevel` rather than against the raw column: if the stored value were
+      // unusable, treating it as "different" and writing a new version is right, and treating it as equal would
+      // strand the company on an unreadable level forever.
+      const current = resolveAutonomyLevel(active.autonomy_level);
+      if (current === params.level) return { status: 'unchanged', policyId: active.id, version: active.version, level: params.level };
+
+      // SUPERSEDE FIRST. The insert below would otherwise collide with the partial unique index that permits only
+      // one active version per company, and a collision is a worse diagnostic than an ordered refusal.
+      const superseded = await policies.supersede(active.id, params.at);
+      // `undefined` means a concurrent writer superseded it between the read and here. Refused rather than retried:
+      // the other writer's intent is unknown, and re-applying this level on top of a version we never saw could
+      // silently undo a change made a millisecond earlier — including one that TIGHTENED autonomy.
+      if (superseded === undefined) return { status: 'refused', reason: 'superseded_concurrently' };
+
+      const created = await policies.insert({
+        accountId: scope.tenant.accountId,
+        companyId: scope.tenant.companyId,
+        version: active.version + 1,
+        // Carried forward VERBATIM. This use case changes the level and nothing else; rewriting rules here would
+        // make one control silently edit another.
+        baseline: active.baseline,
+        rules: active.rules,
+        autonomyLevel: params.level,
+        createdByUserId: params.userId,
+      });
+      if (created === undefined) return { status: 'refused', reason: 'superseded_concurrently' };
+
+      await audit(
+        scope,
+        policyChanged({ policyId: created.id, version: created.version, baseline: created.baseline, ruleCount: Array.isArray(active.rules) ? active.rules.length : 0 }),
+        auditCtx(options),
+      );
+      options.logger?.info('policy.autonomy_level_changed', {
+        metadata: { accountId: params.accountId, companyId: params.companyId, version: created.version, from: current, to: params.level },
+      });
+      return { status: 'ok', policyId: created.id, version: created.version, level: params.level };
+    },
+    opts(options),
+  );
+  return ran.kind === 'ran' ? ran.value : { status: 'forbidden' };
+}
+
+export interface AutonomyLevelOption {
+  readonly level: AutonomyLevel;
+  /** Whether this release implements it. Levels 3–5 are visible and `false` (CDR-071 §2-G5). */
+  readonly available: boolean;
+  /** Plain language, because PRD principle 2 requires the consequence and not just the number. */
+  readonly consequence: string;
+  readonly current: boolean;
+}
+
+export type ReadCompanyAutonomyResult =
+  | { readonly status: 'ok'; readonly current: AutonomyLevel; readonly options: readonly AutonomyLevelOption[] }
+  | { readonly status: 'refused'; readonly reason: AutonomyRefusalReason }
+  | { readonly status: 'forbidden' };
+
+/**
+ * The company's level plus every level that exists, with availability and consequence (CDR-071 §2-G5).
+ *
+ * THIS IS THE READ MODEL FOR "LEVELS 3-5 VISIBLE DISABLED" AND IT SHIPS NO INTERFACE. It returns the data a surface
+ * would need; building that surface is an owner gate.
+ *
+ * `policy:manage` rather than a read permission: the consequence strings describe what the company will do without
+ * asking, and the set of levels is a control surface, not general company data.
+ */
+export async function readCompanyAutonomy(
+  client: DatabaseClient,
+  params: Pick<SetCompanyAutonomyLevelParams, 'userId' | 'accountId' | 'companyId'>,
+  options: PolicyServiceOptions = {},
+): Promise<ReadCompanyAutonomyResult> {
+  const ran = await runInCompanyScope(
+    client,
+    { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
+    async (scope, role): Promise<ReadCompanyAutonomyResult> => {
+      if (checkAuthorization(role, 'policy:manage', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
+
+      const active = await new PolicyRepository(scope.db).findActive(scope.tenant.companyId);
+      if (active === undefined) return { status: 'refused', reason: 'no_active_policy' };
+
+      // Reported through `resolveAutonomyLevel`, so what a reader is shown is what the ENGINE would actually apply.
+      // Showing the raw column while the engine collapsed it would be a screen that lies about the company's safety.
+      const current = resolveAutonomyLevel(active.autonomy_level);
+      return {
+        status: 'ok',
+        current,
+        options: AUTONOMY_LEVELS.map((level) => ({
+          level,
+          available: isMvpAutonomyLevel(level),
+          consequence: AUTONOMY_LEVEL_CONSEQUENCES[level],
+          current: level === current,
+        })),
+      };
     },
     opts(options),
   );
