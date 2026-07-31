@@ -13,6 +13,18 @@ with *"stop-system failure = block platform-wide (fail closed)"*.
 
 ---
 
+> ## ⚠️ READ THIS BEFORE ANYTHING ELSE: SEVEN SCOPES ARE NAMED, **FIVE** ARE ENFORCEABLE
+>
+> `capability` and `integration` stops are **STORABLE AND INERT** in this release. The tool registry carries no
+> identity for either, so no call can be matched against them. They are **refused at activation**, and a stored one
+> makes the evaluation **unreadable → deny** rather than being silently ignored.
+>
+> **Nobody reading this document, the backlog row, `PROJECT-STATE`, the PR, or any read model may come away
+> believing a stop can halt a capability or an integration.** It cannot. See §1-G10.
+>
+> Enforceable: `task` · `worker` · `company` · `external_actions_only` · `account_wide`
+> Inert: ~~`capability`~~ · ~~`integration`~~
+
 ## §0 The thing that makes this ticket different
 
 **A STOP THAT SILENTLY FAILS TO REACH ONE SCOPE IS WORSE THAN NO STOP AT ALL**, because the operator believes it
@@ -162,9 +174,17 @@ refuses them with a typed reason naming them as not yet enforceable, exactly as 
 3–5 by name rather than clamping them. The schema admits all seven so later work stays additive; the enforcement
 surface admits only the five the dispatcher can actually honour.
 
+**AND A STORED INERT STOP DENIES — it is not merely un-activatable.** Without that, a `capability` row that
+reached the table some other way would be compared against a `capabilityId` the dispatcher can never populate,
+fail to match, and read as **clear**: a stop the operator activated, sitting in the database, silently permitting
+everything. `evaluateStops` therefore returns `unreadable / scope_not_enforceable` for any inert scope, and it
+does so BEFORE returning any covering match, so an inert row cannot hide behind a working one. Three tests pin
+this, including one proving the inert stop is not rescued by a call that happens to carry a matching identity.
+
 **REVERSIBLE IN ONE LINE.** When the registry gains a capability/integration identity, remove those scopes from
 `NOT_YET_ENFORCEABLE_STOP_SCOPES` and add their two matrix cases. A test asserts the enforceable set and the
-covering relation agree, so the day the registry gains the field, the omission surfaces rather than persisting.
+covering relation agree, and another asserts the 7/5/2 split by count — so the day the registry gains the field,
+an omission surfaces as a failure rather than persisting as a quiet seven that behaves as five.
 
 **FLAGGED FOR THE OWNER**, because it narrows a canon-named control: `diagrams/13` lists seven scopes and this
 ticket makes five of them usable. The alternative — accepting activation for a scope that halts nothing — is worse

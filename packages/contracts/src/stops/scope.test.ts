@@ -76,6 +76,15 @@ describe('the scope vocabulary is canon-s, closed, and complete', () => {
     expect(Object.keys(MATRIX).sort()).toEqual([...STOP_SCOPES].sort());
   });
 
+  test('SEVEN ARE NAMED, FIVE ARE ENFORCEABLE — and the split is asserted, not just documented', () => {
+    // If a future change makes `capability`/`integration` enforceable without adding their behavioural cases, the
+    // count below stops matching and this fails. The alternative — a quiet seven that behaves as five — is the
+    // failure this whole ticket exists to prevent.
+    expect(STOP_SCOPES).toHaveLength(7);
+    expect(ENFORCEABLE_STOP_SCOPES).toHaveLength(5);
+    expect(NOT_YET_ENFORCEABLE_STOP_SCOPES).toHaveLength(2);
+  });
+
   test.each(STOP_SCOPES)('%s is a scope', (s) => expect(isStopScope(s)).toBe(true));
 
   test.each(['', 'TASK', 'account', 'everything', null, undefined, 0, {}])('%p is not a scope', (v) => {
@@ -108,10 +117,35 @@ describe('CDR-072 §1-G10 — a scope the dispatcher cannot resolve is not activ
   test('a non-scope is not enforceable either — the guard does not widen the vocabulary', () => {
     expect(isEnforceableStopScope('whatever')).toBe(false);
   });
+
+  // THE CASE THAT MATTERS MOST IN THIS BLOCK. A stored stop this release cannot enforce must DENY, not be ignored.
+  // Without it, a `capability` stop would be compared against a `capabilityId` the dispatcher can never populate,
+  // fail to match, and read as CLEAR — a stop the operator activated, sitting in the database, silently permitting
+  // everything. That is CDR-072 §0's failure hiding inside the function written to prevent it.
+  test.each(['capability', 'integration'] as const)('a stored %s stop makes the evaluation UNREADABLE, never clear', (scope) => {
+    const r = evaluateStops([stop(scope, 'anything')], inCompany());
+    expect(r).toMatchObject({ kind: 'unreadable', reason: 'scope_not_enforceable' });
+    expect(r).not.toEqual({ kind: 'clear' });
+  });
+
+  test('an inert stop poisons the whole evaluation even alongside a stop that DOES cover the call', () => {
+    // Otherwise the inert row hides behind a working one and nobody learns the store holds a stop that does nothing.
+    expect(evaluateStops([stop('account_wide'), stop('capability', 'cap-1')], inCompany())).toMatchObject({
+      kind: 'unreadable',
+      reason: 'scope_not_enforceable',
+    });
+  });
+
+  test('an inert stop is NOT rescued by the call happening to carry a matching identity', () => {
+    // `capabilityId` exists on the call shape for the day the registry gains one. Until the DISPATCHER can populate
+    // it from the registry, a match here would be a coincidence, not enforcement.
+    const r = evaluateStops([stop('capability', 'cap-1')], inCompany({ ...CALL, capabilityId: 'cap-1' }));
+    expect(r).toMatchObject({ kind: 'unreadable' });
+  });
 });
 
 describe('CDR-072 §1-G2 — each scope halts what it CLAIMS to halt', () => {
-  test.each(STOP_SCOPES.filter((s) => s !== 'external_actions_only'))('a %s stop covers its own call', (scope) => {
+  test.each(ENFORCEABLE_STOP_SCOPES.filter((s) => s !== 'external_actions_only'))('a %s stop covers its own call', (scope) => {
     const r = evaluateStops([MATRIX[scope].covers], inCompany());
     expect(r).toMatchObject({ kind: 'stopped' });
   });
@@ -130,7 +164,7 @@ describe('CDR-072 §1-G2 — each scope halts what it CLAIMS to halt', () => {
 describe('CDR-072 §1-G2 — each scope does NOT halt what it should not', () => {
   // Over-halting is a different defect from under-halting and still a defect: a targeted control that silently
   // becomes a full outage leaves the operator's model of what is running wrong in the other direction.
-  test.each(STOP_SCOPES.filter((s) => s !== 'account_wide' && s !== 'external_actions_only'))(
+  test.each(ENFORCEABLE_STOP_SCOPES.filter((s) => s !== 'account_wide' && s !== 'external_actions_only'))(
     'a %s stop does not cover a call it does not name',
     (scope) => {
       expect(evaluateStops([MATRIX[scope].misses], inCompany())).toEqual({ kind: 'clear' });

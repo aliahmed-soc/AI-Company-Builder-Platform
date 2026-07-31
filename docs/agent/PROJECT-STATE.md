@@ -67,7 +67,31 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-006 Autonomy levels 1–2 — ON BRANCH, awaiting the owner's merge gate** (CDR-071; APPR-008; PRD §12/§11.5).
+- **ACBP-P6-007 Emergency stop and resume review — IN PROGRESS** (CDR-072; ADMIN-001/002; COMP-006; invariant 14;
+  launch gate 8; trust-critical #9/#10).
+  **⚠️ SEVEN SCOPES ARE NAMED, FIVE ARE ENFORCEABLE.** `capability` and `integration` are **storable and INERT** —
+  the tool registry carries no identity for either, so no call can be matched against them. They are refused at
+  activation, and a stored one makes the evaluation **unreadable → deny** rather than being silently ignored.
+  **Do not read "seven stop scopes" anywhere as seven working scopes.** Enforceable: `task`, `worker`, `company`,
+  `external_actions_only`, `account_wide`. Reversible in one line when the registry gains the identity (CDR-072
+  §1-G10) — **flagged for the owner**, because it narrows a canon-named control.
+  **THE WHOLE TICKET IS WRITTEN AGAINST ONE FAILURE:** a stop that silently fails to reach one scope is worse than
+  no stop at all, because the operator believes it worked and stops watching. Hence: every scope proven TWICE
+  (halts what it claims, does NOT halt what it should not — over-halting is a different defect and still a defect);
+  the evidence names WHICH scopes halted rather than that a stop was requested; and there is no partial success.
+  **THE CALLER-INJECTABLE `stop` PORT DIES IN THIS TICKET** (§1-G1). It currently defaults to `clear`, which was
+  true only while no engine existed; with a real engine a caller could assert `clear` and walk through a live stop —
+  the defect P6-003c closed for approvals. A checker mirroring `check-approval-port.mjs` will keep it gone.
+  Done so far: contracts (seven scopes + covering relation, 55 tests, 8 mutations 0 survivors), migration 0050
+  (`emergency_stops` dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, and three
+  audit events whose payloads name scope + target. Still to come: the service, the dispatcher wiring + port
+  deletion, the timed ≤5s per-scope propagation evidence, docs, two review passes.
+
+- **ACBP-P6-006 Autonomy levels 1–2 — DONE** (CDR-071; APPR-008; PRD §12/§11.5). Merged as squash `fdc3065`,
+  PR #66; exact-head CI `30649500593` on `a9a57f6` and exact-main `30650127201` on `fdc3065` both green with
+  **ZERO SKIPS** (226 files / 3153 tests); branch deleted after the second.
+
+- **ACBP-P6-006 Autonomy levels 1–2 — working block** (CDR-071; APPR-008; PRD §12/§11.5).
   **THE PLATFORM ALREADY HAD LEVEL 2 AND NOBODY HAD SAID SO.** `DEFAULT_NEW_COMPANY_POLICY` carries the owner's
   ruling of 2026-07-29 — informational and internal-reversible allowed, anything higher requires approval — which is
   §12's L2 row behaviour for behaviour. So this ticket NAMES an existing posture and adds the stricter one; the L2

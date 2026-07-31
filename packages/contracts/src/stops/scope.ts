@@ -11,6 +11,12 @@
 /**
  * The seven stop scopes, from `diagrams/13-emergency-stop.mmd`'s own legend. CLOSED, and ordered narrowest →
  * broadest so a reader can see that breadth is the axis.
+ *
+ * ⚠️ **SEVEN ARE NAMED; ONLY FIVE ARE ENFORCEABLE IN THIS RELEASE.** `capability` and `integration` are storable
+ * and **INERT** — the tool registry carries no identity for either, so no call can be matched against them. They
+ * are refused at activation (§1-G10) and a stored one DENIES rather than being ignored. Do not read this array as
+ * "seven working scopes": use {@link ENFORCEABLE_STOP_SCOPES} for anything that decides or displays what a stop
+ * can actually halt.
  */
 export const STOP_SCOPES = [
   'task',
@@ -79,7 +85,7 @@ export interface StoppableCall {
 export type StopEvaluation =
   | { readonly kind: 'stopped'; readonly scopes: readonly StopScope[] }
   | { readonly kind: 'clear' }
-  | { readonly kind: 'unreadable'; readonly reason: 'unknown_scope' | 'missing_target' };
+  | { readonly kind: 'unreadable'; readonly reason: 'unknown_scope' | 'missing_target' | 'scope_not_enforceable' };
 
 /** Scopes whose meaning is "this specific thing", and which are therefore meaningless without a target. */
 const IDENTITY_SCOPES: readonly StopScope[] = ['task', 'worker', 'capability', 'integration', 'company'];
@@ -121,6 +127,16 @@ export function evaluateStops(stops: readonly StopRecord[], call: StoppableCall)
 
   for (const record of stops) {
     if (!isStopScope(record?.scope)) return { kind: 'unreadable', reason: 'unknown_scope' };
+
+    // A STORED STOP THIS RELEASE CANNOT ENFORCE MUST DENY, NOT BE IGNORED. Without this branch a `capability` stop
+    // would be compared against a `capabilityId` the dispatcher can never populate, fail to match, and read as
+    // CLEAR — a stop the operator activated, that is sitting in the database, silently permitting everything. That
+    // is CDR-072 §0's failure hiding inside the very function written to prevent it.
+    //
+    // The service refuses to create these (§1-G10), so this should be unreachable through the product path — which
+    // is exactly why it is here: the branch guards against a row arriving some other way, and being wrong here
+    // means a halt the operator believes in doing nothing at all.
+    if (!isEnforceableStopScope(record.scope)) return { kind: 'unreadable', reason: 'scope_not_enforceable' };
 
     const scope = record.scope;
     if (IDENTITY_SCOPES.includes(scope)) {
