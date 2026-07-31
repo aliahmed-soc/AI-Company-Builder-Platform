@@ -403,7 +403,17 @@ export async function setCompanyAutonomyLevel(
         autonomyLevel: params.level,
         createdByUserId: params.userId,
       });
-      if (created === undefined) return { status: 'refused', reason: 'superseded_concurrently' };
+      if (created === undefined) {
+        // THROW, DO NOT RETURN — and the difference is the whole point. This callback runs INSIDE the account
+        // transaction, so RETURNING here would COMMIT the supersession above while the replacement version was
+        // never written, leaving the company with NO ACTIVE POLICY.
+        //
+        // That state is fail-closed (evaluation returns `no_active_policy`, which denies) but it is also
+        // UNRECOVERABLE through the product path: `initializeCompanyPolicy` finds no active policy, tries version 1,
+        // collides with the superseded version 1, and throws its own invariant error. The company would be stuck
+        // permanently. Throwing rolls the supersession back, so the company keeps the policy it had.
+        throw new Error('autonomy level change superseded the active policy but could not write its replacement — invariant violated');
+      }
 
       await audit(
         scope,

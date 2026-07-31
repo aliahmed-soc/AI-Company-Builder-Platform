@@ -274,6 +274,29 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       expect(await setLevel(1)).toMatchObject({ status: 'refused', reason: 'no_active_policy' });
     });
 
+    test('if the replacement version cannot be written, the SUPERSESSION ROLLS BACK — no company is left policy-less', async () => {
+      // Review pass 1 found this: the callback runs INSIDE the account transaction, so returning a typed refusal
+      // after a successful supersede would COMMIT the supersession with no replacement — leaving the company with no
+      // active policy AND unrecoverable, because `initializeCompanyPolicy` would then collide on version 1 and throw.
+      //
+      // Forced by parking a SUPERSEDED row at the version the change will try to claim, so the insert conflicts.
+      const init = await initializeCompanyPolicy(product, ids());
+      const v = (init as { version: number }).version;
+      await sql`insert into policies (account_id, company_id, version, baseline, rules, autonomy_level, created_by_user_id, status, superseded_at)
+                values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${v + 1}, 'allow', '[]'::jsonb, 2, ${w.aOwner}::uuid, 'superseded', now())`.execute(owner.kysely);
+
+      await expect(setLevel(1)).rejects.toThrow();
+
+      // THE ASSERTION THAT MATTERS: the company still has its original ACTIVE policy at the original level.
+      const active = await sql<{ version: number; autonomy_level: number }>`
+        select version, autonomy_level from policies where company_id = ${w.companyA1}::uuid and status = 'active'`.execute(owner.kysely);
+      expect(active.rows).toHaveLength(1);
+      expect(Number(active.rows[0]!.version)).toBe(v);
+      expect(Number(active.rows[0]!.autonomy_level)).toBe(2);
+      // And the company is still governable rather than bricked.
+      expect(await readCompanyAutonomy(product, ids())).toMatchObject({ status: 'ok', current: 2 });
+    });
+
     test('the level cannot be set into ANOTHER COMPANY — the scope refuses before any write', async () => {
       await initializeCompanyPolicy(product, ids());
       const r = await setLevel(1, { companyId: w.companyB1, accountId: w.accountB });
