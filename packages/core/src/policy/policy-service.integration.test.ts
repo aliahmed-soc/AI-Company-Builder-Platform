@@ -247,14 +247,22 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       // version number. "Level changes audited" is not satisfied by recording that something changed.
       await initializeCompanyPolicy(product, ids());
       await setLevel(1);
-      const rows = await sql<{ metadata: Record<string, unknown> }>`
-        select metadata from audit_events
-        where company_id = ${w.companyA1}::uuid and name = 'policy.changed'
-        order by occurred_at, event_id`.execute(owner.kysely);
-      expect(rows.rows).toHaveLength(2);
+      // Read through the TYPED builder rather than a raw `sql` template. The first version of this test selected a
+      // column named `metadata`; the column is `payload`, and a raw template is not checked against the schema, so
+      // typecheck passed and CI failed with `column "metadata" does not exist`. The builder makes that a compile
+      // error instead.
+      const rows = await owner.kysely
+        .selectFrom('audit_events')
+        .select('payload')
+        .where('company_id', '=', w.companyA1)
+        .where('name', '=', 'policy.changed')
+        .orderBy('occurred_at')
+        .orderBy('event_id')
+        .execute();
+      expect(rows).toHaveLength(2);
       // Initialization states the level the company STARTED at, rather than leaving it inferred from the default.
-      expect(rows.rows[0]!.metadata).toMatchObject({ autonomy_level: 2 });
-      expect(rows.rows[1]!.metadata).toMatchObject({ autonomy_level: 1, superseded_version: 1 });
+      expect(rows[0]!.payload).toMatchObject({ autonomy_level: 2 });
+      expect(rows[1]!.payload).toMatchObject({ autonomy_level: 1, superseded_version: 1 });
     });
 
     test('the new version carries the rules forward VERBATIM — one control does not silently edit another', async () => {
