@@ -1090,6 +1090,53 @@ export interface DatabaseSchema {
   policy_evaluations: PolicyEvaluationsTable;
   approval_requests: ApprovalRequestsTable;
   approval_decisions: ApprovalDecisionsTable;
+  emergency_stops: EmergencyStopsTable;
+  held_work: HeldWorkTable;
+}
+
+/**
+ * An activated emergency stop (ACBP-P6-007; CDR-072; ADMIN-001; migration 0050).
+ *
+ * DUAL-SCOPE, like `audit_events`: `company_id` is NULL for an `account_wide` stop and set for every other scope,
+ * enforced by a CHECK. An account-wide stop pinned to a company would not cover its siblings — the CDR-072 §0
+ * silent miss wearing a schema.
+ *
+ * `scope` and `target_id` are `never` on update and carry no UPDATE grant: a stop that could be re-pointed after
+ * activation would let the record of WHAT was halted be rewritten after the fact.
+ */
+export interface EmergencyStopsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string | null, string | null, never>;
+  /** One of `STOP_SCOPES`. Mirrored by a CHECK; a test asserts the two sets agree. */
+  scope: ColumnType<string, string, never>;
+  /** Required for the identity scopes, forbidden for the rest — enforced by CHECK, not by convention. */
+  target_id: ColumnType<string | null, string | null, never>;
+  status: ColumnType<string, string | undefined, string>;
+  reason: ColumnType<string | null, string | null, never>;
+  activated_by_user_id: ColumnType<string, string, never>;
+  activated_at: ColumnType<Date, Date | string | undefined, never>;
+  cleared_by_user_id: ColumnType<string | null, string | null, string | null>;
+  cleared_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/**
+ * Work caught by a stop and awaiting ADMIN-002's review-to-resume (ACBP-P6-007; CDR-072 §1-G6/G7; migration 0050).
+ *
+ * NO DELETE anywhere in the stack: diagram 13's queue is *"visible, nothing lost"*, so a DISCARDED item is a
+ * reviewed item rather than an absent one — an operator must be able to see afterwards what they chose not to
+ * resume.
+ */
+export interface HeldWorkTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  company_id: ColumnType<string, string, never>;
+  stop_id: ColumnType<string, string, never>;
+  task_id: ColumnType<string, string, never>;
+  status: ColumnType<string, string | undefined, string>;
+  held_at: ColumnType<Date, Date | string | undefined, never>;
+  reviewed_by_user_id: ColumnType<string | null, string | null, string | null>;
+  reviewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /**

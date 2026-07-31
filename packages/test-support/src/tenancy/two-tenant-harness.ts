@@ -57,7 +57,7 @@ export type AdversarialDatabaseClient = DatabaseClient;
  * example: it is GLOBAL platform config (ACBP-P5-003a) and still belongs here.
  */
 export const ALL_TABLES = [
-  'approval_decisions', 'approval_requests',
+  'approval_decisions', 'emergency_stops', 'held_work', 'approval_requests',
   'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
   'job_checkpoints',
   'jobs',
