@@ -59,6 +59,9 @@ import {
   approvalRevoked,
   approvalRevokeFailed,
   approvalConsumed,
+  emergencyStopActivated,
+  emergencyStopCleared,
+  emergencyStopWorkReviewed,
   toolCallRequested,
   toolCallCompleted,
   workerStateChanged,
@@ -144,6 +147,13 @@ export const AUDITED_OPERATIONS = {
   // `policy.blocked` because "the rules said no" and "there were no rules to ask" are different problems (§6-G16).
   'policy.evaluate.unavailable': 'policy.unavailable',
   'policy.initialize': 'policy.changed',
+  // Emergency stop (ACBP-P6-007; CDR-072; ADMIN-001/002). THREE operations for three events, and the split is the
+  // same one the approval and policy pairs make: activating a halt, lifting it, and deciding the fate of one held
+  // item are three things a reader counts separately. `work.review` covers BOTH confirm and discard — a discard is
+  // a decision an operator made, not an absence of one.
+  'emergency_stop.activate': 'emergency_stop.activated',
+  'emergency_stop.clear': 'emergency_stop.cleared',
+  'emergency_stop.work.review': 'emergency_stop.work_reviewed',
   // Approvals (ACBP-P6-003c; CDR-068). THREE operations for three events. `approval.decide` and
   // `approval.decide.rejected` are separate operations rather than one carrying an outcome, mirroring the
   // `policy.evaluate` / `policy.evaluate.denied` split: the audited operation IS the authorization, so granting it
@@ -210,6 +220,11 @@ export type PolicyAuditedOperation = 'policy.evaluate' | 'policy.evaluate.denied
 // needed, and this is the human deciding. Different authority, different reader — the same reasoning that separated
 // POLICY from RUN and BILLING from RUN.
 export type ApprovalAuditedOperation = 'approval.request' | 'approval.decide' | 'approval.decide.rejected' | 'approval.revoke' | 'approval.revoke_failed' | 'approval.consume';
+// Emergency stop (ACBP-P6-007; CDR-072). Its OWN domain, and deliberately not folded into POLICY or APPROVAL:
+// policy decides whether an action is allowed and approval is a human permitting one, whereas a STOP is a human
+// halting everything in a scope regardless of either. Different authority, different reader — the same reasoning
+// that separated APPROVAL from POLICY, and POLICY from RUN.
+export type EmergencyStopAuditedOperation = 'emergency_stop.activate' | 'emergency_stop.clear' | 'emergency_stop.work.review';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -230,10 +245,11 @@ export const BILLING_AUDITED_OPERATION_IDS: readonly BillingAuditedOperation[] =
 export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[] = ['artifact.request-revision'];
 export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected', 'approval.revoke', 'approval.revoke_failed', 'approval.consume'];
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
+export const EMERGENCY_STOP_AUDITED_OPERATION_IDS: readonly EmergencyStopAuditedOperation[] = ['emergency_stop.activate', 'emergency_stop.clear', 'emergency_stop.work.review'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation | EmergencyStopAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -374,6 +390,15 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => workerRunFinished({ workerRunId: subjectId, workerId: 'research', workerVersion: 1, outcome: 'failed', failureCategory: 'policy_blocked', haltReason: 'budget_exhausted' });
     case 'task.complete':
       return (subjectId) => taskCompleted({ taskId: subjectId, runId: subjectId, artifactCount: 1, hasNoArtifactRationale: false });
+    // Emergency stop (ACBP-P6-007; CDR-072 §1-G5). The driver values are representative: what this registry proves
+    // is that each operation HAS a factory and that the factory's event name matches the map — the real scope,
+    // target and counts come from the service and are asserted against the stored payload there.
+    case 'emergency_stop.activate':
+      return (subjectId) => emergencyStopActivated({ stopId: subjectId, scope: 'account_wide', target: null, heldCount: 0 });
+    case 'emergency_stop.clear':
+      return (subjectId) => emergencyStopCleared({ stopId: subjectId, scope: 'account_wide', pendingReviewCount: 0 });
+    case 'emergency_stop.work.review':
+      return (subjectId) => emergencyStopWorkReviewed({ stopId: subjectId, decision: 'confirmed', heldWorkId: subjectId });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

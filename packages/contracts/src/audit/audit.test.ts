@@ -97,6 +97,12 @@ describe('event-name registry (deny unregistered)', () => {
       'company.paused',
       'company.resumed',
       'company.updated',
+      // Emergency stop (ACBP-P6-007; CDR-072 §1-G5; ADMIN-001/002). `activated` is named outright by
+      // FAILURE-AND-RECOVERY row 15; `cleared` and `work_reviewed` carry ADMIN-002's review-to-resume, where a
+      // discard is as much a decision as a confirm.
+      'emergency_stop.activated',
+      'emergency_stop.cleared',
+      'emergency_stop.work_reviewed',
       'membership.invited',
       'membership.revoked',
       // Workspace provisioning (ACBP-P1-012; CDR-018 §8) — six audit-only events, deliberately registered.

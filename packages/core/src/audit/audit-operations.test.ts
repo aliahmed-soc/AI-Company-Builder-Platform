@@ -51,6 +51,10 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'policy.evaluate.denied',
       'policy.evaluate.unavailable',
       'policy.initialize',
+      // Emergency stop (ACBP-P6-007; CDR-072; ADMIN-001/002) — activate, clear, and review one held item.
+      'emergency_stop.activate',
+      'emergency_stop.clear',
+      'emergency_stop.work.review',
       'tool.dispatch',
       'tool.complete',
       'tool.fail',
