@@ -42,6 +42,25 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-005 Approval invalidation on edit — MERGED** (CDR-070; APPR-004/007; **launch gate 4**;
+  trust-critical #6). A Testing ticket, and the evidence is the deliverable: canon's clause is *"Editing a material
+  approved payload invalidates approval"*, and M6's user-visible criterion is *"modified approved payload requires
+  reapproval"*.
+  **THE PROOF IS A MATRIX OVER THE BOUND ELEMENTS**, one case each for payload, tool and tool version, plus the
+  cost bound at the contract — because a single changed-payload test would pass while three of the four did
+  nothing, which is exactly how P6-004 shipped its version component inert. Every case ends at the DISPATCHER, and
+  every case asserts the approval was **not burned**, proven by running the legitimate call afterwards: a refusal
+  that consumed the approval would deny the honest call too. The group carries a mandatory control, without which
+  "correctly refuses a modified payload" and "refuses everything" are indistinguishable.
+  **WRITING THE PROOF EXPOSED A REAL GAP.** APPR-007 states the mechanism as *"Edit rebinds hash"*, and
+  `decideApproval` accepted `supersededByRequestId` while checking NOTHING about it — any pending request in the
+  company satisfied it, including one bound to a different action. The successor must now be bound to exactly the
+  edited payload, recomputed with the same function the gate uses, pending, same run, same tool. A decision saying
+  "I edited it to X" cannot be recorded unless a live request is bound to X.
+  **NO SCHEMA, NO EVENTS, NO NEW AUTHZ.** `edited_data` is still not applied anywhere — the successor carries the
+  edit because a human raised it that way, and the platform now verifies that rather than assuming it.
+  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **3063 tests / 225 files, ZERO SKIPS**.
+
 - **ACBP-P6-004 Payload binding, expiry, revocation, single-use consumption — MERGED** (CDR-069; APPR-004/005/006/009).
   ADR-009's title, built: *"payload-hash-bound, expiring, revocable, single-use approvals enforced at the tool
   dispatcher."* The gate no longer asks "did a human decide something about this tool on this run?" — it asks "is

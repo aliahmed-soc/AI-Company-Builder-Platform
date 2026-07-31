@@ -65,5 +65,34 @@ Testing ticket that has changed scope.
 
 ## §2 Status
 
-Written first. §1-G2 is the only behaviour change; G1/G3 are evidence. Updated against what was built before the
-ticket is called finished.
+Written first; updated here against what was built.
+
+**ALL FOUR GATES BUILT.** §1-G2 was the only behaviour change and it closed a real gap — `supersededByRequestId`
+was accepted with no check at all, so "Edit rebinds hash" was a caller convention rather than a platform guarantee.
+G1/G3 are the gate-4 evidence; G4 held (no schema, no events).
+
+### Where the gate-4 evidence lives
+
+| Claim | Evidence |
+|---|---|
+| A changed PAYLOAD does not run | `packages/core/src/tools/policy-enforcement.integration.test.ts` — `describe('gate 4 …')`, two cases |
+| A changed TOOL does not run | same block |
+| A changed TOOL VERSION does not run | same block — the element P6-004 shipped inert |
+| A changed COST BOUND breaks the binding | same block, asserted at the CONTRACT (see the limit below) |
+| The unchanged action still runs | same block — the mandatory control |
+| A refusal does not BURN the approval | asserted in every negative case, and proven by running the legitimate call after each |
+| An edit REBINDS to a live request carrying it | `packages/core/src/approvals/approval-service.integration.test.ts` — four cases incl. the control |
+
+### The one element proven at the contract, not the dispatcher
+
+The COST BOUND is bound by the hash and asserted there, because `dispatchToolCall` has no cost input and
+recomputes with the request's own stored bound — CDR-069 §3 records this. Canon's *"execution exceeding bound limit
+fails closed"* is the worker runtime's check at execution (P5-005). The binding is ready for it; the dispatcher
+cannot be the place that catches cost drift.
+
+### What this ticket did NOT change
+
+No schema, no new audit events, no new authz action. `edited_data` is still not APPLIED anywhere — the successor
+request carries the edited payload because a human raised it that way, and §1-G2 now verifies that it does. Nothing
+here plumbs an edit into an execution automatically, and nothing should until there is a decision about who authors
+the successor.
