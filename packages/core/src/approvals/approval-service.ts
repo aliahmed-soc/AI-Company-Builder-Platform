@@ -331,7 +331,7 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
       // rule already says a changed tool invalidates. PENDING, because a rebind needs a live request to land on;
       // superseding onto something already decided would point the human's edit at a closed question.
       if (parsed.decision.supersedes && params.supersededByRequestId !== undefined) {
-        // LOCKED, so pending is still true when markSuperseded runs below — see indRequestForUpdate.
+        // LOCKED, so `pending` is still true when `markSuperseded` runs below — see `findRequestForUpdate`.
         const successor = await approvals.findRequestForUpdate(params.supersededByRequestId);
         const expected =
           successor === undefined

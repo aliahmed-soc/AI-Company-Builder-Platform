@@ -158,7 +158,7 @@ export async function reserveCredit(client: DatabaseClient, params: ReserveCredi
         // the lock. The first reservation stands and the caller gets it — a retry must not become a second charge.
         // BY KEY, not by run. Review pass 1: the first version re-queried by RUN, which under the lock is guaranteed
         // to be the undefined we already saw — so an ordinary client mistake (one key reused across two runs)
-        // threw an internal error instead of returning a typed refusal, and lready_reserved was unreachable.
+        // threw an internal error instead of returning a typed refusal, and already_reserved was unreachable.
         const byKey = await credits.findReservationByKey(scope.tenant.accountId, params.idempotencyKey.trim());
         if (byKey === undefined) throw new Error('credit reservation was refused but no prior reservation exists — invariant violated');
         return { status: 'already_reserved', entry: toDTO(byKey) };
