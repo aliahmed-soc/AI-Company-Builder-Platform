@@ -32,7 +32,10 @@ Status: Proposed for owner review. Layers defined now; implemented incrementally
 3. A worker cannot run without explicit tenant context. *(P5-001/005)*
 4. A tool not in the worker allowlist is denied. *(P5-003)*
 5. Model output cannot approve an action. *(P6-003/004)*
-6. Editing a material approved payload invalidates approval. *(P6-005)*
+6. Editing a material approved payload invalidates approval. *(P6-005 — **built**; launch gate 4. Evidence:
+   `policy-enforcement.integration.test.ts` `describe('gate 4 …')` — one case per bound element plus a control,
+   each ending at the dispatcher and each asserting the approval is not burned; rebinding in
+   `approval-service.integration.test.ts`. Index in CDR-070 §2.)*
 7. Expired approval cannot execute. *(P6-004)*
 8. Revoked integration cannot execute. *(rig in P6-002; full when integrations exist)*
 9. Paused company cannot start new autonomous work. *(P6-007)*

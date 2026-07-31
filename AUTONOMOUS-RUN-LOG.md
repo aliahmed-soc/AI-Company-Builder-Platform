@@ -1477,7 +1477,7 @@ managed table") passes on every branch.
 
 ### Still true
 
-CI remains blocked on the GitHub Actions spending limit — owner-only. Local proof is **not** a substitute: it does
+CI remains blocked on the GitHub Actions spending limit — owner-only. **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]** Local proof is **not** a substitute: it does
 not exercise the CI service's exact image, and five of six branches still have no PR, so no workflow would run for
 them even if billing were restored.
 
@@ -1488,7 +1488,7 @@ them even if billing were restored.
 **Merged to main on local verification:** `19463e7` (merge), slice commits `29f52b3` (CDR-065), `2ea20ad`
 (journey + suite), `6b7243e` (demo + activity correction), `b36705a` (revision re-execution), `eaed94d` (lint),
 `326f6c5` (review pass 2 + PROJECT-STATE + backlog). Post-merge sweep on main: **211 files / 2731 tests, zero
-failures, zero skips**, postmaster stable throughout. **Locally verified, NOT CI-proven.**
+failures, zero skips**, postmaster stable throughout. **Locally verified, NOT CI-proven.** **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]**
 
 **Phase 5 is complete — all 15 tickets Done.** `ACBP-P5-001` and `ACBP-P5-003` were stale bookkeeping: both were
 already delivered through their ratified a/b/c sub-scopes, and P5-003's row merely *parsed* as unfinished because
@@ -1540,7 +1540,7 @@ git normalises on staging, but it broke the LF-anchored `mark-done.ps1` regex un
 
 ### Still true
 
-CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence.
+CI remains blocked on the GitHub Actions spending limit — owner-only. **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]** Everything above is local evidence.
 
 ## Window 17 — ACBP-P6-001 + ACBP-P6-002 merged; the policy engine now gates tool calls (2026-07-30, ~00:30–03:00 +03)
 
@@ -1550,7 +1550,7 @@ State at end: `main == origin/main == 338ae08`, migrations ending **0046**, disk
 window in a while where "green" means what it says.
 
 Final gate on the merge commit, on `main`: **`pnpm run check` EXIT 0 — 218 test files, 2881 tests, ZERO SKIPS.**
-Locally verified, NOT CI-proven: hosted CI is still blocked on the GitHub Actions spending limit (owner-only).
+Locally verified, NOT CI-proven: hosted CI is still blocked on the GitHub Actions spending limit (owner-only). **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]**
 
 ### What merged
 
@@ -1634,7 +1634,7 @@ by a test rather than by a better sentence.
 
 ### Still true
 
-CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
+CI remains blocked on the GitHub Actions spending limit — owner-only. **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]** Everything above is local evidence. **When the
 free minutes reset, the full suite must be run on `main` at `338ae08` and confirmed** before any of it is treated as
 CI-proven.
 
@@ -1702,7 +1702,7 @@ was rewritten earlier this window to validate every drop list rather than one pe
 
 ### Evidence
 
-Locally verified, **NOT CI-proven**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `9e339a3` —
+Locally verified, **NOT CI-proven** **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `9e339a3` —
 **2989 tests / 223 files, ZERO SKIPS**, real PostgreSQL live throughout.
 
 One full-suite run mid-window came back with 83 failed files and 888 skips. It was **VOID, not a regression**: WSL
@@ -1715,7 +1715,7 @@ watching), E: 81.47 GB.
 
 ### Still true
 
-CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When the
+CI remains blocked on the GitHub Actions spending limit — owner-only. **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]** Everything above is local evidence. **When the
 free minutes reset, the full suite must be run on `main` at `9e339a3` and confirmed** before any of it is treated as
 CI-proven.
 
@@ -1804,7 +1804,7 @@ needs a decision.
 
 ### Evidence
 
-Locally verified, **NOT CI-proven**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `7a5a9ea` —
+Locally verified, **NOT CI-proven** **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]**: `pnpm run check` exit 0 and `pnpm test` exit 0 on `main` at `7a5a9ea` —
 **3053 tests / 225 files, ZERO SKIPS**, real PostgreSQL live for the whole sweep.
 
 The database died once mid-window (WSL idle shutdown again, same signature) and was restarted with an 8-hour
@@ -1816,7 +1816,72 @@ Disk at window close: C: 7.57 GB free (recovered slightly from 7.12), E: 81.46 G
 
 ### Still true
 
-CI remains blocked on the GitHub Actions spending limit — owner-only. Everything above is local evidence. **When
+CI remains blocked on the GitHub Actions spending limit — owner-only. **[SUPERSEDED 2026-07-31 — CI-confirmed by run `30632188407` on `4c12da3`; see "The CI verification debt, cleared" at the end of this log.]** Everything above is local evidence. **When
 the free minutes reset, the full suite must be run on `main` at `7a5a9ea` and confirmed** before any of it is
 treated as CI-proven. Phase 6: 001, 002 (open clause), 003 (a/b/c), 004 merged; 005/006/007 unblocked; P6-003d
 remains behind the frontend gate.
+
+---
+
+## The CI verification debt, cleared (2026-07-31)
+
+The owner made the repository public, which restored unlimited free GitHub Actions minutes and ended the outage
+that ran from window 15 to window 19. Everything merged in that stretch carried the label *"locally verified, NOT
+CI-proven"*. This section replaces that label with a specific run, and is deliberate about what the run does and
+does not prove — a vague *"CI is green now"* would re-create exactly the kind of believed-but-underived claim
+ACBP-P6-005 was spent correcting.
+
+### What was actually run
+
+| | |
+|---|---|
+| **Run** | [`30632188407`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30632188407) — workflow `CI`, job `verify`, conclusion **success** |
+| **Commit** | `4c12da39dae71ae5292deae2171f83b6e3a0a0c5` — the tip of `main`. Re-run in place with `gh run rerun`, so it is main's real SHA and not a synthetic commit made to trigger a run |
+| **Result** | **225 files / 3053 tests / ZERO SKIPS** |
+| **Zero skips is enforced, not observed** | the workflow's `CI database preflight` step fails the job if the real-PostgreSQL suites *would* skip, so a green run cannot be a run that quietly skipped them |
+
+### Which merges that run confirms
+
+`4c12da3` contains all of them, verified with `git merge-base --is-ancestor` rather than by reading the log:
+
+- `338ae08` — ACBP-P6-001 + ACBP-P6-002 (policy engine + dispatcher enforcement, PR #64)
+- `9e339a3` — ACBP-P6-003 (human approval engine)
+- `7a5a9ea` — ACBP-P6-004 (payload binding, expiry, revocation, single-use consumption)
+- and every earlier merge of the local-verification sequence, including ACBP-P5-012 and ACBP-P5-015
+
+### What it does NOT confirm, stated plainly
+
+**This is one run on the cumulative tip.** The intermediate merge commits were each pushed to `main` and each
+produced a red run that was never re-run green. The *end state* of the sequence is CI-proven; the individual steps
+are not, and no longer can be. Anyone reading a per-ticket "CI-CONFIRMED" line in `PROJECT-STATE.md` should read it
+as *"contained in the tip that run 30632188407 proved"*, which is what those lines now say.
+
+### The red runs were VOID, and that was established before anything was touched
+
+The outage instructions required diagnosing a red `main` as regression / environment difference / void **before**
+starting any fix. Both reds — `30590300693` at `9e339a3` and `30632014201` at `7a5a9ea` — report `steps=0`: the
+`verify` job never executed a single step. That is GitHub's billing startup-failure signature, not a test result.
+The same workflow, on the same code, ran green the moment the account block lifted. **No code was changed in
+response to those reds, because there was nothing in them to respond to.**
+
+### Why no run existed for most branches
+
+Window 15 recorded that *"five of six branches still have no PR, so no workflow would run for them even if billing
+were restored."* That stayed true after billing was restored, and it bit immediately: `ci.yml` triggers on
+`pull_request` and on `push` to `main` only, so pushing ACBP-P6-005 to its feature branch started nothing at all.
+Draft **PR #65** was opened for it, which is what makes exact-head CI possible — and is required by the charter's
+one-ticket-one-PR rule regardless.
+
+### Secret scan over the full history
+
+A public repository exposes every commit ever made, not just the tip, so the working-tree scan that had been run
+throughout was no longer sufficient on its own.
+
+- **8,689 objects / 3,989 blobs** swept across `--all` refs plus the reflog.
+- **35 pattern matches, every one synthetic or allowlisted** — test fixtures and documentation examples.
+- The only `.env`-shaped file ever committed in the repository's history is `.env.example`.
+- **Nothing to rotate.**
+
+One gap in the tooling was found and is worth carrying: the working-tree secret scanner had **no
+connection-string-with-password pattern**, which had to be added for the history sweep. The scans were clean either
+way, but a `postgres://user:password@host` in a committed file would not have been caught by the standing gate.

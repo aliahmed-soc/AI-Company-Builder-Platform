@@ -28,8 +28,33 @@ constraints, triggers and races.
 
 **What it is NOT.** It is not the hosted zero-skip CI on the exact SHA that this repo's completion standard names,
 and it is one machine with one PostgreSQL version. Every merge commit and every backlog row from this sequence is
-labelled *"merged on local verification, CI still blocked by the GitHub spending limit"*. **When the free minutes
-reset, the full suite must be run on `main` and confirmed** before any of this is treated as CI-proven.
+labelled *"merged on local verification, CI still blocked by the GitHub spending limit"*.
+
+### RESOLVED 2026-07-31 — hosted CI run `30632188407` confirmed this sequence on `main`
+
+The owner made the repository public, which restored unlimited free Actions minutes. The outstanding requirement
+above was then discharged, and this is the precise scope of what was proven:
+
+| | |
+|---|---|
+| **Run** | [`30632188407`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30632188407) — workflow `CI`, job `verify`, conclusion **success** |
+| **Commit** | `4c12da39dae71ae5292deae2171f83b6e3a0a0c5` — the tip of `main`, re-run in place so the SHA is genuinely main's |
+| **Result** | **225 files / 3053 tests / ZERO SKIPS** — the DB preflight step passes only if the real-PostgreSQL suites would actually execute |
+| **Covers** | every merge of the local-verification sequence, because `4c12da3` contains all of them: `338ae08` (P6-001 + P6-002), `9e339a3` (P6-003), `7a5a9ea` (P6-004) — verified with `git merge-base --is-ancestor` |
+
+**WHAT IT DOES NOT COVER, stated so the label is not read as more than it is.** This is one run on the CUMULATIVE
+TIP. The intermediate merge commits `9e339a3` and `7a5a9ea` were each pushed to `main` and each produced a **red**
+run — `30590300693` and `30632014201` — and those were never re-run green. So the *end state* of the sequence is
+CI-proven; each individual step in it is not, and cannot be retroactively.
+
+**THOSE TWO REDS WERE VOID, NOT REGRESSIONS**, diagnosed before anything was touched, as the outage instructions
+required. Both runs report `steps=0`: the `verify` job never executed a single step, which is the GitHub billing
+startup-failure signature, not a test failure. The same workflow on the same code ran green as soon as the account
+block lifted. No code was changed in response to them, because there was nothing in them to respond to.
+
+A **full-history secret scan** was run at the same time, since a public repository exposes every past commit and not
+just the tip: 8,689 objects / 3,989 blobs swept, 35 pattern matches, all synthetic fixtures or allowlisted; the only
+`.env`-shaped file ever committed is `.env.example`. Nothing to rotate.
 
 **Migration numbers are no longer provisional.** They were assigned assuming this merge order and the order held:
 `0041`/`0042` (credit ledger) then `0043` (artifacts), strictly ascending, none applied anywhere before now.
@@ -41,6 +66,31 @@ _Newest first. When a ticket merges, a one-line **DONE** entry is added ABOVE it
 kept as historical detail (what was built, which commits, which gates). **The DONE line is the authoritative status** —
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
+
+- **ACBP-P6-005 Approval invalidation on edit — ON BRANCH, awaiting exact-head CI + the owner's merge gate** (CDR-070; APPR-004/007; **launch gate 4**;
+  trust-critical #6). A Testing ticket, and the evidence is the deliverable: canon's clause is *"Editing a material
+  approved payload invalidates approval"*, and M6's user-visible criterion is *"modified approved payload requires
+  reapproval"*.
+  **THE PROOF IS A MATRIX OVER THE BOUND ELEMENTS**, one case each for payload, tool and tool version, plus the
+  cost bound at the contract — because a single changed-payload test would pass while three of the four did
+  nothing, which is exactly how P6-004 shipped its version component inert. Every case ends at the DISPATCHER, and
+  the group carries a mandatory control, without which "correctly refuses a modified payload" and "refuses
+  everything" are indistinguishable.
+  **THIS BLOCK'S FIRST VERSION OVERSTATED ITS OWN EVIDENCE, and the correction is the point of the ticket.** It
+  claimed the not-burned assertion was in *every* case "proven by running the legitimate call afterwards" — true
+  of the payload cases, not all — and it counted a "changed TOOL" case that, measured, never computed a hash at
+  all: it dispatched a different tool, so scoping refused it before the binding was consulted, and deleting the
+  tool component from `bindingMaterial` left the whole file green. Rebuilt so only the binding can refuse, and
+  re-measured: **7 mutations, 0 survivors**. The per-claim table, and what the block CANNOT measure (the two
+  enforcement layers mutually mask), are in CDR-070 §2.
+  **WRITING THE PROOF EXPOSED A REAL GAP.** APPR-007 states the mechanism as *"Edit rebinds hash"*, and
+  `decideApproval` accepted `supersededByRequestId` while checking NOTHING about it — any pending request in the
+  company satisfied it, including one bound to a different action. The successor must now be bound to exactly the
+  edited payload, recomputed with the same function the gate uses, pending, same run, same tool. A decision saying
+  "I edited it to X" cannot be recorded unless a live request is bound to X.
+  **NO SCHEMA, NO EVENTS, NO NEW AUTHZ.** `edited_data` is still not applied anywhere — the successor carries the
+  edit because a human raised it that way, and the platform now verifies that rather than assuming it.
+  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **3063 tests / 225 files, ZERO SKIPS**.
 
 - **ACBP-P6-004 Payload binding, expiry, revocation, single-use consumption — MERGED** (CDR-069; APPR-004/005/006/009).
   ADR-009's title, built: *"payload-hash-bound, expiring, revocable, single-use approvals enforced at the tool
@@ -64,7 +114,10 @@ ticket without a DONE line above it is genuinely in flight._
   recomputes with the request's own stored cost — execution-time enforcement is P5-005); consumption at
   authorization BURNS the approval even if the call never runs (fail-closed, revisit when P5-005 gives a true
   execution instant); `approval.expired` stays unregistered because nothing sweeps expiry.
-  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **3042 tests / 225 files, ZERO SKIPS**.
+  Locally verified: `pnpm run check` exit 0; **3042 tests / 225 files, ZERO SKIPS**.
+  **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3` — 3053 tests, zero skips. Its
+  own merge commit `7a5a9ea` produced a red run (`30632014201`) that was VOID: `steps=0`, the GitHub billing
+  startup failure, never a test result. See the resolved block at the top for what that run does and does not prove.
 
 - **ACBP-P6-003 Human approval engine (a/b/c) — MERGED, NOT DONE; sub-scope (d) is owner-gated** (CDR-068).
   The approval store exists and the dispatcher reads it. Contracts for the five decision paths, migration 0047
@@ -94,7 +147,9 @@ ticket without a DONE line above it is genuinely in flight._
   **KNOWN AND MARKED, NOT SILENT:** CDR-068 §2-G4 (preview-equals-execution, APPR-010) is **still not built** —
   `preview` is free text with no relationship to `data`, and its failing-by-design marker test remains. P6-004 bound
   the PAYLOAD; deriving the PREVIEW from it is the other half and the two must not be conflated.
-  Locally verified, NOT CI-proven: `pnpm run check` exit 0; **2988 tests / 223 files, ZERO SKIPS** (real PostgreSQL
+  **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3`. Its own merge commit
+  `9e339a3` produced a red run (`30590300693`) that was VOID — `steps=0`, the billing startup failure.
+  Locally verified: `pnpm run check` exit 0; **2988 tests / 223 files, ZERO SKIPS** (real PostgreSQL
   live for the whole sweep; an earlier red run was VOID — WSL had shut the database down mid-run).
 
 - **ACBP-P6-002 Dispatcher enforcement integration — MERGED, BUT THE TICKET IS *NOT* DONE** (CDR-067; PR #64).
@@ -129,7 +184,9 @@ ticket without a DONE line above it is genuinely in flight._
   field shapes a review pass proved could evade the original pattern. `gates.stop` remains a port until P6-007, for
   the same reason this one survived P6-002: its engine does not exist. Four more residual risks stay logged in
   CDR-067 §2-G10.
-  Locally verified, NOT CI-proven: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL
+  **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3` — P6-001 and P6-002 entered
+  main together as `338ae08`, which that run contains.
+  Locally verified: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL
   live for the whole sweep).
 
 - **ACBP-P6-001 Deterministic policy engine (a/b/c) — DONE** (CDR-066), merged on local verification with P6-002 on
@@ -164,7 +221,8 @@ ticket without a DONE line above it is genuinely in flight._
   widening the taxonomy turns it red instead of quietly restoring the overstatement. P6-008 owns the fix.
   Guard demonstrated, not assumed: feeding the fabricated-citation step a valid document turns it red
   (`expected uncertified, got ok`).
-  Locally verified, NOT CI-proven.
+  Locally verified. **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3`, which
+  contains this merge.
 
 - **ACBP-P5-012 revision workflow — DONE** (CDR-064; J-13; TASK-005 lineage), merged on local verification.
   Migration 0044 `artifact_revisions` + `requestRevision` + `readArtifactLineage`. **A revision creates a NEW LINKED
@@ -177,7 +235,8 @@ ticket without a DONE line above it is genuinely in flight._
   Lineage is DERIVED (artifact → run → task → request), never a column on `artifacts`, so it cannot drift. Review
   pass 2 caught a key-reuse defect: one idempotency key reused for a different artifact used to report success for a
   document that was never revised; now a typed refusal.
-  Locally verified, NOT CI-proven.
+  Locally verified. **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3`, which
+  contains this merge.
 
 - **ACBP-P5-013 failure detail and visible retries — IN PROGRESS (window 13).**
   Branch `p5-013-failure-detail` (from main `bf381e7`), CDR-059. No migration — everything derives from

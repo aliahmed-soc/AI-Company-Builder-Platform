@@ -294,6 +294,129 @@ describe.skipIf(!hasTestDatabase)('approval service (real PostgreSQL, restricted
     expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', successor).executeTakeFirst())?.status).toBe('pending');
   });
 
+  // ══════════ ACBP-P6-005 / CDR-070 §1-G2 — the edit must PROVE its successor carries it ══════════
+
+  test('an EDIT whose successor is NOT bound to the edited payload is refused', async () => {
+    const original = await okRequestId();
+    // A successor bound to the ORIGINAL payload, not the edit. Before this guard, `supersededByRequestId` was
+    // accepted with no check at all — so the human's "not those three, this one" could point at anything.
+    const wrongSuccessor = await okRequestId();
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: wrongSuccessor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+
+    // NOTHING MOVED. The original still awaits a human and the successor is untouched — a refused edit must not
+    // half-apply, or the trail would show a supersession that never happened.
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', original).executeTakeFirst())?.status).toBe('pending');
+    expect(await owner.kysely.selectFrom('approval_decisions').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('an EDIT whose successor IS bound to the edited payload supersedes — the control', async () => {
+    const original = await okRequestId();
+    // Raised with the edited payload, so its stored binding is the hash of exactly what the human edited to.
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r.status).toBe('ok');
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', original).executeTakeFirst())?.status).toBe('superseded');
+    // The successor is still PENDING: rebinding creates a new approval, it does not grant one.
+    expect((await owner.kysely.selectFrom('approval_requests').selectAll().where('id', '=', successor).executeTakeFirst())?.status).toBe('pending');
+  });
+
+  test('a successor in a DIFFERENT RUN is refused — an edit belongs to the work it was raised in', async () => {
+    // Review pass 2, F5: mutating the `run_id` conjunct to `true` survived every test — the only conjunct in the
+    // guard with unenforced semantics. CDR-070 §1-G2 states "same run" as an enforced property, so it needs one.
+    const original = await okRequestId();
+
+    const other = await createTask(product, { ...base(), title: 'Different work', description: null, milestoneId: null });
+    const otherTaskId = (other as { status: 'ok'; task: { taskId: string } }).task.taskId;
+    expect((await planTask(product, { ...base(), taskId: otherTaskId })).status).toBe('ok');
+    await sql`update tasks set state = 'queued' where id = ${otherTaskId}::uuid`.execute(owner.kysely);
+    const otherRun = await startRun(product, { ...base(), taskId: otherTaskId, attempt: 1 });
+    const otherRunId = (otherRun as { status: 'ok'; run: { id: string } }).run.id;
+
+    // Bound to exactly the edited payload, same tool, pending — everything right except the run.
+    const successor = await requestApproval(product, { ...base(), runId: otherRunId, toolId: 'send_email', ...content(), data: { recipients: 1 } });
+    if (successor.status !== 'ok') throw new Error(`expected ok, got ${successor.status}`);
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor.request.id,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
+  test('a successor at a DIFFERENT TOOL VERSION is refused — the version is a bound element', async () => {
+    // Review pass 1: the version component CANCELLED, because the expected hash was recomputed from the
+    // successor's own version. A successor raised after the registry moved was accepted as an "edit" of a
+    // request approved under the old version.
+    const original = await okRequestId();
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+              values ('send_email', 2, 'external_reversible', 'fixture tool v2', 'active')`.execute(owner.kysely);
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
+  test('an EDIT whose payload serializes to nothing is refused as incomplete, not thrown at the driver', async () => {
+    // `{ only: undefined }` has a key, so the non-empty check passed; `JSON.stringify` then produced `"{}"` and
+    // the `edited_is_object` CHECK raised a raw 23514. Same class as the fractional cost and the unreadable expiry.
+    const original = await okRequestId();
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { only: undefined } },
+    });
+    expect(r).toMatchObject({ status: 'invalid' });
+    expect(await owner.kysely.selectFrom('approval_decisions').selectAll().execute()).toHaveLength(0);
+  });
+
+  test('a successor for a DIFFERENT tool is not an edit — it is a different action', async () => {
+    const original = await okRequestId();
+    const otherTool = await okRequestId({ toolId: 'wipe_everything', data: { recipients: 1 } });
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: otherTool,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
+  test('an ALREADY-DECIDED successor cannot receive an edit — the rebind needs a live request', async () => {
+    const original = await okRequestId();
+    const successor = await okRequestId({ data: { recipients: 1 }, preview: 'To: 1 supplier' });
+    await decide(successor);
+
+    const r = await decideApproval(product, {
+      ...base(),
+      requestId: original,
+      supersededByRequestId: successor,
+      decision: { path: 'edit_then_approve', decidedAt: new Date(), editedData: { recipients: 1 } },
+    });
+    expect(r).toMatchObject({ status: 'invalid', reason: 'successor_not_bound_to_edit' });
+  });
+
   test('a request from ANOTHER company reads as absent, not as someone else’s approval', async () => {
     const id = await okRequestId();
     const r = await decideApproval(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, requestId: id, decision: { path: 'approve', decidedAt: new Date() } });

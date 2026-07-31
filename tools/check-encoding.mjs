@@ -74,14 +74,39 @@ const offenders = files.filter(hasBom).map((f) => relative(ROOT, f).replace(/\\/
 //      A CR *mid-line* is different: it is `r` eaten out of a word. Adopting this found a FOURTH instance nobody
 //      had noticed — `running` had lost its `r` in a JSDoc comment in `credit-service.integration.test.ts`.
 //
+//   3. A control character that PowerShell's backtick escapes can PRODUCE and this repo never writes on purpose:
+//      BEL (`` `a ``), BACKSPACE (`` `b ``), VERTICAL TAB (`` `v ``), FORM FEED (`` `f ``) and ESC (`` `e ``).
+//      Added ACBP-P6-005 after a FIFTH recurrence, which signals 1 and 2 could not see: `` `f `` in
+//      `` `findRequestForUpdate` `` ate the "f" and left a form feed, and lint's `no-irregular-whitespace` caught it
+//      only because it landed in a `.ts` file — a form feed in a `.md` or `.sql` would have merged silently.
+//
+//      THE SET IS DEFINED BY THE THREAT, NOT TUNED AGAINST THE TREE. PowerShell's full escape list also produces NUL
+//      (`` `0 ``), TAB, CR and LF. TAB and CR are signals 1 and 2; LF is indistinguishable from a real newline; and
+//      NUL is DELIBERATELY EXCLUDED because this repo genuinely writes it — `object-key.test.ts` and
+//      `untrusted.test.ts` both embed raw NUL as control-character-rejection fixtures, so guarding it would produce
+//      two false positives on day one and get the whole checker deleted. Measured across 601 tracked source files:
+//      the five guarded characters appear exactly ONCE, and that one was real damage — a BEL in
+//      `credit-service.ts` where `` `a `` had eaten the "a" out of `already_reserved`, sitting undetected in a
+//      comment explaining a refusal path. Found by this signal, not by review.
+//
 // DELIBERATELY NOT CHECKED: a literal backtick followed by an escape letter. It reads like the strongest signal and
 // is unusable — a template literal beginning with `a `, `t`, `n` or `r` is ordinary code, and the measurement
 // returned 10 hits of which 10 were legitimate. A guard that cries wolf gets deleted, so this one only claims what
 // it can prove. The residual mitigation for that variant is the editing rule below plus review.
 const CODE_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs']);
+// BEL, BACKSPACE, VERTICAL TAB, FORM FEED, ESC — see signal 3 above. NUL is excluded on purpose (real fixtures use
+// it); TAB and CR have their own signals; LF cannot be told from a newline.
+// WRITTEN AS `\uXXXX` ESCAPES, NOT LITERALS, AND IT HAS TO BE: this checker scans `tools/`, so spelling its own
+// signal literally would make it fail on itself — which is how the literals below were first written, and caught.
+const ESCAPE_PRODUCTS = [
+  ['\u0007', 'BEL', 'a'],
+  ['\u0008', 'BACKSPACE', 'b'],
+  ['\u000b', 'VERTICAL TAB', 'v'],
+  ['\u000c', 'FORM FEED', 'f'],
+  ['\u001b', 'ESC', 'e'],
+];
 const mangled = [];
 for (const file of files) {
-  if (!CODE_EXTS.has(file.slice(file.lastIndexOf('.')))) continue;
   let text;
   try {
     text = readFileSync(file, 'utf8');
@@ -89,16 +114,22 @@ for (const file of files) {
     continue;
   }
   const rel = relative(ROOT, file).replace(/\\/g, '/');
+  // Signal 3 applies to EVERY scanned text file: a form feed in a Markdown doc is the same damage as one in a `.ts`,
+  // and only the `.ts` case has a linter behind it. Signals 1 and 2 stay code-only, where they were measured.
+  const isCode = CODE_EXTS.has(file.slice(file.lastIndexOf('.')));
   const problems = [];
   text.split(/\r\n|\n/).forEach((line, i) => {
-    if (line.includes('\t')) problems.push(`${i + 1}: raw TAB — a PowerShell escape ate a "t"`);
-    if (line.includes('\r')) problems.push(`${i + 1}: lone CR mid-line — a PowerShell escape ate an "r"`);
+    if (isCode && line.includes('\t')) problems.push(`${i + 1}: raw TAB — a PowerShell escape ate a "t"`);
+    if (isCode && line.includes('\r')) problems.push(`${i + 1}: lone CR mid-line — a PowerShell escape ate an "r"`);
+    for (const [ch, name, letter] of ESCAPE_PRODUCTS) {
+      if (line.includes(ch)) problems.push(`${i + 1}: raw ${name} — a PowerShell escape ate ${'aeiou'.includes(letter) ? 'an' : 'a'} "${letter}"`);
+    }
   });
   if (problems.length > 0) mangled.push({ rel, problems });
 }
 
 if (offenders.length === 0 && mangled.length === 0) {
-  console.log(`✔ encoding check passed (no UTF-8 BOM, raw TAB or lone CR in ${files.length} scanned text files).`);
+  console.log(`✔ encoding check passed (no UTF-8 BOM, raw TAB, lone CR or PowerShell escape product in ${files.length} scanned text files).`);
   process.exit(0);
 }
 if (offenders.length > 0) {
