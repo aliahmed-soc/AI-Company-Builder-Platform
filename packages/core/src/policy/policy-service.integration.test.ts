@@ -241,6 +241,22 @@ describe.skipIf(!hasTestDatabase)('the policy engine service (real PostgreSQL, r
       expect((await auditNames()).filter((n) => n === 'policy.changed').length).toBe(2);
     });
 
+    test('the audit record says WHAT the level became and which version it superseded', async () => {
+      // Review pass 2: without these fields the event read {version, baseline, rule_count} — and a level change
+      // carries the SAME baseline and SAME rules, so it was indistinguishable from any other change except by
+      // version number. "Level changes audited" is not satisfied by recording that something changed.
+      await initializeCompanyPolicy(product, ids());
+      await setLevel(1);
+      const rows = await sql<{ metadata: Record<string, unknown> }>`
+        select metadata from audit_events
+        where company_id = ${w.companyA1}::uuid and name = 'policy.changed'
+        order by occurred_at, event_id`.execute(owner.kysely);
+      expect(rows.rows).toHaveLength(2);
+      // Initialization states the level the company STARTED at, rather than leaving it inferred from the default.
+      expect(rows.rows[0]!.metadata).toMatchObject({ autonomy_level: 2 });
+      expect(rows.rows[1]!.metadata).toMatchObject({ autonomy_level: 1, superseded_version: 1 });
+    });
+
     test('the new version carries the rules forward VERBATIM — one control does not silently edit another', async () => {
       await initializeCompanyPolicy(product, ids());
       await setLevel(1);

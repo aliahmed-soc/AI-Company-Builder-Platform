@@ -311,7 +311,19 @@ export async function initializeCompanyPolicy(client: DatabaseClient, params: In
 
       // Scalars only, and never the rules themselves — those are the policy's content, and audit metadata is not
       // where content lives.
-      await audit(scope, policyChanged({ policyId: created.id, version: created.version, baseline: created.baseline, ruleCount: DEFAULT_NEW_COMPANY_POLICY.rules.length }), auditCtx(options));
+      await audit(
+        scope,
+        // The level is recorded at initialization too, so the FIRST entry in a company's policy history states the
+        // autonomy it started with rather than leaving it to be inferred from the default of the day.
+        policyChanged({
+          policyId: created.id,
+          version: created.version,
+          baseline: created.baseline,
+          ruleCount: DEFAULT_NEW_COMPANY_POLICY.rules.length,
+          autonomyLevel: DEFAULT_NEW_COMPANY_AUTONOMY_LEVEL,
+        }),
+        auditCtx(options),
+      );
       options.logger?.info('policy.initialized', { metadata: { accountId: params.accountId, companyId: params.companyId, version: created.version } });
       return { status: 'ok', policyId: created.id, version: created.version };
     },
@@ -417,7 +429,16 @@ export async function setCompanyAutonomyLevel(
 
       await audit(
         scope,
-        policyChanged({ policyId: created.id, version: created.version, baseline: created.baseline, ruleCount: Array.isArray(active.rules) ? active.rules.length : 0 }),
+        // `supersededVersion` and `autonomyLevel` both carried: together they make the event answer "what changed,
+        // from which version, to what level" without a reader having to join across rows (CDR-071 §2-G6).
+        policyChanged({
+          policyId: created.id,
+          version: created.version,
+          baseline: created.baseline,
+          ruleCount: Array.isArray(active.rules) ? active.rules.length : 0,
+          supersededVersion: active.version,
+          autonomyLevel: params.level,
+        }),
         auditCtx(options),
       );
       options.logger?.info('policy.autonomy_level_changed', {
