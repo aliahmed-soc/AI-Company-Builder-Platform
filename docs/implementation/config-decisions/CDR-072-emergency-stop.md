@@ -183,15 +183,35 @@ Two consequences, neither cosmetic:
    company**, not the account. They are not false — the events are company-stamped — but a reader can over-read
    them as the account-wide total.
 2. **ADMIN-002's mandatory review never sees the other companies' in-flight tasks.** When the stop is cleared their
-   next tool call simply succeeds, so for those companies work resumes with no confirm-or-discard decision. *"Nothing
-   auto-fires on resume"* currently holds **for the company the stop was raised from**.
+   next tool call simply succeeds, so for those companies work resumes with no confirm-or-discard decision.
 
-**Why it is not fixed in this ticket:** writing `held_work` rows for sibling companies means establishing each
-company's scope inside one account-wide operation. That is a tenant-isolation decision — the charter makes it an
-**owner gate**, and guessing at it inside a stop implementation is precisely the kind of unilateral call the gate
-exists to prevent. Options for the owner: (a) fan out per company inside the account, (b) hold lazily at dispatch
-when a call is refused, or (c) accept the limitation and say so in the operator surface. Each has different
-tenancy and review-queue consequences.
+> ### 🔴 CORRECTION — THIS SECTION STATED A NARROWER, MORE COMFORTABLE DEFECT AS FACT
+>
+> Point 2 above originally ended: *"'Nothing auto-fires on resume' currently holds **for the company the stop was
+> raised from**."* **That was false, and it was written by the author of the defect.** The property held nowhere.
+>
+> An independent review pass found the real scope: `held_work.status` is written by `reviewHeldWork` and **read by
+> nothing**. The dispatcher consults only `emergency_stops`; activation never changed `tasks.state`. So the moment
+> the stop cleared, every held task's next tool call was authorized — whether its review said `held`, `confirmed`,
+> or **`discarded`**. An operator explicitly discarding an item got the identical outcome to never reviewing at all.
+> The confirm-or-discard decision was a bookkeeping row with no consequence, in the raising company as much as in
+> any sibling.
+>
+> **The lesson is the shape of the error, not the error.** Having found a real gap (the sibling companies), the
+> author described its blast radius as the smallest reading that was still bad news, and recorded that reading as
+> established fact in three places — this CDR, `PROJECT-STATE.md`, and a direct report to the owner. A partial
+> diagnosis stated confidently is worse than an open question, because it closes the question. **Wrong
+> documentation is worse than missing documentation.**
+>
+> The sibling-company scoping described above is still true and still open. It is a *second* defect, not the one
+> point 2 claimed to describe.
+
+**Why the sibling-company scoping is not fixed in this ticket:** writing `held_work` rows for sibling companies
+means establishing each company's scope inside one account-wide operation. That is a tenant-isolation decision — the
+charter makes it an **owner gate**, and guessing at it inside a stop implementation is precisely the kind of
+unilateral call the gate exists to prevent. Options for the owner: (a) fan out per company inside the account,
+(b) hold lazily at dispatch when a call is refused, or (c) accept the limitation and say so in the operator
+surface. Each has different tenancy and review-queue consequences.
 
 ### G7 — Resume requires REVIEW, and nothing auto-fires
 
@@ -199,6 +219,39 @@ ADMIN-002: clearing a stop opens a **mandatory** review — confirm or discard e
 **expired approvals are NOT resurrected** (which P6-004 already guarantees: consumption and expiry are properties
 of the approval row, and a held item cannot revive one). *"Nothing auto-fires on resume"* is the clause; a resume
 that silently re-ran held work would be the same betrayal as a stop that missed a scope.
+
+> #### 🔴 THIS GATE WAS NOT IMPLEMENTED, AND CANON ALREADY SAID WHERE IT LIVES
+>
+> **What was actually built:** `held_work.status` written by `reviewHeldWork`, read by nothing. No enforcement.
+> The clause above was stated as satisfied and was not.
+>
+> **CANON FINDING, not a design choice.** The mechanism was searched for before proposing one, and the documents
+> already specify it — the same pattern as J-13 settling the revision question and the autonomy default turning out
+> to be the ruled company baseline.
+>
+> `WORKFLOW-STATE-MACHINES.md` §4 lists the task states as the core lifecycle *"with holds `waiting_for_input`,
+> `waiting_for_approval`, `blocked_by_policy`, **`paused`**"*, and gives the transition row verbatim:
+>
+> | From → To | Actor | Pre | Effects | Audit | Usage | Retry |
+> |---|---|---|---|---|---|---|
+> | running→paused / paused→running | **system (company pause / emergency stop)** | **scope stop active** | held visibly; **resume requires review (ADMIN-002)** | audited | metered to stop | resumes from checkpoint |
+>
+> The same section's `queued→running` row already carries **`stop-state clear`** as a precondition, and
+> `diagrams/13-emergency-stop.mmd` closes it: `clear stop` → *"MANDATORY resume review (ADMIN-002): confirm/discard
+> each held item"* → *"**Confirmed items** resume from checkpoints"* — confirmed items, not all items.
+>
+> So enforcement belongs to the **task state machine**, which already owns the question "may this task proceed",
+> and `paused` is already a legal state with `running → paused` and `paused → running` both already in the
+> implemented `LEGAL_TRANSITIONS` table (shipped by P4-002 verbatim from WORKFLOW §4). Nothing new is being
+> invented; a specified transition simply had no producer.
+>
+> **What that means concretely:** activation transitions covered in-flight tasks `running → paused`; a `paused`
+> task returns to `running` only when its held-work review is `confirmed`; a `discarded` item never resumes.
+>
+> **Why NOT the alternative** (having the dispatcher consult `held_work` on every call): it widens the chokepoint's
+> read surface and adds a failure mode — an unreadable `held_work` would have to fail closed and would then block
+> everything, which is a new outage source bolted onto the control that exists to prevent uncontrolled behaviour.
+> Canon points at the state machine; the state machine is also the narrower change.
 
 ### G8 — A STOP THAT PARTIALLY WRITES MUST NOT POLITELY REFUSE
 
@@ -211,8 +264,15 @@ stop** — the exact inverse of the §0 failure and just as dangerous, because t
 state disagree in a way neither will surface.
 
 So: within an activation or a resume, any failure after the first write **throws**, rolling the transaction back to
-a state someone actually chose. Refusals that happen *before* any write stay typed refusals. Proven the way P6-006
-proved it — force the failure, assert the call rejects **and** that no partial stop state survives.
+a state someone actually chose. Refusals that happen *before* any write stay typed refusals.
+
+> **CORRECTION — the proof clause was aspirational and was written in the past tense.** This paragraph originally
+> ended *"Proven the way P6-006 proved it — force the failure, assert the call rejects **and** that no partial stop
+> state survives."* **No such test existed.** The independent review found the wider fact behind it: the whole stop
+> controller had zero tests and zero callers, so every service-level guard here — including this one — was unproven.
+> The rule is correctly implemented (the review traced all three functions and found no typed refusal after a
+> write); it was simply never demonstrated. Restated as an obligation rather than an achievement, and discharged by
+> the stop-service suite this ticket now owes.
 
 ### G10 — A SCOPE THE DISPATCHER CANNOT RESOLVE IS REFUSED AT ACTIVATION, NEVER SILENTLY INERT
 

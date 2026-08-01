@@ -75,8 +75,13 @@ export type ActivateStopResult =
 /**
  * Activate an emergency stop (ADMIN-001).
  *
- * OWNER-ONLY via `stop:activate`, which is deliberately a different action from `stop:clear`: whoever may halt the
- * platform is not automatically whoever may restart it.
+ * OWNER-ONLY via `stop:activate`, a deliberately separate action from `stop:clear` so a later role model CAN give
+ * halting and un-halting to different people.
+ *
+ * TODAY THEY ARE THE SAME PEOPLE. Both actions map to `['owner']` in the authz policy, so no asymmetry is enforced
+ * yet — the separation is structural, not effective. An earlier version of this comment asserted that "whoever may
+ * halt the platform is not automatically whoever may restart it", which stated the intent as though it were the
+ * behaviour.
  */
 export async function activateStop(client: DatabaseClient, params: ActivateStopParams, options: StopServiceOptions = {}): Promise<ActivateStopResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
@@ -137,7 +142,13 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       //      take them as the account-wide total.
       //   2. ADMIN-002's mandatory review therefore never sees the other companies' in-flight tasks. When the stop
       //      is cleared their next tool call simply succeeds — so for those companies, work resumes WITHOUT a
-      //      confirm-or-discard decision, which is "nothing auto-fires on resume" holding for one company only.
+      //      confirm-or-discard decision.
+      //
+      //      AN EARLIER VERSION OF THIS COMMENT ENDED "...which is 'nothing auto-fires on resume' holding for one
+      //      company ONLY." THAT WAS FALSE. It held for no company: `held_work.status` was read by nothing at all,
+      //      so a cleared stop resumed everything everywhere regardless of review. Stating the narrower, more
+      //      comfortable version as fact is what let the real defect sit unexamined. See `clearStop` and
+      //      CDR-072 §1-G7 for the canon-specified fix.
       //
       // NOT FIXED HERE ON PURPOSE. Writing `held_work` rows for sibling companies means establishing each company's
       // scope inside one account-wide operation, which is a tenant-isolation decision and an OWNER GATE under the
@@ -192,9 +203,20 @@ export type ClearStopResult =
 /**
  * Clear a stop (ADMIN-002).
  *
- * CLEARING RESUMES NOTHING. Every held item still needs its own confirm-or-discard decision, and the event carries
- * `pending_review_count` so the record cannot imply the halt was simply over. *"Nothing auto-fires on resume"* is
- * the clause; a clear that silently re-ran held work would be the same betrayal as a stop that missed a scope.
+ * CLEARING RESUMES NOTHING *OF ITS OWN ACCORD*, and the event carries `pending_review_count` so the record cannot
+ * imply the halt was simply over.
+ *
+ * ⚠️ BUT THAT IS NOT YET THE SAME AS ADMIN-002'S "NOTHING AUTO-FIRES ON RESUME", AND AN EARLIER VERSION OF THIS
+ * COMMENT CLAIMED IT WAS. Found by independent review: `held_work.status` is written by `reviewHeldWork` and read
+ * by NOTHING. Clearing the stop row is therefore sufficient on its own for every held task's next tool call to be
+ * authorized — `held`, `confirmed` and `discarded` all behave identically, so an explicit discard changes one
+ * column and nothing else.
+ *
+ * WHERE THE ENFORCEMENT BELONGS IS ALREADY SETTLED BY CANON, not by this ticket's judgement:
+ * `WORKFLOW-STATE-MACHINES.md` §4 gives `running→paused / paused→running` with actor *"system (company pause /
+ * emergency stop)"*, precondition *"scope stop active"* and effect *"held visibly; resume requires review
+ * (ADMIN-002)"*; `diagrams/13` ends *"CONFIRMED items resume from checkpoints"*. `paused` is already a legal task
+ * state with both transitions already in `LEGAL_TRANSITIONS`. See CDR-072 §1-G7.
  */
 export async function clearStop(client: DatabaseClient, params: ClearStopParams, options: StopServiceOptions = {}): Promise<ClearStopResult> {
   const audit = options.auditWriter ?? writeAuditEvent;
@@ -251,6 +273,12 @@ export type ReviewHeldWorkResult =
  *
  * THIS FUNCTION DOES NOT RESUME ANYTHING. It records the decision. Re-queueing confirmed work belongs to the task
  * state machine, and wiring it here would make "nothing auto-fires on resume" false.
+ *
+ * ⚠️ THAT REASONING IS RIGHT AND WAS ALSO USED TO EXCUSE THE GAP. Declining to resume here is correct — canon puts
+ * the transition on the task state machine (`WORKFLOW` §4 `paused→running`, precondition review completed). What
+ * was missing is the other half: NOTHING consumed `status` at all, so a `discarded` item resumed exactly like a
+ * `confirmed` one the moment the stop cleared. "Belongs to the state machine" was true; "is done by the state
+ * machine" was not, and the comment read as though both were. See CDR-072 §1-G7.
  */
 export async function reviewHeldWork(client: DatabaseClient, params: ReviewHeldWorkParams, options: StopServiceOptions = {}): Promise<ReviewHeldWorkResult> {
   const audit = options.auditWriter ?? writeAuditEvent;

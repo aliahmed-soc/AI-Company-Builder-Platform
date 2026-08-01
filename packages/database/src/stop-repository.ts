@@ -85,8 +85,13 @@ export class StopRepository {
       })
       // INFERENCE, not `ON CONSTRAINT`: the target is a PARTIAL unique INDEX, and PostgreSQL's
       // `ON CONFLICT ON CONSTRAINT` accepts only real table constraints (42704 at runtime otherwise). The predicate
-      // below must stay identical to the index's own WHERE clause in migration 0050, and
-      // `tools/check-conflict-targets.mjs` fails the build if they drift.
+      // below must stay identical to the index's own WHERE clause in migration 0050.
+      //
+      // ⚠️ NOTHING ENFORCES THAT SENTENCE. An earlier version claimed "`tools/check-conflict-targets.mjs` fails the
+      // build if they drift" — it does not. That checker only flags `ON CONFLICT ON CONSTRAINT` naming a known
+      // index; it never parses inference predicates. Drift here raises 42P10 at runtime on every activation, which
+      // is the `credit_transactions_reservation_key_uq` failure shape again: a dead write path that typecheck, lint
+      // and unit tests all pass. The stop-service integration suite is what actually exercises this statement.
       .onConflict((oc) => oc.columns(['account_id', 'company_id', 'scope', 'target_id']).where('status', '=', 'active').doNothing())
       .returningAll()
       .executeTakeFirst();

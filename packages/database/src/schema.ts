@@ -1108,7 +1108,9 @@ export interface EmergencyStopsTable {
   id: ColumnType<string, string | undefined, never>;
   account_id: ColumnType<string, string, never>;
   company_id: ColumnType<string | null, string | null, never>;
-  /** One of `STOP_SCOPES`. Mirrored by a CHECK; a test asserts the two sets agree. */
+  /** One of `STOP_SCOPES`. Mirrored by a CHECK, and `emergency-stops.integration.test.ts` reads that CHECK back out
+   *  of `pg_constraint` and asserts the two sets agree — an assertion added only after a review found this comment
+   *  claiming it while no such test existed. */
   scope: ColumnType<string, string, never>;
   /** Required for the identity scopes, forbidden for the rest — enforced by CHECK, not by convention. */
   target_id: ColumnType<string | null, string | null, never>;

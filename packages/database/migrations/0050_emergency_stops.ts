@@ -27,7 +27,11 @@ const APP_ROLE = sql.ref('acbp_app');
 const CURRENT_ACCOUNT = sql`nullif(current_setting('app.current_account', true), '')`;
 const CURRENT_COMPANY = sql`nullif(current_setting('app.current_company', true), '')`;
 
-// Mirrors `STOP_SCOPES` in @acbp/contracts. Duplicated on purpose and asserted equal by a test — the ACTIVITY_TYPES
+// Mirrors `STOP_SCOPES` in @acbp/contracts. Duplicated on purpose and asserted equal by a test that reads this
+// CHECK back out of `pg_constraint` and compares it as a SET to the contract's list
+// (`emergency-stops.integration.test.ts`). That assertion did NOT exist when this comment first claimed it did —
+// an independent review found the claim unbacked, which is why it now names the file that makes it true. The
+// ACTIVITY_TYPES
 // divergence (contracts widened without a migration) is the precedent for why a silently diverging pair is a booby
 // trap rather than a convenience.
 const SCOPES = "'task', 'worker', 'capability', 'integration', 'company', 'external_actions_only', 'account_wide'";

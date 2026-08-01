@@ -99,14 +99,33 @@ ticket without a DONE line above it is genuinely in flight._
   dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
   scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
   gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
-  **⚠️ OPEN, FOUND IN REVIEW — AN `account_wide` STOP HOLDS ONLY THE RAISING COMPANY'S WORK.** The halt itself is
-  account-wide (dual-scope RLS; the dispatcher denies every company's calls), but `held_work.company_id` is NOT NULL
-  with a tenant-pinned FK and activation runs inside ONE company's scope. So `held_count`/`pending_review_count`
-  count one company, and **ADMIN-002's mandatory review never sees the other companies' in-flight tasks** — on clear
-  their work resumes with no confirm-or-discard decision. Not fixed here: writing `held_work` for sibling companies
-  means establishing each company's scope inside one account-wide operation, which is a **tenant-isolation decision
-  and an OWNER GATE**. Three options recorded in CDR-072 §1-G6.
-  Still to come: the second review pass. **Ticket Done / PR ready / merge are owner gates and have not been taken.**
+  **🔴 NOT MERGEABLE — AN INDEPENDENT REVIEW FOUND TWO BLOCKERS, AND CORRECTED A FALSE ASSURANCE THIS FILE CARRIED.**
+  This block previously said the sibling-company scoping meant *"nothing auto-fires on resume"* held "for one
+  company only". **That was false and it was written by the author of the defect.** It held for NO company:
+  `held_work.status` was written by `reviewHeldWork` and read by NOTHING, so clearing the stop authorized every held
+  task's next call regardless of whether its review said `held`, `confirmed` or **`discarded`**. A narrower, more
+  comfortable reading of a real defect was recorded as established fact here, in CDR-072 and in a direct report to
+  the owner. **Wrong documentation is worse than missing documentation** — it closes the question.
+  **BLOCKER 1 — ADMIN-002 review-to-resume enforced nothing.** CANON ALREADY SPECIFIES THE FIX (a canon finding, not
+  a design choice): `WORKFLOW-STATE-MACHINES.md` §4 lists `paused` among the task holds and gives
+  `running→paused / paused→running` with actor *"system (company pause / emergency stop)"*, precondition *"scope stop
+  active"*, effect *"held visibly; resume requires review (ADMIN-002)"*; `queued→running` already requires
+  *"stop-state clear"*; `diagrams/13` ends *"CONFIRMED items resume from checkpoints"*. `paused` and both transitions
+  are ALREADY in the implemented `LEGAL_TRANSITIONS` (P4-002, verbatim from WORKFLOW §4) — a specified transition
+  simply had no producer.
+  **BLOCKER 2 — the stop controller had zero tests and zero callers.** `activateStop`/`clearStop`/`reviewHeldWork`/
+  `readStopState` had never executed; the dispatcher suite used its own raw-insert helper. Every service-level guard
+  was unproven, including `StopRepository.insert`'s `ON CONFLICT` inference against the partial index — the
+  `credit_transactions_reservation_key_uq` shape that once left a write path dead.
+  **THREE HIGHS:** the hold query ignores scope entirely (a `task` stop holds ALL in-flight work and reports it);
+  `task`/`worker` targets are unvalidated free text (active, visible, halts nothing — the same hole closed for
+  `company` and not generalised); and **gate 8's measurement timed a raw superuser INSERT rather than
+  `activateStop`**, which does N+3 round trips — so the 6.7–8.6 ms is NOT evidence for the product path.
+  **⚠️ STILL OPEN AND OWNER-GATED — an `account_wide` stop holds only the raising company's work.** A *second*,
+  genuine defect: `held_work.company_id` is NOT NULL with a tenant-pinned FK and activation runs inside ONE
+  company's scope, so `held_count`/`pending_review_count` count one company. Fixing it means establishing each
+  company's scope inside one account-wide operation — a **tenant-isolation decision**. Three options in CDR-072 §1-G6.
+  **Ticket Done / PR ready / merge are owner gates and have not been taken.**
 
 - **ACBP-P6-006 Autonomy levels 1–2 — DONE** (CDR-071; APPR-008; PRD §12/§11.5). Merged as squash `fdc3065`,
   PR #66; exact-head CI `30649500593` on `a9a57f6` and exact-main `30650127201` on `fdc3065` both green with

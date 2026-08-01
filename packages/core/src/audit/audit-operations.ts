@@ -391,8 +391,12 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'task.complete':
       return (subjectId) => taskCompleted({ taskId: subjectId, runId: subjectId, artifactCount: 1, hasNoArtifactRationale: false });
     // Emergency stop (ACBP-P6-007; CDR-072 §1-G5). The driver values are representative: what this registry proves
-    // is that each operation HAS a factory and that the factory's event name matches the map — the real scope,
-    // target and counts come from the service and are asserted against the stored payload there.
+    // is that each operation HAS a factory and that the factory's event name matches the map.
+    //
+    // ⚠️ "...and the real scope, target and counts are asserted against the stored payload THERE" is what this
+    // comment used to say about the service. There was no "there": an independent review found the stop service had
+    // no test at all, so no stored payload was asserted anywhere. Deferring a proof to a suite that does not exist
+    // reads exactly like having proved it. The stop-service integration suite is where that assertion now lives.
     case 'emergency_stop.activate':
       return (subjectId) => emergencyStopActivated({ stopId: subjectId, scope: 'account_wide', target: null, heldCount: 0 });
     case 'emergency_stop.clear':

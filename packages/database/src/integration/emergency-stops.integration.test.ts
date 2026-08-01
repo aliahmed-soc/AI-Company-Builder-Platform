@@ -11,6 +11,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
+import { STOP_SCOPES } from '@acbp/contracts';
 import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
@@ -177,6 +178,24 @@ describe.skipIf(!hasTestDatabase)('emergency_stops + held_work (real PostgreSQL,
 
   test('an unknown scope cannot be stored — the vocabulary is closed at the database, not only in TypeScript', async () => {
     expect(await sqlStateOf(insertStop(accountA, companyA1, { companyId: companyA1, scope: 'everything', targetId: null }))).toBe(CHECK_VIOLATION);
+  });
+
+  test("THE MIGRATION'S SCOPE LIST EQUALS THE CONTRACT'S — set equality, read back from the live CHECK", async () => {
+    // Migration 0050 and `@acbp/contracts` each carry the vocabulary, and 0050's comment claimed they were
+    // "asserted equal by a test". THEY WERE NOT — the independent review found no such assertion anywhere, and one
+    // hard-coded unknown value (the case above) is not set equality. This is that assertion, and it reads the
+    // constraint PostgreSQL actually enforces rather than the migration's source text.
+    //
+    // The failure it prevents: a scope added to contracts without the migration passes `activateStop`'s
+    // enforceability check and then dies on a 23514 AFTER authorization — a throw where the design promises a typed
+    // refusal. The ACTIVITY_TYPES divergence (contracts widened without a migration) is the precedent 0050 cites.
+    const def = await sql<{ definition: string }>`
+      select pg_get_constraintdef(oid) as definition from pg_constraint where conname = 'emergency_stops_scope_valid'
+    `.execute(su.kysely);
+    const definition = def.rows[0]?.definition;
+    expect(definition, 'emergency_stops_scope_valid must exist for this assertion to mean anything').toBeDefined();
+    const inCheck = [...String(definition).matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).sort();
+    expect(inCheck).toEqual([...STOP_SCOPES].sort());
   });
 
   test('status and the clearing columns cannot disagree', async () => {
