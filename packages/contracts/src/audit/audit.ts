@@ -931,7 +931,12 @@ export function emergencyStopActivated(input: {
   // the rest of the queue fills lazily as sibling companies' tasks hit the dispatcher and get refused. A reader who
   // takes this number as "everything the stop caught" is wrong in the direction that matters, and this ticket has
   // already shipped one over-reading defect of exactly that shape. So the count carries the scope of its own claim.
-  const heldScope = input.scope === 'account_wide' ? 'this_company_at_activation_floor' : 'complete_for_scope';
+  // EVERY holding scope's count is a floor. An earlier version said `complete_for_scope` for everything except
+  // `account_wide`; an independent review found that false for all four — activation captures only what was in
+  // flight at that instant, and a task created, planned and started DURING the stop joins the queue later, when
+  // the dispatcher refuses it. `external_actions_only` holds nothing at all, so its count is a true zero.
+  const heldScope =
+    input.scope === 'external_actions_only' ? 'never_holds' : input.scope === 'account_wide' ? 'this_company_at_activation_floor' : 'this_scope_at_activation_floor';
   const metadata: Record<string, string | number | boolean> = {
     scope: input.scope,
     held_count: input.heldCount,
@@ -986,6 +991,22 @@ export function toolCallRequested(input: {
    * trail. Scope NAMES only: no target ids, which would put a task/worker identifier into the metadata.
    */
   readonly stopScopes?: string;
+  /**
+   * The stop this refusal HELD the task under (ACBP-P6-007; CDR-072 §1-G6). Present only when the dispatcher
+   * actually wrote a `held_work` row.
+   *
+   * WHY THIS IS AUDITED AND NOT INFERRED: an independent review found the dispatcher mutating task lifecycle state
+   * with no record at all, so a reader could not distinguish the FIRST refusal — which created a queue item and
+   * suspended a task — from the fifth, which did neither. WORKFLOW §4's `running→paused` row carries **Audit:
+   * audited**; this is that record for the dispatcher's half of it.
+   */
+  readonly heldByStopId?: string;
+  /**
+   * Whether the task was actually transitioned `running → paused` by this refusal — the CHECKED row count, not the
+   * intent. A task that left `running` in the window is held for review without a transition, and saying so is the
+   * difference between a record and a wish.
+   */
+  readonly pausedTask?: boolean;
 }): AuditEvent {
   // `tool_version` is OMITTED when null rather than sent as null: audit metadata is scalars only, and an absent key
   // says "this tool had no registered version" exactly as well as a null would have — without breaking the bound.
@@ -999,9 +1020,15 @@ export function toolCallRequested(input: {
   // `stop_scopes` rides the DENIED branch only, and only for the reason it explains. On a permitted call it would
   // claim a halt that did not happen; on a different refusal it would attribute that refusal to a stop.
   const stopScopes = input.denialReason === 'emergency_stopped' && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
+  // The hold/pause facts ride the same branch and the same condition — they can only have happened on an
+  // `emergency_stopped` refusal, so recording them anywhere else would assert a halt that did not occur.
+  const heldFacts =
+    input.denialReason === 'emergency_stopped' && input.heldByStopId !== undefined
+      ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true }
+      : {};
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
-    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes });
+    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes, ...heldFacts });
 }
 
 /**

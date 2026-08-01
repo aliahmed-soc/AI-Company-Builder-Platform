@@ -419,12 +419,76 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await heldRows()).toHaveLength(1);
   });
 
-  test('a refusal for a DIFFERENT reason holds nothing — the write is bound to the stop, not to denial in general', async () => {
-    // Without this, "the dispatcher holds work when it refuses" and "the dispatcher holds work when a stop refuses"
-    // are indistinguishable, and every unrelated denial would pollute the review queue.
+  test('a refusal for a DIFFERENT reason holds nothing — WITH a covering stop in force', async () => {
+    // VACUOUS IN ITS FIRST VERSION, AND AN INDEPENDENT REVIEW CAUGHT IT — the same defect, in the same file, THIRTY
+    // LINES ABOVE ITS OWN CORRECTED TWIN. It only deleted the registration; `beforeEach` truncates every fixture, so
+    // no stop row existed, `stopEvaluation.kind` was `clear`, and BOTH conjuncts of the guard were false. Deleting
+    // `finalReason === 'emergency_stopped'` — the mutation that would make any denial pollute the queue, which is
+    // exactly what this test claims to prevent — left it green.
+    //
+    // The non-vacuous shape: a stop that DOES cover this call, AND an unregistered tool. `not_registered` is checked
+    // first, so the refusal reason is not the stop's while the evaluation is genuinely `stopped` — the one cell that
+    // distinguishes "holds on any denial" from "holds when a stop denies".
+    await activateStop('account_wide', null, null);
     await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
     expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
     expect(await heldRows()).toHaveLength(0);
+    expect(await taskStateOf((await runIdentities()).taskId)).not.toBe('paused');
+  });
+
+  test('THE HELD ROW NAMES THE STOP THAT ACTUALLY COVERED IT — not merely one that shares a scope', async () => {
+    // THE BLOCKER an independent review found. Attribution matched covering SCOPE NAMES back against `activeStops`,
+    // which is ordered by `activated_at, id` — so with two `task` stops up, a call from the SECOND task was filed
+    // under the FIRST task's stop. `listHeld` for the real stop then returned empty, so clearing it reported
+    // nothing to review while the task sat paused, and the item could only be released by reviewing a row under a
+    // stop that never covered it — which is refused while that stop is active. A permanently paused task, with the
+    // evidence saying all was well.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+
+    // An EARLIER stop of the SAME scope naming a DIFFERENT task — the decoy the buggy lookup returned.
+    await activateStop('task', '00000000-0000-4000-8000-0000000000ff', w.companyA1);
+    const decoy = (await owner.kysely.selectFrom('emergency_stops').select(['id']).where('target_id', '=', '00000000-0000-4000-8000-0000000000ff').executeTakeFirstOrThrow()).id;
+    // ...then the stop that genuinely covers this call.
+    await activateStop('task', taskId, w.companyA1);
+    const real = (await owner.kysely.selectFrom('emergency_stops').select(['id']).where('target_id', '=', taskId).executeTakeFirstOrThrow()).id;
+    expect(decoy).not.toBe(real);
+
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    const held = await heldRows();
+    expect(held).toHaveLength(1);
+    expect(held[0]?.stop_id, 'the held row must name the stop that covered the call, not an earlier same-scope one').toBe(real);
+  });
+
+  test('external_actions_only REFUSES the call but does NOT hold or pause the task', async () => {
+    // It halts CALLS, not tasks — `activateStop` deliberately holds nothing for it because internal work continues
+    // by design. An unfiltered dispatcher write silently converted the narrowest control into a whole-task halt:
+    // one `send_email` and the task was paused into ADMIN-002's queue. §1-G2 names over-halting as a defect too.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('external_actions_only', null, w.companyA1);
+    expect(await dispatch({ toolId: 'send_email' })).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    expect(await heldRows()).toHaveLength(0);
+    expect(await taskStateOf(taskId)).toBe('running');
+  });
+
+  test('THE HOLD AND THE PAUSE ARE AUDITED — a lifecycle mutation with no record is not evidence', async () => {
+    // WORKFLOW §4's `running→paused` row carries "Audit: audited". The first version wrote the row and changed the
+    // task's state with NO audit at all, so a reader could not tell the FIRST refusal — which created a queue item
+    // and suspended a task — from the fifth, which did neither. `paused_task` is the CHECKED row count, not intent.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('account_wide', null, null);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const first = await latestRequestedPayload();
+    expect(first['held_by_stop_id']).toEqual(expect.any(String));
+    expect(first['paused_task']).toBe(true);
+
+    // The SECOND refusal holds nothing new and pauses nothing — and says so, which is the whole point of recording
+    // the checked count rather than the intent.
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    expect((await latestRequestedPayload())['paused_task']).toBe(false);
   });
 
   test('an UNREADABLE stop refuses without holding — `stop_unavailable` is not a halt that caught anything', async () => {

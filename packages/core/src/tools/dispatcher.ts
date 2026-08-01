@@ -399,21 +399,24 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       const activeStops = await new StopRepository(scope.db).listActive();
       // Mapped field-by-field rather than cast. A cast would also silence the day a column is renamed, and this is
       // the input to the function that decides whether the platform is halted.
+      // HOISTED so the covering-stop lookup below can re-ask the SAME question about the SAME call, rather than
+      // reconstructing the facts and risking a second, drifting version of them.
+      const stoppableCall = {
+        taskId: taskRun.task_id,
+        workerId: workerRow.rows[0]?.worker_id ?? null,
+        // Inert scopes (CDR-072 §1-G10): the registry carries no identity for either, so these stay null and a
+        // stored stop of that kind resolves to `unreadable` → denied rather than silently missing.
+        capabilityId: null,
+        integrationId: null,
+        // DERIVED from the registry's risk class via the contract's own helper. `tool_registrations` has no
+        // external-effect column, and CDR-051 §0.2 records that deriving it is the stand-in until a tool declares
+        // one. Never from model text (ADR-010 §5).
+        hasExternalEffect: hasExternalEffect(definition?.risk_class),
+        companyId: scope.tenant.companyId,
+      };
       const stopEvaluation = evaluateStops(
         activeStops.map((s) => ({ scope: s.scope, targetId: s.target_id })),
-        {
-          taskId: taskRun.task_id,
-          workerId: workerRow.rows[0]?.worker_id ?? null,
-          // Inert scopes (CDR-072 §1-G10): the registry carries no identity for either, so these stay null and a
-          // stored stop of that kind resolves to `unreadable` → denied rather than silently missing.
-          capabilityId: null,
-          integrationId: null,
-          // DERIVED from the registry's risk class via the contract's own helper. `tool_registrations` has no
-          // external-effect column, and CDR-051 §0.2 records that deriving it is the stand-in until a tool declares
-          // one. Never from model text (ADR-010 §5).
-          hasExternalEffect: hasExternalEffect(definition?.risk_class),
-          companyId: scope.tenant.companyId,
-        },
+        stoppableCall,
       );
 
       const decision = decideDispatch({
@@ -560,28 +563,49 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       //
       // IDEMPOTENT BY CONSTRUCTION: `held_work_stop_task_uq` + `ON CONFLICT DO NOTHING`, because a stopped task
       // typically retries and each retry lands here again. Proven against a real database, not argued.
+      let heldByStopId: string | undefined;
+      let pausedTask = false;
       if (finalReason === 'emergency_stopped' && stopEvaluation.kind === 'stopped') {
-        // ATTRIBUTED TO A STOP THAT ACTUALLY COVERED THIS CALL. `evaluateStops` names the covering SCOPES; the
-        // matching row is taken from the same `activeStops` list the evaluation was computed from, so the
-        // attribution cannot drift from the decision. Where several stops cover one call, the FIRST covering scope
-        // in the closed `STOP_SCOPES` order wins — deterministic, so two identical calls never attribute
-        // differently, and `held_work_stop_task_uq` stays meaningful.
-        const covering = activeStops.find((s) => (stopEvaluation.scopes as readonly string[]).includes(s.scope));
-        if (covering !== undefined) {
-          const stops = new StopRepository(scope.db);
-          await stops.hold({
+        // ── WHICH STOP CAUGHT THIS CALL — RE-ASKED, NOT NAME-MATCHED (independent review, Blocker) ───────────
+        //
+        // The first version matched the covering SCOPE NAMES back against `activeStops` and took the first hit.
+        // `listActive` orders by `activated_at, id`, NOT by covering, so with two `task` stops up — one for task Y
+        // raised at 10:00, one for task X at 10:05 — a call from task X was attributed to Y's stop. The
+        // consequences compounded: `listHeld(S_X)` returned empty so clearing X's stop reported nothing to review
+        // while X sat paused, and X could only be released by reviewing a row filed under a stop that never
+        // covered it — which `reviewHeldWork` refuses while that stop is active. A permanently paused,
+        // uncompletable task, with the evidence saying all was well. §0's failure relocated into the record.
+        //
+        // The fix asks the covering relation ITSELF, one stop at a time, about the SAME call facts the decision
+        // used: a stop covers iff evaluating it ALONE returns `stopped`. No name matching, no second rule to drift.
+        // Ties resolve to the EARLIEST covering stop (`activated_at, id`), which is deterministic and is the halt
+        // that actually caught the task first.
+        const covering = activeStops.find(
+          (s) => evaluateStops([{ scope: s.scope, targetId: s.target_id }], stoppableCall).kind === 'stopped',
+        );
+        // `external_actions_only` HALTS CALLS, NOT TASKS — so it must not hold or pause (independent review).
+        // `activateStop` deliberately holds nothing for it ("internal work continues by design"), and an
+        // unfiltered write here silently converted the narrowest control into a whole-task halt: one `send_email`
+        // and the task was paused into ADMIN-002's queue. §1-G2 names over-halting as a defect in its own right.
+        // A stop of another scope covering the same call still holds — this filters the SCOPE, not the call.
+        const haltsTheTask = covering !== undefined && covering.scope !== 'external_actions_only';
+        if (haltsTheTask) {
+          await new StopRepository(scope.db).hold({
             accountId: scope.tenant.accountId,
             companyId: scope.tenant.companyId,
             stopId: covering.id,
             taskId: taskRun.task_id,
           });
-          // Guarded on `state = 'running'`: the only legal edge into `paused` (WORKFLOW §4). A task in any other
-          // state is held for review but not transitioned — `queued` is already gated by "stop-state clear".
-          await new TaskRepository(scope.db).updateState(taskRun.task_id, 'running', 'paused');
+          heldByStopId = covering.id;
+          // THE ROW COUNT IS CHECKED, matching the correction twenty lines above: a task that left `running` in
+          // this window is NOT paused, and reporting it as paused would be the "unapplied write reported as
+          // applied" shape review passes keep finding. `running → paused` is the only legal edge into `paused`
+          // (WORKFLOW §4); any other state is held for review without a transition.
+          pausedTask = (await new TaskRepository(scope.db).updateState(taskRun.task_id, 'running', 'paused')) === 1;
         }
       }
 
-      await audit(scope, requestedEvent(finalRow, finalReason, signals, stopEvaluation), auditCtx(options));
+      await audit(scope, requestedEvent(finalRow, finalReason, signals, stopEvaluation, heldByStopId, pausedTask), auditCtx(options));
       if (finalReason !== null) {
         // Logged at WARN because a refusal at the chokepoint is the signal the platform alarms on (TOOL-003 asks for
         // owner notification on gate unavailability). Metadata is scalars only — no arguments, no digest.
@@ -681,14 +705,23 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
 
 // ── audit events (the factories live in @acbp/contracts, so the registry types them) ─────────────────────────
 
-function requestedEvent(row: ToolCallRow, denialReason: string | null, injectionSignals: string, stopEvaluation: StopEvaluation) {
+function requestedEvent(
+  row: ToolCallRow,
+  denialReason: string | null,
+  injectionSignals: string,
+  stopEvaluation: StopEvaluation,
+  heldByStopId?: string,
+  pausedTask?: boolean,
+) {
   const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
   // WHICH SCOPES HALTED IT (CDR-072 §1-G5), taken from the evaluation that actually decided this call rather than
   // re-derived — a second derivation is one that can disagree with the refusal it is supposed to explain. The
   // factory records it only on an `emergency_stopped` refusal, so passing it unconditionally here is safe and
   // keeps the "what halted this" answer next to the reason instead of behind a branch that could be missed.
   const stopScopes = stopEvaluation.kind === 'stopped' ? stopEvaluation.scopes.join(',') : '';
-  return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason, stopScopes });
+  return denialReason === null
+    ? toolCallRequested(base)
+    : toolCallRequested({ ...base, denialReason, stopScopes, ...(heldByStopId === undefined ? {} : { heldByStopId, pausedTask: pausedTask === true }) });
 }
 
 /** The DISTINCT signals across every untrusted item, comma-joined. Signals only — the content never leaves memory. */

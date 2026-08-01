@@ -473,10 +473,22 @@ export interface StopScopeAvailability {
  * So `held_count` on the activation event is a FLOOR, not a total, and this field says which reading applies.
  */
 export type HeldQueueCompleteness =
-  /** Every in-flight task this stop covers was held at activation, and no more can be added. */
-  | 'complete_for_scope'
-  /** More items may appear as covered tasks reach the dispatcher — the count is a floor. */
-  | 'grows_lazily';
+  /**
+   * More items may appear as covered tasks reach the dispatcher — the count is a FLOOR. True of every scope that
+   * holds anything at all.
+   *
+   * An earlier version of this type also offered `complete_for_scope`, claiming "no more can be added" for every
+   * scope except `account_wide`. AN INDEPENDENT REVIEW FOUND THAT FALSE FOR ALL FOUR: activation holds only tasks
+   * that are in flight AT THAT MOMENT, and nothing stops a task being created, planned, queued and started while
+   * the stop stands — it then joins the queue when the dispatcher refuses it. The variant was deleted rather than
+   * re-scoped, because a label nothing can truthfully carry is worse than no label.
+   */
+  | 'grows_lazily'
+  /**
+   * This scope never holds anything, so the queue for it is always empty. `external_actions_only` halts CALLS, not
+   * tasks — internal work continues by design — so neither activation nor the dispatcher files an item under it.
+   */
+  | 'never_holds';
 
 export type ReadStopStateResult =
   | {
@@ -529,9 +541,10 @@ export async function readStopState(
           scope: s.scope,
           targetId: s.target_id,
           activatedAt: s.activated_at,
-          // `account_wide` fills lazily across sibling companies; every other scope is confined to this company and
-          // was fully held at activation. Both still exclude tasks that never reach the dispatcher — see the caveat.
-          heldQueueCompleteness: s.scope === 'account_wide' ? ('grows_lazily' as const) : ('complete_for_scope' as const),
+          // EVERY holding scope grows lazily — activation captures only what was in flight at that instant, and
+          // the dispatcher files the rest as covered tasks are refused. `external_actions_only` holds nothing at
+          // all, ever, because it halts calls rather than tasks.
+          heldQueueCompleteness: s.scope === 'external_actions_only' ? ('never_holds' as const) : ('grows_lazily' as const),
         })),
         heldQueueCaveat:
           'The held-work queue records what this stop INTERRUPTED, not everything it covers. A covered task that ' +
