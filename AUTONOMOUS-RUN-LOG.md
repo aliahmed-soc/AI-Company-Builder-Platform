@@ -2096,3 +2096,4 @@ should start at L1 rather than L2.
 GREEN — 228/228 files, 3251/3251 tests, ZERO SKIPS.** C: 50.1 GB free (21.8%).
 
 - 2026-08-01T11:09Z scheduled wake stood down: last commit cf154f6 at 2026-08-01T11:00Z is 9 minutes old, inside the 25-minute serialisation window - a session is actively committing.
+- 2026-08-01T11:29Z scheduled wake stood down: last commit 02962e7 at 2026-08-01T11:28Z is 1 minute old, inside the 25-minute serialisation window - a session is actively committing (14:10, 14:16, 14:28 local, all pushed).
