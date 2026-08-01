@@ -10,7 +10,8 @@
 // WHY THE RECORD COMES FIRST. TOOL-002 wants 100% of calls recorded, and a row written after execution cannot exist
 // for a call that died mid-flight — precisely the call worth having a record of. So an authorized call is inserted
 // `requested` before it is handed back, and `reportToolCallOutcome` closes it later.
-import { ToolCallRepository, TaskRunRepository, ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { ToolCallRepository, TaskRunRepository, ApprovalRepository, StopRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { sql } from 'kysely';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   decideDispatch,
@@ -25,7 +26,9 @@ import {
   approvalConsumed,
   toolCallRequested,
   toolCallCompleted,
+  evaluateStops,
   type StopAnswer,
+  type StopEvaluation,
   type ToolDenialReason,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
@@ -48,33 +51,50 @@ import type { Logger } from '@acbp/observability';
  * human's deliberate deferral immediately.
  */
 
-/** The remaining Phase 5 gate port's default. See `ToolGates` for why stop is `clear` rather than `unavailable`. */
-const CLEAR = (): StopAnswer => ({ kind: 'clear' });
-
 /**
- * The gates the dispatcher consults through PORTS, with fail-closed defaults, because the engines behind them are
- * still a later ticket: `stop` is ACBP-P6-007.
+ * **THERE ARE NO GATE PORTS LEFT.** `policy` died in ACBP-P6-002, `approval` in ACBP-P6-003c (CDR-068 §0.1), and
+ * `stop` dies here in ACBP-P6-007 (CDR-072 §1-G1). The dispatcher consults all three stores ITSELF, so a caller can
+ * neither supply, override nor omit any of the three answers.
  *
- * **THERE IS NO `policy` PORT (ACBP-P6-002) AND NO `approval` PORT (ACBP-P6-003c; CDR-068 §0.1).** The dispatcher
- * consults both stores itself, so a caller cannot supply, override or omit either answer — and because the approval
- * REQUIREMENT rides the policy answer (`PolicyGateAnswer`), a caller cannot forge the requirement either.
  * `COMPONENT-CATALOG` names this component *"Trusted — the enforcement chokepoint"* and
  * `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check **never skippable**: a gate a caller may omit
- * will eventually be omitted, and the omission would be invisible, because the default (`unavailable`) *looks* like a
- * deliberate fail-closed answer.
+ * will eventually be omitted, and the omission would be invisible, because the default *looks* like a deliberate
+ * fail-closed answer.
  *
- * **WHY THE APPROVAL PORT SURVIVED P6-002 AND DIES HERE.** That ticket's adversarial review reported it as a bypass —
- * a caller passing `approval: () => ({ kind: 'allow' })` could satisfy an approval that policy DEMANDED, with no
- * approval record consulted anywhere. It was left open for exactly one reason: there was no approval store to consult,
- * so deleting it would have made every `require_approval` an unconditional deny and left the approve-and-proceed path
- * unexecuted by any test — the D1 unreachable-path shape. Migration 0047 and the P6-003c service ended that reason,
- * and `tools/check-approval-port.mjs` has been failing the build ever since to make sure it was not forgotten.
+ * **WHY THE STOP PORT SURVIVED THIS LONG AND DIES NOW.** Its own comment used to justify itself: the engine did not
+ * exist, so "no stop CAN be in force" made the `clear` default simply TRUE. That sentence stopped being true the
+ * moment migration 0050 and the stop controller landed. With a real engine behind it, a caller passing
+ * `stop: () => ({ kind: 'clear' })` would walk straight through a live emergency stop — the identical bypass the
+ * approval port was deleted for, on the one control whose entire purpose is to be un-bypassable.
  *
- * `stop` remains a port because its engine (P6-007) does not exist, and it defaults to `clear` rather than
- * `unavailable`: with no stop mechanism in existence, no stop CAN be in force, so `clear` is simply true.
+ * `tools/check-stop-port.mjs` fails the build if it comes back, exactly as `check-approval-port.mjs` does for
+ * approvals. The interface is kept (rather than removed outright) so both checkers still have a host to inspect —
+ * a vanished host is an ERROR in those checks, not a quiet pass.
  */
 export interface ToolGates {
-  readonly stop?: () => Promise<StopAnswer> | StopAnswer;
+  /**
+   * Deliberately empty. See above: every gate is read from its store inside `dispatchToolCall`.
+   *
+   * DO NOT ADD A GATE HERE. If a future engine needs a seam for testing, give it a store the test can write to —
+   * a caller-injectable answer to a safety question has been re-introduced and deleted twice already.
+   */
+  readonly _never?: never;
+}
+
+/**
+ * Translate the stop engine's answer into the dispatcher's gate vocabulary (CDR-072 §1-G3).
+ *
+ * THE ONLY INTERESTING LINE IS THE LAST ONE. `unreadable` becomes `unavailable`, never `clear` — canon's principle
+ * is that *"no stop is recorded" is a complete answer; "I could not check" is not*, and `decideDispatch` turns
+ * `unavailable` into `stop_unavailable` → denied. That single mapping is what makes a corrupt stop row, and a
+ * stored stop whose scope this release cannot enforce, both fail CLOSED instead of quietly permitting everything.
+ *
+ * Exported so the mapping is testable on its own rather than only through a database.
+ */
+export function toStopGateAnswer(evaluation: StopEvaluation): StopAnswer {
+  if (evaluation.kind === 'stopped') return { kind: 'stopped' };
+  if (evaluation.kind === 'clear') return { kind: 'clear' };
+  return { kind: 'unavailable' };
 }
 
 export interface DispatcherOptions {
@@ -346,13 +366,75 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // a `reject` is also `decided`.
       const approved = usability?.usable === true && decisionAuthorizes;
 
+      // ── EMERGENCY STOP, read from the store (ACBP-P6-007; CDR-072 §1-G1; invariant 14) ────────────────────
+      //
+      // `listActive` returns the covering CANDIDATES — RLS already restricts rows to this account and either this
+      // company or the account-wide ones, which is exactly the set that can cover a call here — and the pure
+      // `evaluateStops` decides. The covering rule is NOT re-implemented here: a duplicated rule is one that can
+      // drift, and the copy that drifts silently is the one that misses a scope.
+      //
+      // The run's task and worker are read so `task` and `worker` scopes can match. A missing worker run leaves
+      // `workerId` null, which makes that scope MISS rather than throw — deliberately, because an `account_wide`
+      // or `company` stop must still halt a call whose provenance is incomplete. Nothing escapes a broad stop by
+      // being poorly attributed.
+      //
+      // THE FIRST VERSION OF THIS READ WAS WRONG IN TWO WAYS AT ONCE, and hosted CI found it because a fixture
+      // guard refused to compare null against null. It ran
+      //   `select task_run_id, worker_id from worker_runs where id = <runId>`
+      // but `params.runId` is a `task_runs.id` — it is what `TaskRunRepository.findById` resolved above. So:
+      //   1. the join key was wrong (`worker_runs.id` against a task-run id) and matched NOTHING, ever; and
+      //   2. even had it matched, `task_run_id` is not a TASK id — a `task` stop targets a task (`held_work.task_id`
+      //      references `tasks`), so the comparison could never be true either.
+      // Both `task` and `worker` scopes therefore resolved to null on every call: two of the five enforceable
+      // scopes SILENTLY ENFORCED NOTHING while the stop appeared to work. That is CDR-072 §0's failure exactly —
+      // and it is the reason the enforcement matrix has to run through the dispatcher rather than stop at the
+      // pure covering relation, which was correct the whole time.
+      //
+      // `taskRun.task_id` is already in hand from the lookup above, so the task identity costs no query at all.
+      // The worker comes from the worker run OF this task run — exactly one can exist, because migration 0040
+      // carries `UNIQUE(task_run_id)` ("one worker executes one attempt"), so this is a lookup and not a choice.
+      const workerRow = await sql<{ worker_id: string }>`
+        select worker_id from worker_runs where task_run_id = ${params.runId}::uuid
+      `.execute(scope.db);
+      const activeStops = await new StopRepository(scope.db).listActive();
+      // Mapped field-by-field rather than cast. A cast would also silence the day a column is renamed, and this is
+      // the input to the function that decides whether the platform is halted.
+      // HOISTED so the covering-stop lookup below can re-ask the SAME question about the SAME call, rather than
+      // reconstructing the facts and risking a second, drifting version of them.
+      const stoppableCall = {
+        taskId: taskRun.task_id,
+        workerId: workerRow.rows[0]?.worker_id ?? null,
+        // Inert scopes (CDR-072 §1-G10): the registry carries no identity for either, so these stay null and a
+        // stored stop of that kind resolves to `unreadable` → denied rather than silently missing.
+        capabilityId: null,
+        integrationId: null,
+        // DERIVED from the registry's risk class via the contract's own helper. `tool_registrations` has no
+        // external-effect column, and CDR-051 §0.2 records that deriving it is the stand-in until a tool declares
+        // one. Never from model text (ADR-010 §5).
+        hasExternalEffect: hasExternalEffect(definition?.risk_class),
+        companyId: scope.tenant.companyId,
+      };
+      const stopEvaluation = evaluateStops(
+        activeStops.map((s) => ({ scope: s.scope, targetId: s.target_id })),
+        stoppableCall,
+      );
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
         allowlist: params.allowlist,
         untrustedContext: untrusted,
-        stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
+        // ── THE STOP GATE, read from the STORE inside this transaction (ACBP-P6-007; CDR-072 §1-G1/G3/G4) ──
+        //
+        // Same scope, same transaction as the call it authorizes. That is what bounds launch gate 8's <=5s
+        // propagation by TRANSACTION VISIBILITY rather than by a cache refresh: a stop committed before this read is
+        // visible to it, so there is nothing to propagate and no interval to tune.
+        //
+        // `unreadable` maps to `unavailable`, NOT to `clear`. Canon's own principle is that *"no stop is recorded"
+        // is a complete answer; "I could not check" is not* — and `decideDispatch` turns `unavailable` into
+        // `stop_unavailable` -> denied. That covers a corrupt record AND a scope this release cannot enforce.
+        stop: toStopGateAnswer(stopEvaluation),
         // The engine's OWN mapping, tested beside it, so the translation cannot be got wrong here. It never yields
         // `unavailable`: a RESULT is an answer, and only a thrown evaluation — which propagates and rolls the whole
         // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval
@@ -461,7 +543,69 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         }
       }
 
-      await audit(scope, requestedEvent(finalRow, finalReason, signals), auditCtx(options));
+      // ── HOLD THE WORK THIS STOP JUST CAUGHT (CDR-072 §1-G6, PM ruling: Option B) ───────────────────────────
+      //
+      // WHY THIS WRITE LIVES IN THE CHOKEPOINT, AND THE OBJECTION AGAINST IT. An `account_wide` stop is visible to
+      // every company in the account (dual-scope RLS) and the dispatcher refuses their calls correctly — but
+      // `activateStop` runs in ONE company's scope, so only that company's work got a `held_work` row and a
+      // `running → paused` transition. Sibling companies were halted with no review queue and no paused state, and
+      // on clear their work resumed with no confirm-or-discard decision.
+      //
+      // The PM ruled Option B over fanning out per company at activation (O(companies × tasks) statements before
+      // commit, on the control whose promise is speed) and over merely documenting the gap. THE ACCEPTED COST IS
+      // THIS LINE: the dispatcher now mutates task lifecycle state, which is a responsibility it did not previously
+      // have, on the most security-sensitive function in the codebase. That was weighed, not overlooked. If it
+      // causes trouble, the coherent retreat is to delete this block and keep the labelling — CDR-072 §1-G6.
+      //
+      // ⚠️ THE BOUNDARY, STATED WHERE IT IS EASIEST TO FORGET: this catches a task only when that task ATTEMPTS A
+      // CALL. A task halted by the stop that never reaches the dispatcher is never held and never paused. The queue
+      // is therefore a record of what the stop actually INTERRUPTED, never a roster of everything it covers.
+      //
+      // IDEMPOTENT BY CONSTRUCTION: `held_work_stop_task_uq` + `ON CONFLICT DO NOTHING`, because a stopped task
+      // typically retries and each retry lands here again. Proven against a real database, not argued.
+      let heldByStopId: string | undefined;
+      let pausedTask = false;
+      if (finalReason === 'emergency_stopped' && stopEvaluation.kind === 'stopped') {
+        // ── WHICH STOP CAUGHT THIS CALL — RE-ASKED, NOT NAME-MATCHED (independent review, Blocker) ───────────
+        //
+        // The first version matched the covering SCOPE NAMES back against `activeStops` and took the first hit.
+        // `listActive` orders by `activated_at, id`, NOT by covering, so with two `task` stops up — one for task Y
+        // raised at 10:00, one for task X at 10:05 — a call from task X was attributed to Y's stop. The
+        // consequences compounded: `listHeld(S_X)` returned empty so clearing X's stop reported nothing to review
+        // while X sat paused, and X could only be released by reviewing a row filed under a stop that never
+        // covered it — which `reviewHeldWork` refuses while that stop is active. A permanently paused,
+        // uncompletable task, with the evidence saying all was well. §0's failure relocated into the record.
+        //
+        // The fix asks the covering relation ITSELF, one stop at a time, about the SAME call facts the decision
+        // used: a stop covers iff evaluating it ALONE returns `stopped`. No name matching, no second rule to drift.
+        // Ties resolve to the EARLIEST covering stop (`activated_at, id`), which is deterministic and is the halt
+        // that actually caught the task first.
+        const covering = activeStops.find(
+          (s) => evaluateStops([{ scope: s.scope, targetId: s.target_id }], stoppableCall).kind === 'stopped',
+        );
+        // `external_actions_only` HALTS CALLS, NOT TASKS — so it must not hold or pause (independent review).
+        // `activateStop` deliberately holds nothing for it ("internal work continues by design"), and an
+        // unfiltered write here silently converted the narrowest control into a whole-task halt: one `send_email`
+        // and the task was paused into ADMIN-002's queue. §1-G2 names over-halting as a defect in its own right.
+        // A stop of another scope covering the same call still holds — this filters the SCOPE, not the call.
+        const haltsTheTask = covering !== undefined && covering.scope !== 'external_actions_only';
+        if (haltsTheTask) {
+          await new StopRepository(scope.db).hold({
+            accountId: scope.tenant.accountId,
+            companyId: scope.tenant.companyId,
+            stopId: covering.id,
+            taskId: taskRun.task_id,
+          });
+          heldByStopId = covering.id;
+          // THE ROW COUNT IS CHECKED, matching the correction twenty lines above: a task that left `running` in
+          // this window is NOT paused, and reporting it as paused would be the "unapplied write reported as
+          // applied" shape review passes keep finding. `running → paused` is the only legal edge into `paused`
+          // (WORKFLOW §4); any other state is held for review without a transition.
+          pausedTask = (await new TaskRepository(scope.db).updateState(taskRun.task_id, 'running', 'paused')) === 1;
+        }
+      }
+
+      await audit(scope, requestedEvent(finalRow, finalReason, signals, stopEvaluation, heldByStopId, pausedTask), auditCtx(options));
       if (finalReason !== null) {
         // Logged at WARN because a refusal at the chokepoint is the signal the platform alarms on (TOOL-003 asks for
         // owner notification on gate unavailability). Metadata is scalars only — no arguments, no digest.
@@ -561,9 +705,23 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
 
 // ── audit events (the factories live in @acbp/contracts, so the registry types them) ─────────────────────────
 
-function requestedEvent(row: ToolCallRow, denialReason: string | null, injectionSignals: string) {
+function requestedEvent(
+  row: ToolCallRow,
+  denialReason: string | null,
+  injectionSignals: string,
+  stopEvaluation: StopEvaluation,
+  heldByStopId?: string,
+  pausedTask?: boolean,
+) {
   const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
-  return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason });
+  // WHICH SCOPES HALTED IT (CDR-072 §1-G5), taken from the evaluation that actually decided this call rather than
+  // re-derived — a second derivation is one that can disagree with the refusal it is supposed to explain. The
+  // factory records it only on an `emergency_stopped` refusal, so passing it unconditionally here is safe and
+  // keeps the "what halted this" answer next to the reason instead of behind a branch that could be missed.
+  const stopScopes = stopEvaluation.kind === 'stopped' ? stopEvaluation.scopes.join(',') : '';
+  return denialReason === null
+    ? toolCallRequested(base)
+    : toolCallRequested({ ...base, denialReason, stopScopes, ...(heldByStopId === undefined ? {} : { heldByStopId, pausedTask: pausedTask === true }) });
 }
 
 /** The DISTINCT signals across every untrusted item, comma-joined. Signals only — the content never leaves memory. */

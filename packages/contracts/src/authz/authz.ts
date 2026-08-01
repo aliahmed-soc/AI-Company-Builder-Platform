@@ -170,6 +170,17 @@ export const AUTHZ_ACTIONS = [
   'approval:decide',
   'approval:revoke',
   'approval:read',
+  // Emergency stop (ACBP-P6-007; CDR-072; ADMIN-001/002). THREE actions, and the split is not cosmetic:
+  //   `stop:activate` — MAY THIS PERSON HALT THE PLATFORM? A safety action. Owner-only, but note the asymmetry
+  //                     below: nothing about activation may fail closed INTO running.
+  //   `stop:clear`    — MAY THIS PERSON LIFT A HALT? A different and strictly more dangerous authority than
+  //                     activating one. Collapsing the two would mean anyone who can stop can also un-stop, which
+  //                     is the wrong default for a control whose entire purpose is to be hard to undo by accident.
+  //   `stop:read`     — MAY THIS PERSON SEE WHAT IS HALTED? Seeing a stop is not a risk; lifting it is. Mirrors
+  //                     the `approval:read` split for the same reason.
+  'stop:activate',
+  'stop:clear',
+  'stop:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -326,6 +337,17 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // `listWorkers` was made viewer-readable on (CDR-056). Reading a pending request is not authority over it: the
   // decide action above is owner-only, so a viewer can see that something needs a human without being that human.
   'approval:read': ['owner', 'viewer'],
+  // Emergency stop (ACBP-P6-007; CDR-072 §1-G9; ADMIN-001/002). Activating and clearing are both OWNER-ONLY, and
+  // they are separate actions rather than one so a later role model can widen who may HALT without also widening
+  // who may UN-halt. Those two are not symmetric: stopping is a safety action whose worst case is lost work,
+  // whereas clearing is what lets the AI act again.
+  'stop:activate': ['owner'],
+  'stop:clear': ['owner'],
+  // VIEWERS may see what is halted, for the same reason they may read the approval inbox: a team wondering why
+  // nothing is running should be able to find out that a stop is in force. Seeing a halt is not authority over it —
+  // `stop:clear` above is owner-only, so a viewer can learn the platform is stopped without being able to restart
+  // it. Hiding it would make the single most important operational fact invisible to the people asking about it.
+  'stop:read': ['owner', 'viewer'],
 };
 
 /**

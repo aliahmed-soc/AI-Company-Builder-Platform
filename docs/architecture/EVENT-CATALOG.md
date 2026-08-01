@@ -235,7 +235,16 @@ Retention default: activity-projected events with company data; audit-relevant e
      `policy_eval_ref` and `approval_ref` are absent because the engines that produce them are Phase 6's. `has_receipt`
      is a BOOLEAN rather than the receipt: whether an external effect could be evidenced is the auditable fact, and the
      reference itself lives on the `tool_calls` row. `unconfirmed` never carries the success outcome — canon says a
-     missing receipt marks the call unconfirmed, "never 'succeeded'". -->
+     missing receipt marks the call unconfirmed, "never 'succeeded'".
+     ACBP-P6-007 (CDR-072 §1-G5) ADDS ONE KEY: `stop_scopes` on `tool.call_requested`, present ONLY when
+     `denial_reason` is `emergency_stopped`. Comma-joined scope NAMES from the closed `STOP_SCOPES` vocabulary and
+     nothing else — no target ids, which would put a task or worker identifier into audit metadata.
+     WHY IT IS NOT OPTIONAL DETAIL: without it an account-wide halt and a single stopped task leave IDENTICAL
+     evidence, so nobody reading the trail afterwards can tell how far the stop actually reached. That is the
+     CDR-072 §0 failure — an operator believing a stop worked — surviving into the record. The key is absent on any
+     other refusal and on every permitted call, so its presence always means a stop, and only a stop, halted that
+     call. TWO OF THE SEVEN SCOPES (`capability`, `integration`) CANNOT APPEAR IN IT: they are not enforceable in
+     this release, and a stored stop of either kind denies as `stop_unavailable`, never as `emergency_stopped`. -->
 | tool.call_requested / tool.call_started | Dispatcher | (record) | tool_call_id, tool_id+version, risk_class, policy_eval_ref, approval_ref?, idempotency_key | TOOL-002 completeness | ≥ audit |
 | tool.call_completed / tool.call_failed | Dispatcher | Coordinator, usage | tool_call_id, outcome, receipt_ref (external effects: **required for success claim**, invariant 20), error_category | audit-grade for external classes | ≥ audit |
 | model.call_completed | Model gateway | Usage ledger | call_id, provider, model+version, token_usage, est_cost, fallback_used, latency_ms, outcome | usage source record | ≥ billing |

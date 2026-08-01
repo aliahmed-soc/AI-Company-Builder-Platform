@@ -67,7 +67,108 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-006 Autonomy levels 1–2 — ON BRANCH, awaiting the owner's merge gate** (CDR-071; APPR-008; PRD §12/§11.5).
+- **ACBP-P6-007 Emergency stop and resume review — IN PROGRESS** (CDR-072; ADMIN-001/002; COMP-006; invariant 14;
+  launch gate 8; trust-critical #9/#10).
+  **⚠️ SEVEN SCOPES ARE NAMED, FIVE ARE ENFORCEABLE.** `capability` and `integration` are **storable and INERT** —
+  the tool registry carries no identity for either, so no call can be matched against them. They are refused at
+  activation, and a stored one makes the evaluation **unreadable → deny** rather than being silently ignored.
+  **Do not read "seven stop scopes" anywhere as seven working scopes.** Enforceable: `task`, `worker`, `company`,
+  `external_actions_only`, `account_wide`. Reversible in one line when the registry gains the identity (CDR-072
+  §1-G10) — **flagged for the owner**, because it narrows a canon-named control.
+  **THE WHOLE TICKET IS WRITTEN AGAINST ONE FAILURE:** a stop that silently fails to reach one scope is worse than
+  no stop at all, because the operator believes it worked and stops watching. Hence: every scope proven TWICE
+  (halts what it claims, does NOT halt what it should not — over-halting is a different defect and still a defect);
+  the evidence names WHICH scopes halted rather than that a stop was requested; and there is no partial success.
+  **THE CALLER-INJECTABLE `stop` PORT IS DELETED** (§1-G1). It defaulted to `clear`, true only while no engine
+  existed; with a real engine a caller could assert `clear` and walk through a live stop — the defect P6-003c
+  closed for approvals. `ToolGates` now has no members and `tools/check-stop-port.mjs` (in `check:static`) keeps it
+  gone, including the four evasions measured against real fixture trees.
+  **THE §0 FAILURE HAPPENED INSIDE THIS TICKET, AND THAT IS THE MOST IMPORTANT FACT HERE.** The dispatcher resolved
+  `task`/`worker` identities with `select … from worker_runs where id = <runId>`, but `runId` is a `task_runs.id` —
+  the join key matched nothing, ever, and `task_run_id` is not a task id either. **Both scopes were storable,
+  activatable, visible in the read model and halted NOTHING**, while the pure `evaluateStops` suite stayed green
+  throughout. Fixed in `b9d303e`. Two lessons, both recorded in CDR-072 §G2: the covering relation being correct is
+  NOT the same claim as the scope being enforced, so the matrix must run end-to-end; and a fixture helper that
+  THREW instead of returning null is what exposed it — nulls would have compared against nulls and certified two
+  dead scopes as enforced.
+  **LAUNCH GATE 8 IS MEASURED, AND MET FOR FIVE OF SEVEN.** Hosted CI on `b9d303e` (`30680683466`, 227/227 files,
+  3237/3237 tests, **ZERO SKIPS**): `account_wide` 6.7 ms, `external_actions_only` 7.1 ms, `worker` 7.8 ms, `task`
+  7.9 ms, `company` 8.6 ms — bound 5000 ms. The two inert scopes never produce `emergency_stopped`, so there is no
+  halt to time; a table of seven green rows would be exactly the false assurance §0 warns about.
+  Done: contracts (seven scopes + covering relation, 8 mutations 0 survivors), migration 0050 (`emergency_stops`
+  dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
+  scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
+  gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
+  **TWO INDEPENDENT REVIEW PASSES, BOTH REMEDIATED; ONLY OWNER GATES REMAIN.** The second pass — briefed at the
+  chokepoint write path — found a further **Blocker** (a held row could name a stop that never covered the call,
+  because attribution matched scope NAMES against a list ordered by `activated_at`; the task could end up
+  permanently paused and uncompletable) plus five Highs. All fixed. Two **PM rulings** are recorded in CDR-072
+  §1-G6: the chokepoint holds what it refuses (Option B + C's labelling, with the recorded objection that this
+  gives the chokepoint a task-lifecycle responsibility, and C named as the coherent retreat), and the in-flight
+  **safe-stop at activation** (`task_runs.stop_requested_at` → `decideStepAdmission` halts the worker at its next
+  checkpoint) — the latter a CANON finding from `WORKFLOW-STATE-MACHINES.md` §4, which assigns the stop checks to
+  different actors and gives in-flight work a safe-stop rather than another gate read.
+  **A COMMENT AUDIT** over every P6-007 guarantee-claim found three asserting properties the codebase does not
+  provide — all three in the labelling added FOR the condition about not overclaiming. The rule left in the code:
+  *if a comment claims a guarantee is ENFORCED, the enforcement must be nameable — a test, a constraint, a checker
+  — or the sentence goes.*
+
+  **BOTH FIRST-PASS BLOCKERS AND ALL THREE HIGHS ARE ALSO CLOSED** (`2afc604`, `cf154f6`, `0972701`, `02962e7`, `4140986`,
+  `4f82b6c`). Exact-head CI `30698900097` on `4f82b6c`: **229/229 files, 3285/3285 tests, ZERO SKIPS**, including
+  33 stop-service cases and gate 8 measured at **4.5 ms through `activateStop` itself**. What remains is the
+  owner-gated `account_wide` held-work scoping, plus ticket Done / PR ready / merge.
+  The history below is kept rather than tidied away, because the shape of the errors is the useful artifact.
+
+  **🔴 AN INDEPENDENT REVIEW FOUND TWO BLOCKERS, AND CORRECTED A FALSE ASSURANCE THIS FILE CARRIED.**
+  This block previously said the sibling-company scoping meant *"nothing auto-fires on resume"* held "for one
+  company only". **That was false and it was written by the author of the defect.** It held for NO company:
+  `held_work.status` was written by `reviewHeldWork` and read by NOTHING, so clearing the stop authorized every held
+  task's next call regardless of whether its review said `held`, `confirmed` or **`discarded`**. A narrower, more
+  comfortable reading of a real defect was recorded as established fact here, in CDR-072 and in a direct report to
+  the owner. **Wrong documentation is worse than missing documentation** — it closes the question.
+  **BLOCKER 1 — ADMIN-002 review-to-resume enforced nothing.** CANON ALREADY SPECIFIES THE FIX (a canon finding, not
+  a design choice): `WORKFLOW-STATE-MACHINES.md` §4 lists `paused` among the task holds and gives
+  `running→paused / paused→running` with actor *"system (company pause / emergency stop)"*, precondition *"scope stop
+  active"*, effect *"held visibly; resume requires review (ADMIN-002)"*; `queued→running` already requires
+  *"stop-state clear"*; `diagrams/13` ends *"CONFIRMED items resume from checkpoints"*. `paused` and both transitions
+  are ALREADY in the implemented `LEGAL_TRANSITIONS` (P4-002, verbatim from WORKFLOW §4) — a specified transition
+  simply had no producer.
+  **BLOCKER 2 — the stop controller had zero tests and zero callers.** `activateStop`/`clearStop`/`reviewHeldWork`/
+  `readStopState` had never executed; the dispatcher suite used its own raw-insert helper. Every service-level guard
+  was unproven, including `StopRepository.insert`'s `ON CONFLICT` inference against the partial index — the
+  `credit_transactions_reservation_key_uq` shape that once left a write path dead.
+  **CLOSED by `stop-service.integration.test.ts` (33 real-PG cases).** The single most valuable assertion is
+  `already_active`: it proves the `ON CONFLICT` inference against the `NULLS NOT DISTINCT` partial index RESOLVES.
+  Had it not, PostgreSQL would raise 42P10 and every activation would die — a safety control that cannot be switched
+  on, in the one ticket about a control that must never fail silently. §1-G8 is likewise proven, not promised: a
+  throwing audit writer leaves no stop row, no held work and no event.
+  **BLOCKER 1 CLOSED THE WAY CANON SPECIFIED IT.** Activation transitions the RUNNING tasks it caught
+  `running → paused` in the same transaction as the hold; a `paused` task returns to `running` ONLY when its held
+  item is CONFIRMED; a DISCARD leaves it paused (not cancelled — "nothing lost"). Reviewing while the stop is still
+  active is refused (`stop_still_active`), because ADMIN-002 says clearing OPENS the review. Only `running` tasks
+  transition: `queued` is already gated by WORKFLOW §4's `queued→running` "stop-state clear" precondition, and
+  `waiting_*` tasks are not executing — all are still HELD, since the review is about what the operator must decide
+  on, not only what changed state. `paused_count` joins `held_count` on the activation event so "held 5, paused 2"
+  distinguishes a halted fleet from a queue that never started.
+  **THREE HIGHS, ALL FIXED:** the hold query ignored scope entirely (a `task` stop held ALL in-flight work and
+  reported it) — now per-scope, with `external_actions_only` deliberately holding NOTHING because it halts calls
+  rather than tasks; `task`/`worker` targets were unvalidated free text (active, visible, halting nothing — the same
+  hole closed for `company` and not generalised) — now resolved against `tasks`/`worker_definitions` under RLS, so a
+  foreign company's task reads as ABSENT rather than forbidden; and **gate 8's measurement timed a raw superuser
+  INSERT rather than `activateStop`**, which does N+3 round trips — the 6.7–8.6 ms figure is WITHDRAWN as evidence
+  and replaced by **4.5 ms measured through the real call**, with the test stating plainly what it does not cover
+  (single company, small N, one host; not a distributed-fleet claim).
+  **⚠️ STILL OPEN AND OWNER-GATED — an `account_wide` stop holds only the raising company's work.** A *second*,
+  genuine defect: `held_work.company_id` is NOT NULL with a tenant-pinned FK and activation runs inside ONE
+  company's scope, so `held_count`/`pending_review_count` count one company. Fixing it means establishing each
+  company's scope inside one account-wide operation — a **tenant-isolation decision**. Three options in CDR-072 §1-G6.
+  **Ticket Done / PR ready / merge are owner gates and have not been taken.**
+
+- **ACBP-P6-006 Autonomy levels 1–2 — DONE** (CDR-071; APPR-008; PRD §12/§11.5). Merged as squash `fdc3065`,
+  PR #66; exact-head CI `30649500593` on `a9a57f6` and exact-main `30650127201` on `fdc3065` both green with
+  **ZERO SKIPS** (226 files / 3153 tests); branch deleted after the second.
+
+- **ACBP-P6-006 Autonomy levels 1–2 — working block** (CDR-071; APPR-008; PRD §12/§11.5).
   **THE PLATFORM ALREADY HAD LEVEL 2 AND NOBODY HAD SAID SO.** `DEFAULT_NEW_COMPANY_POLICY` carries the owner's
   ruling of 2026-07-29 — informational and internal-reversible allowed, anything higher requires approval — which is
   §12's L2 row behaviour for behaviour. So this ticket NAMES an existing posture and adds the stricter one; the L2
@@ -207,9 +308,9 @@ ticket without a DONE line above it is genuinely in flight._
   arguments. Both fixed and mutation-proven.
   **CLOSED BY ACBP-P6-003c** (below): `gates.approval` was caller-injectable and is now deleted — the dispatcher
   reads a real stored decision. `tools/check-approval-port.mjs` fails the build if it comes back, in any of the four
-  field shapes a review pass proved could evade the original pattern. `gates.stop` remains a port until P6-007, for
-  the same reason this one survived P6-002: its engine does not exist. Four more residual risks stay logged in
-  CDR-067 §2-G10.
+  field shapes a review pass proved could evade the original pattern. `gates.stop` survived here for the same
+  reason this one survived P6-002 — its engine did not exist — and **is now deleted too, by ACBP-P6-007**, which
+  is what makes `ToolGates` empty. Four more residual risks stay logged in CDR-067 §2-G10.
   **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3` — P6-001 and P6-002 entered
   main together as `338ae08`, which that run contains.
   Locally verified: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL

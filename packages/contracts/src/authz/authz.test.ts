@@ -96,6 +96,12 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // which is what makes an approval retractable rather than a one-way door.
   'approval:revoke': ['owner'],
   'approval:read': ['owner', 'viewer'],
+  // Emergency stop (ACBP-P6-007; CDR-072 §1-G9). Activate and clear are owner-only and DELIBERATELY separate, so a
+  // later role model can widen who may halt without also widening who may un-halt. Viewers may READ what is halted
+  // — a team wondering why nothing is running must be able to find out — but cannot lift it.
+  'stop:activate': ['owner'],
+  'stop:clear': ['owner'],
+  'stop:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

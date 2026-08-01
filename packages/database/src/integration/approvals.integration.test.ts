@@ -21,7 +21,7 @@ const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `appr_${'test'}_pw_1970`;
 
 const ALL = [
-  'approval_decisions',
+  'approval_decisions', 'emergency_stops', 'held_work',
   'approval_requests',
   'policy_evaluations',
   'policies',

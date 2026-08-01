@@ -56,6 +56,46 @@ describe('the closed vocabularies', () => {
     const registered = toolCallRequested({ callId: 'c2', toolId: 'web_research', toolVersion: 3, riskClass: 'informational', externalEffect: false });
     expect(registered.metadata).toMatchObject({ tool_version: 3 });
   });
+
+  // ── ACBP-P6-007: THE REFUSAL MUST SAY WHAT HALTED IT (CDR-072 §1-G5) ──────────────────────────────────────
+  //
+  // `denial_reason: 'emergency_stopped'` alone records only that A stop was in force. The operator's actual
+  // question — the one they ask while deciding whether the halt did what they intended — is WHICH scope caught
+  // this call. Without it, an account-wide stop and a single task stop leave IDENTICAL evidence, so "the stop
+  // reached everything" and "the stop reached one task and missed the rest" are indistinguishable after the fact.
+  // That is CDR-072 §0's failure surviving into the record. Same shape as `injection_signals`: a comma-joined
+  // CLOSED vocabulary, never free text.
+  test('a stop refusal names the covering SCOPES, so the record answers "what halted this call"', () => {
+    const e = toolCallRequested({
+      callId: 'c3',
+      toolId: 'send_email',
+      toolVersion: 1,
+      riskClass: 'external',
+      externalEffect: true,
+      denialReason: 'emergency_stopped',
+      stopScopes: 'account_wide,task',
+    });
+    expect(e.outcome).toBe('denied');
+    expect(e.metadata).toMatchObject({ denial_reason: 'emergency_stopped', stop_scopes: 'account_wide,task' });
+  });
+
+  test('a refusal for any OTHER reason carries no stop_scopes — the key never implies a halt that did not happen', () => {
+    const e = toolCallRequested({ callId: 'c4', toolId: 'send_email', toolVersion: 1, riskClass: 'external', externalEffect: true, denialReason: 'policy_denied' });
+    expect(Object.keys(e.metadata)).not.toContain('stop_scopes');
+  });
+
+  test('an EMPTY scope list is omitted rather than sent blank', () => {
+    // A blank `stop_scopes` would have to be read as either "no scope covered it" — which contradicts the refusal —
+    // or "not recorded". An absent key says the second thing unambiguously.
+    const e = toolCallRequested({ callId: 'c5', toolId: 'send_email', toolVersion: 1, riskClass: 'external', externalEffect: true, denialReason: 'emergency_stopped', stopScopes: '' });
+    expect(Object.keys(e.metadata)).not.toContain('stop_scopes');
+  });
+
+  test('an authorized call carries no stop_scopes even if one is passed — a permitted call was halted by nothing', () => {
+    const e = toolCallRequested({ callId: 'c6', toolId: 'web_research', toolVersion: 1, riskClass: 'informational', externalEffect: false, stopScopes: 'account_wide' });
+    expect(e.outcome).toBe('success');
+    expect(Object.keys(e.metadata)).not.toContain('stop_scopes');
+  });
 });
 
 describe('decideDispatch — the authorized path', () => {

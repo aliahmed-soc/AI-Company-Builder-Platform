@@ -230,6 +230,17 @@ export const AUDIT_EVENTS = {
   // Policy CREATION. DATA-ARCHITECTURE requires "policy changes audited" without naming the event, so the name is
   // derived from canon's own phrase. Subject = the policy version, which is what an owner asks "who changed this".
   'policy.changed': { schemaVersion: 1, subjectType: 'policy' },
+  // Emergency stop (ACBP-P6-007; CDR-072 §1-G5; ADMIN-001/002; FAILURE-AND-RECOVERY row 15 names
+  // `emergency_stop.activated` outright). Subject = the STOP, because an operator asking "what is halted and who
+  // halted it" wants one thread per stop rather than per company.
+  //
+  // THE PAYLOAD CARRIES THE SCOPE AND TARGET, and that is the requirement rather than a nicety: a record saying
+  // only that a stop happened cannot answer what stopped, which is CDR-072 §0's failure written into the audit
+  // trail. It is the same nominal-vs-substantive defect ACBP-P6-006's review pass 2 found in `policy.changed`.
+  'emergency_stop.activated': { schemaVersion: 1, subjectType: 'emergency_stop' },
+  'emergency_stop.cleared': { schemaVersion: 1, subjectType: 'emergency_stop' },
+  // ADMIN-002's review-to-resume: each held item is confirmed or discarded, and BOTH are decisions worth recording.
+  'emergency_stop.work_reviewed': { schemaVersion: 1, subjectType: 'emergency_stop' },
   'tool.call_requested': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_completed': { schemaVersion: 1, subjectType: 'tool_call' },
   'tool.call_failed': { schemaVersion: 1, subjectType: 'tool_call' },
@@ -889,6 +900,85 @@ export function policyChanged(input: {
   return makeEvent('policy.changed', input.policyId, 'success', metadata);
 }
 
+/**
+ * An emergency stop was activated (ACBP-P6-007; CDR-072 §1-G5; ADMIN-001).
+ *
+ * `scope` AND `target` ARE THE POINT. The clause this satisfies is not "a stop was requested" but "an operator can
+ * tell what is halted" — so the event names the scope it covers and the thing it names. `held_count` says how much
+ * in-flight work the stop caught, because a stop that halted nothing and a stop that held nine tasks are very
+ * different situations to walk back into.
+ *
+ * `target` is a bounded REFERENCE (an id or a capability name), never content.
+ */
+export function emergencyStopActivated(input: {
+  readonly stopId: string;
+  readonly scope: string;
+  readonly target: string | null;
+  readonly heldCount: number;
+  /**
+   * How many of the held tasks were actually TRANSITIONED to `paused` (WORKFLOW §4 `running→paused`).
+   *
+   * Distinct from `held_count` on purpose, and the difference is information rather than noise: a `queued` or
+   * `waiting_*` task is held for review but takes no `paused` edge, because its own precondition already stops it
+   * starting. `held_count: 5, paused_count: 2` therefore says "five items need your decision, two were mid-flight
+   * and are now suspended" — which is what an operator walking back in actually needs to know. Reporting only the
+   * held total would leave them unable to tell a halted fleet from a queue that never started.
+   */
+  readonly pausedCount: number;
+  /**
+   * How many live RUNS were asked to safe-stop (`task_runs.stop_requested_at`), so the worker halts at its next
+   * checkpoint rather than merely being unable to complete.
+   *
+   * SEPARATE FROM `paused_count` ON PURPOSE. Pausing the task and stopping the run are different acts with
+   * different consequences: a paused task with no live run needs no safe-stop, and a run asked to stop is the only
+   * one of the two that actually interrupts work in progress. Collapsing them would leave an operator unable to
+   * tell "three tasks suspended" from "three workers told to down tools".
+   */
+  readonly stopRequestedCount: number;
+}): AuditEvent {
+  // `held_scope` EXISTS BECAUSE THE COUNT ALONE MISLEADS (CDR-072 §1-G6 PM ruling, condition 1) — though nothing
+  // forces a reader to consult it; it is recorded, not enforced. `held_count` is a FLOOR, not a
+  // total: an `account_wide` stop is enforced across every company but activation runs in ONE company's scope, and
+  // the rest of the queue fills lazily as sibling companies' tasks hit the dispatcher and get refused. A reader who
+  // takes this number as "everything the stop caught" is wrong in the direction that matters, and this ticket has
+  // already shipped one over-reading defect of exactly that shape. So the count carries the scope of its own claim.
+  // EVERY holding scope's count is a floor. An earlier version said `complete_for_scope` for everything except
+  // `account_wide`; an independent review found that false for all four — activation captures only what was in
+  // flight at that instant, and a task created, planned and started DURING the stop joins the queue later, when
+  // the dispatcher refuses it. `external_actions_only` holds nothing at all, so its count is a true zero.
+  const heldScope =
+    input.scope === 'external_actions_only' ? 'never_holds' : input.scope === 'account_wide' ? 'this_company_at_activation_floor' : 'this_scope_at_activation_floor';
+  const metadata: Record<string, string | number | boolean> = {
+    scope: input.scope,
+    held_count: input.heldCount,
+    paused_count: input.pausedCount,
+    stop_requested_count: input.stopRequestedCount,
+    held_scope: heldScope,
+  };
+  if (input.target !== null) metadata['target'] = input.target;
+  // OUTCOME `success`, not `blocked`. The distinction matters and the first version got it wrong: activating a stop
+  // is an owner action that SUCCEEDED. What gets BLOCKED is each subsequent tool call, and those are recorded on
+  // their own `tool_calls` rows with `denial_reason = 'emergency_stopped'`. Marking the activation itself `blocked`
+  // would put the halt's effect and its authorization in the same bucket, so a reader counting blocked events could
+  // not tell how many actions were actually stopped.
+  return makeEvent('emergency_stop.activated', input.stopId, 'success', metadata);
+}
+
+/**
+ * A stop was cleared (ADMIN-002). Outcome `success`: clearing is an authorized action, not a refusal.
+ *
+ * `pending_review_count` is carried because clearing a stop does NOT resume anything — the held items still need a
+ * decision each, and a record that omitted how many were waiting would imply the halt was simply over.
+ */
+export function emergencyStopCleared(input: { readonly stopId: string; readonly scope: string; readonly pendingReviewCount: number }): AuditEvent {
+  return makeEvent('emergency_stop.cleared', input.stopId, 'success', { scope: input.scope, pending_review_count: input.pendingReviewCount });
+}
+
+/** One held item was confirmed or discarded (ADMIN-002). Both are decisions, so both are recorded. */
+export function emergencyStopWorkReviewed(input: { readonly stopId: string; readonly decision: string; readonly heldWorkId: string }): AuditEvent {
+  return makeEvent('emergency_stop.work_reviewed', input.stopId, 'success', { decision: input.decision, held_work_id: input.heldWorkId });
+}
+
 export function toolCallRequested(input: {
   readonly callId: string;
   readonly toolId: string;
@@ -903,6 +993,32 @@ export function toolCallRequested(input: {
    * empty string never has to be read as either 'none matched' or 'not checked'.
    */
   readonly injectionSignals?: string;
+  /**
+   * WHICH emergency-stop scopes covered this call (ACBP-P6-007; CDR-072 §1-G5). Comma-joined, from the CLOSED
+   * `STOP_SCOPES` vocabulary, and recorded ONLY on an `emergency_stopped` refusal.
+   *
+   * Without it the refusal records that A stop was in force but not what it reached — and an account-wide halt and
+   * a single stopped task would leave identical evidence. The operator's question after pressing stop is precisely
+   * which scopes answered, so a record that cannot distinguish those two is the §0 failure surviving into the audit
+   * trail. Scope NAMES only: no target ids, which would put a task/worker identifier into the metadata.
+   */
+  readonly stopScopes?: string;
+  /**
+   * The stop this refusal HELD the task under (ACBP-P6-007; CDR-072 §1-G6). Present only when the dispatcher
+   * actually wrote a `held_work` row.
+   *
+   * WHY THIS IS AUDITED AND NOT INFERRED: an independent review found the dispatcher mutating task lifecycle state
+   * with no record at all, so a reader could not distinguish the FIRST refusal — which created a queue item and
+   * suspended a task — from the fifth, which did neither. WORKFLOW §4's `running→paused` row carries **Audit:
+   * audited**; this is that record for the dispatcher's half of it.
+   */
+  readonly heldByStopId?: string;
+  /**
+   * Whether the task was actually transitioned `running → paused` by this refusal — the CHECKED row count, not the
+   * intent. A task that left `running` in the window is held for review without a transition, and saying so is the
+   * difference between a record and a wish.
+   */
+  readonly pausedTask?: boolean;
 }): AuditEvent {
   // `tool_version` is OMITTED when null rather than sent as null: audit metadata is scalars only, and an absent key
   // says "this tool had no registered version" exactly as well as a null would have — without breaking the bound.
@@ -913,9 +1029,18 @@ export function toolCallRequested(input: {
     ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }),
     ...(input.injectionSignals === undefined || input.injectionSignals === '' ? {} : { injection_signals: input.injectionSignals }),
   };
+  // `stop_scopes` rides the DENIED branch only, and only for the reason it explains. On a permitted call it would
+  // claim a halt that did not happen; on a different refusal it would attribute that refusal to a stop.
+  const stopScopes = input.denialReason === 'emergency_stopped' && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
+  // The hold/pause facts ride the same branch and the same condition — they can only have happened on an
+  // `emergency_stopped` refusal, so recording them anywhere else would assert a halt that did not occur.
+  const heldFacts =
+    input.denialReason === 'emergency_stopped' && input.heldByStopId !== undefined
+      ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true }
+      : {};
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
-    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason });
+    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes, ...heldFacts });
 }
 
 /**

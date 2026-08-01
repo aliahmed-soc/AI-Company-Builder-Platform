@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { type DatabaseClient } from '@acbp/database';
-import { TOOL_DENIAL_REASONS, TOOL_CALL_OUTCOMES, RISK_CLASSES, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS } from '@acbp/contracts';
+import { TOOL_DENIAL_REASONS, TOOL_CALL_OUTCOMES, RISK_CLASSES, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS, ENFORCEABLE_STOP_SCOPES, NOT_YET_ENFORCEABLE_STOP_SCOPES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -74,6 +74,14 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     const started = await startRun(product, { ...base(), taskId, attempt: 1 });
     expect(started.status).toBe('ok');
     runId = (started as { status: 'ok'; run: { id: string } }).run.id;
+
+    // A WORKER STAMPED ONTO THAT RUN (ACBP-P6-007). Inserted directly as the OWNER rather than through
+    // `startWorkerRun`, which would drag a registered worker definition and its allowlist into a suite about the
+    // dispatcher. What matters here is only that `worker_runs` carries a real row for this task run, because
+    // without one the `worker` stop scope has no identity to match and its case would prove nothing.
+    // `UNIQUE(task_run_id)` (migration 0040) means this is the one and only worker run for the attempt.
+    await sql`insert into worker_runs (account_id, company_id, task_run_id, worker_id, worker_version, max_spend_micros, max_duration_ms)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, 'research', 1, 1000000, 600000)`.execute(owner.kysely);
 
     await register('web_research', 'informational');
     await register('memory_write', 'internal_reversible');
@@ -211,11 +219,320 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
   });
 
-  test('an emergency stop refuses, and an UNREACHABLE stop state refuses distinctly', async () => {
-    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'stopped' }) } });
+  // REWRITTEN BY ACBP-P6-007 (CDR-072 §1-G1). This used to inject `gates.stop`, which is exactly the bypass that
+  // ticket deleted: a caller could hand the dispatcher any stop answer it liked. Both cases now go through a REAL
+  // ROW in `emergency_stops`, so what is proven is the enforcement rather than the plumbing.
+  test('a REAL account-wide stop refuses the call', async () => {
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, null, 'account_wide', null, ${w.aOwner}::uuid)`.execute(owner.kysely);
+    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'unavailable' }) } });
+  });
+
+  test('a stored stop this release CANNOT ENFORCE refuses distinctly — it never reads as clear', async () => {
+    // The §0 failure as a live row: a `capability` stop is storable but inert (no registry identity exists), so it
+    // must resolve to `stop_unavailable` rather than silently permitting the call. Inserted with the owner client
+    // because the SERVICE refuses to create one — which is the point of having both defences.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'capability', 'web_research', ${w.aOwner}::uuid)`.execute(owner.kysely);
+    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(unreachable).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
+  });
+
+  test('THE CONTROL: with no stop row at all the same call is NOT refused by the stop gate', async () => {
+    // Without this, "always denies" would satisfy both cases above.
+    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
+    expect(r).not.toMatchObject({ reason: 'emergency_stopped' });
+    expect(r).not.toMatchObject({ reason: 'stop_unavailable' });
+  });
+
+  // ── ACBP-P6-007: THE PER-SCOPE ENFORCEMENT MATRIX (CDR-072 §1-G2; launch gate 8) ───────────────────────────
+  //
+  // THE FAILURE THIS BLOCK EXISTS TO PREVENT (CDR-072 §0): a stop that silently fails to reach ONE scope is worse
+  // than no stop at all, because the operator believes it worked and stops watching. The contract suite proves the
+  // covering relation on paper; this proves it through a REAL ROW, the RLS predicates, and the live dispatcher —
+  // which is where a scope actually goes missing, because a scope can be correct in `evaluateStops` and still never
+  // fire if the dispatcher cannot populate the identity it matches on.
+  //
+  // Every enforceable scope is proven TWICE: it halts the call it claims, and it does NOT halt one it should not.
+  // The misses are not padding. Without them a dispatcher that denied EVERYTHING would satisfy all five positives.
+  //
+  // The two INERT scopes are deliberately absent from this matrix — they cannot appear here as passing rows,
+  // because they enforce nothing. Their behaviour (deny as `stop_unavailable`) is the test above.
+  const activateStop = async (scope: string, targetId: string | null, companyId: string | null): Promise<void> => {
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${companyId}::uuid, ${scope}, ${targetId}, ${w.aOwner}::uuid)`.execute(owner.kysely);
+  };
+
+  /**
+   * The identities the dispatcher resolves from the run — the exact values `task`/`worker` scopes match on, read
+   * back from the database rather than assumed.
+   *
+   * THE THROW IS THE POINT, and it has already earned its place: the first version of this helper looked the run
+   * up as `worker_runs.id = runId`, found nothing, and would have compared null against null — a `task` and a
+   * `worker` case passing while proving that a stop targeting nothing fails to halt a call attached to nothing.
+   * It threw instead, and hosted CI turned that into the discovery that the DISPATCHER had the same wrong lookup.
+   */
+  const runIdentities = async (): Promise<{ taskId: string; workerId: string }> => {
+    const r = await sql<{ task_id: string; worker_id: string | null }>`
+      select tr.task_id, (select wr.worker_id from worker_runs wr where wr.task_run_id = tr.id) as worker_id
+      from task_runs tr where tr.id = ${runId}::uuid
+    `.execute(owner.kysely);
+    const row = r.rows[0];
+    if (row === undefined) throw new Error('the fixture task run does not exist — the task/worker matrix would pass vacuously');
+    if (row.worker_id === null) throw new Error('the fixture task run has no worker run — the worker scope case would compare null against null');
+    return { taskId: row.task_id, workerId: row.worker_id };
+  };
+
+  /** The LATEST requested-event payload, ordered by the ULID primary key — which is monotonic by construction, so
+   *  this is a real "most recent". An unordered read with `.at(-1)` would assert against whichever row the planner
+   *  happened to return last, which is not the same thing and would pass or fail by luck. */
+  const latestRequestedPayload = async (): Promise<Record<string, unknown>> => {
+    const rows = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'tool.call_requested').orderBy('event_id').execute();
+    const last = rows.at(-1);
+    if (last === undefined) throw new Error('no tool.call_requested event was written — the assertion below would be vacuous');
+    return last.payload;
+  };
+
+  /**
+   * A COVERING stop for each enforceable scope: the row to write, and the call it must halt.
+   *
+   * Driven off `ENFORCEABLE_STOP_SCOPES` below rather than listed by hand, so a scope that becomes enforceable
+   * without a covering case here fails on the missing key instead of quietly going unproven — which is the exact
+   * way a scope goes silently missing.
+   */
+  type CoveringCase = { targetId: string | null; companyId: string | null; toolId: string };
+  const COVERING_CASE: Record<string, () => CoveringCase | Promise<CoveringCase>> = {
+    account_wide: () => ({ targetId: null, companyId: null, toolId: 'web_research' }),
+    company: () => ({ targetId: w.companyA1, companyId: w.companyA1, toolId: 'web_research' }),
+    // The TASK, not the task RUN. `held_work.task_id` references `tasks`, so a `task` stop names a task — the
+    // distinction the dispatcher's first lookup got wrong.
+    task: async () => ({ targetId: (await runIdentities()).taskId, companyId: w.companyA1, toolId: 'web_research' }),
+    worker: async () => ({ targetId: (await runIdentities()).workerId, companyId: w.companyA1, toolId: 'web_research' }),
+    // `send_email` is `external_reversible`, so the registry-derived external effect is true. The stop gate runs
+    // BEFORE policy and approval, so the refusal below is the STOP's, not the approval requirement's — an emergency
+    // stop must not be reachable only for calls that would have been allowed anyway.
+    external_actions_only: () => ({ targetId: null, companyId: w.companyA1, toolId: 'send_email' }),
+  };
+
+  test('every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven', () => {
+    expect(Object.keys(COVERING_CASE).sort()).toEqual([...ENFORCEABLE_STOP_SCOPES].sort());
+    // And the inert two are ABSENT on purpose: they cannot appear as passing rows in an enforcement matrix,
+    // because they enforce nothing. Their behaviour is the `stop_unavailable` case above.
+    for (const inert of NOT_YET_ENFORCEABLE_STOP_SCOPES) expect(Object.keys(COVERING_CASE)).not.toContain(inert);
+  });
+
+  // COVERS + LAUNCH GATE 8 IN ONE CASE PER SCOPE. Splitting them would let the enforcement pass while the timing
+  // went unmeasured for four of the five — which is what the first draft of this file did, measuring only
+  // `account_wide` while CDR-072 §G4 promises the bound "for every scope".
+  //
+  // WHAT THE NUMBER MEANS, stated so nobody reads more into it: propagation here is bounded by TRANSACTION
+  // VISIBILITY, not by a cache refresh. The stop is read inside the same transaction as the call it authorizes, so
+  // a stop committed before that read is visible to it — no interval to tune, no window for a stale answer. The
+  // measurement confirms the mechanism has no hidden staleness. It is NOT a claim about a distributed fleet; that
+  // is P7 infrastructure's to prove. And it cannot cover the two INERT scopes at all — they never produce
+  // `emergency_stopped`, so there is no halt to time, which is the honest reason gate 8 is met for FIVE of seven.
+  test.each(ENFORCEABLE_STOP_SCOPES)('COVERS + gate 8 — a %s stop halts its call, MEASURED under 5s', async (scope) => {
+    const c = await COVERING_CASE[scope]!();
+    // The control: this same call was NOT stop-refused a moment ago, so the refusal below is caused by the stop
+    // rather than by anything already true of the fixture.
+    expect(await dispatch({ toolId: c.toolId })).not.toMatchObject({ reason: 'emergency_stopped' });
+
+    const startedAt = performance.now();
+    await activateStop(scope, c.targetId, c.companyId);
+    const stopped = await dispatch({ toolId: c.toolId });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    // Logged unconditionally so the measurement is in the CI record as evidence, not only when it fails.
+    console.info(`[ACBP-P6-007] gate 8 / ${scope}: first refusal ${elapsedMs.toFixed(1)}ms after the stop committed (bound 5000ms)`);
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
+  test('MISSES — another ACCOUNT\'s account-wide stop does not halt this one', async () => {
+    // The dual-scope RLS predicate is what makes this true, and it is the one that would silently over-halt the
+    // whole platform if `company_id is null` had been written without the account check beside it.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountB}::uuid, null, 'account_wide', null, ${w.bOwner}::uuid)`.execute(owner.kysely);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a SIBLING company\'s stop does not halt this company', async () => {
+    // Same account, different company: the case where an over-broad predicate would turn one company's halt into
+    // an outage for the whole account, and the operator would have no way to tell from the record.
+    await activateStop('company', w.companyA2, w.companyA2);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a stop on a DIFFERENT task does not halt this one', async () => {
+    await activateStop('task', '00000000-0000-4000-8000-0000000000ff', w.companyA1);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a stop on a DIFFERENT worker does not halt this one', async () => {
+    await activateStop('worker', 'some-other-worker', w.companyA1);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — external_actions_only leaves an INTERNAL call running', async () => {
+    // The whole purpose of this scope: stop what reaches the outside world, let internal work continue. If it
+    // over-halted, an operator reaching for the narrow control would get a full outage instead.
+    await activateStop('external_actions_only', null, w.companyA1);
+    expect(await dispatch({ toolId: 'web_research' })).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  // ── CDR-072 §1-G6, PM RULING (Option B): THE CHOKEPOINT HOLDS THE WORK IT REFUSES ────────────────────────
+  //
+  // The accepted cost of that ruling is a WRITE on the refusal path, so these cases exist to prove the write is
+  // correct, idempotent, and does not fire when it should not. The objection recorded against the ruling — that the
+  // chokepoint gains a task-lifecycle responsibility — is exactly why this block is adversarial rather than happy-path.
+
+  const heldRows = async () => owner.kysely.selectFrom('held_work').selectAll().orderBy('id').execute();
+  const taskStateOf = async (id: string) =>
+    (await owner.kysely.selectFrom('tasks').select(['state']).where('id', '=', id).executeTakeFirst())?.state;
+
+  test('a refused call HOLDS its task and PAUSES it — the sibling-company gap closed at the chokepoint', async () => {
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    expect(await taskStateOf(taskId)).toBe('running');
+
+    await activateStop('account_wide', null, null);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const held = await heldRows();
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ task_id: taskId, status: 'held' });
+    expect(await taskStateOf(taskId)).toBe('paused');
+  });
+
+  test('IDEMPOTENT UNDER REPEATED REFUSALS — proven against the database, not argued', async () => {
+    // LOAD-BEARING (PM ruling condition 3). A stopped task typically RETRIES, so this path is hit again and again;
+    // without `held_work_stop_task_uq` + ON CONFLICT DO NOTHING the queue would gain a duplicate row per attempt and
+    // ADMIN-002's review would become unfinishable by design — the operator asked to decide the same item N times.
+    // Five refusals, because two would not distinguish "idempotent" from "the second one happened to fail".
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('account_wide', null, null);
+    for (let i = 0; i < 5; i += 1) {
+      expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    }
+    expect(await heldRows()).toHaveLength(1);
+  });
+
+  test('a refusal for a DIFFERENT reason holds nothing — WITH a covering stop in force', async () => {
+    // VACUOUS IN ITS FIRST VERSION, AND AN INDEPENDENT REVIEW CAUGHT IT — the same defect, in the same file, THIRTY
+    // LINES ABOVE ITS OWN CORRECTED TWIN. It only deleted the registration; `beforeEach` truncates every fixture, so
+    // no stop row existed, `stopEvaluation.kind` was `clear`, and BOTH conjuncts of the guard were false. Deleting
+    // `finalReason === 'emergency_stopped'` — the mutation that would make any denial pollute the queue, which is
+    // exactly what this test claims to prevent — left it green.
+    //
+    // The non-vacuous shape: a stop that DOES cover this call, AND an unregistered tool. `not_registered` is checked
+    // first, so the refusal reason is not the stop's while the evaluation is genuinely `stopped` — the one cell that
+    // distinguishes "holds on any denial" from "holds when a stop denies".
+    await activateStop('account_wide', null, null);
+    await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
+    expect(await heldRows()).toHaveLength(0);
+    expect(await taskStateOf((await runIdentities()).taskId)).not.toBe('paused');
+  });
+
+  test('THE HELD ROW NAMES THE STOP THAT ACTUALLY COVERED IT — not merely one that shares a scope', async () => {
+    // THE BLOCKER an independent review found. Attribution matched covering SCOPE NAMES back against `activeStops`,
+    // which is ordered by `activated_at, id` — so with two `task` stops up, a call from the SECOND task was filed
+    // under the FIRST task's stop. `listHeld` for the real stop then returned empty, so clearing it reported
+    // nothing to review while the task sat paused, and the item could only be released by reviewing a row under a
+    // stop that never covered it — which is refused while that stop is active. A permanently paused task, with the
+    // evidence saying all was well.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+
+    // An EARLIER stop of the SAME scope naming a DIFFERENT task — the decoy the buggy lookup returned.
+    await activateStop('task', '00000000-0000-4000-8000-0000000000ff', w.companyA1);
+    const decoy = (await owner.kysely.selectFrom('emergency_stops').select(['id']).where('target_id', '=', '00000000-0000-4000-8000-0000000000ff').executeTakeFirstOrThrow()).id;
+    // ...then the stop that genuinely covers this call.
+    await activateStop('task', taskId, w.companyA1);
+    const real = (await owner.kysely.selectFrom('emergency_stops').select(['id']).where('target_id', '=', taskId).executeTakeFirstOrThrow()).id;
+    expect(decoy).not.toBe(real);
+
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    const held = await heldRows();
+    expect(held).toHaveLength(1);
+    expect(held[0]?.stop_id, 'the held row must name the stop that covered the call, not an earlier same-scope one').toBe(real);
+  });
+
+  test('external_actions_only REFUSES the call but does NOT hold or pause the task', async () => {
+    // It halts CALLS, not tasks — `activateStop` deliberately holds nothing for it because internal work continues
+    // by design. An unfiltered dispatcher write silently converted the narrowest control into a whole-task halt:
+    // one `send_email` and the task was paused into ADMIN-002's queue. §1-G2 names over-halting as a defect too.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('external_actions_only', null, w.companyA1);
+    expect(await dispatch({ toolId: 'send_email' })).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    expect(await heldRows()).toHaveLength(0);
+    expect(await taskStateOf(taskId)).toBe('running');
+  });
+
+  test('THE HOLD AND THE PAUSE ARE AUDITED — a lifecycle mutation with no record is not evidence', async () => {
+    // WORKFLOW §4's `running→paused` row carries "Audit: audited". The first version wrote the row and changed the
+    // task's state with NO audit at all, so a reader could not tell the FIRST refusal — which created a queue item
+    // and suspended a task — from the fifth, which did neither. `paused_task` is the CHECKED row count, not intent.
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('account_wide', null, null);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const first = await latestRequestedPayload();
+    expect(first['held_by_stop_id']).toEqual(expect.any(String));
+    expect(first['paused_task']).toBe(true);
+
+    // The SECOND refusal holds nothing new and pauses nothing — and says so, which is the whole point of recording
+    // the checked count rather than the intent.
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    expect((await latestRequestedPayload())['paused_task']).toBe(false);
+  });
+
+  test('an UNREADABLE stop refuses without holding — `stop_unavailable` is not a halt that caught anything', async () => {
+    // A `capability` stop is storable but inert, so the call is denied `stop_unavailable`. Nothing was interrupted
+    // BY A COVERING STOP, so nothing may be attributed to one — a held row here would name a stop that covers
+    // nothing, which is the §0 shape in the evidence rather than in the enforcement.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'capability', 'web_research', ${w.aOwner}::uuid)`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
+    expect(await heldRows()).toHaveLength(0);
+  });
+
+  test('THE EVIDENCE NAMES WHAT HALTED IT — not merely that something did (CDR-072 §1-G5)', async () => {
+    // `denial_reason: emergency_stopped` alone cannot distinguish "the account is halted" from "one task is".
+    // Both stops below cover this call, so the record must name BOTH — an evidence trail that reported only the
+    // first would understate the halt while looking complete.
+    const { taskId } = await runIdentities();
+    await activateStop('account_wide', null, null);
+    await activateStop('task', taskId, w.companyA1);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const metadata = await latestRequestedPayload();
+    expect(metadata['denial_reason']).toBe('emergency_stopped');
+    const scopes = metadata['stop_scopes'];
+    // Narrowed rather than stringified: a non-string here (absent, or some object) would otherwise become the text
+    // "undefined"/"[object Object]" and then fail on the comparison for a reason that names the wrong problem.
+    if (typeof scopes !== 'string') throw new Error(`stop_scopes must be a comma-joined string; got ${typeof scopes}`);
+    expect(scopes.split(',').sort()).toEqual(['account_wide', 'task']);
+  });
+
+  test('a NON-STOP refusal never claims a stop halted it — WITH a real stop in force', async () => {
+    // THIS TEST WAS VACUOUS AND AN INDEPENDENT REVIEW CAUGHT IT. The first version only deleted the registration;
+    // `beforeEach` truncates every fixture, so NO stop row existed, the evaluation was `clear`, `stopScopes` was ''
+    // and the factory dropped the key for that reason alone. It would have passed with the
+    // `denialReason === 'emergency_stopped'` guard deleted — i.e. it proved nothing about the property it names.
+    //
+    // The non-vacuous shape: activate a stop that DOES cover this call, and ALSO unregister the tool.
+    // `decideDispatch` checks `not_registered` FIRST (an unregistered tool has no trustworthy risk class), so the
+    // refusal reason is `not_registered` while `stopEvaluation.kind` is genuinely `stopped` and a non-empty scope
+    // list is passed to the factory. Only the guard can drop it now.
+    await activateStop('account_wide', null, null);
+    await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
+    expect(Object.keys(await latestRequestedPayload())).not.toContain('stop_scopes');
   });
 
   // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow

@@ -1885,3 +1885,252 @@ throughout was no longer sufficient on its own.
 One gap in the tooling was found and is worth carrying: the working-tree secret scanner had **no
 connection-string-with-password pattern**, which had to be added for the history sweep. The scans were clean either
 way, but a `postgres://user:password@host` in a committed file would not have been caught by the standing gate.
+
+---
+
+## Window 20 — ACBP-P6-006 merged; P6-007 through the stop service (2026-07-31 ~19:30 → 2026-08-01 ~03:00 +03)
+
+**MERGED: ACBP-P6-006 autonomy levels 1–2**, squash `fdc3065`, PR #66. Exact-head CI `30649500593` on `a9a57f6`
+and exact-main `30650127201` on `fdc3065`, both **226 files / 3153 tests, ZERO SKIPS**, Slice A demo green.
+Branch tip verified byte-identical to the squash, then deleted local + remote. Also deleted five stale merged
+branches (P6-001a/b, P6-002, P6-003, P6-004) after verifying each against **the commit that landed it** — ancestry
+alone is wrong for squash merges, and three-dot `main...branch` always shows a squashed branch's own commits.
+
+**ACBP-P6-007 emergency stop — in progress on `p6-007-emergency-stop`, draft PR #67.** Commits: `c8ce3ff` CDR-072;
+`999412e` scopes + covering relation; `23b5938` migration 0050; `c6ebf58` StopRepository + §1-G10; `4fbebe8` three
+audit events; `215babf` inert scopes made loud; `0a7f00b` three authz actions; plus the stop service.
+
+### The judgment call this window, flagged and unresolved
+
+**SEVEN SCOPES ARE NAMED; FIVE ARE ENFORCEABLE.** The tool registry carries no identity for a capability or an
+integration — no column, no call fact — so those two scopes cannot be matched against any call. Shipping them as
+activatable would hand an operator a halt that does nothing, which is CDR-072 §0's failure created by the ticket
+meant to prevent it. They are storable but refused at activation, and a stored one makes the evaluation
+`unreadable → deny`. **This narrows a canon-named control** (diagram 13 lists seven) and whether to pull the
+registry work forward so all seven ship together is the owner's call. Reversible in one line.
+
+Making that limitation loud found a REAL DEFECT: `evaluateStops` was treating the two as ordinary identity scopes,
+so a stored one would compare against a `null` id, fail to match, and read as **clear** — a stop sitting in the
+database silently permitting everything. Now fail-closed, checked before any covering match so an inert row cannot
+hide behind a working one.
+
+### What the guards caught, so the record shows the tooling working
+
+- **`check-conflict-targets.mjs`** caught a real runtime bug: `ON CONFLICT ON CONSTRAINT` against a PARTIAL UNIQUE
+  INDEX, which PostgreSQL rejects with 42704 — and only on the activate-twice path. Fixed by changing the index to
+  plain columns with `NULLS NOT DISTINCT` (PG 15+; CI runs 16) so it is inferable.
+- **The audit registry's compile-time partition** refused three unregistered events, then refused a domain type
+  missing from `PartitionDomains`. Neither could have shipped silently.
+- **The closed authz action list** refused three actions with no role mapping.
+- **A test caught a semantic error of mine**: `emergency_stop.activated` was first given outcome `blocked`. Wrong —
+  activation is an owner action that SUCCEEDED; what gets blocked is each later tool call, on its own `tool_calls`
+  row. Conflating them makes "how many actions were actually stopped" uncountable.
+- **A mechanical edit went wrong and typecheck caught it**: adding two tables to 58 reset lists, I anchored on the
+  quoted string `'approval_decisions'`, which also appears as a CALL ARGUMENT — 14 insertions landed inside
+  `selectFrom(...)`, `createTable(...)` and `dropTable(...)`, including migration 0047 and `approval-repository.ts`,
+  i.e. already-merged production code. My first sweep for others reported none and was WRONG: the PowerShell glob
+  did not recurse. Re-swept with ripgrep, reverted only the call-argument form, and confirmed both files
+  byte-identical to origin/main.
+
+### CI verification debt — CLEARED earlier this window
+
+Run `30632188407` on `4c12da3` (main's real tip, re-run in place): **225 files / 3053 tests, ZERO SKIPS**, covering
+`338ae08` (P6-001+002), `9e339a3` (P6-003) and `7a5a9ea` (P6-004), verified by `git merge-base --is-ancestor`. It is
+ONE run on the CUMULATIVE TIP: the intermediate merges each produced a red run that was never re-run green, and
+both reds were **VOID** (`steps=0` — the GitHub billing startup failure, not a test result). Full-history secret
+scan: 8,689 objects / 3,989 blobs, 35 matches all synthetic or allowlisted, nothing to rotate.
+
+### Disk — crossed the stop line and was resolved
+
+C: fell from 8.2 GB to **2.7 GB** in ~3 hours of building, crossing the owner's 3 GB floor. Stopped and reported
+rather than acting; nothing was pruned. Read-only investigation found the cause: the `acbp-local-dev` WSL
+`ext4.vhdx` (4.91 GB, **not sparse**) grows with repeated migrations-from-zero and **never shrinks on its own**.
+The pnpm store was only 0.91 GB and was never the problem. The owner uninstalled Docker Desktop (43 GB
+`docker_data.vhdx`, unused here) → **C: 49.7 GB free**. The WSL mechanism remains, so the pressure will return;
+compaction is an owner action.
+
+### Scheduled autonomous running
+
+A 20-minute schedule was set up, deleted during the disk block, and recreated. **One wake actually fired** (21:29
+local) and correctly **stood down**: it detected this session mid-edit on the same enforcement chokepoint — 48
+modified files and an uncommitted migration 0050 — and declined to touch anything. Worth recording precisely: that
+demonstrates the AGENT noticed and reasoned its way out, **not** that the scheduler holds a lock. The app exposes
+no `lastRunAt` and writes no run log, and there is no Windows Task Scheduler entry — it is app-level only, so it
+runs only while the app is open.
+
+
+---
+
+## Window 20 — 2026-08-01 (early hours) — CI was red for five commits and nobody was looking
+
+### The finding that mattered most
+
+**CI had been failing on five consecutive commits** (`215babf`, `0a7f00b`, `4fbebe8`, `d5d137f`, `5c45359`) while I
+kept running the local gate and pushing. The local gate cannot see these failures: every failing suite is
+real-PostgreSQL and SKIPS locally. So "green locally" said nothing about the only evidence that counts, and five
+pushes went out on it. Reading CI is not a finalization step — it is the check that the last commit was real.
+
+### Three failures, two causes, both mine
+
+1. **A seventh casualty of the over-broad reset-list edit**, this time INSIDE a SQL string literal:
+   `where table_name = 'approval_decisions', 'emergency_stops', 'held_work'` — a syntax error rather than a harmless
+   extra array element. My earlier revert swept only the call-argument form `(...)`; this one is `= '...'`.
+   **That is the wrong-anchor lesson repeating inside the fix for it.** The re-sweep this time enumerated ALL 73
+   occurrences repo-wide and classified each by whether its LINE looks like SQL — a different anchor, one suspect,
+   exactly this one.
+2. **`emergency_stops` and `held_work` were in `TENANT_TABLES` but not in `EXPECTED_GRANTS`**, so P1-014 compared
+   their real INSERT/SELECT against `[]`.
+
+### Two things that were nominally done and substantively missing
+
+- **The refusal did not say WHAT halted it.** `denial_reason: 'emergency_stopped'` cannot distinguish "the account
+  is halted" from "one task is" — identical evidence for very different halts. `tool.call_requested` now carries
+  `stop_scopes` (comma-joined closed vocabulary, no target ids, only on that one reason).
+- **Four of the five enforceable scopes had never been proven through the dispatcher.** The contract suite proves
+  the covering relation on paper; a scope can be correct there and still never fire because the dispatcher cannot
+  populate the identity it matches on. Ten real-PG cases now prove each scope twice — halts what it claims, does
+  not halt what it should not — including a cross-account and a sibling-company stop.
+- **And gate 8 was measured for ONE scope while CDR-072 §G4 promised "every scope".** A gap between my own design
+  record and my own test. The covering case and the timing are now one case per scope, deliberately not splittable
+  again, driven off `ENFORCEABLE_STOP_SCOPES` with a guard asserting the keys match exactly.
+
+### Gate 8 is met for FIVE of seven, and that is the honest number
+
+`capability` and `integration` never produce `emergency_stopped` — they deny as `stop_unavailable` — so there is no
+halt to time. A timing table showing seven green rows would be the exact false assurance CDR-072 §0 is about.
+
+### A near-miss worth a guard
+
+My first draft of the withheld-column assertions named `work_kind`/`work_id`; the real column is `task_id`.
+`not.toContain('work_id')` PASSES against a table with no such column — a vacuous assertion that reads exactly like
+a real one. `expectUpdatableColumnsExactly` now resolves every named column against `information_schema.columns`
+first. The suite's older hand-written forbidden-lists are still eye-checked only; widening the helper across them
+is flagged, not done quietly here.
+
+### State at the end of this window
+
+Branch `p6-007-emergency-stop` at `9ea6a2c`, tree clean and pushed. CI on `791bd56` GREEN with **227/227 files and
+3220/3220 tests, ZERO SKIPS** — the red streak is closed. Runs for `d8460ac` and `9ea6a2c` followed; `d8460ac`'s was
+cancelled by the newer push (concurrency group), which is expected and is not a failure.
+
+### ADDENDUM — the defect the matrix was built to catch was inside this ticket
+
+`b9d303e`. The dispatcher resolved the `task` and `worker` stop identities with
+`select task_run_id, worker_id from worker_runs where id = <runId>`, and `runId` is a `task_runs.id`. The join key
+matched nothing, ever — and `task_run_id` is not a task id either, so it could not have matched even had the join
+been right. **Both scopes were storable, activatable, visible in the read model, and halted nothing.** An operator
+stopping one runaway task would have been told it worked and watched it keep running.
+
+The pure `evaluateStops` was correct throughout and its suite was green. The covering relation was never wrong;
+the DISPATCHER's ability to populate the identity it matches on was. That is precisely why the matrix has to run
+end-to-end, and it caught this on the first hosted run.
+
+It was caught by a guard I nearly did not write: `runIdentities()` THROWS when the fixture has no worker run,
+instead of returning nulls. Nulls would have compared against nulls, gone green, and certified two dead scopes as
+enforced — a passing matrix being the most convincing way to ship exactly this bug.
+
+**Launch gate 8, measured on real PostgreSQL in CI (`30680683466`, 227/227 files, 3237/3237 tests, ZERO SKIPS):**
+
+| scope | first refusal after the stop committed |
+| --- | --- |
+| account_wide | 6.7 ms |
+| external_actions_only | 7.1 ms |
+| worker | 7.8 ms |
+| task | 7.9 ms |
+| company | 8.6 ms |
+
+Bound is 5000 ms. `capability` and `integration` are absent because they never produce `emergency_stopped` — there
+is no halt to time, which is why the gate is met for FIVE of seven and not seven.
+### ADDENDUM 2 — two review passes, two more real defects, and the suite that should have existed
+
+**Pass 1: an `account_wide` stop holds only the raising company's work.** The halt IS account-wide (dual-scope RLS;
+the dispatcher denies every company's calls, proven by the matrix), but `held_work.company_id` is NOT NULL with a
+tenant-pinned FK and activation runs inside ONE company's scope. So `held_count`/`pending_review_count` count one
+company, and **ADMIN-002's mandatory review never sees the other companies' in-flight tasks** — on clear their work
+resumes with no confirm-or-discard decision. NOT FIXED: writing `held_work` for sibling companies means establishing
+each company's scope inside one account-wide operation, which is a tenant-isolation decision and an **OWNER GATE**.
+Three options recorded in CDR-072 §1-G6. **This one needs the owner's call.**
+
+**Pass 2: a `company` stop could name a DIFFERENT company and then halt nothing.** The covering rule matches
+`target_id` against the CALL's company while RLS shows the row to the company in `company_id`, and nothing tied them
+together — so a stop raised in A naming B was storable, active, visible to A, and covered nothing. Third occurrence
+of that exact shape in this ticket. Closed at both layers: a CHECK in migration 0050 makes the row unstorable, and
+`activateStop` refuses it with a typed reason.
+
+**And why it survived: migration 0050 had NO real-PostgreSQL suite at all.** Every other table in the repo has one.
+The P1-014 catalog covers grants and "RLS is enabled" — never constraint BEHAVIOUR. For a table whose entire purpose
+is to make a dishonest stop unstorable, "the constraint is written in the migration" is not the same claim as "the
+constraint rejects the row" — the same gap in kind as the covering relation being correct while the scope enforced
+nothing. 14 cases now cover it, including a down-to-0049-and-back migration.
+
+**Final evidence: hosted CI `30681663120` on `6e79c73` — 228/228 files, 3251/3251 tests, ZERO SKIPS.**
+
+**Process note, recorded rather than glossed:** the charter calls for an INDEPENDENT review and prior tickets used a
+subagent. This session's instructions forbid spawning agents unasked, so both passes were the author's own. They
+found real defects, but a self-review is not the independent pass the completion standard specifies.
+
+### STOPPED AT A GATE — P6-008 is the next ticket in order and it is UI
+
+`ACBP-P6-008 Decision Room and activity completion` — *"Ten queues; SSE; proposed-vs-executed marking with evidence
+joins"*, acceptance *"Ten queues correct counts; hollow-success rendering impossible"*, required tests *"Decision
+Room suite"*, architecture `diagrams/11`, inbox integrated. **The Decision Room is a screen.** That is the owner's
+standing FRONTEND/UI gate — no scaffolding, no component library, no layout, and the audit docs' recorded style is
+reference rather than pre-approval. Flagged, not started.
+
+**The next backend-only Phase 6 ticket is `ACBP-P6-009` (account usage rollups and reconciliation)** — Type
+Security, deps `ACBP-P5-014` which is Done, no UI, Ready. It is genuinely unblocked, and NOT started for two
+reasons worth stating rather than assuming: P6-007 is unmerged, so a P6-009 branch would have to fork from `main`
+and would add its migration and reset-list entries alongside P6-007's uncommitted-to-main `0050` — the exact shared
+files that produced SEVEN mis-edit casualties this session. And three owner decisions are open on P6-007 itself.
+
+Open owner decisions, all of them blocking a clean close:
+1. **The account-wide held-work gap** (CDR-072 §1-G6) — fan out per company, hold lazily at dispatch, or accept and
+   surface it.
+2. **The independent review pass** — both passes were the author's own; the charter specifies an independent one.
+3. **Ticket Done / PR #67 ready / merge**, and then branch cleanup.
+
+Plus two carried from earlier: whether policy evaluation point 1 refuses task planning, and whether new companies
+should start at L1 rather than L2.
+
+**Final state: branch `p6-007-emergency-stop` at `a469f92`, tree clean and pushed, exact-head CI `30682072277`
+GREEN — 228/228 files, 3251/3251 tests, ZERO SKIPS.** C: 50.1 GB free (21.8%).
+
+- 2026-08-01T11:09Z scheduled wake stood down: last commit cf154f6 at 2026-08-01T11:00Z is 9 minutes old, inside the 25-minute serialisation window - a session is actively committing.
+- 2026-08-01T11:29Z scheduled wake stood down: last commit 02962e7 at 2026-08-01T11:28Z is 1 minute old, inside the 25-minute serialisation window - a session is actively committing (14:10, 14:16, 14:28 local, all pushed).
+
+### FINAL — P6-007 remediation complete; only owner gates remain
+
+**Both Blockers and all three Highs from the independent review are closed.** Exact-head CI `30699352077` on
+`d2505e5` GREEN; the code-bearing evidence is `30698900097` on `4f82b6c` — **229/229 files, 3285/3285 tests, ZERO
+SKIPS**, 33 stop-service cases, gate 8 at **4.5 ms measured through `activateStop` itself**.
+
+Blocker 1 was closed the way CANON specified (`WORKFLOW-STATE-MACHINES.md` §4 + `diagrams/13`), not by a design
+choice: activation pauses the RUNNING tasks it caught; only a CONFIRMED review resumes one; a DISCARD leaves it
+paused rather than cancelled; reviewing while the stop is still active is refused, because ADMIN-002 says clearing
+OPENS the review.
+
+**Three lessons this stretch produced, in order of how much they cost:**
+
+1. **A partial diagnosis stated confidently is worse than an open question, because it CLOSES the question.** I
+   found a real gap, described its blast radius as the smallest reading that was still bad news, and recorded that
+   as fact in the CDR, PROJECT-STATE and a direct report to the owner. Wrong documentation is worse than missing
+   documentation.
+2. **The independent pass found what two author passes could not** — 2 Blockers, 3 Highs, 10 Medium/Low, including
+   two of my own comments claiming "a test asserts this" where no test existed. Self-review has a ceiling.
+3. **Every CI failure during remediation was in my INSTRUMENTS, not the code.** The guards that assert their own
+   preconditions are the ones that caught things; every place I omitted one, the test passed while proving nothing.
+
+**Open, all owner-gated:** the `account_wide` held-work scoping (CDR-072 §1-G6, three options); ticket Done / PR
+#67 ready / merge / branch cleanup; whether policy evaluation point 1 refuses task planning; whether new companies
+start at L1 rather than L2. **ACBP-P6-008 (Decision Room) is a SCREEN and is blocked on UI direction**; P6-009 is
+the next backend-only Ready ticket and is deliberately not started while P6-007 is unmerged.
+
+C: 46.9 GB free.
+
+- 2026-08-01T13:10Z scheduled wake, no code change: verified rather than assumed. Tree clean, local == origin at
+  3950d7d, and the EXACT-HEAD run is `30699664226` on `3950d7d` — 229/229 files, **3285/3285 tests, ZERO SKIPS**
+  (the FINAL entry above cited d2505e5 and 4f82b6c, one commit short of the head it was describing). Blocker 1's
+  behavioural half confirmed present in source, not just in the log: `activateStop` transitions the running tasks it
+  caught `running→paused` and reports `pausedCount`; `reviewHeldWork` does `paused→running` ONLY for `confirmed`,
+  and a `discarded` item is deliberately left paused rather than cancelled. Nothing started: P6-008 is a screen, and
+  P6-009 stays unstarted while P6-007 is unmerged. All that remains is owner-gated. C: 53.4 GB free.
