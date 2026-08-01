@@ -99,7 +99,21 @@ ticket without a DONE line above it is genuinely in flight._
   dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
   scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
   gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
-  **BOTH BLOCKERS AND ALL THREE HIGHS ARE NOW CLOSED** (`2afc604`, `cf154f6`, `0972701`, `02962e7`, `4140986`,
+  **TWO INDEPENDENT REVIEW PASSES, BOTH REMEDIATED; ONLY OWNER GATES REMAIN.** The second pass — briefed at the
+  chokepoint write path — found a further **Blocker** (a held row could name a stop that never covered the call,
+  because attribution matched scope NAMES against a list ordered by `activated_at`; the task could end up
+  permanently paused and uncompletable) plus five Highs. All fixed. Two **PM rulings** are recorded in CDR-072
+  §1-G6: the chokepoint holds what it refuses (Option B + C's labelling, with the recorded objection that this
+  gives the chokepoint a task-lifecycle responsibility, and C named as the coherent retreat), and the in-flight
+  **safe-stop at activation** (`task_runs.stop_requested_at` → `decideStepAdmission` halts the worker at its next
+  checkpoint) — the latter a CANON finding from `WORKFLOW-STATE-MACHINES.md` §4, which assigns the stop checks to
+  different actors and gives in-flight work a safe-stop rather than another gate read.
+  **A COMMENT AUDIT** over every P6-007 guarantee-claim found three asserting properties the codebase does not
+  provide — all three in the labelling added FOR the condition about not overclaiming. The rule left in the code:
+  *if a comment claims a guarantee is ENFORCED, the enforcement must be nameable — a test, a constraint, a checker
+  — or the sentence goes.*
+
+  **BOTH FIRST-PASS BLOCKERS AND ALL THREE HIGHS ARE ALSO CLOSED** (`2afc604`, `cf154f6`, `0972701`, `02962e7`, `4140986`,
   `4f82b6c`). Exact-head CI `30698900097` on `4f82b6c`: **229/229 files, 3285/3285 tests, ZERO SKIPS**, including
   33 stop-service cases and gate 8 measured at **4.5 ms through `activateStop` itself**. What remains is the
   owner-gated `account_wide` held-work scoping, plus ticket Done / PR ready / merge.

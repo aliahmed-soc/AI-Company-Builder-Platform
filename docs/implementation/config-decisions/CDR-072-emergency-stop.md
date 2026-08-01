@@ -245,6 +245,44 @@ accepted limitation instead of a fixed one.
 3. **Idempotency on the refusal path is load-bearing and must be PROVEN**, not argued: `ON CONFLICT DO NOTHING`
    against `held_work_stop_task_uq` has to hold under repeated refusals against a real database.
 
+#### ✅ PM RULING (owner's authority) — IN-FLIGHT SAFE-STOP AT ACTIVATION
+
+**The canon finding is the engineer's; the choice of where the write lands is the PM's.**
+
+**The finding.** Pausing the TASK does not stop the RUN. An independent review found a paused task still executing
+tools after the stop cleared — nothing on the dispatch path reads `tasks.state`, so the pause only blocks
+completion. Searching canon before proposing a mechanism (the J-13 pattern) showed canon does **not** put this at
+the dispatcher. `WORKFLOW-STATE-MACHINES.md` §4 assigns the stop checks to **different actors**:
+
+| line | transition | actor | the stop check |
+|---|---|---|---|
+| 54 | `queued→running` | **worker** | *"…**stop-state clear**; company active"* |
+| 89 | `proposed→authorized` | **dispatcher** | *"…approval verify/consume where gated + **stop-state** + integration status"* |
+| 15 | company `active→paused` | owner | Effects: *"no new job pickup (invariant 16); **in-flight safe-stop**"* |
+
+For work **already running**, canon's answer is a safe stop, not another gate read. And the mechanism already
+existed, simply never called from here: `task_runs.stop_requested_at` via `TaskRunRepository.requestStop`, which
+`decideStepAdmission` checks **first** — *"an owner's request outranks every automatic rule and is not a failure"* —
+ending the run as `stopped` rather than failed. That is OQ-14's *"finish the current tool call, halt before the
+next"* exactly. Only `cancelRun` called it.
+
+**RULING — the safe-stop is requested at ACTIVATION, alongside the `running → paused` transition, NOT on the
+dispatcher's refusal path.** PM reasoning, recorded because it is not self-evident:
+
+- Activation **already** enumerates and pauses the running tasks it caught. Those are exactly the runs needing a
+  safe-stop; the information is in hand and no new lookup is required.
+- It keeps the refusal path to **one** write rather than two. The objection recorded against Option B was the
+  chokepoint accumulating responsibilities, and a second write there compounds precisely that unease.
+- A safe-stop at activation reaches an in-flight run **that may never make another tool call** — which the
+  refusal-path version structurally cannot, since it only fires when something tries to act. That is the same
+  "never attempts, never held" gap, and activation closes it for the runs that matter most.
+
+**The lazy dispatcher hold stays as ruled** — it covers work not yet running at activation. This is **additive**.
+
+**What is NOT done, and stays undone deliberately:** the dispatcher still does not read `tasks.state`. A `paused`
+task whose run somehow continues is not refused *for being paused*; it is refused because the stop is active, and
+once the stop clears the safe-stop has already ended its run. The chokepoint's read set is unchanged.
+
 ### G7 — Resume requires REVIEW, and nothing auto-fires
 
 ADMIN-002: clearing a stop opens a **mandatory** review — confirm or discard each held item — and
