@@ -79,13 +79,28 @@ ticket without a DONE line above it is genuinely in flight._
   no stop at all, because the operator believes it worked and stops watching. Hence: every scope proven TWICE
   (halts what it claims, does NOT halt what it should not — over-halting is a different defect and still a defect);
   the evidence names WHICH scopes halted rather than that a stop was requested; and there is no partial success.
-  **THE CALLER-INJECTABLE `stop` PORT DIES IN THIS TICKET** (§1-G1). It currently defaults to `clear`, which was
-  true only while no engine existed; with a real engine a caller could assert `clear` and walk through a live stop —
-  the defect P6-003c closed for approvals. A checker mirroring `check-approval-port.mjs` will keep it gone.
-  Done so far: contracts (seven scopes + covering relation, 55 tests, 8 mutations 0 survivors), migration 0050
-  (`emergency_stops` dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, and three
-  audit events whose payloads name scope + target. Still to come: the service, the dispatcher wiring + port
-  deletion, the timed ≤5s per-scope propagation evidence, docs, two review passes.
+  **THE CALLER-INJECTABLE `stop` PORT IS DELETED** (§1-G1). It defaulted to `clear`, true only while no engine
+  existed; with a real engine a caller could assert `clear` and walk through a live stop — the defect P6-003c
+  closed for approvals. `ToolGates` now has no members and `tools/check-stop-port.mjs` (in `check:static`) keeps it
+  gone, including the four evasions measured against real fixture trees.
+  **THE §0 FAILURE HAPPENED INSIDE THIS TICKET, AND THAT IS THE MOST IMPORTANT FACT HERE.** The dispatcher resolved
+  `task`/`worker` identities with `select … from worker_runs where id = <runId>`, but `runId` is a `task_runs.id` —
+  the join key matched nothing, ever, and `task_run_id` is not a task id either. **Both scopes were storable,
+  activatable, visible in the read model and halted NOTHING**, while the pure `evaluateStops` suite stayed green
+  throughout. Fixed in `b9d303e`. Two lessons, both recorded in CDR-072 §G2: the covering relation being correct is
+  NOT the same claim as the scope being enforced, so the matrix must run end-to-end; and a fixture helper that
+  THREW instead of returning null is what exposed it — nulls would have compared against nulls and certified two
+  dead scopes as enforced.
+  **LAUNCH GATE 8 IS MEASURED, AND MET FOR FIVE OF SEVEN.** Hosted CI on `b9d303e` (`30680683466`, 227/227 files,
+  3237/3237 tests, **ZERO SKIPS**): `account_wide` 6.7 ms, `external_actions_only` 7.1 ms, `worker` 7.8 ms, `task`
+  7.9 ms, `company` 8.6 ms — bound 5000 ms. The two inert scopes never produce `emergency_stopped`, so there is no
+  halt to time; a table of seven green rows would be exactly the false assurance §0 warns about.
+  Done: contracts (seven scopes + covering relation, 8 mutations 0 survivors), migration 0050 (`emergency_stops`
+  dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
+  scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
+  gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
+  Still to come: EXECUTION-LOG entry, two independent review passes. **Ticket Done / PR ready / merge are owner
+  gates and have not been taken.**
 
 - **ACBP-P6-006 Autonomy levels 1–2 — DONE** (CDR-071; APPR-008; PRD §12/§11.5). Merged as squash `fdc3065`,
   PR #66; exact-head CI `30649500593` on `a9a57f6` and exact-main `30650127201` on `fdc3065` both green with
@@ -231,9 +246,9 @@ ticket without a DONE line above it is genuinely in flight._
   arguments. Both fixed and mutation-proven.
   **CLOSED BY ACBP-P6-003c** (below): `gates.approval` was caller-injectable and is now deleted — the dispatcher
   reads a real stored decision. `tools/check-approval-port.mjs` fails the build if it comes back, in any of the four
-  field shapes a review pass proved could evade the original pattern. `gates.stop` remains a port until P6-007, for
-  the same reason this one survived P6-002: its engine does not exist. Four more residual risks stay logged in
-  CDR-067 §2-G10.
+  field shapes a review pass proved could evade the original pattern. `gates.stop` survived here for the same
+  reason this one survived P6-002 — its engine did not exist — and **is now deleted too, by ACBP-P6-007**, which
+  is what makes `ToolGates` empty. Four more residual risks stay logged in CDR-067 §2-G10.
   **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3` — P6-001 and P6-002 entered
   main together as `338ae08`, which that run contains.
   Locally verified: `pnpm run check` exit 0, **2869 tests / 217 files, ZERO SKIPS** (real PostgreSQL

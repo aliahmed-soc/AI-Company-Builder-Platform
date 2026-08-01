@@ -308,6 +308,11 @@ Three properties make it more than a comment:
 ACBP-P6-003, not an optional extra.** The same argument applies to `gates.stop` and P6-007 — that port has no marker
 yet, because no stop store exists to detect; P6-007 should add the equivalent detector when it lands.
 
+**BOTH CLOSURES ARE NOW DONE.** `gates.approval` was deleted by ACBP-P6-003c, and `gates.stop` by ACBP-P6-007 —
+`ToolGates` has no members left and is kept only as the host both checkers inspect, carrying a DO-NOT-ADD-A-GATE
+note. `tools/check-stop-port.mjs` is the equivalent detector this paragraph asked for, mirroring
+`check-approval-port.mjs` including its four measured evasions, and both run in `check:static`.
+
 **Other residual risks the reviewer logged, with disposition:**
 
 | Risk | Disposition |
