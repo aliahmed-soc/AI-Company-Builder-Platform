@@ -2012,6 +2012,7 @@ is flagged, not done quietly here.
 Branch `p6-007-emergency-stop` at `9ea6a2c`, tree clean and pushed. CI on `791bd56` GREEN with **227/227 files and
 3220/3220 tests, ZERO SKIPS** — the red streak is closed. Runs for `d8460ac` and `9ea6a2c` followed; `d8460ac`'s was
 cancelled by the newer push (concurrency group), which is expected and is not a failure.
+
 ### ADDENDUM — the defect the matrix was built to catch was inside this ticket
 
 `b9d303e`. The dispatcher resolved the `task` and `worker` stop identities with
