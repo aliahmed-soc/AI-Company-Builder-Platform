@@ -2094,3 +2094,5 @@ should start at L1 rather than L2.
 
 **Final state: branch `p6-007-emergency-stop` at `a469f92`, tree clean and pushed, exact-head CI `30682072277`
 GREEN — 228/228 files, 3251/3251 tests, ZERO SKIPS.** C: 50.1 GB free (21.8%).
+
+- 2026-08-01T11:09Z scheduled wake stood down: last commit cf154f6 at 2026-08-01T11:00Z is 9 minutes old, inside the 25-minute serialisation window - a session is actively committing.
