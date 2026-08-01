@@ -122,7 +122,9 @@ describe.skipIf(!hasTestDatabase)('RLS catalog audit + adversarial suite (real P
     // Split so each claim is checked against the right set: the DEFINER set stays exactly three, and the non-definer
     // functions are named too, so a genuinely new one still has to be added here consciously.
     expect(all.rows.filter((x) => x.prosecdef).map((x) => x.proname)).toEqual([...BOOTSTRAP_FNS]);
-    expect(all.rows.filter((x) => !x.prosecdef).map((x) => x.proname)).toEqual(['acbp_check_credit_settlement']);
+    // `acbp_check_usage_correction` (0051, ACBP-P6-009) is the second such function: a plain trigger bounding a
+    // compensating usage entry against the event it references. Named here, not filtered away.
+    expect(all.rows.filter((x) => !x.prosecdef).map((x) => x.proname)).toEqual(['acbp_check_credit_settlement', 'acbp_check_usage_correction']);
 
     const fns = { rows: all.rows.filter((x) => x.prosecdef) };
     for (const f of fns.rows) {

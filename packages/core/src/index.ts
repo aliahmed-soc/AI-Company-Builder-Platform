@@ -29,6 +29,9 @@ export * from './artifacts/index.js';
 export * from './policy/index.js';
 // Emergency stop controller (ACBP-P6-007; CDR-072; ADMIN-001/002; invariant 14).
 export * from './stops/index.js';
+// Account usage rollups (ACBP-P6-009; CDR-073; trust-critical #14). The rollup is a PROJECTION, never a source of
+// truth — nothing may authorize a billing, limit or entitlement decision from it.
+export * from './usage/index.js';
 // The approval engine: request, decide, inbox (ACBP-P6-003c; CDR-068). Reachability is not a nicety — until this
 // line existed the module could not be imported from outside `@acbp/core` at all, which is why every one of its
 // guards survived mutation: nothing could call them.

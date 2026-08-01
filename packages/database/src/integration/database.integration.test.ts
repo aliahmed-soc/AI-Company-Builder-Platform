@@ -62,12 +62,25 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
 
   test('migrations reverse fully and re-apply restores every managed table', async () => {
     await migrateToLatest(client); // ensure applied (idempotent)
-    // Reverse each applied migration batch until none remain (robust to any number of migrations).
-    for (let i = 0; i < 50; i++) {
+    // Reverse each applied migration batch until none remain.
+    //
+    // THE BOUND USED TO BE 50 AND THE COMMENT CLAIMED "robust to any number of migrations". It was neither: each
+    // `migrateDown` reverses exactly ONE migration, so at 51 migrations (ACBP-P6-009's 0051) the loop ran out one
+    // short, left `_acbp_migration_probe` applied, and failed downstream as `expected 1 to be +0` — a message that
+    // says nothing about the cause and sends the reader looking at the newest migration's `down()`.
+    //
+    // So the bound is now generous AND the exit reason is asserted: running out of iterations is a DIFFERENT
+    // outcome from draining the stack, and the old loop could not tell them apart.
+    let drained = false;
+    for (let i = 0; i < 1000; i++) {
       const down = await migrateDown(client);
       expect(down.error).toBeUndefined();
-      if ((down.results?.length ?? 0) === 0) break;
+      if ((down.results?.length ?? 0) === 0) {
+        drained = true;
+        break;
+      }
     }
+    expect(drained, 'the reversal loop hit its iteration cap instead of draining the migration stack — raise the cap').toBe(true);
     const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name in ('_acbp_migration_probe', 'users', 'identity_webhook_receipts')`.execute(client.kysely);
     expect(afterDown.rows[0]?.n).toBe(0); // every migration-managed table dropped by down()
     const reapply = await migrateToLatest(client);

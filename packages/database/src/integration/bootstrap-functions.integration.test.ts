@@ -188,7 +188,11 @@ describe.skipIf(!hasTestDatabase)('SECURITY DEFINER bootstrap functions (real Po
     // function against the bootstrap list reported a breach where no privilege was escalated. Named explicitly rather
     // than filtered away, so a genuinely new non-definer function still has to be admitted here on purpose.
     const names = fns.rows.map((r) => r.proname);
-    expect(names).toEqual(['acbp_accept_invite', 'acbp_check_credit_settlement', 'acbp_provision_account', 'acbp_resolve_own_membership']);
+    // `acbp_check_usage_correction` (migration 0051, ACBP-P6-009) joins for the same reason and on the same terms
+    // as `acbp_check_credit_settlement`: a plain trigger function, deliberately NOT SECURITY DEFINER, bounding a
+    // compensating entry against the row it references. Admitted BY NAME, so the next new function still has to be
+    // added here consciously — the assertion below is what keeps the DEFINER allowlist itself closed at three.
+    expect(names).toEqual(['acbp_accept_invite', 'acbp_check_credit_settlement', 'acbp_check_usage_correction', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     expect(fns.rows.filter((r) => r.prosecdef).map((r) => r.proname)).toEqual(['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership']);
     for (const f of fns.rows.filter((r) => r.prosecdef)) {
       expect(f.prosecdef).toBe(true);
