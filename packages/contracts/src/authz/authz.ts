@@ -181,6 +181,21 @@ export const AUTHZ_ACTIONS = [
   'stop:activate',
   'stop:clear',
   'stop:read',
+  // Account usage rollups (ACBP-P6-009; CDR-073; USAGE-001 amended). TWO actions, both ACCOUNT-level — checked
+  // against the caller's active ACCOUNT-membership role, like `portfolio:read`, because a rollup spans the
+  // account's companies and no company role can answer a question about all of them.
+  //   `usage:read`    — MAY THIS PERSON SEE THE ACCOUNT'S USAGE? `API-CONTRACTS` is explicit: *"account rollup =
+  //                     account owner"*. Owner-only, and NOT widened to viewer the way `stop:read` and
+  //                     `approval:read` were: those disclose that work is halted or pending, whereas this
+  //                     discloses spend across the whole account, which canon assigns to the owner alone.
+  //   `usage:correct` — MAY THIS PERSON WRITE A COMPENSATING USAGE RECORD? A correction changes a billing-relevant
+  //                     figure, so it is owner-only and DISTINCT from reading. It never edits: the correction is
+  //                     a new append-only row referencing the original (CDR-073 §1-G9; trust-critical #13).
+  // There is deliberately NO `usage:rebuild` action. Whether an account owner may trigger a rebuild on demand or
+  // whether it is platform-only is an OPEN OWNER DECISION (CDR-073 §3.2); registering an action now would encode
+  // an answer nobody has given. Until it is ruled, rebuild is a core use case with no API surface.
+  'usage:read',
+  'usage:correct',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -348,6 +363,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // `stop:clear` above is owner-only, so a viewer can learn the platform is stopped without being able to restart
   // it. Hiding it would make the single most important operational fact invisible to the people asking about it.
   'stop:read': ['owner', 'viewer'],
+  // Account usage (ACBP-P6-009; CDR-073). Both OWNER-ONLY, per `API-CONTRACTS`' "account rollup = account owner".
+  // A viewer is deliberately excluded from BOTH: unlike a halted-work or pending-approval read, these disclose
+  // (and in `usage:correct`'s case alter) the account's spend.
+  'usage:read': ['owner'],
+  'usage:correct': ['owner'],
 };
 
 /**

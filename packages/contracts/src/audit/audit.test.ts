@@ -159,6 +159,11 @@ describe('event-name registry (deny unregistered)', () => {
       'understanding.item_reviewed',
       'understanding.confirmed',
       'understanding.corrected',
+      // Account usage rollups (ACBP-P6-009; CDR-073) — exactly TWO. `usage.rollup_rebuilt` is deliberately NOT
+      // here: a bare rebuild recomputes a projection and changes no fact, and the only production path that
+      // triggers one is reconciliation, which records it in `usage.rollup_reconciled`'s payload.
+      'usage.corrected',
+      'usage.rollup_reconciled',
       // Context assembly (ACBP-P2-007; CDR-032 §3) — a MEM-004 conflict was flagged + items withheld.
       'context.conflict_flagged',
       // Task lifecycle (ACBP-P4-002; CDR-033 §4) — a task appeared on the board.

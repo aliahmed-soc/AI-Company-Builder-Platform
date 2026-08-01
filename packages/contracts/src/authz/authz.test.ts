@@ -102,6 +102,11 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'stop:activate': ['owner'],
   'stop:clear': ['owner'],
   'stop:read': ['owner', 'viewer'],
+  // Account usage (ACBP-P6-009; CDR-073). Owner-only on BOTH, per API-CONTRACTS' "account rollup = account owner".
+  // Note this is the first read action since `profile:read` that a viewer does NOT get: it discloses account-wide
+  // spend, unlike the halted-work and pending-approval reads that were deliberately widened to viewer.
+  'usage:read': ['owner'],
+  'usage:correct': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];
