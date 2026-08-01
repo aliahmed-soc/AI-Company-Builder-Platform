@@ -202,12 +202,21 @@ describe('CDR-072 §1-G3 — a record that cannot be interpreted is UNREADABLE, 
   // The §0 failure in miniature. A scoped stop with no target could be read two ways: cover nothing (the stop
   // silently does nothing while the operator believes it worked) or cover everything (over-halt). BOTH are wrong,
   // so it is neither — it is unreadable, and the dispatcher already turns that into `stop_unavailable` -> denied.
-  test.each(['task', 'worker', 'capability', 'integration', 'company'] as const)(
-    'a %s stop with NO target is unreadable, not clear',
-    (scope) => {
-      expect(evaluateStops([stop(scope, null)], inCompany())).toMatchObject({ kind: 'unreadable' });
-    },
-  );
+  // THE REASON IS ASSERTED PER SCOPE, not just `unreadable`. An independent review found the earlier version
+  // asserted only the kind — and for `capability`/`integration` the not-enforceable guard returns BEFORE the target
+  // check ever runs, so those two rows exercised `scope_not_enforceable` and never `missing_target`. Deleting the
+  // missing-target branch for them would have left the test green: two rows passing for a reason other than the one
+  // the test names is the same vacuity class as a negative assertion against a column that does not exist.
+  test.each([
+    ['task', 'missing_target'],
+    ['worker', 'missing_target'],
+    ['company', 'missing_target'],
+    // Enforceability is checked first, so these two can never reach the target check — asserted, not assumed.
+    ['capability', 'scope_not_enforceable'],
+    ['integration', 'scope_not_enforceable'],
+  ] as const)('a %s stop with NO target is unreadable for reason %s', (scope, reason) => {
+    expect(evaluateStops([stop(scope, null)], inCompany())).toEqual({ kind: 'unreadable', reason });
+  });
 
   test('an unrecognised scope is unreadable', () => {
     // No cast needed: `StopRecord.scope` is `string`, because these rows come from a database that can hold a

@@ -399,8 +399,17 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(scopes.split(',').sort()).toEqual(['account_wide', 'task']);
   });
 
-  test('a NON-STOP refusal never claims a stop halted it', async () => {
-    // The other half: `stop_scopes` on a policy denial would send an operator hunting for a halt that never existed.
+  test('a NON-STOP refusal never claims a stop halted it — WITH a real stop in force', async () => {
+    // THIS TEST WAS VACUOUS AND AN INDEPENDENT REVIEW CAUGHT IT. The first version only deleted the registration;
+    // `beforeEach` truncates every fixture, so NO stop row existed, the evaluation was `clear`, `stopScopes` was ''
+    // and the factory dropped the key for that reason alone. It would have passed with the
+    // `denialReason === 'emergency_stopped'` guard deleted — i.e. it proved nothing about the property it names.
+    //
+    // The non-vacuous shape: activate a stop that DOES cover this call, and ALSO unregister the tool.
+    // `decideDispatch` checks `not_registered` FIRST (an unregistered tool has no trustworthy risk class), so the
+    // refusal reason is `not_registered` while `stopEvaluation.kind` is genuinely `stopped` and a non-empty scope
+    // list is passed to the factory. Only the guard can drop it now.
+    await activateStop('account_wide', null, null);
     await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
     expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
     expect(Object.keys(await latestRequestedPayload())).not.toContain('stop_scopes');

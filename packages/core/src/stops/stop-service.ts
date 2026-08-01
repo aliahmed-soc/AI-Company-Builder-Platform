@@ -45,6 +45,8 @@ export const STOP_REFUSAL_REASONS = [
   'already_reviewed',
   /** A `company` stop naming a company other than the one it is raised in — see the refusal site. */
   'target_must_be_own_company',
+  /** A `task`/`worker` stop naming something that does not exist in this tenant — it could never cover a call. */
+  'target_not_found',
 ] as const;
 export type StopRefusalReason = (typeof STOP_REFUSAL_REASONS)[number];
 
@@ -56,6 +58,9 @@ export type StopRefusalReason = (typeof STOP_REFUSAL_REASONS)[number];
  * review queue with work that never started. Terminal states are not held for the obvious reason.
  */
 const IN_FLIGHT_TASK_STATES = ['queued', 'running', 'waiting_for_input', 'waiting_for_approval'] as const;
+
+/** Shape gate before any `::uuid` cast — see the `task` target check for why a `.catch()` cannot do this job. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ActivateStopParams {
   readonly userId: string;
@@ -110,6 +115,32 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       if (params.scope === 'company' && target !== scope.tenant.companyId) {
         return { status: 'refused', reason: 'target_must_be_own_company' };
       }
+      // ── AND THE SAME REASONING FOR `task` AND `worker` (fixed after independent review) ────────────────────
+      //
+      // The `company` refusal above was added in review pass 2 and NOT GENERALISED, which is its own lesson: the
+      // argument for it — "a stop that is active and visible while covering NOTHING is §0's failure with a
+      // different mask on" — applies verbatim to the other two identity scopes, and they were left as free text.
+      // Any non-blank string was stored, went `active`, appeared in `readStopState`, and could never match a call.
+      //
+      // The concrete case is not hypothetical: an operator halting a runaway task pastes the TASK-RUN id — exactly
+      // the confusion the dispatcher itself shipped (CDR-072 §1-G2) — and is told the stop worked while the task
+      // keeps calling tools. Existence is checked inside this transaction under RLS, so a foreign company's task
+      // reads as absent and is refused for the same reason rather than leaking that it exists.
+      if (params.scope === 'task') {
+        // SHAPE-CHECKED IN JS BEFORE THE CAST, and that is not belt-and-braces. A malformed `::uuid` cast raises
+        // 22P02, and in PostgreSQL a failed statement ABORTS THE TRANSACTION — every later statement then dies with
+        // 25P02, so a `.catch()` around the query would convert a clean typed refusal into a broken transaction.
+        // The first draft of this guard did exactly that.
+        if (!UUID_PATTERN.test(target)) return { status: 'refused', reason: 'target_not_found' };
+        const found = await sql<{ id: string }>`select id from tasks where id = ${target}::uuid`.execute(scope.db);
+        if (found.rows.length === 0) return { status: 'refused', reason: 'target_not_found' };
+      }
+      if (params.scope === 'worker') {
+        // The WORKER REGISTRY is the authority, not a run: a worker with no run yet is still a legitimate target,
+        // and refusing it would make the stop unavailable exactly when the operator wants it pre-emptively.
+        const found = await sql<{ worker_id: string }>`select worker_id from worker_definitions where worker_id = ${target}`.execute(scope.db);
+        if (found.rows.length === 0) return { status: 'refused', reason: 'target_not_found' };
+      }
 
       const stops = new StopRepository(scope.db);
       const created = await stops.insert({
@@ -153,12 +184,59 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       // NOT FIXED HERE ON PURPOSE. Writing `held_work` rows for sibling companies means establishing each company's
       // scope inside one account-wide operation, which is a tenant-isolation decision and an OWNER GATE under the
       // charter — not something to guess at inside a stop implementation. CDR-072 §1-G6 records it as open.
-      const inFlight = await sql<{ id: string }>`
-        select id from tasks
-        where company_id = ${scope.tenant.companyId}::uuid
-          and state in (${sql.join(IN_FLIGHT_TASK_STATES.map((s) => sql.lit(s)))})
-        order by id
-      `.execute(scope.db);
+      //
+      // ── WHAT THIS STOP ACTUALLY CAUGHT — PER SCOPE (fixed after independent review) ────────────────────────
+      //
+      // The first version ran ONE query for every scope: all in-flight tasks in the company, ignoring
+      // `params.scope` and `params.targetId` entirely. A `task` stop naming one task therefore held all nine
+      // in-flight tasks and reported `held_count: 9`, while the dispatcher refused calls for exactly one of them.
+      // The other eight were never halted and yet appeared in ADMIN-002's review queue.
+      //
+      // That is CDR-072 §0's failure in the OVER-stating direction, which §1-G2 names as "a different defect from
+      // one that under-halts, but still a defect": the operator's picture of what is running is wrong either way,
+      // and a review queue padded with work that was never stopped is one nobody can finish honestly.
+      //
+      // The held set must therefore be the set the covering relation would actually halt:
+      const inFlightStates = sql.join(IN_FLIGHT_TASK_STATES.map((s) => sql.lit(s)));
+      const caught = async (): Promise<readonly { id: string }[]> => {
+        // Whole-company halts: `account_wide` and `company` both stop every call in this company, so every
+        // in-flight task here is genuinely caught.
+        if (params.scope === 'account_wide' || params.scope === 'company') {
+          return (
+            await sql<{ id: string }>`
+              select id from tasks where company_id = ${scope.tenant.companyId}::uuid and state in (${inFlightStates}) order by id
+            `.execute(scope.db)
+          ).rows;
+        }
+        // A task stop catches exactly its task — and only if that task is actually in flight.
+        if (params.scope === 'task') {
+          return (
+            await sql<{ id: string }>`
+              select id from tasks where company_id = ${scope.tenant.companyId}::uuid and id = ${target}::uuid and state in (${inFlightStates})
+            `.execute(scope.db)
+          ).rows;
+        }
+        // A worker stop catches the tasks that worker is executing, via the run that stamped it. `worker_runs` has
+        // `UNIQUE(task_run_id)`, so this cannot fan out per attempt.
+        if (params.scope === 'worker') {
+          return (
+            await sql<{ id: string }>`
+              select t.id from tasks t
+                join task_runs tr on tr.task_id = t.id
+                join worker_runs wr on wr.task_run_id = tr.id
+              where t.company_id = ${scope.tenant.companyId}::uuid and wr.worker_id = ${target} and t.state in (${inFlightStates})
+              group by t.id order by t.id
+            `.execute(scope.db)
+          ).rows;
+        }
+        // `external_actions_only` HOLDS NOTHING, deliberately. It does not halt a task — it refuses the subset of
+        // that task's calls which reach the outside world, and internal work continues by design. Which in-flight
+        // tasks would later attempt an external call is not knowable at activation time, so holding them all would
+        // assert a halt that did not happen, and holding "the ones that will" is unanswerable. An empty queue is
+        // the honest record: nothing was stopped outright, so nothing awaits a confirm-or-discard decision.
+        return [];
+      };
+      const inFlight = { rows: await caught() };
 
       let heldCount = 0;
       for (const task of inFlight.rows) {
