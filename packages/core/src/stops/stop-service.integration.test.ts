@@ -68,7 +68,13 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
   const auditRows = async (name: string) =>
     owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', name).orderBy('event_id').execute();
   const stopRows = async () => owner.kysely.selectFrom('emergency_stops').selectAll().orderBy('activated_at').execute();
-  const heldRows = async () => owner.kysely.selectFrom('held_work').selectAll().orderBy('held_at').execute();
+  // ORDERED BY `id`, NOT `held_at`. Every row an activation writes lands in ONE transaction, so `now()` — and
+  // therefore `held_at` — is IDENTICAL across them; ordering by it leaves the row order up to the planner. The
+  // first version of this helper did exactly that and CI caught it: a test asserting on `[0]` after a review read a
+  // different row than the one it had reviewed. That is the same unordered-read vacuity the review pass flagged
+  // elsewhere, reappearing in the suite written to close it — which is why assertions below resolve BY ID.
+  const heldRows = async () => owner.kysely.selectFrom('held_work').selectAll().orderBy('id').execute();
+  const heldById = async (id: string) => (await heldRows()).find((h) => h.id === id);
 
   /** Create a task and drive it to a genuinely in-flight state through the real use cases. */
   async function inFlightTask(): Promise<string> {
@@ -243,7 +249,13 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
       reason: 'already_reviewed',
     });
     // The FIRST decision stands: silently overwriting it would make ADMIN-002's review no decision at all.
-    expect((await heldRows())[0]).toMatchObject({ status: 'confirmed' });
+    // Resolved BY ID — an `account_wide` stop holds several items and they share a `held_at`, so positional access
+    // would assert against whichever row the planner returned first.
+    expect(await heldById(heldWorkId)).toMatchObject({ status: 'confirmed' });
+    // ...and the item NOT reviewed is untouched, so "already_reviewed" is about this item and not a global latch.
+    const untouched = (await heldRows()).filter((h) => h.id !== heldWorkId);
+    expect(untouched).toHaveLength(1);
+    expect(untouched[0]).toMatchObject({ status: 'held', reviewed_at: null });
   });
 
   test('clearing an unknown or already-cleared stop is refused, not thrown', async () => {
