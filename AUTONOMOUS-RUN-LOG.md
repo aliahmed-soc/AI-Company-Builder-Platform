@@ -2126,3 +2126,11 @@ start at L1 rather than L2. **ACBP-P6-008 (Decision Room) is a SCREEN and is blo
 the next backend-only Ready ticket and is deliberately not started while P6-007 is unmerged.
 
 C: 46.9 GB free.
+
+- 2026-08-01T13:10Z scheduled wake, no code change: verified rather than assumed. Tree clean, local == origin at
+  3950d7d, and the EXACT-HEAD run is `30699664226` on `3950d7d` — 229/229 files, **3285/3285 tests, ZERO SKIPS**
+  (the FINAL entry above cited d2505e5 and 4f82b6c, one commit short of the head it was describing). Blocker 1's
+  behavioural half confirmed present in source, not just in the log: `activateStop` transitions the running tasks it
+  caught `running→paused` and reports `pausedCount`; `reviewHeldWork` does `paused→running` ONLY for `confirmed`,
+  and a `discarded` item is deliberately left paused rather than cancelled. Nothing started: P6-008 is a screen, and
+  P6-009 stays unstarted while P6-007 is unmerged. All that remains is owner-gated. C: 53.4 GB free.
