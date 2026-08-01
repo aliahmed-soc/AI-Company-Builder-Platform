@@ -289,13 +289,81 @@ Stating this here because the alternative is a PROJECT-STATE line reading "#12 d
    takes the threshold as a parameter; the **value** is a commercial/operational decision, not an engineering one,
    and is left to the owner exactly as AOQ-14's limit values are. No default is silently invented — a caller must
    pass one.
-2. **Who may trigger a rebuild.** The read is account-owner-only per `API-CONTRACTS`. A rebuild is a maintenance
-   operation; whether an account owner may trigger one on demand, or whether it is platform-only, is an
-   authorization decision with support-cost implications. Until ruled, the rebuild is **not exposed on any API
-   surface** — it exists as a core use case invoked by tests and (later) a scheduled maintenance job.
+2. **Who may trigger a rebuild — and, equally, a reconciliation.** The read is account-owner-only per
+   `API-CONTRACTS`. A rebuild is a maintenance operation; whether an account owner may trigger one on demand, or
+   whether it is platform-only, is an authorization decision with support-cost implications. Reconciliation
+   performs a rebuild, so the same question covers it and this clause is extended to name it explicitly.
+
+   **What is NOT open, and was got wrong once:** whether the resulting FIGURES may be DISCLOSED to a non-owner.
+   That is already ruled — *"account rollup = account owner"* — and §5-R1 records how conflating the two
+   questions produced a live disclosure hole. All three functions that return account figures now require
+   `usage:read`. Requiring owner is the most restrictive posture and cannot pre-empt a narrower ruling here.
 
 ## §4 Requirements this ticket does not touch
 
 No UI, no API route, no scheduled-job wiring. The Decision Room surfacing of usage alerts is P6-010's
 (`usage.limit_reached`), and the reconciliation *job* schedule belongs with the job runner. This ticket delivers
 the schema, the deterministic aggregation, the correction mechanism and the reconciliation computation.
+
+## §5 The use cases, and what two independent review passes found
+
+Built: `rebuildAccountUsageRollup`, `reconcileAccountUsageRollup`, `readAccountUsageRollup` and
+`recordUsageCorrection`, plus the two audit events, registered WITH their producers as §1-G15 requires.
+
+Both review passes were briefed at the diff and the governing canon and NOT at the author's conclusions. Both
+failed. The two findings worth carrying forward:
+
+### R1 — The disclosure hole beside the locked door (HIGH)
+
+`rebuildAccountUsageRollup` and `reconcileAccountUsageRollup` returned the account's figures with **no
+authorization check at all**, while `readAccountUsageRollup` — three functions away, in the same file — correctly
+enforced owner-only `usage:read`. A viewer refused by the read could call the rebuild and receive the identical
+numbers, plus a projection write and an audit row stamped with their own actor id.
+
+**The cause was a conflation, and it is the transferable part.** Two different questions were treated as one:
+*who may TRIGGER a rebuild* (genuinely unruled — §3.2) and *whether its RESULT may be disclosed* (already ruled by
+`API-CONTRACTS`). Because the first was open, the second went unasked.
+
+**The defence written in the code made it worse.** A comment argued the gap was acceptable because the function was
+*"exposed on NO API surface — not a role check"*. Both functions are exported from the package index. A deployment
+fact is not an enforcement, and stating it in a comment is precisely the false-assurance pattern this repo has
+recorded before: the author of a gap explaining why it is safe.
+
+Compounding it, the same file's own comment cited the `readCreditLedger` review-pass-1 HIGH — *checking a company
+role for an account-level fact* — as the thing it was avoiding, while the function below reproduced its effect by
+checking nothing.
+
+### R2 — Every "viewer is refused" test passed for the wrong reason (HIGH)
+
+The seeded viewer held **no company membership at all**. So a build that (re)introduced the R1-adjacent defect —
+resolving the role from `company_memberships` — would refuse that user anyway, by resolving them to `null`, and
+every viewer test would have stayed green through the regression it existed to catch.
+
+Both suites now seed an **account VIEWER who is a company OWNER**, so the two roles disagree and only the
+account-level check can produce the refusal, with a control asserting the divergence really exists. This is the
+`credit-service.integration.test.ts` precedent, which records the identical lesson from P5-014.
+
+### Also found and fixed
+
+Two of four correction lanes were never non-zero in any test (a transposed or dropped column was invisible); the
+reconciliation audit payload asserted one drift lane of four; the pure input guards — including the NaN-threshold
+branch that launch gate 7's alerting depends on — lived only in skipped suites, so deleting them left the local
+gate green; a bare `catch` reported any database fault as `company_not_found`; deltas had no int4 floor, so an
+in-range-typed value reached the driver as `22003` before the magnitude trigger; reconciliation claimed a snapshot
+guarantee READ COMMITTED does not provide; and a duplicated "never edits" privileges test set `SET LOCAL` against
+the connection **pool**, so the scope it claimed was discarded before the next statement.
+
+**A note on the NaN guard, because it is the shape most likely to recur.** `Math.abs(x) > NaN` is `false` for every
+`x`. An unrefused NaN threshold does not alert and does not throw — it silently switches OFF drift detection for
+that lane, in the single mechanism gate 7 relies on. It now has a DB-free suite whose stub client throws on any
+property access, so the tests pass only if the refusal precedes the database; the guard was mutation-verified by
+removing the integer check and watching exactly that test go red.
+
+### What the local gate could not have caught
+
+The first remediated push went red in CI on one assertion of 3421. An integration test claimed a missing
+threshold was refused; the helper it used gave `threshold` a **default parameter**, and a JavaScript default fires
+exactly when the argument is `undefined` — so the case substituted a valid tolerance and succeeded. The test was
+measuring the helper, not the guard. It is removed there with the reason recorded inline, and the case lives in
+the DB-free suite where no default can mask it. Worth stating: that suite skips without PostgreSQL, so hosted CI
+was the only thing that could have found it — the arrangement working, not failing.
