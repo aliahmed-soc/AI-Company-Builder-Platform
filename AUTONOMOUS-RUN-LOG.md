@@ -2012,3 +2012,31 @@ is flagged, not done quietly here.
 Branch `p6-007-emergency-stop` at `9ea6a2c`, tree clean and pushed. CI on `791bd56` GREEN with **227/227 files and
 3220/3220 tests, ZERO SKIPS** — the red streak is closed. Runs for `d8460ac` and `9ea6a2c` followed; `d8460ac`'s was
 cancelled by the newer push (concurrency group), which is expected and is not a failure.
+### ADDENDUM — the defect the matrix was built to catch was inside this ticket
+
+`b9d303e`. The dispatcher resolved the `task` and `worker` stop identities with
+`select task_run_id, worker_id from worker_runs where id = <runId>`, and `runId` is a `task_runs.id`. The join key
+matched nothing, ever — and `task_run_id` is not a task id either, so it could not have matched even had the join
+been right. **Both scopes were storable, activatable, visible in the read model, and halted nothing.** An operator
+stopping one runaway task would have been told it worked and watched it keep running.
+
+The pure `evaluateStops` was correct throughout and its suite was green. The covering relation was never wrong;
+the DISPATCHER's ability to populate the identity it matches on was. That is precisely why the matrix has to run
+end-to-end, and it caught this on the first hosted run.
+
+It was caught by a guard I nearly did not write: `runIdentities()` THROWS when the fixture has no worker run,
+instead of returning nulls. Nulls would have compared against nulls, gone green, and certified two dead scopes as
+enforced — a passing matrix being the most convincing way to ship exactly this bug.
+
+**Launch gate 8, measured on real PostgreSQL in CI (`30680683466`, 227/227 files, 3237/3237 tests, ZERO SKIPS):**
+
+| scope | first refusal after the stop committed |
+| --- | --- |
+| account_wide | 6.7 ms |
+| external_actions_only | 7.1 ms |
+| worker | 7.8 ms |
+| task | 7.9 ms |
+| company | 8.6 ms |
+
+Bound is 5000 ms. `capability` and `integration` are absent because they never produce `emergency_stopped` — there
+is no halt to time, which is why the gate is met for FIVE of seven and not seven.
