@@ -50,6 +50,8 @@ const ALL = [
   'strategy_recommendations',
   'strategy_options',
   'strategy_generations',
+  'usage_corrections',
+  'account_usage_rollups',
   'usage_events',
   'understanding_confirmation_events',
   'understanding_item_reviews',

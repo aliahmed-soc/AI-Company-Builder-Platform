@@ -1092,6 +1092,8 @@ export interface DatabaseSchema {
   approval_decisions: ApprovalDecisionsTable;
   emergency_stops: EmergencyStopsTable;
   held_work: HeldWorkTable;
+  account_usage_rollups: AccountUsageRollupsTable;
+  usage_corrections: UsageCorrectionsTable;
 }
 
 /**
@@ -1139,6 +1141,58 @@ export interface HeldWorkTable {
   held_at: ColumnType<Date, Date | string | undefined, never>;
   reviewed_by_user_id: ColumnType<string | null, string | null, string | null>;
   reviewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/**
+ * The per-`(account_id, period)` usage projection (ACBP-P6-009; CDR-073; migration 0051).
+ *
+ * A PROJECTION, NOT A SOURCE OF TRUTH. It is the one table here whose figures are meant to be overwritten,
+ * because they hold nothing of their own: drop the row and a rebuild reproduces it from the ledger. When it and
+ * the ledger disagree the LEDGER is right, and nothing may authorize a billing or limit decision from it.
+ *
+ * The four figure columns plus `computed_at` are updatable and match the COLUMN-SCOPED UPDATE grant exactly.
+ * `account_id` and `period_start` are `never`: a re-keyable rollup row could be moved to another account by an
+ * UPDATE, which RI and the policy would both allow.
+ *
+ * The figures are `bigint`, so they arrive from the driver as STRINGS (this repo installs no int8 type parser).
+ * Read them through the repository's parser, never with bare arithmetic — CDR-073 §1-G14.
+ */
+export interface AccountUsageRollupsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  /** First day of a UTC calendar month; a CHECK enforces the day-of-month. */
+  period_start: ColumnType<string, string, never>;
+  event_count: ColumnType<string, string | number | undefined, string | number>;
+  input_tokens: ColumnType<string, string | number | undefined, string | number>;
+  output_tokens: ColumnType<string, string | number | undefined, string | number>;
+  estimated_cost_micros: ColumnType<string, string | number | undefined, string | number>;
+  computed_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/**
+ * A compensating usage entry (ACBP-P6-009; CDR-073; trust-critical #13; migration 0051).
+ *
+ * APPEND-ONLY — every column is `never` on update, matching grants that carry no UPDATE or DELETE at all. "Usage
+ * corrections create compensating records (never edits)" is therefore a property of the privileges rather than
+ * of any caller's restraint.
+ *
+ * Deltas are `<= 0` by CHECK (a correction only ever reduces), bounded per lane against the corrected event by a
+ * trigger, and there is at most ONE correction per event — the three together are what keep a rollup lane from
+ * going negative.
+ */
+export interface UsageCorrectionsTable {
+  id: ColumnType<string, string | undefined, never>;
+  account_id: ColumnType<string, string, never>;
+  /** Attribution, not isolation — the RLS predicate is account-keyed; a composite FK pins the company. */
+  company_id: ColumnType<string, string, never>;
+  corrects_usage_event_id: ColumnType<string, string, never>;
+  event_count_delta: ColumnType<number, number | undefined, never>;
+  input_tokens_delta: ColumnType<number, number | undefined, never>;
+  output_tokens_delta: ColumnType<number, number | undefined, never>;
+  estimated_cost_micros_delta: ColumnType<number, number | undefined, never>;
+  reason: ColumnType<string, string, never>;
+  created_by_user_id: ColumnType<string | null, string | null, never>;
+  created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
 /**
@@ -1328,6 +1382,10 @@ export type MemoryItemRow = Selectable<MemoryItemsTable>;
 export type NewMemoryItem = Insertable<MemoryItemsTable>;
 export type UsageEventRow = Selectable<UsageEventsTable>;
 export type NewUsageEvent = Insertable<UsageEventsTable>;
+export type AccountUsageRollupRow = Selectable<AccountUsageRollupsTable>;
+export type NewAccountUsageRollup = Insertable<AccountUsageRollupsTable>;
+export type UsageCorrectionRow = Selectable<UsageCorrectionsTable>;
+export type NewUsageCorrection = Insertable<UsageCorrectionsTable>;
 export type UnderstandingDocumentRow = Selectable<UnderstandingDocumentsTable>;
 export type NewUnderstandingDocument = Insertable<UnderstandingDocumentsTable>;
 export type UnderstandingItemRow = Selectable<UnderstandingItemsTable>;

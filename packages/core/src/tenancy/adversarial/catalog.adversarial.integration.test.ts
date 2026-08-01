@@ -19,7 +19,7 @@ import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClien
 import { threatTitle } from '@acbp/test-support';
 
 /** Every tenant-scoped table that must carry ENABLE + FORCE RLS. */
-const TENANT_TABLES = ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'policy_evaluations', 'policies', 'artifact_revisions', 'credit_transactions'] as const;
+const TENANT_TABLES = ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'accounts', 'account_profiles', 'memberships', 'audit_events', 'companies', 'company_profiles', 'company_memberships', 'activity_events', 'provisioning_steps', 'company_workspace_areas', 'platform_admins', 'interview_sessions', 'interview_questions', 'interview_answers', 'memory_items', 'usage_events', 'account_usage_rollups', 'usage_corrections', 'understanding_documents', 'understanding_items', 'understanding_item_reviews', 'understanding_confirmation_events', 'tasks', 'task_dependencies', 'strategy_generations', 'strategy_options', 'strategy_recommendations', 'strategy_selections', 'decisions', 'roadmaps', 'goals', 'milestones', 'task_review_flags', 'planning_runs', 'planning_run_inputs', 'task_deletions', 'jobs', 'job_checkpoints', 'task_runs', 'tool_calls', 'company_worker_states', 'worker_runs', 'artifacts', 'policy_evaluations', 'policies', 'artifact_revisions', 'credit_transactions'] as const;
 
 /** The closed SECURITY DEFINER allowlist (CDR-013 #4/#5) — exact names, namespace-wide. */
 const EXPECTED_DEFINERS = ['acbp_accept_invite', 'acbp_provision_account', 'acbp_resolve_own_membership'] as const;
@@ -142,6 +142,14 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // discarded held item is a REVIEWED row an operator can still see, not a vanished one.
   emergency_stops: ['INSERT', 'SELECT'],
   held_work: ['INSERT', 'SELECT'],
+  // Account usage rollups (ACBP-P6-009; CDR-073 §1-G1/G9). The pair is deliberately ASYMMETRIC, and the asymmetry
+  // is the design: `account_usage_rollups` is the one table here whose figures are MEANT to be overwritten,
+  // because it is a projection that a rebuild reproduces exactly — its UPDATE is COLUMN-level (the four figures
+  // plus computed_at) so it does not appear here, and `account_id`/`period_start` are outside it precisely so a
+  // rebuild cannot re-key a row into another account. `usage_corrections` is the opposite: append-only with no
+  // UPDATE at any level, which is what makes trust-critical #13's "never edits" a property of the privileges.
+  account_usage_rollups: ['INSERT', 'SELECT'],
+  usage_corrections: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -310,6 +318,15 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
       'activated_by_user_id',
       'reason',
     ]);
+    // The rollup's UPDATE grant covers the derived figures and nothing else (ACBP-P6-009; CDR-073 §1-G1).
+    // `account_id` and `period_start` being OUTSIDE it is the load-bearing part: with a table-wide grant, an
+    // UPDATE could re-key a rollup row into a different account or a different period, and neither RI nor the
+    // account-keyed policy would object as long as the new key were still the caller's own account.
+    await expectUpdatableColumnsExactly(
+      'account_usage_rollups',
+      ['computed_at', 'estimated_cost_micros', 'event_count', 'input_tokens', 'output_tokens'],
+      ['id', 'account_id', 'period_start'],
+    );
     await expectUpdatableColumnsExactly('held_work', ['reviewed_at', 'reviewed_by_user_id', 'status'], [
       'id',
       'account_id',

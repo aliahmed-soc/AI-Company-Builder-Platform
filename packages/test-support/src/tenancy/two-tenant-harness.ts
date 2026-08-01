@@ -61,6 +61,11 @@ export const ALL_TABLES = [
   'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
   'job_checkpoints',
   'jobs',
+  // BEFORE usage_events, and the order is load-bearing for the same reason the tool_calls note below gives:
+  // usage_corrections carries a composite FK to (usage_events.id, company_id), so clearing the parent first
+  // raises 23503. account_usage_rollups references only accounts and could sit anywhere ahead of them.
+  'usage_corrections',
+  'account_usage_rollups',
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',
   'tool_calls',

@@ -259,25 +259,10 @@ export const AUDIT_EVENTS = {
   // entries, not runs.
   'credit.reserved': { schemaVersion: 1, subjectType: 'credit_transaction' },
   'credit.settled': { schemaVersion: 1, subjectType: 'credit_transaction' },
-  // Account usage rollups (ACBP-P6-009; CDR-073; backlog "Audit behavior: Reconciliation audited"). TWO events.
-  //
-  // `usage.corrected` — subject is the CORRECTION row, not the event it compensates. A reader tracing "who
-  //   adjusted this account's usage and why" follows corrections; the original event is immutable and already
-  //   has its own durable record. This is the audit half of trust-critical #13.
-  //
-  // `usage.rollup_reconciled` — subject is the ACCOUNT, because reconciliation is a statement about an
-  //   (account, period) pair rather than about any row. The payload carries the PER-LANE DRIFT and whether a
-  //   rebuild was applied: an event recording only "reconciliation ran" cannot answer whether the number moved,
-  //   which is exactly CDR-073 §0's silent-wrongness failure written into the audit trail — the same
-  //   nominal-vs-substantive defect called out for `policy.changed` and `emergency_stop.activated` above.
-  //
-  // There is deliberately NO `usage.rollup_rebuilt` event. A bare rebuild recomputes a PROJECTION and changes no
-  // fact (CDR-073 §1-G1), and the only production path that triggers one is reconciliation, which records it in
-  // the event above. Enforcement of "only path": rebuild is exported from @acbp/core but imported by no route —
-  // `usage:rebuild` was deliberately never registered as an authz action, so there is nothing for a route to
-  // authorize against.
-  'usage.corrected': { schemaVersion: 1, subjectType: 'usage_correction' },
-  'usage.rollup_reconciled': { schemaVersion: 1, subjectType: 'account' },
+  // Account usage rollups (ACBP-P6-009; CDR-073 §1-G15) register `usage.corrected` and `usage.rollup_reconciled`
+  // in the slice that BUILDS THEIR PRODUCERS, not here. Registering a name ahead of its producer trips
+  // `audit-operations.test.ts`'s no-orphan-events guard, and `DEFERRED_REGISTERED_EVENTS` is deliberately not
+  // used to route around it: a registered-but-unproduced event is exactly the loose end that survives to merge.
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;

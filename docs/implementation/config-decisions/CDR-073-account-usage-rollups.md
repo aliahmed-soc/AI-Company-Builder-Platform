@@ -153,6 +153,57 @@ subtracts far more than the original ever recorded (mirroring the release-exceed
 found in `credit_transactions`). The same answer applies: a CHECK cannot see another row, so the bound is enforced
 by a trigger that reads the referenced event and refuses a correction whose magnitude exceeds it, per lane.
 
+### G10-order — The trigger fires BEFORE the foreign key, and that hid a hole in the first test
+
+Found by running the suite against real PostgreSQL rather than by reading the migration.
+
+A `BEFORE INSERT` trigger runs ahead of constraint checking. So when the app role, scoped into company A1, tries
+to correct an event belonging to A2, the trigger's **visibility** branch refuses first (`23514`) — the composite
+FK's `23503` never gets a chance. The refusal is correct and fail-closed: a bound that cannot be evaluated
+because RLS hides the row must refuse rather than skip.
+
+The problem was in the **test**, and it is the kind this ticket is most prone to: asserting "the cross-company
+correction is rejected" would have passed **even if the composite FK did not exist at all**, because the trigger
+alone rejects it. One guard was silently shadowing another, and the evidence looked complete.
+
+The fix is to prove the FK on a path where the trigger cannot mask it — as a superuser, where the row IS visible
+and the same-account check passes, so the FK is the only thing left to reject. Both assertions now stand, and
+each names which mechanism it is exercising.
+
+### G10a — A correction may only ever REDUCE recorded usage
+
+Every delta is `<= 0`, enforced by CHECK, with at least one lane non-zero.
+
+The asymmetry is deliberate. Under-recording cannot be fixed here anyway: metering is fail-closed (CDR-026 §5),
+so a model call that failed to write its usage event withheld its output — there is no silently unmetered usage
+to add back. What a positive delta *would* create is a path to **inflate a customer's recorded usage without
+writing a real metered event**, which is the one direction that must stay structurally impossible. Adding usage
+requires a genuine `usage_events` row; only subtraction is expressible as a correction.
+
+### G10b — AT MOST ONE correction per usage event
+
+A unique index on `corrects_usage_event_id`. Without it, G10's per-row bound is not a bound at all: three
+corrections each individually within the referenced event's magnitude still sum past it, and the rollup goes
+negative — a negative token count reaching a billing surface.
+
+The tradeoff, stated plainly: **a wrong correction cannot be quietly fixed by a second one.** That is the
+intended behaviour. A correction already adjusts a billing-relevant figure and is owner-only and audited;
+discovering one was wrong is an operational escalation, not something to settle with another silent adjustment.
+This is what makes the non-negative CHECK on the rollup sound rather than aspirational.
+
+### G10c — A correction belongs to the CORRECTED EVENT'S period, not its own
+
+The subtle one, and the one most likely to be got wrong by a later reader.
+
+If a July event is corrected in August, the correction must land in **July's** rollup. Bucketing it by the
+correction's own `created_at` would leave July's total permanently wrong while August silently absorbed an
+adjustment that has nothing to do with it — §0's failure exactly, and unfixable by rebuilding, because a rebuild
+would faithfully reproduce the same misattribution.
+
+So the rebuild joins `usage_corrections` → `usage_events` and buckets by the **event's** `created_at`. The period
+is deliberately NOT denormalised onto the correction row: it is derivable, and a stored copy is one more thing
+that can disagree with the ledger (G1).
+
 ### G11 — Reconciliation recomputes; it never re-reads the projection
 
 `reconcileAccountUsageRollup` recomputes the figures **from the ledger** by the same path as a rebuild and
@@ -196,6 +247,30 @@ codebase — a large, invisible blast radius for a local problem. The helper:
 - is the only path by which a rollup figure becomes a JS number.
 
 Its rejection branch is mutation-tested — a guard nobody has watched fail is not a guard.
+
+### G15 — Two audit events, registered WITH their producers and not before
+
+Canon's requirement is narrow (backlog: *"Audit behavior: Reconciliation audited"*), so this ticket adds exactly two:
+
+- **`usage.corrected`** — subject is the CORRECTION row, not the event it compensates. A reader tracing "who
+  adjusted this account's usage and why" follows corrections; the original event is immutable and already has its
+  own durable record. This is the audit half of trust-critical #13.
+- **`usage.rollup_reconciled`** — subject is the ACCOUNT, because reconciliation is a statement about an
+  `(account, period)` pair rather than about any row. The payload carries the **per-lane drift** and whether a
+  rebuild was applied. An event recording only "reconciliation ran" cannot answer whether the number moved, which
+  is §0's silent-wrongness failure written into the audit trail — the same nominal-vs-substantive defect already
+  called out for `policy.changed` and `emergency_stop.activated`.
+
+There is deliberately **no `usage.rollup_rebuilt`**: a bare rebuild recomputes a projection and changes no fact
+(§1-G1), and the only production path that triggers one is reconciliation, which records it above.
+
+**Registration timing, learned the hard way.** These were first registered in `AUDIT_EVENTS` a slice ahead of the
+use cases that emit them, and `audit-operations.test.ts` failed: *"every REGISTERED audit event is produced by
+exactly one approved operation (no orphan events)"*. The guard is right. `DEFERRED_REGISTERED_EVENTS` exists as an
+escape hatch for reserving a name ahead of its producer, and using it here would have been the wrong call — it
+would leave a registered-but-unproduced event to be cleaned up later, which is precisely the kind of loose end
+that survives to merge. The registration was backed out and lands in the slice that builds the producers, so the
+event, its builder, its operation, its factory case and its real caller all arrive together.
 
 ## §2 Honest scope — what this ticket does NOT close
 
