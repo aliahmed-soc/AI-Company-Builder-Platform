@@ -8,7 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { type DatabaseClient } from '@acbp/database';
-import { TOOL_DENIAL_REASONS, TOOL_CALL_OUTCOMES, RISK_CLASSES, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS } from '@acbp/contracts';
+import { TOOL_DENIAL_REASONS, TOOL_CALL_OUTCOMES, RISK_CLASSES, isToolDenialReason, MOST_RESTRICTIVE_RISK_CLASS, ENFORCEABLE_STOP_SCOPES, NOT_YET_ENFORCEABLE_STOP_SCOPES } from '@acbp/contracts';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, asRestricted, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
@@ -276,9 +276,57 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     return last.payload;
   };
 
-  test('COVERS — account_wide halts a call that names nothing', async () => {
-    await activateStop('account_wide', null, null);
-    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  /**
+   * A COVERING stop for each enforceable scope: the row to write, and the call it must halt.
+   *
+   * Driven off `ENFORCEABLE_STOP_SCOPES` below rather than listed by hand, so a scope that becomes enforceable
+   * without a covering case here fails on the missing key instead of quietly going unproven — which is the exact
+   * way a scope goes silently missing.
+   */
+  type CoveringCase = { targetId: string | null; companyId: string | null; toolId: string };
+  const COVERING_CASE: Record<string, () => CoveringCase | Promise<CoveringCase>> = {
+    account_wide: () => ({ targetId: null, companyId: null, toolId: 'web_research' }),
+    company: () => ({ targetId: w.companyA1, companyId: w.companyA1, toolId: 'web_research' }),
+    task: async () => ({ targetId: (await runIdentities()).taskRunId, companyId: w.companyA1, toolId: 'web_research' }),
+    worker: async () => ({ targetId: (await runIdentities()).workerId, companyId: w.companyA1, toolId: 'web_research' }),
+    // `send_email` is `external_reversible`, so the registry-derived external effect is true. The stop gate runs
+    // BEFORE policy and approval, so the refusal below is the STOP's, not the approval requirement's — an emergency
+    // stop must not be reachable only for calls that would have been allowed anyway.
+    external_actions_only: () => ({ targetId: null, companyId: w.companyA1, toolId: 'send_email' }),
+  };
+
+  test('every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven', () => {
+    expect(Object.keys(COVERING_CASE).sort()).toEqual([...ENFORCEABLE_STOP_SCOPES].sort());
+    // And the inert two are ABSENT on purpose: they cannot appear as passing rows in an enforcement matrix,
+    // because they enforce nothing. Their behaviour is the `stop_unavailable` case above.
+    for (const inert of NOT_YET_ENFORCEABLE_STOP_SCOPES) expect(Object.keys(COVERING_CASE)).not.toContain(inert);
+  });
+
+  // COVERS + LAUNCH GATE 8 IN ONE CASE PER SCOPE. Splitting them would let the enforcement pass while the timing
+  // went unmeasured for four of the five — which is what the first draft of this file did, measuring only
+  // `account_wide` while CDR-072 §G4 promises the bound "for every scope".
+  //
+  // WHAT THE NUMBER MEANS, stated so nobody reads more into it: propagation here is bounded by TRANSACTION
+  // VISIBILITY, not by a cache refresh. The stop is read inside the same transaction as the call it authorizes, so
+  // a stop committed before that read is visible to it — no interval to tune, no window for a stale answer. The
+  // measurement confirms the mechanism has no hidden staleness. It is NOT a claim about a distributed fleet; that
+  // is P7 infrastructure's to prove. And it cannot cover the two INERT scopes at all — they never produce
+  // `emergency_stopped`, so there is no halt to time, which is the honest reason gate 8 is met for FIVE of seven.
+  test.each(ENFORCEABLE_STOP_SCOPES)('COVERS + gate 8 — a %s stop halts its call, MEASURED under 5s', async (scope) => {
+    const c = await COVERING_CASE[scope]!();
+    // The control: this same call was NOT stop-refused a moment ago, so the refusal below is caused by the stop
+    // rather than by anything already true of the fixture.
+    expect(await dispatch({ toolId: c.toolId })).not.toMatchObject({ reason: 'emergency_stopped' });
+
+    const startedAt = performance.now();
+    await activateStop(scope, c.targetId, c.companyId);
+    const stopped = await dispatch({ toolId: c.toolId });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    // Logged unconditionally so the measurement is in the CI record as evidence, not only when it fails.
+    console.info(`[ACBP-P6-007] gate 8 / ${scope}: first refusal ${elapsedMs.toFixed(1)}ms after the stop committed (bound 5000ms)`);
+    expect(elapsedMs).toBeLessThan(5_000);
   });
 
   test('MISSES — another ACCOUNT\'s account-wide stop does not halt this one', async () => {
@@ -289,11 +337,6 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
   });
 
-  test('COVERS — a company stop halts a call in THAT company', async () => {
-    await activateStop('company', w.companyA1, w.companyA1);
-    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-  });
-
   test('MISSES — a SIBLING company\'s stop does not halt this company', async () => {
     // Same account, different company: the case where an over-broad predicate would turn one company's halt into
     // an outage for the whole account, and the operator would have no way to tell from the record.
@@ -301,34 +344,14 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
   });
 
-  test('COVERS — a task stop halts a call made by THAT task\'s run', async () => {
-    const { taskRunId } = await runIdentities();
-    await activateStop('task', taskRunId, w.companyA1);
-    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-  });
-
   test('MISSES — a stop on a DIFFERENT task does not halt this one', async () => {
     await activateStop('task', '00000000-0000-4000-8000-0000000000ff', w.companyA1);
     expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
   });
 
-  test('COVERS — a worker stop halts a call made by THAT worker', async () => {
-    const { workerId } = await runIdentities();
-    await activateStop('worker', workerId, w.companyA1);
-    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-  });
-
   test('MISSES — a stop on a DIFFERENT worker does not halt this one', async () => {
     await activateStop('worker', 'some-other-worker', w.companyA1);
     expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
-  });
-
-  test('COVERS — external_actions_only halts an EXTERNAL call', async () => {
-    // `send_email` is `external_reversible`, so the registry-derived external effect is true. The stop gate runs
-    // BEFORE policy and approval, so this refusal is the stop's, not the approval requirement's — which is the
-    // point: an emergency stop must not be reachable only for calls that would have been allowed anyway.
-    await activateStop('external_actions_only', null, w.companyA1);
-    expect(await dispatch({ toolId: 'send_email' })).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
   });
 
   test('MISSES — external_actions_only leaves an INTERNAL call running', async () => {
@@ -361,29 +384,6 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
     expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
     expect(Object.keys(await latestRequestedPayload())).not.toContain('stop_scopes');
-  });
-
-  test('LAUNCH GATE 8 — the halt reaches the dispatcher in well under 5s, MEASURED', async () => {
-    // TIMED, not asserted by construction. The requirement is a bound on how long a call can still be authorized
-    // after an operator halts the platform, and "it eventually stopped" is not evidence for a bound.
-    //
-    // WHAT THE NUMBER ACTUALLY MEASURES, stated so nobody reads more into it than it carries: propagation here is
-    // bounded by TRANSACTION VISIBILITY, not by a cache refresh. The stop is read inside the same transaction as
-    // the call it authorizes, so a stop committed before that read is visible to it — there is no interval to tune
-    // and no window in which a stale answer could be served. The measurement therefore confirms the mechanism has
-    // no hidden staleness, and it is NOT a claim about a distributed fleet, which P7 infrastructure has to prove.
-    const before = await dispatch();
-    expect(before).not.toMatchObject({ reason: 'emergency_stopped' }); // the control: it was running first
-
-    const activatedAt = Date.now();
-    await activateStop('account_wide', null, null);
-    const stopped = await dispatch();
-    const elapsedMs = Date.now() - activatedAt;
-
-    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-    // Reported unconditionally so the number is in the CI log as evidence, not only on failure.
-    console.info(`[ACBP-P6-007] launch gate 8: first refusal ${elapsedMs}ms after the stop committed (bound 5000ms)`);
-    expect(elapsedMs).toBeLessThan(5_000);
   });
 
   // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow

@@ -131,6 +131,23 @@ operator see the stop actually biting.
 exists) can be unmet in substance (the event cannot answer the question). The test asserts the stored payload
 names the scope, not merely that the event fired.
 
+**IMPLEMENTED, AND THE FIRST DRAFT WAS THE NOMINAL VERSION.** The activation event named its scope from the start,
+but the *blocked call* — the other half of `FAILURE-AND-RECOVERY` row 15's evidence — recorded only
+`denial_reason: 'emergency_stopped'`. That is the same defect one level down: an account-wide halt and a single
+stopped task produced **identical** refusal records, so the trail could not answer how far the stop actually
+reached. `tool.call_requested` now carries `stop_scopes` — comma-joined scope NAMES from the closed vocabulary,
+taken from the evaluation that decided the call rather than re-derived, present only on an `emergency_stopped`
+refusal, and never carrying a target id into audit metadata.
+
+Two scopes can never appear in it: `capability` and `integration` are not enforceable in this release and deny as
+`stop_unavailable`, which is a *different* reason precisely so the two cases stay distinguishable in the record.
+
+**And the enforcement itself is now proven per scope through the live dispatcher**, not only through the pure
+covering relation. Each of the five enforceable scopes has a covering case and a non-covering one; the misses
+include a cross-account and a sibling-company stop, because an over-broad tenancy predicate would turn one
+company's halt into a platform outage that still reads as a correct stop. Without the misses, a dispatcher that
+denied everything would satisfy all five positives.
+
 ### G6 — Safe-stop follows OQ-14's documented default; in-flight work is HELD, never lost
 
 OQ-14 is **non-blocking with an MVP default already documented**: *"finish the current tool call, halt before the
