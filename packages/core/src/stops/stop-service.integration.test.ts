@@ -106,6 +106,15 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
     runOne = (started as { status: 'ok'; run: { id: string } }).run.id;
     await sql`insert into worker_runs (account_id, company_id, task_run_id, worker_id, worker_version, max_spend_micros, max_duration_ms)
               values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runOne}::uuid, ${WORKER_ID}, 1, 1000000, 600000)`.execute(owner.kysely);
+
+    // AND DRIVE THE TASK ITSELF TO `running`. CI caught the first version assuming `startRun` did this: it opens a
+    // TASK RUN (`task_runs.state = 'running'`), which is a different row from the TASK. `taskOne` stayed `queued`,
+    // so every `running→paused` assertion compared 'queued' against 'paused' and the whole paused matrix failed for
+    // a fixture reason rather than a behavioural one. `queued→running` is legal (WORKFLOW §4), and asserting the
+    // result keeps the setup from silently not establishing its own precondition.
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskOne, 'queued', 'running'));
+    const state = await owner.kysely.selectFrom('tasks').select(['state']).where('id', '=', taskOne).executeTakeFirst();
+    expect(state?.state, 'the fixture must leave taskOne RUNNING or the paused matrix proves nothing').toBe('running');
   });
 
   // ── AUTHORIZATION ────────────────────────────────────────────────────────────────────────────────────────
@@ -230,7 +239,9 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
   });
 
   test('a DISCARD is recorded exactly as loudly as a confirm, and the row is never deleted', async () => {
-    await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    // Cleared FIRST: ADMIN-002 says clearing opens the review, and `reviewHeldWork` now enforces that order.
+    const a = await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    await clearStop(product, { ...asOwner(), stopId: (a as { status: 'ok'; stopId: string }).stopId, at: at() });
     const held = await heldRows();
     const heldWorkId = held[0]!.id;
     expect(await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'discarded', at: at() })).toEqual({ status: 'ok', heldWorkId });
@@ -241,7 +252,8 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
   });
 
   test('reviewing the same item twice is refused — a decision is not replaceable', async () => {
-    await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    const a = await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    await clearStop(product, { ...asOwner(), stopId: (a as { status: 'ok'; stopId: string }).stopId, at: at() });
     const heldWorkId = (await heldRows())[0]!.id;
     expect((await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'confirmed', at: at() })).status).toBe('ok');
     expect(await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'discarded', at: at() })).toEqual({
