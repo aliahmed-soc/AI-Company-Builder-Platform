@@ -1957,3 +1957,58 @@ modified files and an uncommitted migration 0050 — and declined to touch anyth
 demonstrates the AGENT noticed and reasoned its way out, **not** that the scheduler holds a lock. The app exposes
 no `lastRunAt` and writes no run log, and there is no Windows Task Scheduler entry — it is app-level only, so it
 runs only while the app is open.
+
+
+---
+
+## Window 20 — 2026-08-01 (early hours) — CI was red for five commits and nobody was looking
+
+### The finding that mattered most
+
+**CI had been failing on five consecutive commits** (`215babf`, `0a7f00b`, `4fbebe8`, `d5d137f`, `5c45359`) while I
+kept running the local gate and pushing. The local gate cannot see these failures: every failing suite is
+real-PostgreSQL and SKIPS locally. So "green locally" said nothing about the only evidence that counts, and five
+pushes went out on it. Reading CI is not a finalization step — it is the check that the last commit was real.
+
+### Three failures, two causes, both mine
+
+1. **A seventh casualty of the over-broad reset-list edit**, this time INSIDE a SQL string literal:
+   `where table_name = 'approval_decisions', 'emergency_stops', 'held_work'` — a syntax error rather than a harmless
+   extra array element. My earlier revert swept only the call-argument form `(...)`; this one is `= '...'`.
+   **That is the wrong-anchor lesson repeating inside the fix for it.** The re-sweep this time enumerated ALL 73
+   occurrences repo-wide and classified each by whether its LINE looks like SQL — a different anchor, one suspect,
+   exactly this one.
+2. **`emergency_stops` and `held_work` were in `TENANT_TABLES` but not in `EXPECTED_GRANTS`**, so P1-014 compared
+   their real INSERT/SELECT against `[]`.
+
+### Two things that were nominally done and substantively missing
+
+- **The refusal did not say WHAT halted it.** `denial_reason: 'emergency_stopped'` cannot distinguish "the account
+  is halted" from "one task is" — identical evidence for very different halts. `tool.call_requested` now carries
+  `stop_scopes` (comma-joined closed vocabulary, no target ids, only on that one reason).
+- **Four of the five enforceable scopes had never been proven through the dispatcher.** The contract suite proves
+  the covering relation on paper; a scope can be correct there and still never fire because the dispatcher cannot
+  populate the identity it matches on. Ten real-PG cases now prove each scope twice — halts what it claims, does
+  not halt what it should not — including a cross-account and a sibling-company stop.
+- **And gate 8 was measured for ONE scope while CDR-072 §G4 promised "every scope".** A gap between my own design
+  record and my own test. The covering case and the timing are now one case per scope, deliberately not splittable
+  again, driven off `ENFORCEABLE_STOP_SCOPES` with a guard asserting the keys match exactly.
+
+### Gate 8 is met for FIVE of seven, and that is the honest number
+
+`capability` and `integration` never produce `emergency_stopped` — they deny as `stop_unavailable` — so there is no
+halt to time. A timing table showing seven green rows would be the exact false assurance CDR-072 §0 is about.
+
+### A near-miss worth a guard
+
+My first draft of the withheld-column assertions named `work_kind`/`work_id`; the real column is `task_id`.
+`not.toContain('work_id')` PASSES against a table with no such column — a vacuous assertion that reads exactly like
+a real one. `expectUpdatableColumnsExactly` now resolves every named column against `information_schema.columns`
+first. The suite's older hand-written forbidden-lists are still eye-checked only; widening the helper across them
+is flagged, not done quietly here.
+
+### State at the end of this window
+
+Branch `p6-007-emergency-stop` at `9ea6a2c`, tree clean and pushed. CI on `791bd56` GREEN with **227/227 files and
+3220/3220 tests, ZERO SKIPS** — the red streak is closed. Runs for `d8460ac` and `9ea6a2c` followed; `d8460ac`'s was
+cancelled by the newer push (concurrency group), which is expected and is not a failure.
