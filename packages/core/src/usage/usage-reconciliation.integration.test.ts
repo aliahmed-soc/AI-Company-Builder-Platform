@@ -346,8 +346,13 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
   });
 
   test('a malformed, partial or negative tolerance is refused', async () => {
+    // ⚠️ `undefined` IS DELIBERATELY ABSENT FROM THIS LIST, and the reason is worth keeping. The `reconcile`
+    // helper above gives `threshold` a DEFAULT parameter, and a JavaScript default fires precisely when the
+    // argument is `undefined` — so passing it here substitutes the valid ZERO_TOLERANCE and the call succeeds.
+    // The test asserting otherwise failed in CI for exactly that reason: it was measuring the helper, not the
+    // guard. A missing threshold IS refused, and is proven where no default can mask it —
+    // `usage-input-validation.test.ts`, which calls the use case directly and needs no database.
     for (const bad of [
-      undefined,
       null,
       42,
       'zero',
