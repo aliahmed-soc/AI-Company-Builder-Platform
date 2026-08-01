@@ -22,6 +22,24 @@ These are **never** collapsed into one ambiguous figure:
 - **Credit transactions** — append-only (invariant 10): grants (plan reset, bonus, purchase), reservations (run preflight), consumptions (run completion), releases (cancel), refunds/corrections (compensating entries referencing the original txn). Balance is always derived; the two-runs-one-credit race resolves via atomic reservation (AT-025 pattern; BILL-002 acceptance).
 - **Account usage rollups** — per `(account_id, period)`: derived aggregation across the account's companies (the ADR-003 owner refinement). Maintained incrementally, **rebuildable from the ledger** (it is a projection, never a source of truth). PRD note: requires the tracked USAGE-001 amendment (ADR-003 §16) — architecture implements it regardless of amendment timing since the owner decision is binding.
 
+  **IMPLEMENTED (ACBP-P6-009; CDR-073; migration 0051).** One correction to the sentence above, because it
+  shaped the build: the rollup is **rebuild-first**, not incrementally maintained. `rebuildAccountUsageRollup`
+  recomputes a whole `(account, period)` from the ledger and REPLACES the stored figures, so rebuilding twice is
+  idempotent; an additive incremental write is exactly what would double a total on a replayed maintenance
+  message. "Maintained incrementally" is therefore satisfied by re-deriving on demand rather than by accumulating
+  deltas — which is also what makes the projection disposable, as the same sentence requires.
+
+  Two lanes only — technical usage and the provider-cost estimate. **No billable, entitlement or credit lane**,
+  because D-02 is open and this design must support flat, usage-based and hybrid pricing without schema change; a
+  `billable_*` column would bake a pricing model into the schema ahead of the decision that determines it, and
+  credits already have their own append-only ledger.
+
+  **Reconciliation** (`reconcileAccountUsageRollup`, launch gate 7) recomputes from the ledger by the SAME path a
+  rebuild uses — never by re-reading the projection, which would report "no drift" in precisely the case the
+  check exists to catch — compares per lane, repairs on any drift, and alerts only past the owner's threshold.
+  **The threshold VALUE is an open owner decision** (CDR-073 §3.1): it is a required parameter, defaulted nowhere
+  in the packages, because a wrong default is silent by construction when the alert is what makes drift visible.
+
 ## 3. Controls (ADR-003 pre-beta list — where each lives)
 
 | Control | Component |

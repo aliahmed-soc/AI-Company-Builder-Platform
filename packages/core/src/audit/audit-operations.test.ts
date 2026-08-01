@@ -67,6 +67,11 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // The credit ledger (ACBP-P5-014; CDR-058) - deliberately approved additions.
       'credit.reserve',
       'credit.settle',
+      // Account usage rollups (ACBP-P6-009; CDR-073 §1-G15) — deliberately approved additions. `usage.correct` is
+      // the compensating-record half of trust-critical #13; `usage.reconcile` is launch gate 7's drift check.
+      // There is deliberately NO `usage.rebuild`: a bare rebuild changes no fact.
+      'usage.correct',
+      'usage.reconcile',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
@@ -140,6 +145,8 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['worker.set_state']).toBe('worker.state_changed');
     expect(AUDITED_OPERATIONS['worker.run_start']).toBe('worker.started');
     expect(AUDITED_OPERATIONS['worker.run_fail']).toBe('worker.failed');
+    expect(AUDITED_OPERATIONS['usage.correct']).toBe('usage.corrected');
+    expect(AUDITED_OPERATIONS['usage.reconcile']).toBe('usage.rollup_reconciled');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {

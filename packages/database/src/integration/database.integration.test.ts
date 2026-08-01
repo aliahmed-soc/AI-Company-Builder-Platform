@@ -15,7 +15,7 @@ async function drop(client: DatabaseClient, table: string): Promise<void> {
 async function cleanup(client: DatabaseClient): Promise<void> {
   // identity_webhook_receipts + users are the ACBP-P1-002 tables (migration 0002); dropped here so
   // this foundation suite starts from a clean slate regardless of applied domain migrations.
-  for (const t of ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
+  for (const t of ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'usage_corrections', 'account_usage_rollups', 'usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users', '_acbp_migration_probe', '_it_a', '_it_c', '_t_rollback', 'kysely_migration', 'kysely_migration_lock', '_it_migration', '_it_migration_lock']) {
     await drop(client, t);
   }
 }
@@ -62,12 +62,25 @@ describe.skipIf(!hasTestDatabase)('database integration (real PostgreSQL)', () =
 
   test('migrations reverse fully and re-apply restores every managed table', async () => {
     await migrateToLatest(client); // ensure applied (idempotent)
-    // Reverse each applied migration batch until none remain (robust to any number of migrations).
-    for (let i = 0; i < 50; i++) {
+    // Reverse each applied migration batch until none remain.
+    //
+    // THE BOUND USED TO BE 50 AND THE COMMENT CLAIMED "robust to any number of migrations". It was neither: each
+    // `migrateDown` reverses exactly ONE migration, so at 51 migrations (ACBP-P6-009's 0051) the loop ran out one
+    // short, left `_acbp_migration_probe` applied, and failed downstream as `expected 1 to be +0` — a message that
+    // says nothing about the cause and sends the reader looking at the newest migration's `down()`.
+    //
+    // So the bound is now generous AND the exit reason is asserted: running out of iterations is a DIFFERENT
+    // outcome from draining the stack, and the old loop could not tell them apart.
+    let drained = false;
+    for (let i = 0; i < 1000; i++) {
       const down = await migrateDown(client);
       expect(down.error).toBeUndefined();
-      if ((down.results?.length ?? 0) === 0) break;
+      if ((down.results?.length ?? 0) === 0) {
+        drained = true;
+        break;
+      }
     }
+    expect(drained, 'the reversal loop hit its iteration cap instead of draining the migration stack — raise the cap').toBe(true);
     const afterDown = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name in ('_acbp_migration_probe', 'users', 'identity_webhook_receipts')`.execute(client.kysely);
     expect(afterDown.rows[0]?.n).toBe(0); // every migration-managed table dropped by down()
     const reapply = await migrateToLatest(client);

@@ -259,6 +259,15 @@ export const AUDIT_EVENTS = {
   // entries, not runs.
   'credit.reserved': { schemaVersion: 1, subjectType: 'credit_transaction' },
   'credit.settled': { schemaVersion: 1, subjectType: 'credit_transaction' },
+  // Account usage rollups (ACBP-P6-009; CDR-073 §1-G15). Registered HERE, in the slice that builds their
+  // producers — `recordUsageCorrection` and `reconcileAccountUsageRollup` both emit below. An earlier slice
+  // registered these names ahead of their producers and `audit-operations.test.ts`'s no-orphan-events guard
+  // failed; `DEFERRED_REGISTERED_EVENTS` was deliberately NOT used to route around it.
+  //
+  // There is deliberately no `usage.rollup_rebuilt`: a bare rebuild recomputes a projection and changes no fact
+  // (CDR-073 §1-G1), and the only production path that triggers one is reconciliation, which records it below.
+  'usage.corrected': { schemaVersion: 1, subjectType: 'usage_correction' },
+  'usage.rollup_reconciled': { schemaVersion: 1, subjectType: 'account' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -1094,6 +1103,83 @@ export function creditSettled(input: {
     settlement: input.settlement,
     credits: input.credits,
     balance_after: input.balanceAfter,
+  });
+}
+
+/**
+ * A compensating usage entry was appended (ACBP-P6-009; CDR-073 §1-G15; trust-critical #13).
+ *
+ * SUBJECT = THE CORRECTION ROW, not the event it compensates. A reader tracing "who adjusted this account's usage,
+ * and why" follows corrections; the original event is immutable and already carries its own durable record. Making
+ * the corrected event the subject would file the adjustment under the very row that did not change.
+ *
+ * The deltas are carried per lane and are `<= 0` (§1-G10a). Their SIGNS are the point: an audit line saying only
+ * that a correction happened cannot answer how much was taken off, which is the question this event exists for.
+ *
+ * `has_reason` is a BOOLEAN, matching `task.deleted` and `worker.state_changed`: the free text the owner wrote is
+ * theirs and stays out of the audit payload. It is not lost — `reason` is a column on the correction row, and the
+ * subject id above is exactly how a reader reaches it.
+ */
+export function usageCorrected(input: {
+  readonly correctionId: string;
+  readonly correctsUsageEventId: string;
+  readonly eventCountDelta: number;
+  readonly inputTokensDelta: number;
+  readonly outputTokensDelta: number;
+  readonly estimatedCostMicrosDelta: number;
+  readonly hasReason: boolean;
+}): AuditEvent {
+  return makeEvent('usage.corrected', input.correctionId, 'success', {
+    corrects_usage_event_id: input.correctsUsageEventId,
+    event_count_delta: input.eventCountDelta,
+    input_tokens_delta: input.inputTokensDelta,
+    output_tokens_delta: input.outputTokensDelta,
+    estimated_cost_micros_delta: input.estimatedCostMicrosDelta,
+    has_reason: input.hasReason,
+  });
+}
+
+/**
+ * An `(account, period)` rollup was reconciled against the ledger (ACBP-P6-009; CDR-073 §1-G15; launch gate 7).
+ *
+ * SUBJECT = THE ACCOUNT, because reconciliation is a statement about an `(account, period)` pair rather than about
+ * any one row — and on the path that matters most, the drift-from-a-missing-projection case, there is no rollup row
+ * to name as a subject at all.
+ *
+ * THE PER-LANE DRIFT IS IN THE PAYLOAD, AND THAT IS THE WHOLE POINT. An event recording only that reconciliation
+ * RAN cannot answer whether the number moved — the nominal-versus-substantive defect already corrected for
+ * `policy.changed` and `emergency_stop.activated`. A reader must be able to ask "did this account's total change,
+ * by how much, in which lane, and was it repaired?" and get an answer from the audit trail alone.
+ *
+ * `lanes_exceeding_threshold` is reported SEPARATELY from the drift because they answer different questions: the
+ * drift is what was wrong, the lane list is what crossed the owner's alerting tolerance. A lane can drift without
+ * alerting, and recording only the alert would hide every sub-threshold discrepancy — the slow, silent kind.
+ *
+ * The lane list is a comma-joined STRING because audit metadata is a flat scalar map with no arrays (the
+ * `company.updated` precedent). An EMPTY string means no lane exceeded the tolerance — the field is always
+ * present, so empty is a real answer rather than a missing one.
+ */
+export function usageRollupReconciled(input: {
+  readonly accountId: string;
+  readonly periodStart: string;
+  readonly eventCountDrift: number;
+  readonly inputTokensDrift: number;
+  readonly outputTokensDrift: number;
+  readonly estimatedCostMicrosDrift: number;
+  readonly lanesExceedingThreshold: readonly string[];
+  readonly rebuildApplied: boolean;
+  /** Whether a projection existed at all. `false` with non-zero drift means the rollup was MISSING, not stale. */
+  readonly storedExisted: boolean;
+}): AuditEvent {
+  return makeEvent('usage.rollup_reconciled', input.accountId, 'success', {
+    period_start: input.periodStart,
+    event_count_drift: input.eventCountDrift,
+    input_tokens_drift: input.inputTokensDrift,
+    output_tokens_drift: input.outputTokensDrift,
+    estimated_cost_micros_drift: input.estimatedCostMicrosDrift,
+    lanes_exceeding_threshold: input.lanesExceedingThreshold.join(','),
+    rebuild_applied: input.rebuildApplied,
+    stored_existed: input.storedExisted,
   });
 }
 

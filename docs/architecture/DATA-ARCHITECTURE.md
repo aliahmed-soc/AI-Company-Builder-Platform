@@ -369,10 +369,35 @@ Status: Proposed. **Logical model — not final migrations.** Vendor-neutral; AD
 <!-- IMPLEMENTED for MODEL CALLS (ACBP-P2-003; CDR-026 §6): table `usage_events` (migration 0017) — company-owned,
      dual-keyed FORCE RLS, APPEND-ONLY (SELECT+INSERT grants only; NO update/delete grant, NO update policy —
      invariant 9). v1 `kind = 'model_call'`; `estimated_cost_micros` is integer micro-units (never a float);
-     `error_category` present iff `outcome='error'` (the seven-value taxonomy). Tool/worker usage kinds + the account
-     usage rollup arrive with their tickets (P5-004/P5-014/P6-009). -->
+     `error_category` present iff `outcome='error'` (the seven-value taxonomy). Tool/worker usage kinds arrive with
+     their tickets (P5-004); the account usage rollup is IMPLEMENTED below. -->
 
 | Account usage rollup | A | (account_id, period) | aggregates usage events across companies | maintained | M (derived; rebuildable from ledger) | — | ≥ billing retention | reconciliation | MVP (ADR-003) |
+<!-- IMPLEMENTED (ACBP-P6-009; CDR-073): tables `account_usage_rollups` + `usage_corrections` (migration 0051).
+     The rollup is ACCOUNT-OWNED with RLS keyed on `account_id` ALONE — the `credit_transactions` shape, for the
+     same reason: the figure spans companies and the company GUC holds one at a time. It is a MUTABLE PROJECTION
+     and the ONLY table here whose values are meant to be overwritten, because every figure is reproducible from
+     the ledger; when the two disagree the LEDGER is right (§0 of CDR-073).
+     Period = the UTC calendar month, `date_trunc('month', created_at at time zone 'UTC')`. That expression exists
+     in THREE places (the contract's `usagePeriodStart` and both aggregation queries); no shared implementation is
+     possible across TS and SQL, so an integration test running the production aggregation under a UTC+14 session
+     zone is what holds them together.
+     Figures are `bigint`, NOT integer: `sum(estimated_cost_micros)` in micro-units overflows int4 at ~2,147 cost
+     units per account-period. They therefore cross the driver as STRINGS (no int8 type parser in this repo) and
+     must be read through `toRollupFigure`.
+     `usage_corrections` is the compensating ledger (trust-critical #13): APPEND-ONLY (SELECT+INSERT only), deltas
+     `<= 0` so a correction can only ever REDUCE, bounded per lane against the corrected event by a trigger, and at
+     most ONE per event — the three together are what keep a rollup lane from going negative. A correction belongs
+     to the CORRECTED EVENT's period, not its own, so a July event corrected in August repairs July.
+     Cross-company aggregation uses `elevateToCompanyScope` (account ownership), never `runInCompanyScope`
+     (actor membership) — otherwise the account total would differ between two owners of the same account. -->
+
+<!-- NOT CLOSED by P6-009, recorded so it is not mistaken for done: the backlog's "company-move attribution".
+     A company cannot change accounts today (`companies_update`'s WITH CHECK pins `account_id`), so it is
+     structurally unreachable rather than implemented. If a move path is ever added, `usage_events` rows keep the
+     OLD `account_id` while the company enumerates under the NEW account — the history would disappear from BOTH
+     rollups with no error. Such a ticket owes this ledger a migration. -->
+
 | Credit transaction | A/C | credit_txn_id | grants/spends/refunds/expiry; corrections reference originals | recorded | **A** (invariant 10) | — | ≥ billing retention | BILL-002 | MVP |
 | Notification | C/A | notification_id | references source event | queued→delivered/failed | M (state) | — | Short (config) | delivery log | Post-MVP |
 | Emergency-stop state | C/A/G | (scope, scope_id) | checked by dispatcher | active→cleared | M | — | History permanent | emergency_stop.* | MVP |

@@ -36,6 +36,9 @@ export * from './billing/index.js';
 export * from './policy/index.js';
 // Emergency-stop scopes and the covering relation (ACBP-P6-007; CDR-072; ADMIN-001; invariant 14).
 export * from './stops/index.js';
+// Account usage rollups: the period derivation and the figure arithmetic the rebuild and reconciliation share
+// (ACBP-P6-009; CDR-073; USAGE-001 amended). The rollup is a PROJECTION — the ledger is the truth.
+export * from './usage/index.js';
 // Approvals: request content (APPR-002), the five decision paths (APPR-007), and the actor-type restriction that
 // makes invariant 5 a type rather than a check (ACBP-P6-003a; CDR-068).
 export * from './approvals/index.js';

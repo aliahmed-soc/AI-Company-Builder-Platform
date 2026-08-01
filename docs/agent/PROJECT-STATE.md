@@ -67,6 +67,26 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-009 Account usage rollups and reconciliation — IMPLEMENTATION COMPLETE, AWAITING OWNER GATES**
+  (CDR-073; USAGE-001 amended; ACT-004; ADR-013/ADR-003 §16; launch gate 7; trust-critical #13/#14). Branch
+  `p6-009-usage-rollups`, draft PR #68, migration **0051** (`account_usage_rollups`, `usage_corrections`).
+  Built by TWO SESSIONS on one branch: Slices 1–3 and 5 here, Slice 4 by a concurrent session, coordinated by the
+  owner. **The backlog row is deliberately still `Ready | Planned`** — setting a ticket Done, marking the PR
+  ready, and merging are owner gates, and none has been taken.
+  - **Closes trust-critical #13 and #14 in full.** Closes only the ROLLUP HALF of #12: a `SUM` cannot double
+    count unless the ledger holds duplicates, and suppressing duplicate delivery is P6-011's. Do not read a
+    later "#12 done" line as covering this.
+  - **THREE independent review passes** (CDR-073 §5/§6), the third after CI was already green. It found no
+    Blockers, three HIGH, three MEDIUM, eight LOW — every HIGH being a real control that no test measured, each
+    now pinned by a test verified to fail when the control is deleted.
+  - **Still owner-gated and NOT closed by this line:** the **drift threshold value** (§3.1 — a required
+    parameter, defaulted nowhere) and **who may trigger a rebuild** (§3.2 — no `usage:rebuild` action exists;
+    the rebuild is gated owner-only on `usage:read` as the most restrictive available posture, which a ruling
+    can narrow but need not widen).
+  - **Deliberately not actioned, not overlooked:** the accumulator's safe-integer guard has no test (reaching it
+    needs ~2^53 tokens in one period, and a fixture faking that would misrepresent its own reachability), and
+    the backlog's "company-move attribution" is structurally unreachable rather than implemented.
+
 - **ACBP-P6-007 Emergency stop and resume review — DONE** (CDR-072; ADMIN-001/002; COMP-006; invariant 14; launch
   gate 8; trust-critical #9/#10). Merged as squash `1f3096d`, PR #67; exact-head CI `30705908508` on `19f5013` and
   exact-main `30706308683` on `1f3096d` both green with **ZERO SKIPS** (229 files / 3294 tests); branch deleted

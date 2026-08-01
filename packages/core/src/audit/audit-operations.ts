@@ -70,6 +70,8 @@ import {
   workerRunStarted,
   workerRunFinished,
   taskCompleted,
+  usageCorrected,
+  usageRollupReconciled,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -187,6 +189,11 @@ export const AUDITED_OPERATIONS = {
   // Task completion (ACBP-P5-011; TASK-005). Distinct from `run.*`: a succeeded RUN is not a completed TASK, and this
   // is the operation that asserts the second fact once an artifact exists to justify it.
   'task.complete': 'task.completed',
+  // Account usage rollups (ACBP-P6-009; CDR-073). Correcting recorded usage and reconciling the projection against
+  // the ledger. There is deliberately no `usage.rebuild` operation: a bare rebuild changes no fact, and the only
+  // production path that triggers one is reconciliation, which records it.
+  'usage.correct': 'usage.corrected',
+  'usage.reconcile': 'usage.rollup_reconciled',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -225,6 +232,11 @@ export type ApprovalAuditedOperation = 'approval.request' | 'approval.decide' | 
 // halting everything in a scope regardless of either. Different authority, different reader — the same reasoning
 // that separated APPROVAL from POLICY, and POLICY from RUN.
 export type EmergencyStopAuditedOperation = 'emergency_stop.activate' | 'emergency_stop.clear' | 'emergency_stop.work.review';
+// Account usage (ACBP-P6-009; CDR-073). Its OWN domain rather than folded into BILLING: `credit.*` is the
+// user-visible CREDIT ledger, whereas these are TECHNICAL USAGE and the projection over it — two of the five
+// numbers `USAGE-AND-BILLING` §1 keeps separate, and collapsing their audit domains would be the first step to
+// collapsing the numbers.
+export type UsageAuditedOperation = 'usage.correct' | 'usage.reconcile';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -246,10 +258,11 @@ export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[]
 export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected', 'approval.revoke', 'approval.revoke_failed', 'approval.consume'];
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 export const EMERGENCY_STOP_AUDITED_OPERATION_IDS: readonly EmergencyStopAuditedOperation[] = ['emergency_stop.activate', 'emergency_stop.clear', 'emergency_stop.work.review'];
+export const USAGE_AUDITED_OPERATION_IDS: readonly UsageAuditedOperation[] = ['usage.correct', 'usage.reconcile'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation | EmergencyStopAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation | EmergencyStopAuditedOperation | UsageAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -403,6 +416,17 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
       return (subjectId) => emergencyStopCleared({ stopId: subjectId, scope: 'account_wide', pendingReviewCount: 0 });
     case 'emergency_stop.work.review':
       return (subjectId) => emergencyStopWorkReviewed({ stopId: subjectId, decision: 'confirmed', heldWorkId: subjectId });
+    // Account usage (ACBP-P6-009; CDR-073). Representative driver values, as above: what this registry proves is
+    // that each operation HAS a factory whose event name matches the map. The real deltas, the real per-lane drift
+    // and the real `rebuild_applied` are asserted against the STORED payload in
+    // `usage-correction-service.integration.test.ts` and `usage-reconciliation.integration.test.ts` — suites that
+    // exist, which is the correction the emergency-stop comment above records the hard way.
+    case 'usage.correct':
+      return (subjectId) =>
+        usageCorrected({ correctionId: subjectId, correctsUsageEventId: subjectId, eventCountDelta: 0, inputTokensDelta: -1, outputTokensDelta: 0, estimatedCostMicrosDelta: 0, hasReason: true });
+    case 'usage.reconcile':
+      return (subjectId) =>
+        usageRollupReconciled({ accountId: subjectId, periodStart: '2026-08-01', eventCountDrift: 0, inputTokensDrift: 0, outputTokensDrift: 0, estimatedCostMicrosDrift: 0, lanesExceedingThreshold: [], rebuildApplied: false, storedExisted: true });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

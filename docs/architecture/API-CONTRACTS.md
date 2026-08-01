@@ -60,6 +60,16 @@ Every state-changing request carries / resolves, where applicable:
      says 'new runs' and is what led this ticket's first schema astray.
      STILL OPEN on this row: list / get(+versions) / download HTTP surfaces, and rate usefulness (J-12). -->
 | Usage | get company usage, get account rollup, get ledger | period filters | usage views separating technical usage / provider cost / billable / entitlement / credits (ADR-013 §5) | Owner; account rollup = account owner | n/a (read) | — | USAGE-001/002, BILL-002 |
+<!-- ACCOUNT ROLLUP IMPLEMENTED AS A USE CASE, NOT YET AS A ROUTE (ACBP-P6-009; CDR-073). `readAccountUsageRollup`
+     enforces this row's rule directly — OWNER-ONLY via `usage:read`, checked against the caller's ACCOUNT
+     membership, because a total that spans companies is one RLS cannot narrow. `recordUsageCorrection` is
+     owner-only via the separate `usage:correct`.
+     `rebuildAccountUsageRollup` has NO route and NO authz action of its own, deliberately: WHO MAY TRIGGER A
+     REBUILD is an open owner decision (CDR-073 §3.2). It is nevertheless gated owner-only via `usage:read`,
+     because it RETURNS the same figures the read does — without that, a viewer refused by the read could call the
+     rebuild and receive them anyway. Owner-only is the most restrictive posture available, so a later ruling can
+     narrow it to platform-only without having to widen anything. -->
+
 | Billing | get subscription, portal handoff link, purchase credits, cancel | — | entitlement view, portal URL | Account owner | Purchase idempotent via provider | billing audits; webhook signature-verified | BILL-001..006 (Phase 7) |
 | Activity | feed (paged, filtered), SSE stream | filters | events with proposed-vs-executed marking (ACT-003) | Company member | n/a (read) | — | ACT-001..005, DEC-001 |
 | Audit | export range (admin/owner), integrity status | date range | redacted audit export | Owner (own company), admin (reason-captured) | n/a (read) | export itself audited | ACT-002, NFR-008 |
