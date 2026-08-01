@@ -17,7 +17,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
 import { usagePeriodStart } from '@acbp/contracts';
-import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, toRollupFigure, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, toRollupFigure, AccountUsageRollupRepository, type DatabaseClient } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
@@ -175,26 +175,48 @@ describe.skipIf(!hasTestDatabase)('account_usage_rollups + usage_corrections (re
 
   // ── the two derivations that must agree, or every total is quietly wrong ───────────────────────────────────
 
-  test('THE SQL AND TYPESCRIPT PERIOD DERIVATIONS AGREE on the same rows (CDR-073 §1-G8)', async () => {
-    // If these ever diverge, one path files an event under August and the other under July, the rollup and the
-    // reconciliation disagree forever, and the drift looks like a data problem rather than a code one.
-    const instants = [
-      '2026-07-31T23:30:00.000Z', // late July in UTC — already August in UTC+2
-      '2026-08-01T00:30:00.000Z', // early August in UTC — still July in UTC-2
-      '2026-12-31T23:59:59.000Z',
-      '2027-01-01T00:00:00.000Z',
-      '2026-02-15T12:00:00.000Z',
-    ];
-    for (const iso of instants) {
-      const id = await insertEvent(accountA, companyA1, { createdAt: iso });
-      const row = await asApp(scope(accountA, companyA1), async (k) =>
-        sql<{ bucket: string }>`
-          select to_char(date_trunc('month', created_at at time zone 'UTC'), 'YYYY-MM-DD') as bucket
-          from usage_events where id = ${id}::uuid
-        `.execute(k),
-      );
-      expect(row.rows[0]!.bucket, `SQL and TS must agree for ${iso}`).toBe(usagePeriodStart(new Date(iso)));
-    }
+  test('THE PRODUCTION AGGREGATION PINS UTC — run under a session zone 14 hours away (CDR-073 §1-G8)', async () => {
+    // WHAT THE FIRST VERSION OF THIS TEST DID WRONG, recorded because it was this ticket's own §0 failure
+    // committed inside the assertion written to prevent it. It issued its OWN copy of
+    // `date_trunc('month', created_at at time zone 'UTC')` and compared that to `usagePeriodStart`. Two
+    // hand-written expressions agreeing proves nothing about the THIRD copy — the one inside `sumCompanyUsage`,
+    // which is the expression that actually decides a customer's bill. Deleting `at time zone 'UTC'` from BOTH
+    // repository queries left every assertion in this file green, because CI's server runs UTC and the two
+    // spellings are then byte-identical.
+    //
+    // So this version calls the PRODUCTION methods, under a session TimeZone 14 hours from UTC, where the pin is
+    // the only thing that can produce the expected answer. Remove it and this test fails; that is the whole
+    // point of it existing.
+    //
+    // `sumCompanyUsage`/`sumCompanyCorrections` have no other test in the repo, so this is also the only place
+    // either method is executed outside the service.
+    const zone = sql`set local timezone to 'Pacific/Kiritimati'`; // UTC+14, the largest standard offset there is
+
+    // 23:30 on 31 July UTC is already 13:30 on 1 AUGUST in UTC+14. The event belongs to JULY either way.
+    const julyBoundary = '2026-07-31T23:30:00.000Z';
+    const eventId = await insertEvent(accountA, companyA1, { createdAt: julyBoundary, inputTokens: 11, outputTokens: 5, costMicros: 70 });
+    expect(usagePeriodStart(new Date(julyBoundary)), 'the TypeScript half must bucket by UTC').toBe('2026-07-01');
+
+    const sums = await asApp(scope(accountA, companyA1), async (k) => {
+      await zone.execute(k);
+      const repo = new AccountUsageRollupRepository(k);
+      return { july: await repo.sumCompanyUsage('2026-07-01'), august: await repo.sumCompanyUsage('2026-08-01') };
+    });
+    expect(sums.july.eventCount, 'a 31-July-UTC event must sum into JULY even under a UTC+14 session').toBe(1);
+    expect(sums.july.inputTokens).toBe(11);
+    expect(sums.july.estimatedCostMicros).toBe(70);
+    expect(sums.august.eventCount, '...and must NOT appear in August').toBe(0);
+
+    // The corrections aggregation carries its own copy of the expression and buckets by the CORRECTED EVENT's
+    // month (§1-G10c), so it needs the same proof rather than inheriting this one.
+    await insertCorrection(accountA, companyA1, { eventId, input: -4 });
+    const corrections = await asApp(scope(accountA, companyA1), async (k) => {
+      await zone.execute(k);
+      const repo = new AccountUsageRollupRepository(k);
+      return { july: await repo.sumCompanyCorrections('2026-07-01'), august: await repo.sumCompanyCorrections('2026-08-01') };
+    });
+    expect(corrections.july.inputTokens, 'the correction follows its event into JULY').toBe(-4);
+    expect(corrections.august.inputTokens).toBe(0);
   });
 
   test('A CORRECTION BELONGS TO THE CORRECTED EVENT\'S PERIOD, not its own (CDR-073 §1-G10c)', async () => {

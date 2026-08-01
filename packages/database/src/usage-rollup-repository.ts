@@ -194,8 +194,13 @@ export class AccountUsageRollupRepository {
    * Sum the CURRENT COMPANY's usage events falling in `periodStart`'s UTC month.
    *
    * The bucket expression is `date_trunc('month', created_at at time zone 'UTC')`, which must agree exactly with
-   * `usagePeriodStart` in @acbp/contracts (CDR-073 §1-G8). The integration suite asserts the two agree on the
-   * same rows rather than trusting that they look similar.
+   * `usagePeriodStart` in @acbp/contracts (CDR-073 §1-G8).
+   *
+   * ENFORCED BY: `usage-rollups.integration.test.ts` → "THE PRODUCTION AGGREGATION PINS UTC", which calls THIS
+   * method under a `Pacific/Kiritimati` (UTC+14) session zone. Removing `at time zone 'UTC'` fails it. The
+   * earlier version of that test asserted agreement between two expressions it wrote ITSELF and never called
+   * this method, so the pin could be deleted with every suite still green — named here because "an integration
+   * test covers it" was exactly the claim that turned out to be empty.
    *
    * Confined to one company by the dual-keyed `usage_events` policy, so the caller must already have elevated.
    */

@@ -124,9 +124,25 @@ here would create the second source of truth G1 exists to prevent.
 ### G8 — Period is the UTC calendar month, derived identically everywhere
 
 `period_start date`, computed as `date_trunc('month', created_at at time zone 'UTC')`. Determinism requires the
-bucket be a **pure function of the event row**, computed the same way in the aggregate and in the rebuild — so the
-derivation exists in exactly one place and both paths call it. A local-timezone bucket would move events between
-periods depending on where the server runs, which is precisely the silent-wrongness failure of §0.
+bucket be a **pure function of the event row**. A local-timezone bucket would move events between periods
+depending on where the server runs, which is precisely the silent-wrongness failure of §0.
+
+**This gate previously claimed the derivation "exists in exactly one place and both paths call it". That was
+false, and it stayed false through the whole build.** The expression exists **three** times — `usagePeriodStart`
+in `@acbp/contracts`, and separately inside `sumCompanyUsage` and `sumCompanyCorrections` — and nothing collapses
+them into one implementation. TypeScript cannot express the SQL, so a shared implementation is not available; what
+is available is a test that fails when they diverge.
+
+Worse, the test written to guarantee this **also wrote its own fourth copy** and compared that to
+`usagePeriodStart`, never calling either repository method. Deleting `at time zone 'UTC'` from both production
+queries left every suite in the repo green, because CI runs UTC and the two spellings are then identical. The
+comment claiming an integration test held them together was the enforcement-claim failure this project treats as
+worse than no comment — committed inside the assertion written to prevent it.
+
+**ENFORCED BY:** `usage-rollups.integration.test.ts` → *"THE PRODUCTION AGGREGATION PINS UTC"*, which calls
+`sumCompanyUsage` and `sumCompanyCorrections` under a `Pacific/Kiritimati` (UTC+14) session zone and asserts a
+31-July-UTC event sums into July and not August. Verified by mutation: removing the pin fails that test and only
+that test. It is also the only place either method is executed outside the service.
 
 ### G9 — Corrections are a SEPARATE append-only table, not a relaxed `usage_events`
 

@@ -72,6 +72,14 @@ describe.skipIf(!hasTestDatabase)('account usage rollup determinism (real Postgr
     return r.rows[0]!.id;
   }
 
+  /** Seed a compensating correction directly (superuser). Deltas are `<= 0`, bounded by the corrected event. */
+  async function seedCorrection(account: string, company: string, eventId: string, d: { input: number; cost: number }): Promise<void> {
+    await sql`
+      insert into usage_corrections (account_id, company_id, corrects_usage_event_id, input_tokens_delta, estimated_cost_micros_delta, reason)
+      values (${account}::uuid, ${company}::uuid, ${eventId}::uuid, ${d.input}, ${d.cost}, 'determinism fixture')
+    `.execute(seed.kysely);
+  }
+
   const rebuild = (userId: string, accountId: string, period = PERIOD) =>
     rebuildAccountUsageRollup(app, { userId, accountId, periodStart: period });
 
@@ -136,6 +144,28 @@ describe.skipIf(!hasTestDatabase)('account usage rollup determinism (real Postgr
     // ...and it is not the degenerate agreement of two zeros.
     expect(asMemberOfNeither.figures.eventCount).toBe(2);
     expect(asMemberOfNeither.companyCount).toBe(2);
+  });
+
+  test('CORRECTIONS IN EVERY COMPANY REDUCE THE TOTAL — not only the last one summed (§1-G5/G10c)', async () => {
+    // WHY THIS CASE EXISTS. `sumCompanyCorrections` is confined to one company by its JOIN to the dual-keyed
+    // `usage_events`, NOT by its own RLS — `usage_corrections` is account-keyed. On that reading, hoisting the
+    // corrections sum out of the per-company loop looks like a harmless simplification. It is not: after the
+    // loop the company GUC holds whichever company sorted last by id, so every other company's corrections
+    // vanish from the total.
+    //
+    // Until this test, EVERY correction fixture in the repo lived in exactly one company of one account, so that
+    // refactor stayed green everywhere while over-stating the bill of any multi-company account. The assertion
+    // catches it whichever company happens to sort last, because both corrections must land.
+    const e1 = await seedEvent(accountA, companyA1, IN_PERIOD, { input: 100, output: 50, cost: 1000 });
+    const e2 = await seedEvent(accountA, companyA2, IN_PERIOD, { input: 200, output: 60, cost: 2000 });
+    await seedCorrection(accountA, companyA1, e1, { input: -10, cost: -100 });
+    await seedCorrection(accountA, companyA2, e2, { input: -20, cost: -200 });
+
+    const result = await rebuild(ownerBoth, accountA);
+    if (result.status !== 'ok') throw new Error(`expected ok, got ${result.status}`);
+    expect(result.figures.inputTokens, 'both corrections must apply: 300 - 10 - 20').toBe(270);
+    expect(result.figures.estimatedCostMicros, 'both corrections must apply: 3000 - 100 - 200').toBe(2700);
+    expect(result.figures.outputTokens, 'an uncorrected lane is untouched').toBe(110);
   });
 
   test('a PAUSED company still counts — deactivated-company history is preserved (§1-G4)', async () => {

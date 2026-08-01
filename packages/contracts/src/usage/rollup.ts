@@ -50,7 +50,12 @@ export type UsagePeriodStart = string;
  * on where the process runs, and the totals would differ between two correct-looking servers.
  *
  * The database side computes the same thing as `date_trunc('month', created_at at time zone 'UTC')`. Both paths
- * must agree; the integration suite asserts they do on the same rows rather than trusting this comment.
+ * must agree.
+ *
+ * ENFORCED BY: `usage-rollups.integration.test.ts` → "THE PRODUCTION AGGREGATION PINS UTC", which runs the
+ * repository's own aggregation under a UTC+14 session zone and checks a 31-July-UTC event sums into July. Note
+ * what is NOT claimed: there is no single shared implementation. The expression exists three times — here, in
+ * `sumCompanyUsage`, and in `sumCompanyCorrections` — and only that test holds them together.
  *
  * Throws on an invalid Date instead of formatting `NaN` into a period key — a malformed key would become a real
  * row and silently split one period in two.

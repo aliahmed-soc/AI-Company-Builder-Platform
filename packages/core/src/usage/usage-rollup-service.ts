@@ -81,6 +81,13 @@ async function computeAccountUsageFromLedger(
     const events = await rollups.sumCompanyUsage(periodStart);
     // Corrections are bucketed by the CORRECTED EVENT's period, not their own (§1-G10c), and are negative
     // or zero, so this is the same lane-wise addition.
+    //
+    // THIS SUM MUST STAY INSIDE THE LOOP. `sumCompanyCorrections` is confined to one company by its JOIN to the
+    // dual-keyed `usage_events`, NOT by its own RLS — `usage_corrections` is account-keyed — which makes hoisting
+    // it out look like a safe simplification. It is not: after the loop the company GUC holds whichever company
+    // sorted last, so every other company's corrections silently vanish from the total.
+    // ENFORCED BY: `usage-rollup-service.integration.test.ts` → "CORRECTIONS IN EVERY COMPANY REDUCE THE TOTAL",
+    // verified by mutation (hoisting fails that test and only that test).
     const corrections = await rollups.sumCompanyCorrections(periodStart);
     figures = addRollupFigures(figures, addRollupFigures(events, corrections));
   }
