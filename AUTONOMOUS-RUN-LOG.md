@@ -2068,3 +2068,29 @@ nothing. 14 cases now cover it, including a down-to-0049-and-back migration.
 **Process note, recorded rather than glossed:** the charter calls for an INDEPENDENT review and prior tickets used a
 subagent. This session's instructions forbid spawning agents unasked, so both passes were the author's own. They
 found real defects, but a self-review is not the independent pass the completion standard specifies.
+
+### STOPPED AT A GATE — P6-008 is the next ticket in order and it is UI
+
+`ACBP-P6-008 Decision Room and activity completion` — *"Ten queues; SSE; proposed-vs-executed marking with evidence
+joins"*, acceptance *"Ten queues correct counts; hollow-success rendering impossible"*, required tests *"Decision
+Room suite"*, architecture `diagrams/11`, inbox integrated. **The Decision Room is a screen.** That is the owner's
+standing FRONTEND/UI gate — no scaffolding, no component library, no layout, and the audit docs' recorded style is
+reference rather than pre-approval. Flagged, not started.
+
+**The next backend-only Phase 6 ticket is `ACBP-P6-009` (account usage rollups and reconciliation)** — Type
+Security, deps `ACBP-P5-014` which is Done, no UI, Ready. It is genuinely unblocked, and NOT started for two
+reasons worth stating rather than assuming: P6-007 is unmerged, so a P6-009 branch would have to fork from `main`
+and would add its migration and reset-list entries alongside P6-007's uncommitted-to-main `0050` — the exact shared
+files that produced SEVEN mis-edit casualties this session. And three owner decisions are open on P6-007 itself.
+
+Open owner decisions, all of them blocking a clean close:
+1. **The account-wide held-work gap** (CDR-072 §1-G6) — fan out per company, hold lazily at dispatch, or accept and
+   surface it.
+2. **The independent review pass** — both passes were the author's own; the charter specifies an independent one.
+3. **Ticket Done / PR #67 ready / merge**, and then branch cleanup.
+
+Plus two carried from earlier: whether policy evaluation point 1 refuses task planning, and whether new companies
+should start at L1 rather than L2.
+
+**Final state: branch `p6-007-emergency-stop` at `a469f92`, tree clean and pushed, exact-head CI `30682072277`
+GREEN — 228/228 files, 3251/3251 tests, ZERO SKIPS.** C: 50.1 GB free (21.8%).
