@@ -113,9 +113,25 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
 
       // ── FIRST WRITE HAS LANDED. Everything below THROWS on failure (§1-G8). ──
 
-      // Hold work that is in flight. `held_work` is company-scoped, so an account-wide stop holds the work of the
-      // company it was raised from; other companies' work is held when their own scope is evaluated at dispatch.
-      // Nothing is cancelled — diagram 13's queue is "visible, nothing lost".
+      // Hold work that is in flight. Nothing is cancelled — diagram 13's queue is "visible, nothing lost".
+      //
+      // ⚠️ KNOWN LIMITATION, FLAGGED FOR THE OWNER — AN `account_wide` STOP HOLDS ONLY THIS COMPANY'S WORK.
+      //
+      // The stop itself IS account-wide: its row carries `company_id NULL` and the dual-scope RLS predicate makes it
+      // visible to every company in the account, so the DISPATCHER denies their calls correctly. That half works.
+      //
+      // The HELD-WORK QUEUE does not. `held_work.company_id` is NOT NULL and its FK to `tasks` is tenant-pinned, and
+      // this transaction holds ONE company's scope — so only the company the stop was raised from gets rows here.
+      // Two consequences, and neither is cosmetic:
+      //   1. `heldCount` below, and `pending_review_count` on the clear event, count ONE company. A reader must not
+      //      take them as the account-wide total.
+      //   2. ADMIN-002's mandatory review therefore never sees the other companies' in-flight tasks. When the stop
+      //      is cleared their next tool call simply succeeds — so for those companies, work resumes WITHOUT a
+      //      confirm-or-discard decision, which is "nothing auto-fires on resume" holding for one company only.
+      //
+      // NOT FIXED HERE ON PURPOSE. Writing `held_work` rows for sibling companies means establishing each company's
+      // scope inside one account-wide operation, which is a tenant-isolation decision and an OWNER GATE under the
+      // charter — not something to guess at inside a stop implementation. CDR-072 §1-G6 records it as open.
       const inFlight = await sql<{ id: string }>`
         select id from tasks
         where company_id = ${scope.tenant.companyId}::uuid

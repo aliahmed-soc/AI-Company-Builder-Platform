@@ -99,8 +99,14 @@ ticket without a DONE line above it is genuinely in flight._
   dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
   scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
   gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
-  Still to come: EXECUTION-LOG entry, two independent review passes. **Ticket Done / PR ready / merge are owner
-  gates and have not been taken.**
+  **⚠️ OPEN, FOUND IN REVIEW — AN `account_wide` STOP HOLDS ONLY THE RAISING COMPANY'S WORK.** The halt itself is
+  account-wide (dual-scope RLS; the dispatcher denies every company's calls), but `held_work.company_id` is NOT NULL
+  with a tenant-pinned FK and activation runs inside ONE company's scope. So `held_count`/`pending_review_count`
+  count one company, and **ADMIN-002's mandatory review never sees the other companies' in-flight tasks** — on clear
+  their work resumes with no confirm-or-discard decision. Not fixed here: writing `held_work` for sibling companies
+  means establishing each company's scope inside one account-wide operation, which is a **tenant-isolation decision
+  and an OWNER GATE**. Three options recorded in CDR-072 §1-G6.
+  Still to come: the second review pass. **Ticket Done / PR ready / merge are owner gates and have not been taken.**
 
 - **ACBP-P6-006 Autonomy levels 1–2 — DONE** (CDR-071; APPR-008; PRD §12/§11.5). Merged as squash `fdc3065`,
   PR #66; exact-head CI `30649500593` on `a9a57f6` and exact-main `30650127201` on `fdc3065` both green with

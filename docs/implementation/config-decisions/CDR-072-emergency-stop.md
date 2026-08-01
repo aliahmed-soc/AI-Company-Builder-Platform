@@ -170,6 +170,29 @@ next, hold the task visibly."* So this is not an owner question — it is a reco
 
 The held-work queue is *"visible, nothing lost"* (diagram 13). A held item is a record, not a deletion.
 
+#### ⚠️ OPEN — an `account_wide` stop holds only the raising company's work (found in review, flagged not guessed)
+
+**The halt is account-wide; the held-work queue is not.** The stop row carries `company_id NULL` and the dual-scope
+RLS predicate makes it visible to every company in the account, so the dispatcher denies their calls correctly —
+that half is proven by the enforcement matrix. But `held_work.company_id` is `NOT NULL` with a tenant-pinned FK to
+`tasks`, and activation runs inside **one** company's scope, so only that company's in-flight tasks get rows.
+
+Two consequences, neither cosmetic:
+
+1. `held_count` on `emergency_stop.activated` and `pending_review_count` on `emergency_stop.cleared` count **one
+   company**, not the account. They are not false — the events are company-stamped — but a reader can over-read
+   them as the account-wide total.
+2. **ADMIN-002's mandatory review never sees the other companies' in-flight tasks.** When the stop is cleared their
+   next tool call simply succeeds, so for those companies work resumes with no confirm-or-discard decision. *"Nothing
+   auto-fires on resume"* currently holds **for the company the stop was raised from**.
+
+**Why it is not fixed in this ticket:** writing `held_work` rows for sibling companies means establishing each
+company's scope inside one account-wide operation. That is a tenant-isolation decision — the charter makes it an
+**owner gate**, and guessing at it inside a stop implementation is precisely the kind of unilateral call the gate
+exists to prevent. Options for the owner: (a) fan out per company inside the account, (b) hold lazily at dispatch
+when a call is refused, or (c) accept the limitation and say so in the operator surface. Each has different
+tenancy and review-queue consequences.
+
 ### G7 — Resume requires REVIEW, and nothing auto-fires
 
 ADMIN-002: clearing a stop opens a **mandatory** review — confirm or discard each held item — and
