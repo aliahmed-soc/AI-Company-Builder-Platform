@@ -334,6 +334,36 @@ another company's usage deltas to a caller with no membership there.** Left as-i
 narrowing it now would break the account-wide reconciliation read that is this ticket's whole point; flagged so
 the next reader treats a direct `usage_corrections` read as needing its own scoping decision.
 
+### The rollup counts EVERY `usage_events` kind, and today exactly one kind can exist
+
+`sumCompanyUsage` carries **no `kind` predicate**. That is correct today and only today: migration 0017:48 pins
+`kind in ('model_call')`, so there is nothing else to count. But 0017:16 calls `kind` *"the extension point (v1:
+only `model_call`; tool/worker usage arrive later)"* — the widening is planned, not hypothetical.
+
+The failure it would cause is this ticket's §0 mode in its purest form. Widening that CHECK makes every rollup
+begin counting the new kind, **including for already-closed, already-invoiced periods**, and §1-G11's drift check
+cannot detect it: reconciliation recomputes down the same query and would agree with itself. The number changes,
+the two sides still match, and nothing alerts.
+
+Filtering to `model_call` in the rollup was rejected as the fix, because it would **invent a requirement** — canon
+nowhere says which kinds are billable, and §1-G7 reserves the definition of the five numbers to the owner.
+Instead, `usage-rollups.integration.test.ts` pins the CHECK's admitted set to exactly `{model_call}` and fails if
+it widens. That is a forcing function, not an answer: whoever adds `tool_call` must decide, in that moment,
+whether it is billable usage and what happens to periods already closed.
+
+### Corrections are cascade-deleted with their parent event, which no application path can reach
+
+`usage_corrections_event_fk` is `ON DELETE CASCADE` (0051:97), so deleting a `usage_events` row silently removes
+the corrections that compensate it — on a ledger §1-G9 calls append-only. Recorded because a reader who assumes
+append-only means indestructible would be wrong.
+
+It is unreachable from the product: the app role holds only `SELECT, INSERT` on `usage_events` (0017:70) and no
+DELETE grant, so the cascade can fire only for a migration, a superuser, or a cascade from account/company
+deletion (0017:46-47). Not narrowed to `NO ACTION`, because the account/company cascade is the intended teardown
+path and blocking it would leave orphaned corrections behind a deleted tenant. A prior version of the
+`ALL_TABLES` note in `two-tenant-harness.ts` misread this FK as `NO ACTION` and claimed the drop order "raises
+23503"; it does not, and the comment now says so.
+
 ## §3 Owner gates raised by this ticket
 
 1. **The drift threshold value** (launch gate 7: *"drift beyond threshold alerts"*). The mechanism is built and

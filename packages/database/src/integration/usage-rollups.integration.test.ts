@@ -509,4 +509,55 @@ describe.skipIf(!hasTestDatabase)('account_usage_rollups + usage_corrections (re
     `.execute(su.kysely);
     expect(rows.rows[0]!.ok).toBe(false);
   });
+
+  test('the usage_events `kind` CHECK still admits EXACTLY {model_call} — widening it is a billing decision, not a schema tweak', async () => {
+    // WHY THIS GUARD EXISTS, and why it lives here rather than as a predicate in the rollup query.
+    //
+    // `sumCompanyUsage` sums `usage_events` for the period with NO `kind` predicate. That is correct only while
+    // exactly one kind can exist: 0017:48 pins `kind in ('model_call')`, and 0017:16 calls `kind` "the extension
+    // point (v1: only `model_call`; tool/worker usage arrive later)". So on the day that CHECK is widened, every
+    // rollup silently begins counting the new kind — including for ALREADY-CLOSED, ALREADY-INVOICED periods —
+    // and the §1-G11 drift check cannot notice, because reconciliation recomputes down that same path and would
+    // simply agree with itself. That is this ticket's §0 failure mode exactly: the number is wrong and nothing
+    // notices.
+    //
+    // Adding `where kind = 'model_call'` to the rollup instead would INVENT A REQUIREMENT. Canon nowhere says
+    // which kinds are billable, and §1-G7 is explicit that the five numbers are the owner's to define. So this
+    // guard forces the question at the moment it becomes real instead of pre-empting it here.
+    const rows = await sql<{ def: string }>`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+      where conname = 'usage_events_kind_valid' and conrelid = 'public.usage_events'::regclass
+    `.execute(su.kysely);
+    // Non-vacuous by construction: a dropped or renamed constraint fails HERE, rather than letting the literal
+    // comparison below run over an empty set and report success.
+    expect(rows.rows, 'usage_events_kind_valid must exist for this guard to assert anything').toHaveLength(1);
+    const literals = [...rows.rows[0]!.def.matchAll(/'([^']*)'/g)].map((m) => m[1]).sort();
+    expect(literals, 'a new kind here silently re-values every rollup — read the comment above before changing it').toEqual(['model_call']);
+  });
+
+  test('`usage_corrections_insert` exists but is SHADOWED by the trigger — recorded, because an unprovable policy reads as an oversight', async () => {
+    // THE ASYMMETRY THIS PINS DOWN. `account_usage_rollups_insert` is provable, and the cross-account test above
+    // pins it to 42501. Its `usage_corrections` counterpart is not, and cannot be: nothing in this suite would go
+    // red if the policy were dropped tomorrow. That difference is reasoned, not accidental, and this test is where
+    // the reasoning is kept.
+    //
+    // The cause is ordering. `usage_corrections_bound` is a BEFORE INSERT trigger and is deliberately NOT SECURITY
+    // DEFINER (0051:127), so its `select ... from usage_events` runs under the CALLER's RLS. Every row the policy
+    // would refuse — `account_id <> current_account` — is a row whose corrected event is therefore either
+    // invisible to the caller or in another account, so the trigger raises 23514 before the policy's WITH CHECK is
+    // ever evaluated. The two cross-account tests above assert that 23514; it is the real, observable behaviour.
+    //
+    // The policy is kept as defence-in-depth against that ordering changing (a SECURITY DEFINER rewrite, or a
+    // trigger that stops consulting `usage_events`). This test asserts only that it is STILL PRESENT and still
+    // account-keyed. It deliberately does NOT assert that the policy enforces anything, because on today's code
+    // path no test could honestly prove that.
+    const rows = await sql<{ cmd: string; withcheck: string | null }>`
+      select polcmd::text as cmd, pg_get_expr(polwithcheck, polrelid) as withcheck
+      from pg_policy
+      where polrelid = 'public.usage_corrections'::regclass and polname = 'usage_corrections_insert'
+    `.execute(su.kysely);
+    expect(rows.rows, 'the policy must exist for this record of why it is unprovable to mean anything').toHaveLength(1);
+    expect(rows.rows[0]!.cmd, "'a' is INSERT in pg_policy.polcmd").toBe('a');
+    expect(rows.rows[0]!.withcheck ?? '', 'still keyed on the account GUC').toContain('app.current_account');
+  });
 });

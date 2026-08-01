@@ -61,9 +61,15 @@ export const ALL_TABLES = [
   'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions',
   'job_checkpoints',
   'jobs',
-  // BEFORE usage_events, and the order is load-bearing for the same reason the tool_calls note below gives:
-  // usage_corrections carries a composite FK to (usage_events.id, company_id), so clearing the parent first
-  // raises 23503. account_usage_rollups references only accounts and could sit anywhere ahead of them.
+  // Children-first by convention here, but — UNLIKE the tool_calls note below — this order is NOT load-bearing.
+  // usage_corrections' composite FK to (usage_events.id, company_id) is ON DELETE CASCADE (0051:97), so clearing
+  // usage_events first would cascade the corrections away rather than raise 23503. The tool_calls case differs
+  // because its FK is `on delete no action` (0046:32); do not read the two notes as making the same claim.
+  //
+  // Worth stating rather than leaving implicit: that cascade is the one path by which a row of an append-only
+  // ledger (CDR-073 §1-G9) disappears. It is not reachable from application code — the app role is granted only
+  // SELECT and INSERT on usage_events (0017:70), never DELETE — so it fires for a migration, a superuser, or a
+  // cascade from an account/company deletion (0017:46-47), not for anything the product does.
   'usage_corrections',
   'account_usage_rollups',
   'usage_events',
