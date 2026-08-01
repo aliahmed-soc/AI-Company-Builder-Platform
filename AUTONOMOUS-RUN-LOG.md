@@ -2176,3 +2176,21 @@ uncompletable while the evidence said all was well.
   waiting is gone now that P6-007 is merged.
 - Whether policy evaluation point 1 refuses task planning; whether new companies start at L1 rather than L2.
 - CDR-051 §0.3's third risk class remains flagged and unruled; AOQ-14's limit values remain the owner's.
+
+- 2026-08-01T16:35Z scheduled wake, docs only. **P6-007 is MERGED and the task brief that sent me here was stale** —
+  it described Blocker 1's behavioural half as the remaining work; it landed before the merge. Serialisation check
+  passed first (tree clean, last commit 44 min old). Re-verified the merge from the CI LOG rather than from the
+  previous entry's own summary, because self-reported completion is exactly what cost this ticket three review
+  passes: exact-main `30706308683` on `1f3096d` reports 229/229 files, 3294/3294 tests, and NOT ONE `N skipped`
+  line in the job log. Blocker 1 confirmed in MAIN's source, not the deleted branch: `stop-service.ts:313` does
+  `running -> paused` inside the activation transaction counting only rows that changed, and `reviewHeldWork`
+  resumes ONLY on `confirmed`. PR #67 already MERGED, not draft — nothing to update there.
+  **What was actually wrong: the docs.** `PROJECT-STATE.md` still headed the ticket **IN PROGRESS**, and by that
+  file's own stated rule ("only the topmost ticket without a DONE line above it is genuinely in flight") the merged
+  ticket was the one thing reading as in flight. Added the DONE line + renamed the block to "working block" per the
+  file's convention, and added the missing merge entry to `EXECUTION-LOG.md`. Both name the `account_wide`
+  held-work scoping (CDR-072 §1-G6) as STILL OPEN, so a Done line is not read as closing it.
+  Nothing started: P6-008 is a screen (owner UI gate), and P6-009 would be starting a different ticket (owner gate).
+  Left stale deliberately and flagged instead: **`## Next executable action` still describes beginning Phase 2** —
+  ~30 tickets out of date. Rewriting it means declaring what comes next, which is the owner's call.
+  C: 52.8 GB free.

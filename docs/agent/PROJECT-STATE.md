@@ -67,7 +67,14 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-007 Emergency stop and resume review — IN PROGRESS** (CDR-072; ADMIN-001/002; COMP-006; invariant 14;
+- **ACBP-P6-007 Emergency stop and resume review — DONE** (CDR-072; ADMIN-001/002; COMP-006; invariant 14; launch
+  gate 8; trust-critical #9/#10). Merged as squash `1f3096d`, PR #67; exact-head CI `30705908508` on `19f5013` and
+  exact-main `30706308683` on `1f3096d` both green with **ZERO SKIPS** (229 files / 3294 tests); branch deleted
+  local + remote after verifying the branch tip's tree is byte-identical in `main` — ancestry does not hold across
+  a squash merge. **Still owner-gated and NOT closed by this line:** the `account_wide` held-work scoping
+  (CDR-072 §1-G6).
+
+- **ACBP-P6-007 Emergency stop and resume review — working block** (CDR-072; ADMIN-001/002; COMP-006; invariant 14;
   launch gate 8; trust-critical #9/#10).
   **⚠️ SEVEN SCOPES ARE NAMED, FIVE ARE ENFORCEABLE.** `capability` and `integration` are **storable and INERT** —
   the tool registry carries no identity for either, so no call can be matched against them. They are refused at
