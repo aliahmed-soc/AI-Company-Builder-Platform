@@ -2041,3 +2041,30 @@ enforced — a passing matrix being the most convincing way to ship exactly this
 
 Bound is 5000 ms. `capability` and `integration` are absent because they never produce `emergency_stopped` — there
 is no halt to time, which is why the gate is met for FIVE of seven and not seven.
+### ADDENDUM 2 — two review passes, two more real defects, and the suite that should have existed
+
+**Pass 1: an `account_wide` stop holds only the raising company's work.** The halt IS account-wide (dual-scope RLS;
+the dispatcher denies every company's calls, proven by the matrix), but `held_work.company_id` is NOT NULL with a
+tenant-pinned FK and activation runs inside ONE company's scope. So `held_count`/`pending_review_count` count one
+company, and **ADMIN-002's mandatory review never sees the other companies' in-flight tasks** — on clear their work
+resumes with no confirm-or-discard decision. NOT FIXED: writing `held_work` for sibling companies means establishing
+each company's scope inside one account-wide operation, which is a tenant-isolation decision and an **OWNER GATE**.
+Three options recorded in CDR-072 §1-G6. **This one needs the owner's call.**
+
+**Pass 2: a `company` stop could name a DIFFERENT company and then halt nothing.** The covering rule matches
+`target_id` against the CALL's company while RLS shows the row to the company in `company_id`, and nothing tied them
+together — so a stop raised in A naming B was storable, active, visible to A, and covered nothing. Third occurrence
+of that exact shape in this ticket. Closed at both layers: a CHECK in migration 0050 makes the row unstorable, and
+`activateStop` refuses it with a typed reason.
+
+**And why it survived: migration 0050 had NO real-PostgreSQL suite at all.** Every other table in the repo has one.
+The P1-014 catalog covers grants and "RLS is enabled" — never constraint BEHAVIOUR. For a table whose entire purpose
+is to make a dishonest stop unstorable, "the constraint is written in the migration" is not the same claim as "the
+constraint rejects the row" — the same gap in kind as the covering relation being correct while the scope enforced
+nothing. 14 cases now cover it, including a down-to-0049-and-back migration.
+
+**Final evidence: hosted CI `30681663120` on `6e79c73` — 228/228 files, 3251/3251 tests, ZERO SKIPS.**
+
+**Process note, recorded rather than glossed:** the charter calls for an INDEPENDENT review and prior tickets used a
+subagent. This session's instructions forbid spawning agents unasked, so both passes were the author's own. They
+found real defects, but a self-review is not the independent pass the completion standard specifies.
