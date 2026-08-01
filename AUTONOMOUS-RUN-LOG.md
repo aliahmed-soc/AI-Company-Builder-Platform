@@ -1885,3 +1885,75 @@ throughout was no longer sufficient on its own.
 One gap in the tooling was found and is worth carrying: the working-tree secret scanner had **no
 connection-string-with-password pattern**, which had to be added for the history sweep. The scans were clean either
 way, but a `postgres://user:password@host` in a committed file would not have been caught by the standing gate.
+
+---
+
+## Window 20 — ACBP-P6-006 merged; P6-007 through the stop service (2026-07-31 ~19:30 → 2026-08-01 ~03:00 +03)
+
+**MERGED: ACBP-P6-006 autonomy levels 1–2**, squash `fdc3065`, PR #66. Exact-head CI `30649500593` on `a9a57f6`
+and exact-main `30650127201` on `fdc3065`, both **226 files / 3153 tests, ZERO SKIPS**, Slice A demo green.
+Branch tip verified byte-identical to the squash, then deleted local + remote. Also deleted five stale merged
+branches (P6-001a/b, P6-002, P6-003, P6-004) after verifying each against **the commit that landed it** — ancestry
+alone is wrong for squash merges, and three-dot `main...branch` always shows a squashed branch's own commits.
+
+**ACBP-P6-007 emergency stop — in progress on `p6-007-emergency-stop`, draft PR #67.** Commits: `c8ce3ff` CDR-072;
+`999412e` scopes + covering relation; `23b5938` migration 0050; `c6ebf58` StopRepository + §1-G10; `4fbebe8` three
+audit events; `215babf` inert scopes made loud; `0a7f00b` three authz actions; plus the stop service.
+
+### The judgment call this window, flagged and unresolved
+
+**SEVEN SCOPES ARE NAMED; FIVE ARE ENFORCEABLE.** The tool registry carries no identity for a capability or an
+integration — no column, no call fact — so those two scopes cannot be matched against any call. Shipping them as
+activatable would hand an operator a halt that does nothing, which is CDR-072 §0's failure created by the ticket
+meant to prevent it. They are storable but refused at activation, and a stored one makes the evaluation
+`unreadable → deny`. **This narrows a canon-named control** (diagram 13 lists seven) and whether to pull the
+registry work forward so all seven ship together is the owner's call. Reversible in one line.
+
+Making that limitation loud found a REAL DEFECT: `evaluateStops` was treating the two as ordinary identity scopes,
+so a stored one would compare against a `null` id, fail to match, and read as **clear** — a stop sitting in the
+database silently permitting everything. Now fail-closed, checked before any covering match so an inert row cannot
+hide behind a working one.
+
+### What the guards caught, so the record shows the tooling working
+
+- **`check-conflict-targets.mjs`** caught a real runtime bug: `ON CONFLICT ON CONSTRAINT` against a PARTIAL UNIQUE
+  INDEX, which PostgreSQL rejects with 42704 — and only on the activate-twice path. Fixed by changing the index to
+  plain columns with `NULLS NOT DISTINCT` (PG 15+; CI runs 16) so it is inferable.
+- **The audit registry's compile-time partition** refused three unregistered events, then refused a domain type
+  missing from `PartitionDomains`. Neither could have shipped silently.
+- **The closed authz action list** refused three actions with no role mapping.
+- **A test caught a semantic error of mine**: `emergency_stop.activated` was first given outcome `blocked`. Wrong —
+  activation is an owner action that SUCCEEDED; what gets blocked is each later tool call, on its own `tool_calls`
+  row. Conflating them makes "how many actions were actually stopped" uncountable.
+- **A mechanical edit went wrong and typecheck caught it**: adding two tables to 58 reset lists, I anchored on the
+  quoted string `'approval_decisions'`, which also appears as a CALL ARGUMENT — 14 insertions landed inside
+  `selectFrom(...)`, `createTable(...)` and `dropTable(...)`, including migration 0047 and `approval-repository.ts`,
+  i.e. already-merged production code. My first sweep for others reported none and was WRONG: the PowerShell glob
+  did not recurse. Re-swept with ripgrep, reverted only the call-argument form, and confirmed both files
+  byte-identical to origin/main.
+
+### CI verification debt — CLEARED earlier this window
+
+Run `30632188407` on `4c12da3` (main's real tip, re-run in place): **225 files / 3053 tests, ZERO SKIPS**, covering
+`338ae08` (P6-001+002), `9e339a3` (P6-003) and `7a5a9ea` (P6-004), verified by `git merge-base --is-ancestor`. It is
+ONE run on the CUMULATIVE TIP: the intermediate merges each produced a red run that was never re-run green, and
+both reds were **VOID** (`steps=0` — the GitHub billing startup failure, not a test result). Full-history secret
+scan: 8,689 objects / 3,989 blobs, 35 matches all synthetic or allowlisted, nothing to rotate.
+
+### Disk — crossed the stop line and was resolved
+
+C: fell from 8.2 GB to **2.7 GB** in ~3 hours of building, crossing the owner's 3 GB floor. Stopped and reported
+rather than acting; nothing was pruned. Read-only investigation found the cause: the `acbp-local-dev` WSL
+`ext4.vhdx` (4.91 GB, **not sparse**) grows with repeated migrations-from-zero and **never shrinks on its own**.
+The pnpm store was only 0.91 GB and was never the problem. The owner uninstalled Docker Desktop (43 GB
+`docker_data.vhdx`, unused here) → **C: 49.7 GB free**. The WSL mechanism remains, so the pressure will return;
+compaction is an owner action.
+
+### Scheduled autonomous running
+
+A 20-minute schedule was set up, deleted during the disk block, and recreated. **One wake actually fired** (21:29
+local) and correctly **stood down**: it detected this session mid-edit on the same enforcement chokepoint — 48
+modified files and an uncommitted migration 0050 — and declined to touch anything. Worth recording precisely: that
+demonstrates the AGENT noticed and reasoned its way out, **not** that the scheduler holds a lock. The app exposes
+no `lastRunAt` and writes no run log, and there is no Windows Task Scheduler entry — it is app-level only, so it
+runs only while the app is open.
