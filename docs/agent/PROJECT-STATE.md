@@ -99,7 +99,13 @@ ticket without a DONE line above it is genuinely in flight._
   dual-scope like `audit_events`, `held_work`; no DELETE anywhere), `StopRepository`, three audit events naming
   scope + target, the stop service, dispatcher wiring + port deletion, the per-scope enforcement matrix, the timed
   gate-8 evidence, and `stop_scopes` on the refusal record so the evidence names WHAT halted the call.
-  **🔴 NOT MERGEABLE — AN INDEPENDENT REVIEW FOUND TWO BLOCKERS, AND CORRECTED A FALSE ASSURANCE THIS FILE CARRIED.**
+  **BOTH BLOCKERS AND ALL THREE HIGHS ARE NOW CLOSED** (`2afc604`, `cf154f6`, `0972701`, `02962e7`, `4140986`,
+  `4f82b6c`). Exact-head CI `30698900097` on `4f82b6c`: **229/229 files, 3285/3285 tests, ZERO SKIPS**, including
+  33 stop-service cases and gate 8 measured at **4.5 ms through `activateStop` itself**. What remains is the
+  owner-gated `account_wide` held-work scoping, plus ticket Done / PR ready / merge.
+  The history below is kept rather than tidied away, because the shape of the errors is the useful artifact.
+
+  **🔴 AN INDEPENDENT REVIEW FOUND TWO BLOCKERS, AND CORRECTED A FALSE ASSURANCE THIS FILE CARRIED.**
   This block previously said the sibling-company scoping meant *"nothing auto-fires on resume"* held "for one
   company only". **That was false and it was written by the author of the defect.** It held for NO company:
   `held_work.status` was written by `reviewHeldWork` and read by NOTHING, so clearing the stop authorized every held
@@ -117,10 +123,27 @@ ticket without a DONE line above it is genuinely in flight._
   `readStopState` had never executed; the dispatcher suite used its own raw-insert helper. Every service-level guard
   was unproven, including `StopRepository.insert`'s `ON CONFLICT` inference against the partial index — the
   `credit_transactions_reservation_key_uq` shape that once left a write path dead.
-  **THREE HIGHS:** the hold query ignores scope entirely (a `task` stop holds ALL in-flight work and reports it);
-  `task`/`worker` targets are unvalidated free text (active, visible, halts nothing — the same hole closed for
-  `company` and not generalised); and **gate 8's measurement timed a raw superuser INSERT rather than
-  `activateStop`**, which does N+3 round trips — so the 6.7–8.6 ms is NOT evidence for the product path.
+  **CLOSED by `stop-service.integration.test.ts` (33 real-PG cases).** The single most valuable assertion is
+  `already_active`: it proves the `ON CONFLICT` inference against the `NULLS NOT DISTINCT` partial index RESOLVES.
+  Had it not, PostgreSQL would raise 42P10 and every activation would die — a safety control that cannot be switched
+  on, in the one ticket about a control that must never fail silently. §1-G8 is likewise proven, not promised: a
+  throwing audit writer leaves no stop row, no held work and no event.
+  **BLOCKER 1 CLOSED THE WAY CANON SPECIFIED IT.** Activation transitions the RUNNING tasks it caught
+  `running → paused` in the same transaction as the hold; a `paused` task returns to `running` ONLY when its held
+  item is CONFIRMED; a DISCARD leaves it paused (not cancelled — "nothing lost"). Reviewing while the stop is still
+  active is refused (`stop_still_active`), because ADMIN-002 says clearing OPENS the review. Only `running` tasks
+  transition: `queued` is already gated by WORKFLOW §4's `queued→running` "stop-state clear" precondition, and
+  `waiting_*` tasks are not executing — all are still HELD, since the review is about what the operator must decide
+  on, not only what changed state. `paused_count` joins `held_count` on the activation event so "held 5, paused 2"
+  distinguishes a halted fleet from a queue that never started.
+  **THREE HIGHS, ALL FIXED:** the hold query ignored scope entirely (a `task` stop held ALL in-flight work and
+  reported it) — now per-scope, with `external_actions_only` deliberately holding NOTHING because it halts calls
+  rather than tasks; `task`/`worker` targets were unvalidated free text (active, visible, halting nothing — the same
+  hole closed for `company` and not generalised) — now resolved against `tasks`/`worker_definitions` under RLS, so a
+  foreign company's task reads as ABSENT rather than forbidden; and **gate 8's measurement timed a raw superuser
+  INSERT rather than `activateStop`**, which does N+3 round trips — the 6.7–8.6 ms figure is WITHDRAWN as evidence
+  and replaced by **4.5 ms measured through the real call**, with the test stating plainly what it does not cover
+  (single company, small N, one host; not a distributed-fleet claim).
   **⚠️ STILL OPEN AND OWNER-GATED — an `account_wide` stop holds only the raising company's work.** A *second*,
   genuine defect: `held_work.company_id` is NOT NULL with a tenant-pinned FK and activation runs inside ONE
   company's scope, so `held_count`/`pending_review_count` count one company. Fixing it means establishing each
