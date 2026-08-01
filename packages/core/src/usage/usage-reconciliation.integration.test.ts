@@ -28,7 +28,13 @@ const ZERO_TOLERANCE = { eventCount: 0, inputTokens: 0, outputTokens: 0, estimat
 /** The stored `usage.rollup_reconciled` payload, as the audit trail actually holds it. */
 interface ReconciledPayload {
   readonly period_start: string;
+  // ALL FOUR DRIFT LANES ARE DECLARED AND ASSERTED. An earlier version declared only `input_tokens_drift`, so
+  // three of the four could have been transposed, zeroed or dropped and nothing would have noticed — in the one
+  // payload CDR-073 §1-G15 exists to make answer "did the number move, and by how much".
+  readonly event_count_drift: number;
   readonly input_tokens_drift: number;
+  readonly output_tokens_drift: number;
+  readonly estimated_cost_micros_drift: number;
   readonly rebuild_applied: boolean;
   readonly stored_existed: boolean;
   /** Comma-joined lane names; empty string means no lane exceeded the tolerance. */
@@ -42,6 +48,8 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
 
   let accountOwner = '';
   let accountViewer = '';
+  /** ACCOUNT viewer, COMPANY owner — the user whose two roles disagree, so the account check is provably the one. */
+  let companyOwnerAccountViewer = '';
   let outsider = '';
   let accountA = '';
   let companyA1 = '';
@@ -129,9 +137,11 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     }
     accountOwner = await seedUser();
     accountViewer = await seedUser();
+    companyOwnerAccountViewer = await seedUser();
     outsider = await seedUser();
-    accountA = await seedAccount(accountOwner, [accountViewer]);
-    companyA1 = await seedCompany(accountA, [accountOwner]);
+    accountA = await seedAccount(accountOwner, [accountViewer, companyOwnerAccountViewer]);
+    // `companyOwnerAccountViewer` is an OWNER here and a VIEWER on the account above — deliberately divergent.
+    companyA1 = await seedCompany(accountA, [accountOwner, companyOwnerAccountViewer]);
   });
 
   // ── the control ───────────────────────────────────────────────────────────────────────────────────────────
@@ -230,7 +240,10 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     expect(Number(stored.rows[0]!.input_tokens)).toBe(100);
   });
 
-  test('a drift BEYOND the tolerance alerts, naming every exceeding lane', async () => {
+  // NAMING, NOT ALERTING. What is proven here is that the exceeding lanes are correctly COMPUTED and reported;
+  // no alert channel exists yet and none is invoked. Surfacing is P6-010's (CDR-073 §4), so "drift beyond
+  // threshold alerts" is met here only up to the point where this ticket's responsibility ends.
+  test('a drift BEYOND the tolerance is reported, naming every exceeding lane', async () => {
     await seedEvent({ input: 100, output: 50, cost: 1000 });
     expect((await rebuild(accountOwner)).status).toBe('ok');
     await corruptStoredRollup({ input_tokens: 40, output_tokens: 49, estimated_cost_micros: 200 });
@@ -239,6 +252,29 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     if (r.status !== 'ok') throw new Error(`expected ok, got ${r.status}`);
     // inputTokens drifts 60 (> 10) and cost drifts 800 (> 100); outputTokens drifts only 1 (within 10).
     expect(r.lanesExceedingThreshold).toEqual(['inputTokens', 'estimatedCostMicros']);
+    // The sub-threshold lane still DRIFTED, and the repair is unconditional on the alert.
+    expect(r.drift.outputTokens).toBe(1);
+    expect(r.rebuildApplied).toBe(true);
+  });
+
+  test('the eventCount lane alone can drift, be alerted on, and be repaired', async () => {
+    // `event_count` was the one lane no corruption case exercised, so its drift/alert/repair path had no
+    // positive test at all — the lane whose value most directly reads as "how much work did this account do".
+    await seedEvent({ input: 100, output: 50, cost: 1000 });
+    await seedEvent({ input: 0, output: 0, cost: 0 });
+    expect((await rebuild(accountOwner)).status).toBe('ok');
+    await corruptStoredRollup({ event_count: 1 });
+
+    const r = await reconcile(accountOwner);
+    if (r.status !== 'ok') throw new Error(`expected ok, got ${r.status}`);
+    expect(r.stored.eventCount).toBe(1);
+    expect(r.computed.eventCount).toBe(2);
+    expect(r.drift).toEqual({ eventCount: 1, inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0 });
+    expect(r.lanesExceedingThreshold).toEqual(['eventCount']);
+    expect(r.rebuildApplied).toBe(true);
+
+    const stored = await sql<{ event_count: string }>`select event_count from account_usage_rollups`.execute(seed.kysely);
+    expect(Number(stored.rows[0]!.event_count)).toBe(2);
   });
 
   // ── the audit record ──────────────────────────────────────────────────────────────────────────────────────
@@ -246,7 +282,9 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
   test('reconciliation is AUDITED with the per-lane drift and whether it rebuilt', async () => {
     await seedEvent({ input: 100, output: 50, cost: 1000 });
     expect((await rebuild(accountOwner)).status).toBe('ok');
-    await corruptStoredRollup({ input_tokens: 80 });
+    // ALL FOUR LANES CORRUPTED BY DISTINCT AMOUNTS, including `event_count`, which no earlier case touched at
+    // all. Distinct drifts are what make a transposed payload field detectable: equal ones would agree.
+    await corruptStoredRollup({ event_count: 0, input_tokens: 80, output_tokens: 47, estimated_cost_micros: 1200 });
     expect((await reconcile(accountOwner)).status).toBe('ok');
 
     const events = await sql<{ subject_type: string; subject_id: string; payload: ReconciledPayload }>`
@@ -257,12 +295,17 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     expect(e.subject_type).toBe('account');
     expect(e.subject_id).toBe(accountA);
     expect(e.payload.period_start).toBe(PERIOD);
-    // THE NUMBER MOVED, AND BY HOW MUCH. An event recording only that reconciliation RAN cannot answer this,
-    // which is the nominal-versus-substantive defect this payload exists to avoid.
-    expect(e.payload.input_tokens_drift).toBe(20);
+    // THE NUMBER MOVED, AND BY HOW MUCH, IN EVERY LANE. An event recording only that reconciliation RAN cannot
+    // answer this, which is the nominal-versus-substantive defect this payload exists to avoid. Each expected
+    // value is distinct, so a transposition between any two lanes fails here.
+    expect(e.payload.event_count_drift).toBe(1); // computed 1, stored 0
+    expect(e.payload.input_tokens_drift).toBe(20); // computed 100, stored 80
+    expect(e.payload.output_tokens_drift).toBe(3); // computed 50, stored 47
+    expect(e.payload.estimated_cost_micros_drift).toBe(-200); // computed 1000, stored 1200 — OVER, hence negative
     expect(e.payload.rebuild_applied).toBe(true);
     expect(e.payload.stored_existed).toBe(true);
-    expect(e.payload.lanes_exceeding_threshold).toBe('inputTokens');
+    // Zero tolerance, so every drifting lane alerts, in the closed lane order.
+    expect(e.payload.lanes_exceeding_threshold).toBe('eventCount,inputTokens,outputTokens,estimatedCostMicros');
   });
 
   test('a CLEAN reconciliation is audited too — "checked and found nothing" is itself the evidence', async () => {
@@ -275,7 +318,10 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     `.execute(seed.kysely);
     expect(events.rows).toHaveLength(1);
     expect(events.rows[0]!.payload.rebuild_applied).toBe(false);
+    expect(events.rows[0]!.payload.event_count_drift).toBe(0);
     expect(events.rows[0]!.payload.input_tokens_drift).toBe(0);
+    expect(events.rows[0]!.payload.output_tokens_drift).toBe(0);
+    expect(events.rows[0]!.payload.estimated_cost_micros_drift).toBe(0);
     // Empty string means "no lane exceeded" — the field is always present, so empty is a real answer.
     expect(events.rows[0]!.payload.lanes_exceeding_threshold).toBe('');
   });
@@ -358,11 +404,49 @@ describe.skipIf(!hasTestDatabase)('rollup reconciliation (real PostgreSQL) — A
     expect(zero.figures.eventCount).toBe(0);
   });
 
-  test('an account VIEWER cannot read the account\'s usage — owner-only per API-CONTRACTS', async () => {
+  test('AN ACCOUNT VIEWER WHO IS A COMPANY OWNER IS STILL REFUSED BY ALL THREE — the ACCOUNT role decides', async () => {
+    // ⚠️ THE FIXTURE IS THE TEST, as in the corrections suite. A viewer with no company membership would be
+    // refused by a build that resolved the role from `company_memberships` — the `readCreditLedger` pass-1 HIGH
+    // this service cites — because they would resolve to `role = null` anyway. Only a caller whose account and
+    // company roles DISAGREE can distinguish the two.
+    const companyRole = await sql<{ role: string }>`
+      select role from company_memberships where member_user_id = ${companyOwnerAccountViewer}::uuid and company_id = ${companyA1}::uuid
+    `.execute(seed.kysely);
+    expect(companyRole.rows).toHaveLength(1);
+    expect(companyRole.rows[0]!.role).toBe('owner');
+
     await seedEvent({ input: 100, output: 50, cost: 1000 });
     expect((await rebuild(accountOwner)).status).toBe('ok');
-    const r = await readAccountUsageRollup(app, { userId: accountViewer, accountId: accountA, periodStart: PERIOD });
-    expect(r.status).toBe('forbidden');
+
+    // ALL THREE, not just the read. `rebuild` and `reconcile` RETURN the same account figures the read does, so
+    // gating only the read would let a viewer take the identical numbers by another door — and, in their case,
+    // write the projection and stamp an audit event while doing it.
+    expect((await readAccountUsageRollup(app, { userId: companyOwnerAccountViewer, accountId: accountA, periodStart: PERIOD })).status).toBe('forbidden');
+    expect((await rebuildAccountUsageRollup(app, { userId: companyOwnerAccountViewer, accountId: accountA, periodStart: PERIOD })).status).toBe('forbidden');
+    expect((await reconcile(companyOwnerAccountViewer)).status).toBe('forbidden');
+  });
+
+  test('a refused viewer writes NOTHING — no projection change and no audit event', async () => {
+    await seedEvent({ input: 100, output: 50, cost: 1000 });
+    expect((await rebuild(accountOwner)).status).toBe('ok');
+    await corruptStoredRollup({ input_tokens: 7 });
+
+    expect((await rebuildAccountUsageRollup(app, { userId: accountViewer, accountId: accountA, periodStart: PERIOD })).status).toBe('forbidden');
+    expect((await reconcile(accountViewer)).status).toBe('forbidden');
+
+    // The corrupted figure is UNTOUCHED: the refusal happened before any repair, so a viewer cannot even force a
+    // rebuild they are not allowed to see the result of.
+    const stored = await sql<{ input_tokens: string }>`select input_tokens from account_usage_rollups`.execute(seed.kysely);
+    expect(Number(stored.rows[0]!.input_tokens)).toBe(7);
+    const n = await sql<{ n: string }>`select count(*)::text as n from audit_events where name = 'usage.rollup_reconciled'`.execute(seed.kysely);
+    expect(n.rows[0]!.n).toBe('0');
+
+    // CONTROL: the owner CAN do both, so these refusals are the role check and not a broken fixture.
+    expect((await reconcile(accountOwner)).status).toBe('ok');
+  });
+
+  test('a plain account viewer is refused by the read too', async () => {
+    expect((await readAccountUsageRollup(app, { userId: accountViewer, accountId: accountA, periodStart: PERIOD })).status).toBe('forbidden');
   });
 
   test('a non-member cannot read it either', async () => {

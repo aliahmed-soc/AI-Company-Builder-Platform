@@ -111,6 +111,24 @@ export class AccountUsageRollupRepository {
     this.#db = db;
   }
 
+  /**
+   * Serialize reconciliations of one `(account, period)` against each other, for this transaction.
+   *
+   * A TRANSACTION-SCOPED ADVISORY LOCK, not a row lock, because the row it protects MAY NOT EXIST YET — a missing
+   * projection is the case reconciliation most needs to handle, and `SELECT … FOR UPDATE` locks nothing when it
+   * matches nothing, so two concurrent reconciliations of a never-computed period would both proceed.
+   *
+   * It is released by COMMIT or ROLLBACK; there is no unlock path to forget. The two-key `int4` overload is used
+   * with `hashtext` of each component, so the account and the period are distinct lock dimensions. A hash
+   * collision between two different periods costs a little serialization and is never a correctness problem.
+   *
+   * This does NOT make the enclosing READ COMMITTED transaction a snapshot — the per-company sums are still read
+   * statement by statement. It closes exactly one hole: two reconciliations racing to write the same period.
+   */
+  async lockAccountPeriodForReconcile(accountId: string, periodStart: string): Promise<void> {
+    await sql`select pg_advisory_xact_lock(hashtext(${accountId}), hashtext(${periodStart}))`.execute(this.#db);
+  }
+
   /** The stored projection for one period, or undefined when it has never been computed. */
   find(accountId: string, periodStart: string): Promise<AccountUsageRollupRow | undefined> {
     return this.#db

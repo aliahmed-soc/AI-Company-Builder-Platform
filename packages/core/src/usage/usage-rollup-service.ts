@@ -84,6 +84,16 @@ async function computeAccountUsageFromLedger(
     const corrections = await rollups.sumCompanyCorrections(periodStart);
     figures = addRollupFigures(figures, addRollupFigures(events, corrections));
   }
+  // THE ACCUMULATOR IS THE ONE SIDE OF THE BIGINT SEAM THE REPOSITORY CANNOT GUARD. `toRollupFigure` checks every
+  // value crossing the driver, but this fold SUMS those checked values and the total can exceed what a JS number
+  // represents exactly — after which it is silently imprecise and gets written to a `bigint` column as a
+  // plausible-looking wrong number. Practically unreachable at real token volumes; refused rather than trusted,
+  // because "unreachable" is the assumption §0 is about.
+  for (const lane of USAGE_ROLLUP_LANES) {
+    if (!Number.isSafeInteger(figures[lane])) {
+      throw new RangeError(`account usage rollup lane ${lane} exceeds the safe integer range`);
+    }
+  }
   return { figures, companyCount: companies.length };
 }
 
@@ -112,17 +122,28 @@ export type RebuildAccountUsageRollupResult =
        */
       readonly companyCount: number;
     }
+  /** An active account member who is not an OWNER. The figures are not disclosed and nothing is written. */
+  | { readonly status: 'forbidden' }
   | { readonly status: 'denied'; readonly reason: AccountAccessDenialReason }
   | { readonly status: 'invalid_period' };
 
 /**
  * Recompute one `(account, period)` rollup from the ledger and store it.
  *
- * There is deliberately NO authorization action for this operation and NO API route reaching it. Whether an
- * account owner may trigger a rebuild on demand, or whether it is platform-only, is an OPEN OWNER DECISION
- * (CDR-073 §3.2); registering a `usage:rebuild` action now would encode an answer nobody has given. The account
- * membership check below is scope ESTABLISHMENT, not a filter — it decides whether this caller may act in the
- * account at all, and has no influence on which companies are summed.
+ * OWNER-ONLY, VIA `usage:read` — and the distinction that makes this the right action rather than an invented one
+ * is worth stating, because an earlier version of this function had NO check at all.
+ *
+ * TWO SEPARATE QUESTIONS were being conflated. *Who may TRIGGER a rebuild* is genuinely unruled (CDR-073 §3.2),
+ * and nothing here answers it. *Whether the resulting FIGURES may be disclosed to a non-owner* is already ruled
+ * by `API-CONTRACTS` — *"account rollup = account owner"* — and this function RETURNS those figures. Without the
+ * check, a viewer refused by `readAccountUsageRollup` could call this instead and receive the identical numbers,
+ * plus a write. That is the `readCreditLedger` review-pass-1 HIGH in a new place: the authorization is the only
+ * thing between a viewer and account-wide spend, because a total that legitimately spans companies is one RLS
+ * cannot narrow.
+ *
+ * Requiring OWNER does not foreclose §3.2. It is the most restrictive posture available, and a later ruling can
+ * only narrow it further (to platform-only); registering a permissive `usage:rebuild` action now would have been
+ * the choice that encoded an answer nobody gave.
  */
 export async function rebuildAccountUsageRollup(
   client: DatabaseClient,
@@ -139,13 +160,16 @@ export async function rebuildAccountUsageRollup(
   const run = await runInAccountScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId },
-    async (scope) => {
+    async (scope): Promise<RebuildAccountUsageRollupResult> => {
+      if (!(await callerMayReadAccountUsage(scope, params.userId, params.accountId, options))) {
+        return { status: 'forbidden' };
+      }
       const { figures, companyCount } = await computeAccountUsageFromLedger(scope, periodStart);
       // The rollup table is account-keyed, so this write is legal even though the company GUC still holds the
       // last company elevated into (§1-G2). The upsert REPLACES the figures rather than adding to them, which
       // is what makes a repeated rebuild idempotent instead of doubling (§1-G12).
       await new AccountUsageRollupRepository(scope.db).upsert(params.accountId, periodStart, figures);
-      return { figures, companyCount };
+      return { status: 'ok', periodStart, figures, companyCount };
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
@@ -153,7 +177,24 @@ export async function rebuildAccountUsageRollup(
   if (run.kind === 'denied') {
     return { status: 'denied', reason: run.reason };
   }
-  return { status: 'ok', periodStart, figures: run.value.figures, companyCount: run.value.companyCount };
+  return run.value;
+}
+
+/**
+ * Does this caller hold `usage:read` on the account? Owner-only per `API-CONTRACTS`.
+ *
+ * Shared by the three functions that RETURN account figures, so the disclosure rule is written once. Resolved
+ * from the caller's ACCOUNT membership — never a company role, which is the `readCreditLedger` pass-1 HIGH.
+ */
+async function callerMayReadAccountUsage(
+  scope: AccountScope,
+  userId: string,
+  accountId: string,
+  options: RebuildAccountUsageRollupOptions,
+): Promise<boolean> {
+  const own = await resolveOwnMembershipBootstrap(scope.db, userId, accountId);
+  const role = own !== null && isMemberRole(own.role) ? own.role : null;
+  return checkAuthorization(role, 'usage:read', { accountId, actorId: userId }, authzOpts(options)).kind !== 'deny';
 }
 
 // ── reconciliation (launch gate 7) ──────────────────────────────────────────────────────────────────────────
@@ -189,6 +230,8 @@ export type ReconcileAccountUsageRollupResult =
       /** False means the projection was MISSING, not stale. */
       readonly storedExisted: boolean;
     }
+  /** An active account member who is not an OWNER. No figures disclosed, no repair, no audit event. */
+  | { readonly status: 'forbidden' }
   | { readonly status: 'denied'; readonly reason: AccountAccessDenialReason }
   | { readonly status: 'invalid_period' }
   | { readonly status: 'invalid_threshold' };
@@ -208,12 +251,24 @@ export type ReconcileAccountUsageRollupResult =
  * itself, or against any other cached value, would report "no drift" in precisely the case this check exists to
  * catch. `computeAccountUsageFromLedger` above is the same function the rebuild uses.
  *
- * NO AUTHORIZATION ACTION, DELIBERATELY — and this is a LIMITATION, not a claim of safety. Reconciliation
- * writes, so it is not a read; but who may trigger it is the same unruled owner question CDR-073 §3.2 raises for
- * the rebuild it performs, and registering a `usage:reconcile` action now would encode an answer nobody has
- * given. The floor is the one `runInAccountScope` enforces: an ACTIVE account membership. What keeps this off a
- * viewer's reach is that it is exposed on NO API surface — not a role check. Extending §3.2 to name
- * reconciliation explicitly is flagged for the owner.
+ * OWNER-ONLY, VIA `usage:read`, for the reason given on {@link rebuildAccountUsageRollup}: this RETURNS the
+ * account's computed figures and its drift, which `API-CONTRACTS` rules owner-only, and an earlier version
+ * checked nothing and relied on "it is exposed on no API surface" — a deployment fact, not an enforcement.
+ * Who may TRIGGER a reconciliation remains part of CDR-073 §3.2's open question and is flagged for the owner;
+ * requiring owner is the most restrictive posture and cannot pre-empt a narrower ruling.
+ *
+ * ⚠️ WHAT THE ISOLATION DOES AND DOES NOT GIVE YOU. The enclosing transaction is PostgreSQL's default READ
+ * COMMITTED (`withAccountTransaction` sets no isolation level), so each statement takes a FRESH snapshot: the
+ * per-company sums folded below are not one instant's view. Two consequences, both real:
+ *   - Reconciling a LIVE period can report drift that is merely the clock moving — events committing between the
+ *     stored-row read and the last company's sum. The check is meaningful for a CLOSED period, which is what a
+ *     maintenance schedule should reconcile.
+ *   - Without serialization, two concurrent reconciliations could each compute from a different moment and the
+ *     later writer could overwrite a NEWER correct projection with an older total. That one is closed here, by
+ *     `lockAccountPeriodForReconcile` below — a transaction-scoped advisory lock on `(account, period)` taken
+ *     BEFORE the stored row is read, so reconciliations of the same period run one at a time.
+ * A plain `rebuildAccountUsageRollup` does not take that lock, so it is not serialized against this — the
+ * projection is rebuildable and self-healing (§1-G1), and a durable fix belongs with the scheduled job.
  */
 export async function reconcileAccountUsageRollup(
   client: DatabaseClient,
@@ -233,10 +288,15 @@ export async function reconcileAccountUsageRollup(
   const run = await runInAccountScope(
     client,
     { userId: params.userId, requestedAccountId: params.accountId },
-    async (scope) => {
+    async (scope): Promise<ReconcileAccountUsageRollupResult> => {
+      if (!(await callerMayReadAccountUsage(scope, params.userId, params.accountId, options))) {
+        return { status: 'forbidden' };
+      }
       const rollups = new AccountUsageRollupRepository(scope.db);
-      // READ THE PROJECTION FIRST, in the same transaction as the recomputation below, so a concurrent rebuild
-      // cannot land between the two and make the drift a comparison of two different instants.
+      // SERIALIZE FIRST, before anything is read. Taken here rather than around the write because the value
+      // being written was decided by the read — locking only at the upsert would let a second reconciliation
+      // compute from an older moment and then overwrite a newer, correct projection.
+      await rollups.lockAccountPeriodForReconcile(params.accountId, periodStart);
       const storedFigures = await rollups.findFigures(params.accountId, periodStart);
       const storedExisted = storedFigures !== undefined;
       const stored = storedFigures ?? emptyRollupFigures();
@@ -272,7 +332,7 @@ export async function reconcileAccountUsageRollup(
         options.correlationId !== undefined ? ({ correlationId: options.correlationId } satisfies AuditWriteContext) : {},
       );
 
-      return { computed, stored, drift, exceeding, rebuildApplied, storedExisted };
+      return { status: 'ok', periodStart, computed, stored, drift, lanesExceedingThreshold: exceeding, rebuildApplied, storedExisted };
     },
     options.correlationId !== undefined ? { correlationId: options.correlationId } : {},
   );
@@ -280,16 +340,7 @@ export async function reconcileAccountUsageRollup(
   if (run.kind === 'denied') {
     return { status: 'denied', reason: run.reason };
   }
-  return {
-    status: 'ok',
-    periodStart,
-    computed: run.value.computed,
-    stored: run.value.stored,
-    drift: run.value.drift,
-    lanesExceedingThreshold: run.value.exceeding,
-    rebuildApplied: run.value.rebuildApplied,
-    storedExisted: run.value.storedExisted,
-  };
+  return run.value;
 }
 
 /**
@@ -361,9 +412,7 @@ export async function readAccountUsageRollup(
     client,
     { userId: params.userId, requestedAccountId: params.accountId },
     async (scope): Promise<ReadAccountUsageRollupResult> => {
-      const own = await resolveOwnMembershipBootstrap(scope.db, params.userId, params.accountId);
-      const role = own !== null && isMemberRole(own.role) ? own.role : null;
-      if (checkAuthorization(role, 'usage:read', { accountId: params.accountId, actorId: params.userId }, authzOpts(options)).kind === 'deny') {
+      if (!(await callerMayReadAccountUsage(scope, params.userId, params.accountId, options))) {
         return { status: 'forbidden' };
       }
       const row = await new AccountUsageRollupRepository(scope.db).find(params.accountId, periodStart);

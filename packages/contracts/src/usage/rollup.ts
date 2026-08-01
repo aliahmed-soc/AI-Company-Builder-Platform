@@ -70,9 +70,14 @@ export function usagePeriodStart(instant: Date): UsagePeriodStart {
  *
  * Requires the first of the month: the period key IS the month, so a mid-month date is not a stricter version of
  * the same thing — it is a different key that would create a second row for one period.
+ *
+ * Year `0000` is excluded because it is not a date PostgreSQL accepts (there is no year zero), and this guard's
+ * whole job is to refuse a bad period BEFORE a scope is established. Letting `'0000-01-01'` through would have
+ * carried it all the way to `${periodStart}::date` in the aggregation, where it raises `22008` — a thrown error
+ * where `invalid_period` is the answer the caller should get.
  */
 export function isUsagePeriodStart(value: unknown): value is UsagePeriodStart {
-  return typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])-01$/.test(value);
+  return typeof value === 'string' && /^(?!0000)\d{4}-(0[1-9]|1[0-2])-01$/.test(value);
 }
 
 /** All lanes at zero — the identity for {@link addRollupFigures}, and the starting point of a rebuild fold. */

@@ -13,7 +13,7 @@
 //   - magnitude <= the corrected event    — a trigger, because a CHECK cannot see another row (§1-G10)
 //   - at most ONE correction per event    — a unique index (§1-G10b)
 // This service's job is authorization, scope, attribution and the audit record.
-import { usageCorrected } from '@acbp/contracts';
+import { isPlatformError, usageCorrected } from '@acbp/contracts';
 import {
   UsageCorrectionRepository,
   elevateToCompanyScope,
@@ -29,6 +29,9 @@ import type { Logger } from '@acbp/observability';
 
 /** The maximum length of the owner's free-text justification. Bounded because it is caller-supplied. */
 const REASON_MAX = 500;
+
+/** The floor of PostgreSQL `integer`, which is what the four delta columns are (migration 0051). */
+const INT4_MIN = -2_147_483_648;
 
 export interface RecordUsageCorrectionParams {
   /** Server-verified internal user id (from the identity boundary). NEVER a browser claim. */
@@ -106,11 +109,17 @@ export async function recordUsageCorrection(
       // Elevate into the company owning the event. `elevateToCompanyScope` verifies the company belongs to the
       // caller's ACCOUNT via the account-scoped `companies` policy and fails closed when it does not — so a
       // company id belonging to another account cannot be used to reach into it.
+      // `elevateToCompanyScope` throws a `not_found` PlatformError when the company is not visible under this
+      // account (fail-closed). ONLY that is a refusal. It also issues two live statements — a `companies` select
+      // and a `set_config` — and a connection reset, statement timeout or GUC misconfiguration on either throws
+      // too. A bare `catch` would report an outage to the owner as "that company id is wrong", which is the same
+      // swallow-everything defect `classifyCorrectionFailure` returns `null` to avoid a few lines below.
       let companyScope;
       try {
         companyScope = await elevateToCompanyScope(scope, params.companyId);
-      } catch {
-        return { status: 'company_not_found' };
+      } catch (error: unknown) {
+        if (isPlatformError(error) && error.category === 'not_found') return { status: 'company_not_found' };
+        throw error;
       }
 
       // THE EVENT MUST EXIST, IN THIS COMPANY. Checked before the insert so the common mistake gets a typed
@@ -175,8 +184,16 @@ export async function recordUsageCorrection(
  *
  * PINNED TO SQLSTATE, NOT TO MESSAGE TEXT. Constraint names and provider messages are sanitized before they reach
  * callers in this codebase, so matching on them would be matching on something that is not there. `23505` is the
- * one-correction-per-event unique index (§1-G10b); `23514` is a CHECK or the magnitude trigger, which raises a
- * check violation deliberately (§1-G10).
+ * one-correction-per-event unique index (§1-G10b).
+ *
+ * ⚠️ `23514` IS ONE-TO-MANY AND `exceeds_original` NAMES ONLY ITS COMMONEST CAUSE. Migration 0051's trigger
+ * raises a check violation for five conditions — the per-lane magnitude bound, the event not being visible in
+ * scope, the event belonging to another account, retracting more than one event, plus the table's own
+ * non-positive/not-empty/reason-length CHECKs. SQLSTATE alone cannot tell them apart. The non-magnitude
+ * conditions are unreachable on this path today because the deltas are validated before the insert and the event
+ * is looked up first (a foreign event returns `usage_event_not_found`), which is what keeps the label honest —
+ * NOT the code distinguishing them. Relaxing either of those pre-checks would start reporting other refusals as
+ * `exceeds_original`, and the trigger would need distinct error codes before that happened.
  *
  * Returning `null` rather than a catch-all refusal is the load-bearing part: an unrecognised failure must
  * propagate, or a genuine fault would be reported to the caller as an ordinary, expected refusal.
@@ -201,7 +218,13 @@ function readDeltas(params: RecordUsageCorrectionParams): {
   const raw = [params.eventCountDelta, params.inputTokensDelta, params.outputTokensDelta, params.estimatedCostMicrosDelta];
   // `Number.isInteger` is false for NaN and Infinity, so neither reaches the database. A NaN delta would
   // otherwise be inserted as NULL or rejected far from where it was introduced.
-  if (!raw.every((v) => typeof v === 'number' && Number.isInteger(v) && v <= 0)) return null;
+  //
+  // THE LOWER BOUND IS NOT DECORATION. The four delta columns are `integer` (int4), so a value below
+  // −2,147,483,648 is rejected by the BIND, raising `22003 numeric_value_out_of_range` — and that happens BEFORE
+  // the magnitude trigger can refuse it, so `classifyCorrectionFailure` (which knows 23505 and 23514) would not
+  // recognise it and the caller would get a thrown internal error where `invalid_delta` is the honest answer.
+  // One branch away from a typed refusal is not close enough.
+  if (!raw.every((v) => typeof v === 'number' && Number.isInteger(v) && v <= 0 && v >= INT4_MIN)) return null;
   // An all-zero correction records an adjustment that adjusts nothing, permanently consuming this event's one
   // correction slot (§1-G10b) and leaving no way to make the real one.
   if (raw.every((v) => v === 0)) return null;

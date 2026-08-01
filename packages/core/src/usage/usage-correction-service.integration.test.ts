@@ -29,6 +29,8 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
   let accountOwner = '';
   let accountViewer = '';
+  /** ACCOUNT viewer, COMPANY owner — the user whose two roles disagree, so the account check is provably the one. */
+  let companyOwnerAccountViewer = '';
   let outsider = '';
   let accountA = '';
   let accountB = '';
@@ -77,9 +79,13 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
       accountId: accountA,
       companyId: companyA1,
       correctsUsageEventId: eventA1,
-      eventCountDelta: 0,
+      // FOUR DISTINCT NON-ZERO LANES. Leaving `eventCountDelta` and `outputTokensDelta` at zero — as an earlier
+      // version did throughout — meant no test in the repo ever carried a non-zero value through the service for
+      // those two lanes, so a dropped or transposed column in either the insert or the correction aggregation
+      // was invisible. Distinct magnitudes make a swap fail rather than coincide.
+      eventCountDelta: -1,
       inputTokensDelta: -10,
-      outputTokensDelta: 0,
+      outputTokensDelta: -5,
       estimatedCostMicrosDelta: -100,
       reason: 'duplicate provider charge',
       ...over,
@@ -111,10 +117,12 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
     }
     accountOwner = await seedUser();
     accountViewer = await seedUser();
+    companyOwnerAccountViewer = await seedUser();
     outsider = await seedUser();
-    accountA = await seedAccount(accountOwner, [accountViewer]);
+    accountA = await seedAccount(accountOwner, [accountViewer, companyOwnerAccountViewer]);
     accountB = await seedAccount(outsider);
-    companyA1 = await seedCompany(accountA, [accountOwner]);
+    // `companyOwnerAccountViewer` is an OWNER here and a VIEWER on the account above — deliberately divergent.
+    companyA1 = await seedCompany(accountA, [accountOwner, companyOwnerAccountViewer]);
     companyB1 = await seedCompany(accountB, [outsider]);
     eventA1 = await seedEvent(accountA, companyA1, { input: 100, output: 50, cost: 1000 });
     eventB1 = await seedEvent(accountB, companyB1, { input: 100, output: 50, cost: 1000 });
@@ -122,29 +130,40 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
   // ── the compensating record itself ────────────────────────────────────────────────────────────────────────
 
-  test('a correction is a NEW ROW referencing the original — and the original is UNCHANGED', async () => {
-    const before = await sql<{ input_tokens: number; estimated_cost_micros: number }>`
-      select input_tokens, estimated_cost_micros from usage_events where id = ${eventA1}::uuid
-    `.execute(seed.kysely);
+  test('a correction is a NEW ROW referencing the original — and the WHOLE original row is UNCHANGED', async () => {
+    // `select *`, not a couple of columns. An earlier version compared a two-key projection and called the
+    // result "byte-for-byte untouched", which would have missed an edit to any other column on the event.
+    const before = await sql<Record<string, unknown>>`select * from usage_events where id = ${eventA1}::uuid`.execute(seed.kysely);
 
     const result = await correct(accountOwner);
     expect(result.status).toBe('ok');
 
-    const row = await sql<{ corrects_usage_event_id: string; input_tokens_delta: number; estimated_cost_micros_delta: number; reason: string; created_by_user_id: string }>`
-      select corrects_usage_event_id, input_tokens_delta, estimated_cost_micros_delta, reason, created_by_user_id from usage_corrections
+    // ALL FOUR LANES, each with a DISTINCT value. Deltas that shared a value (or left two lanes at zero) could
+    // not detect a transposed column in `insert` or in `sumCompanyCorrections` — `sum(event_count_delta) as
+    // output_tokens` would read as correct. The distinctness is the assertion.
+    const row = await sql<{
+      corrects_usage_event_id: string;
+      event_count_delta: number;
+      input_tokens_delta: number;
+      output_tokens_delta: number;
+      estimated_cost_micros_delta: number;
+      reason: string;
+      created_by_user_id: string;
+    }>`
+      select corrects_usage_event_id, event_count_delta, input_tokens_delta, output_tokens_delta, estimated_cost_micros_delta, reason, created_by_user_id from usage_corrections
     `.execute(seed.kysely);
     expect(row.rows).toHaveLength(1);
     expect(row.rows[0]!.corrects_usage_event_id).toBe(eventA1);
+    expect(row.rows[0]!.event_count_delta).toBe(-1);
     expect(row.rows[0]!.input_tokens_delta).toBe(-10);
+    expect(row.rows[0]!.output_tokens_delta).toBe(-5);
     expect(row.rows[0]!.estimated_cost_micros_delta).toBe(-100);
     expect(row.rows[0]!.reason).toBe('duplicate provider charge');
     // ATTRIBUTION: who adjusted the figure is the question the audit trail exists to answer.
     expect(row.rows[0]!.created_by_user_id).toBe(accountOwner);
 
-    // THE ORIGINAL IS BYTE-FOR-BYTE UNTOUCHED. This is the "never edits" half, at the row level.
-    const after = await sql<{ input_tokens: number; estimated_cost_micros: number }>`
-      select input_tokens, estimated_cost_micros from usage_events where id = ${eventA1}::uuid
-    `.execute(seed.kysely);
+    // THE ORIGINAL IS UNTOUCHED, across every column it has.
+    const after = await sql<Record<string, unknown>>`select * from usage_events where id = ${eventA1}::uuid`.execute(seed.kysely);
     expect(after.rows[0]).toEqual(before.rows[0]);
   });
 
@@ -157,13 +176,15 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
     const after = await rebuildAccountUsageRollup(app, { userId: accountOwner, accountId: accountA, periodStart: PERIOD });
     if (after.status !== 'ok') throw new Error(`expected ok, got ${after.status}`);
-    expect(after.figures).toEqual({ eventCount: 1, inputTokens: 90, outputTokens: 50, estimatedCostMicros: 900 });
+    // EVERY LANE MOVES, each by its own distinct delta. This is what makes the assertion able to detect a
+    // transposition in `sumCompanyCorrections`: swapping any two lanes changes at least one of these numbers.
+    expect(after.figures).toEqual({ eventCount: 0, inputTokens: 90, outputTokens: 45, estimatedCostMicros: 900 });
   });
 
   test('a correction lands in the CORRECTED EVENT\'S period, not the period it was made in (§1-G10c)', async () => {
     // A JULY event. The correction row is created NOW (August, per the test clock) and must still reduce JULY.
     const julyEvent = await seedEvent(accountA, companyA1, { input: 500, output: 0, cost: 5000 }, '2026-07-10T09:00:00.000Z');
-    const r = await correct(accountOwner, { correctsUsageEventId: julyEvent, inputTokensDelta: -500, estimatedCostMicrosDelta: -5000 });
+    const r = await correct(accountOwner, { correctsUsageEventId: julyEvent, inputTokensDelta: -500, outputTokensDelta: 0, estimatedCostMicrosDelta: -5000 });
     expect(r.status).toBe('ok');
 
     const july = await rebuildAccountUsageRollup(app, { userId: accountOwner, accountId: accountA, periodStart: '2026-07-01' });
@@ -211,23 +232,25 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
   // ── "never edits", proven at the PRIVILEGES ───────────────────────────────────────────────────────────────
 
-  test('NEVER EDITS: the app role has no UPDATE and no DELETE on either ledger', async () => {
-    // Attempted as the role the application actually runs as. A build that relaxed these grants to "make
-    // corrections easier" would turn this red — which a test that only records corrections never would.
-    await sql`select set_config('app.current_account', ${accountA}, true)`.execute(app.kysely);
-    await sql`select set_config('app.current_company', ${companyA1}, true)`.execute(app.kysely);
-
-    await expect(sql`update usage_events set input_tokens = 1 where id = ${eventA1}::uuid`.execute(app.kysely)).rejects.toThrow();
-    await expect(sql`delete from usage_events where id = ${eventA1}::uuid`.execute(app.kysely)).rejects.toThrow();
-
-    expect((await correct(accountOwner)).status).toBe('ok');
-    await expect(sql`update usage_corrections set input_tokens_delta = 0`.execute(app.kysely)).rejects.toThrow();
-    await expect(sql`delete from usage_corrections`.execute(app.kysely)).rejects.toThrow();
-
-    // ...and the correction is still there after all four attempts.
-    const n = await sql<{ n: string }>`select count(*)::text as n from usage_corrections`.execute(seed.kysely);
-    expect(n.rows[0]!.n).toBe('1');
-  });
+  // ⚠️ "NEVER EDITS" IS NOT PROVEN IN THIS FILE, AND DELIBERATELY SO.
+  //
+  // It is a claim about PRIVILEGES — that the app role holds no UPDATE or DELETE on `usage_events` or
+  // `usage_corrections` — and it is proven where privileges are tested, at the database layer:
+  // `packages/database/src/integration/usage-rollups.integration.test.ts` (the `42501` assertions on both
+  // tables, each pinned to the SQLSTATE and each paired with a control showing the rollup's figure columns ARE
+  // updatable, so the grant is not simply refusing everything).
+  //
+  // An earlier version of this suite carried its own copy of that proof and it was WORSE in three ways, which is
+  // why it is gone rather than repaired: it issued `set_config(..., true)` — SET LOCAL — against the connection
+  // POOL rather than inside a transaction, so the scope it claimed to establish was discarded before the next
+  // statement and might land on a different connection entirely; it asserted bare `rejects.toThrow()`, which a
+  // column rename would satisfy with `42703 undefined_column` just as happily as a privilege refusal; and it had
+  // no control, so "refuses UPDATE" and "the role can do nothing here" were indistinguishable. Two copies of a
+  // guarantee, one of them wrong, is worse than one correct copy.
+  //
+  // What this suite proves instead is the SERVICE-level fact the database suite cannot: that recording a
+  // correction through `recordUsageCorrection` leaves the corrected event untouched — asserted over the whole
+  // row, immediately below.
 
   test('AT MOST ONE correction per event — a second is refused, and the first is untouched (§1-G10b)', async () => {
     expect((await correct(accountOwner)).status).toBe('ok');
@@ -249,7 +272,10 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
   test('a POSITIVE delta is refused — usage can only ever be reduced (§1-G10a)', async () => {
     // The one direction that must stay structurally impossible: inflating recorded usage without a real metered
-    // event behind it. Refused before the database by the service, and by a CHECK if it ever got there.
+    // event behind it. THIS TEST EXERCISES ONE LAYER — the service refuses before any database call, so
+    // `usage_corrections_deltas_nonpositive` never fires on this path. That CHECK is proven independently in
+    // `packages/database/src/integration/usage-rollups.integration.test.ts`; naming both here would credit this
+    // assertion with coverage it does not have.
     const result = await correct(accountOwner, { inputTokensDelta: 5 });
     expect(result.status).toBe('invalid_delta');
     const n = await sql<{ n: string }>`select count(*)::text as n from usage_corrections`.execute(seed.kysely);
@@ -283,11 +309,35 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
 
   // ── authorization and tenancy ─────────────────────────────────────────────────────────────────────────────
 
-  test('an account VIEWER is forbidden — correcting usage is owner-only', async () => {
-    const result = await correct(accountViewer);
+  test('AN ACCOUNT VIEWER WHO IS A COMPANY OWNER IS STILL FORBIDDEN — the role that decides is the ACCOUNT one', async () => {
+    // ⚠️ THIS FIXTURE IS THE TEST. A viewer with no company membership would be refused by a build that resolved
+    // the role from `company_memberships` — the exact `readCreditLedger` review-pass-1 HIGH that
+    // `usage-correction-service.ts` names as its reason for checking the account role — because they would
+    // resolve to `role = null` and deny anyway. Such a test passes for the wrong reason and would stay green
+    // through a reintroduction of the defect.
+    //
+    // `companyOwnerAccountViewer` is a VIEWER on the account and an OWNER of the company, so the two roles
+    // DISAGREE and only the account-level check can produce `forbidden`.
+    const membership = await sql<{ role: string }>`
+      select role from company_memberships where member_user_id = ${companyOwnerAccountViewer}::uuid and company_id = ${companyA1}::uuid
+    `.execute(seed.kysely);
+    // The control on the fixture itself: if this row were missing or not 'owner', the divergence would not exist
+    // and the assertion below would be the weak one again.
+    expect(membership.rows).toHaveLength(1);
+    expect(membership.rows[0]!.role).toBe('owner');
+    const accountRole = await sql<{ role: string }>`
+      select role from memberships where member_user_id = ${companyOwnerAccountViewer}::uuid and account_id = ${accountA}::uuid
+    `.execute(seed.kysely);
+    expect(accountRole.rows[0]!.role).toBe('viewer');
+
+    const result = await correct(companyOwnerAccountViewer);
     expect(result.status).toBe('forbidden');
     const n = await sql<{ n: string }>`select count(*)::text as n from usage_corrections`.execute(seed.kysely);
     expect(n.rows[0]!.n).toBe('0');
+  });
+
+  test('a plain account viewer is forbidden too', async () => {
+    expect((await correct(accountViewer)).status).toBe('forbidden');
   });
 
   test('a caller with NO membership in the account is denied, and writes nothing', async () => {
@@ -312,10 +362,49 @@ describe.skipIf(!hasTestDatabase)('usage corrections (real PostgreSQL) — ACBP-
     expect(n.rows[0]!.n).toBe('0');
   });
 
-  test('a refused correction leaves NO audit event — the row and its record commit together', async () => {
+  test('a refused correction leaves no audit event', async () => {
     expect((await correct(accountViewer)).status).toBe('forbidden');
     expect((await correct(accountOwner, { inputTokensDelta: -101, estimatedCostMicrosDelta: 0 })).status).toBe('exceeds_original');
     const events = await sql<{ n: string }>`select count(*)::text as n from audit_events where name = 'usage.corrected'`.execute(seed.kysely);
     expect(events.rows[0]!.n).toBe('0');
+  });
+
+  test('A FAILING AUDIT WRITE ROLLS THE CORRECTION BACK — the row and its record commit together', async () => {
+    // ⚠️ THE PREVIOUS TEST DOES NOT PROVE THIS, WHICH IS WHY BOTH EXIST. Those two refusals never reach the
+    // insert, so their zero audit rows would hold even if the audit call had been deleted entirely. Atomicity is
+    // only observable by letting the write SUCCEED and then making the audit fail: if the two were not in one
+    // transaction, the correction would survive its missing record.
+    const boom = (): never => {
+      throw new Error('audit writer failed');
+    };
+    await expect(
+      recordUsageCorrection(
+        app,
+        {
+          userId: accountOwner,
+          accountId: accountA,
+          companyId: companyA1,
+          correctsUsageEventId: eventA1,
+          eventCountDelta: -1,
+          inputTokensDelta: -10,
+          outputTokensDelta: -5,
+          estimatedCostMicrosDelta: -100,
+          reason: 'duplicate provider charge',
+        },
+        { auditWriter: boom },
+      ),
+    ).rejects.toThrow();
+
+    // NOTHING SURVIVED. Not the correction, not a partial audit row.
+    const corrections = await sql<{ n: string }>`select count(*)::text as n from usage_corrections`.execute(seed.kysely);
+    expect(corrections.rows[0]!.n).toBe('0');
+    const events = await sql<{ n: string }>`select count(*)::text as n from audit_events where name = 'usage.corrected'`.execute(seed.kysely);
+    expect(events.rows[0]!.n).toBe('0');
+
+    // CONTROL: the identical call with a working audit writer DOES record one, so the rollback above is the
+    // audit failure and not some unrelated refusal swallowing the whole test.
+    expect((await correct(accountOwner)).status).toBe('ok');
+    const after = await sql<{ n: string }>`select count(*)::text as n from usage_corrections`.execute(seed.kysely);
+    expect(after.rows[0]!.n).toBe('1');
   });
 });
