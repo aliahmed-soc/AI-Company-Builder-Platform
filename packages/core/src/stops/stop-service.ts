@@ -21,7 +21,7 @@ import {
   emergencyStopWorkReviewed,
   type StopScope,
 } from '@acbp/contracts';
-import { StopRepository, writeAuditEvent, type DatabaseClient, type TenantScope } from '@acbp/database';
+import { StopRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type TenantScope } from '@acbp/database';
 import { sql } from 'kysely';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -47,6 +47,12 @@ export const STOP_REFUSAL_REASONS = [
   'target_must_be_own_company',
   /** A `task`/`worker` stop naming something that does not exist in this tenant — it could never cover a call. */
   'target_not_found',
+  /**
+   * Reviewing held work while the stop is STILL ACTIVE. ADMIN-002 says clearing a stop *opens* the mandatory
+   * review, so this order is not merely unusual — confirming here would either resume work into a live halt or
+   * record a decision whose effect silently depends on a later clear.
+   */
+  'stop_still_active',
 ] as const;
 export type StopRefusalReason = (typeof STOP_REFUSAL_REASONS)[number];
 
@@ -73,7 +79,14 @@ export interface ActivateStopParams {
 }
 
 export type ActivateStopResult =
-  | { readonly status: 'ok'; readonly stopId: string; readonly scope: StopScope; readonly heldCount: number }
+  | {
+      readonly status: 'ok';
+      readonly stopId: string;
+      readonly scope: StopScope;
+      readonly heldCount: number;
+      /** How many held tasks were actually transitioned `running → paused`. See `emergencyStopActivated`. */
+      readonly pausedCount: number;
+    }
   | { readonly status: 'refused'; readonly reason: StopRefusalReason }
   | { readonly status: 'forbidden' };
 
@@ -198,21 +211,23 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       //
       // The held set must therefore be the set the covering relation would actually halt:
       const inFlightStates = sql.join(IN_FLIGHT_TASK_STATES.map((s) => sql.lit(s)));
-      const caught = async (): Promise<readonly { id: string }[]> => {
+      const caught = async (): Promise<readonly { id: string; state: string }[]> => {
         // Whole-company halts: `account_wide` and `company` both stop every call in this company, so every
         // in-flight task here is genuinely caught.
         if (params.scope === 'account_wide' || params.scope === 'company') {
           return (
-            await sql<{ id: string }>`
-              select id from tasks where company_id = ${scope.tenant.companyId}::uuid and state in (${inFlightStates}) order by id
+            await sql<{ id: string; state: string }>`
+              select id, state from tasks
+              where company_id = ${scope.tenant.companyId}::uuid and state in (${inFlightStates}) order by id
             `.execute(scope.db)
           ).rows;
         }
         // A task stop catches exactly its task — and only if that task is actually in flight.
         if (params.scope === 'task') {
           return (
-            await sql<{ id: string }>`
-              select id from tasks where company_id = ${scope.tenant.companyId}::uuid and id = ${target}::uuid and state in (${inFlightStates})
+            await sql<{ id: string; state: string }>`
+              select id, state from tasks
+              where company_id = ${scope.tenant.companyId}::uuid and id = ${target}::uuid and state in (${inFlightStates})
             `.execute(scope.db)
           ).rows;
         }
@@ -220,12 +235,12 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
         // `UNIQUE(task_run_id)`, so this cannot fan out per attempt.
         if (params.scope === 'worker') {
           return (
-            await sql<{ id: string }>`
-              select t.id from tasks t
+            await sql<{ id: string; state: string }>`
+              select t.id, t.state from tasks t
                 join task_runs tr on tr.task_id = t.id
                 join worker_runs wr on wr.task_run_id = tr.id
               where t.company_id = ${scope.tenant.companyId}::uuid and wr.worker_id = ${target} and t.state in (${inFlightStates})
-              group by t.id order by t.id
+              group by t.id, t.state order by t.id
             `.execute(scope.db)
           ).rows;
         }
@@ -238,7 +253,27 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       };
       const inFlight = { rows: await caught() };
 
+      // ── HOLD, AND PAUSE WHAT IS ACTUALLY RUNNING (canon: WORKFLOW §4; CDR-072 §1-G7) ──────────────────────
+      //
+      // `held_work` alone was never enough — it was written and read by nothing, so a cleared stop resumed every
+      // task regardless of its review. Canon puts the enforcement on the TASK STATE MACHINE, which already owns
+      // "may this task proceed": `running→paused`, actor *"system (company pause / emergency stop)"*, precondition
+      // *"scope stop active"*, effect *"held visibly; resume requires review (ADMIN-002)"*. `paused` and both
+      // directions were ALREADY legal transitions (P4-002, verbatim from WORKFLOW §4) — the transition simply had
+      // no producer. Nothing here is invented.
+      //
+      // ONLY `running` TASKS TRANSITION, because `running→paused` is the only legal edge into `paused`. The other
+      // in-flight states need no edge and must not get one:
+      //   `queued`              — WORKFLOW §4 already gates `queued→running` on *"stop-state clear"*, so a queued
+      //                           task cannot start while the stop stands. Pausing it would add an illegal edge to
+      //                           solve a problem the state machine has already solved.
+      //   `waiting_for_input`   — not executing; it is blocked on a human or an approval, and the dispatcher refuses
+      //   `waiting_for_approval`  any tool call it makes on resume anyway.
+      // They are still HELD, because ADMIN-002's review is about what the operator must decide on, not only about
+      // what changed state.
       let heldCount = 0;
+      let pausedCount = 0;
+      const tasks = new TaskRepository(scope.db);
       for (const task of inFlight.rows) {
         const held = await stops.hold({
           accountId: scope.tenant.accountId,
@@ -247,18 +282,21 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
           taskId: task.id,
         });
         if (held !== undefined) heldCount += 1;
+        // Guarded on `state = 'running'`, so a task that finished in this window is simply not paused — exactly one
+        // transition can win and a completed task is never dragged backwards.
+        if (task.state === 'running' && (await tasks.updateState(task.id, 'running', 'paused')) === 1) pausedCount += 1;
       }
 
       // The evidence names WHAT halted, not that something did (§1-G5).
       await audit(
         scope,
-        emergencyStopActivated({ stopId: created.id, scope: params.scope, target: requiresTarget ? target : null, heldCount }),
+        emergencyStopActivated({ stopId: created.id, scope: params.scope, target: requiresTarget ? target : null, heldCount, pausedCount }),
         auditCtx(options),
       );
       options.logger?.warn('stop.activated', {
         metadata: { accountId: params.accountId, companyId: params.companyId, scope: params.scope, heldCount },
       });
-      return { status: 'ok', stopId: created.id, scope: params.scope, heldCount };
+      return { status: 'ok', stopId: created.id, scope: params.scope, heldCount, pausedCount };
     },
     opts(options),
   );
@@ -369,17 +407,40 @@ export async function reviewHeldWork(client: DatabaseClient, params: ReviewHeldW
       }
 
       const stops = new StopRepository(scope.db);
-      const row = await sql<{ stop_id: string; status: string }>`
-        select stop_id, status from held_work where id = ${params.heldWorkId}::uuid
+      const row = await sql<{ stop_id: string; status: string; task_id: string; stop_status: string }>`
+        select h.stop_id, h.status, h.task_id, s.status as stop_status
+        from held_work h join emergency_stops s on s.id = h.stop_id
+        where h.id = ${params.heldWorkId}::uuid
       `.execute(scope.db);
       const held = row.rows[0];
       if (held === undefined) return { status: 'refused', reason: 'not_found' };
       if (held.status !== 'held') return { status: 'refused', reason: 'already_reviewed' };
+      // ORDER MATTERS, AND CANON FIXES IT. ADMIN-002 says clearing a stop *opens* the mandatory review, so a review
+      // while the stop is still active is out of sequence: confirming would either resume work into a live halt, or
+      // record a decision whose effect silently depends on a later clear. Refused instead of guessed.
+      if (held.stop_status === 'active') return { status: 'refused', reason: 'stop_still_active' };
 
       const reviewed = await stops.review(params.heldWorkId, params.decision, params.userId, params.at);
       // Guarded on `status = 'held'`: a concurrent reviewer already decided this item. Their decision stands —
       // silently overwriting it would make ADMIN-002's review replaceable, which is not a decision at all.
       if (reviewed === undefined) return { status: 'refused', reason: 'already_reviewed' };
+
+      // ── THE RESUME ITSELF (canon: WORKFLOW §4 `paused→running`; diagram 13) ───────────────────────────────
+      //
+      // *"CONFIRMED items resume from checkpoints"* — confirmed, not all. This is the half that did not exist:
+      // `status` was written here and read by nothing, so a cleared stop resumed every task regardless, and an
+      // explicit DISCARD behaved identically to a confirm.
+      //
+      // A DISCARD DELIBERATELY LEAVES THE TASK `paused`. It is not cancelled — canon's queue is "nothing lost", and
+      // a discarded item stays visible as a reviewed decision the operator can still see. Cancelling it here would
+      // be a second, unasked-for state change riding on a review.
+      //
+      // Guarded on `state = 'paused'`, so a task that was never running (held while `queued` or `waiting_*`, which
+      // take no `paused` edge) is simply not transitioned — its own precondition already keeps it from starting.
+      // FIRST WRITE HAS LANDED above, so a failure from here THROWS rather than returning a typed refusal (§1-G8).
+      if (params.decision === 'confirmed') {
+        await new TaskRepository(scope.db).updateState(held.task_id, 'paused', 'running');
+      }
 
       await audit(scope, emergencyStopWorkReviewed({ stopId: held.stop_id, decision: params.decision, heldWorkId: params.heldWorkId }), auditCtx(options));
       return { status: 'ok', heldWorkId: params.heldWorkId };

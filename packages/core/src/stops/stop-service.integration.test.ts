@@ -269,6 +269,67 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
     expect(await clearStop(product, { ...asOwner(), stopId, at: at() })).toEqual({ status: 'refused', reason: 'not_active' });
   });
 
+  // ── ADMIN-002 REVIEW-TO-RESUME, THE WAY CANON SPECIFIES IT (WORKFLOW §4; diagram 13) ─────────────────────
+  //
+  // The Blocker an independent review found: `held_work.status` was written by `reviewHeldWork` and read by
+  // NOTHING, so clearing a stop authorized every held task's next call whether its review said `held`, `confirmed`
+  // or `discarded`. An explicit discard changed one column and nothing else.
+
+  const taskState = async (id: string) =>
+    (await owner.kysely.selectFrom('tasks').select(['state']).where('id', '=', id).executeTakeFirst())?.state;
+
+  test('activation PAUSES the running task it caught — the transition canon already specified', async () => {
+    // `running→paused`, actor "system (company pause / emergency stop)", pre "scope stop active". Both directions
+    // were ALREADY legal (P4-002, verbatim from WORKFLOW §4); the transition simply had no producer.
+    expect(await taskState(taskOne)).toBe('running');
+    await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    expect(await taskState(taskOne)).toBe('paused');
+  });
+
+  test('a QUEUED task is held but NOT paused — `queued→running` already requires stop-state clear', async () => {
+    // `running→paused` is the only legal edge into `paused`. Adding one for `queued` would invent a transition to
+    // solve a problem WORKFLOW §4 has already solved by gating the start.
+    expect(await taskState(taskTwo)).toBe('queued');
+    const r = await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    expect(r).toMatchObject({ status: 'ok', heldCount: 2 });
+    expect(await taskState(taskTwo)).toBe('queued');
+    expect(await taskState(taskOne)).toBe('paused');
+  });
+
+  test('reviewing while the stop is STILL ACTIVE is refused — ADMIN-002 says clearing OPENS the review', async () => {
+    await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    const heldWorkId = (await heldRows())[0]!.id;
+    expect(await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'confirmed', at: at() })).toEqual({
+      status: 'refused',
+      reason: 'stop_still_active',
+    });
+    // ...and the task stays paused, so an out-of-order review cannot resume work into a live halt.
+    expect(await taskState(taskOne)).toBe('paused');
+  });
+
+  test('CONFIRMING resumes the task — "confirmed items resume from checkpoints"', async () => {
+    const a = await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    const stopId = (a as { status: 'ok'; stopId: string }).stopId;
+    expect((await clearStop(product, { ...asOwner(), stopId, at: at() })).status).toBe('ok');
+    // CLEARING ALONE RESUMES NOTHING — the whole point of the review gate.
+    expect(await taskState(taskOne)).toBe('paused');
+    const heldWorkId = (await heldRows())[0]!.id;
+    expect((await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'confirmed', at: at() })).status).toBe('ok');
+    expect(await taskState(taskOne)).toBe('running');
+  });
+
+  test('DISCARDING does NOT resume — and does not cancel either; the item stays visible as a decision', async () => {
+    // The case that was previously indistinguishable from a confirm. A discard leaves the task `paused`: canon's
+    // queue is "nothing lost", so the item remains a reviewed record rather than being cancelled by a side effect.
+    const a = await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    const stopId = (a as { status: 'ok'; stopId: string }).stopId;
+    await clearStop(product, { ...asOwner(), stopId, at: at() });
+    const heldWorkId = (await heldRows())[0]!.id;
+    expect((await reviewHeldWork(product, { ...asOwner(), heldWorkId, decision: 'discarded', at: at() })).status).toBe('ok');
+    expect(await taskState(taskOne)).toBe('paused');
+    expect(await heldById(heldWorkId)).toMatchObject({ status: 'discarded' });
+  });
+
   // ── §1-G8: NO PARTIALLY-STOPPED PLATFORM ─────────────────────────────────────────────────────────────────
 
   test('a failure AFTER the first write rolls everything back — no partial stop survives', async () => {

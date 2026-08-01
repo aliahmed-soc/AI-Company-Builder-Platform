@@ -915,8 +915,18 @@ export function emergencyStopActivated(input: {
   readonly scope: string;
   readonly target: string | null;
   readonly heldCount: number;
+  /**
+   * How many of the held tasks were actually TRANSITIONED to `paused` (WORKFLOW §4 `running→paused`).
+   *
+   * Distinct from `held_count` on purpose, and the difference is information rather than noise: a `queued` or
+   * `waiting_*` task is held for review but takes no `paused` edge, because its own precondition already stops it
+   * starting. `held_count: 5, paused_count: 2` therefore says "five items need your decision, two were mid-flight
+   * and are now suspended" — which is what an operator walking back in actually needs to know. Reporting only the
+   * held total would leave them unable to tell a halted fleet from a queue that never started.
+   */
+  readonly pausedCount: number;
 }): AuditEvent {
-  const metadata: Record<string, string | number | boolean> = { scope: input.scope, held_count: input.heldCount };
+  const metadata: Record<string, string | number | boolean> = { scope: input.scope, held_count: input.heldCount, paused_count: input.pausedCount };
   if (input.target !== null) metadata['target'] = input.target;
   // OUTCOME `success`, not `blocked`. The distinction matters and the first version got it wrong: activating a stop
   // is an owner action that SUCCEEDED. What gets BLOCKED is each subsequent tool call, and those are recorded on
