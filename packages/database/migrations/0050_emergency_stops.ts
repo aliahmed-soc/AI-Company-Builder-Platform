@@ -73,6 +73,13 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       'emergency_stops_company_matches_scope',
       sql`(scope = 'account_wide' and company_id is null) or (scope <> 'account_wide' and company_id is not null)`,
     )
+    // A `company` STOP MUST NAME ITS OWN COMPANY. Found in review pass 2, and it is the §0 failure in miniature:
+    // the covering rule matches a `company` stop by comparing `target_id` to the CALL's company, while RLS shows the
+    // row to the company in `company_id`. Nothing tied those two together, so a stop with `company_id = A` and
+    // `target_id = B` was storable, ACTIVE, visible to A — and covered nothing at all. An operator would have been
+    // told the company was halted while every call went through. Making it unstorable is the right layer: the
+    // service refuses it too, but a CHECK cannot be forgotten by a future caller.
+    .addCheckConstraint('emergency_stops_company_target_is_self', sql`scope <> 'company' or target_id = company_id::text`)
     // Status and the clearing columns cannot disagree — an `active` row that records who cleared it, or a `cleared`
     // row that does not, is a record nobody can read honestly afterwards.
     .addCheckConstraint(

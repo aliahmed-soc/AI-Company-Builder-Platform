@@ -43,6 +43,8 @@ export const STOP_REFUSAL_REASONS = [
   'not_found',
   'not_active',
   'already_reviewed',
+  /** A `company` stop naming a company other than the one it is raised in — see the refusal site. */
+  'target_must_be_own_company',
 ] as const;
 export type StopRefusalReason = (typeof STOP_REFUSAL_REASONS)[number];
 
@@ -95,6 +97,14 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       const target = typeof params.targetId === 'string' ? params.targetId.trim() : '';
       if (requiresTarget && target === '') return { status: 'refused', reason: 'target_required' };
       if (!requiresTarget && target !== '') return { status: 'refused', reason: 'target_not_allowed' };
+      // A `company` STOP MUST NAME ITS OWN COMPANY (review pass 2). The covering rule matches this scope by
+      // comparing `target_id` against the CALL's company, while RLS shows the row to the company in `company_id`.
+      // A stop raised in company A naming company B would therefore be active and visible to A while covering
+      // NOTHING — §0's failure with a different mask on. Refused here so the caller gets a reason, and refused by
+      // migration 0050's CHECK so it cannot be stored by any future path that forgets to ask.
+      if (params.scope === 'company' && target !== scope.tenant.companyId) {
+        return { status: 'refused', reason: 'target_must_be_own_company' };
+      }
 
       const stops = new StopRepository(scope.db);
       const created = await stops.insert({
