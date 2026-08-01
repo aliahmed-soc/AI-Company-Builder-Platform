@@ -253,10 +253,27 @@ Retention default: activity-projected events with company data; audit-relevant e
      the gateway. It carries bounded metadata only (provider, model@version, token_usage, estimated_cost_micros
      [integer micro-units], fallback_used, latency_ms, outcome, task_class, correlation_id) — NO prompt/response
      content. Because that append-only row IS the durable record, it is not ALSO written to `audit_events` (avoids
-     double-recording; mirrors the CDR-023/CDR-024 audit-mechanism decisions). `usage.recorded`/rollups stay
-     deferred (P5-014/P6-009). -->
+     double-recording; mirrors the CDR-023/CDR-024 audit-mechanism decisions). `usage.recorded` stays deferred. -->
 
 | usage.recorded | Usage ledger | Rollup maintainer, UI | usage_event_id, kind, quantities, company_id, account_id | append-only ledger | ≥ billing |
+<!-- ROLLUPS IMPLEMENTED (ACBP-P6-009; CDR-073 §1-G15) with TWO audit events, and `usage.recorded` still deferred
+     for the reason above — the append-only `usage_events` row IS the durable record, so re-emitting it would be
+     double-recording.
+       `usage.corrected`          — subject = the CORRECTION row, not the event it compensates: a reader tracing
+                                    "who adjusted this account's usage" follows corrections, and the original
+                                    event is immutable with its own record. The per-lane deltas are in the
+                                    payload; the operator's free-text reason is NOT — `has_reason` is a boolean
+                                    and the reason itself stays on the row the subject id points at.
+       `usage.rollup_reconciled`  — subject = the ACCOUNT, because reconciliation is a statement about an
+                                    (account, period) pair rather than about any row — and on the
+                                    missing-projection path there is no rollup row to name. Payload carries the
+                                    PER-LANE DRIFT, the lanes that crossed the owner's threshold, and whether a
+                                    rebuild was applied. Recording only "reconciliation ran" would not say
+                                    whether the number moved, which is the nominal-vs-substantive defect already
+                                    corrected for `policy.changed` and `emergency_stop.activated`.
+     There is deliberately NO `usage.rollup_rebuilt`: a bare rebuild recomputes a projection and changes no fact,
+     and the only production path that triggers one is reconciliation, which records it above. -->
+
 | usage.limit_reached | Usage ledger | Policy engine, notification, Decision Room | limit_type, scope, threshold (hard/soft) | audited | ≥ billing |
 | document.generated | Document module | activity, Decision Room results | document_id, version, provenance_ref (worker, run, model_version) | audited | with company |
 | artifact.exported | Export module | audit | export_job_id, scope, manifest_digest | **audit-grade** (ownership check logged) | permanent record |

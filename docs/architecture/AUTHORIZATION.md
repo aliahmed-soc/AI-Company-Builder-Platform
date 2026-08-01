@@ -207,6 +207,20 @@ trusted core/use-case seam:
   `UNIQUE(request_id)`, so a withdrawal cannot be a second decision without destroying the constraint that makes
   "one decision per approval" true). DISTINCT closed action, deny-by-default; not granted to a viewer, an account
   owner without company membership, nor via forged provider claims. See `CDR-069 §1-G4`.
+- **P6-009** (account usage rollups) adds `usage:read` and `usage:correct`, both **`owner`-only** and both
+  **ACCOUNT-level** — checked against the caller's active ACCOUNT membership, like `portfolio:read`, because a
+  rollup spans the account's companies and no company role can answer a question about all of them.
+  `API-CONTRACTS` is explicit: *"account rollup = account owner"*. Deliberately NOT widened to viewer the way
+  `stop:read` and `approval:read` were — those disclose that work is halted or pending, whereas this discloses
+  spend across the whole account, which canon assigns to the owner alone. `usage:correct` is DISTINCT from
+  reading because it alters a billing-relevant figure; it never edits (the correction is a new append-only row).
+  **These are the only defence.** A total that legitimately spans companies is one RLS cannot narrow, so unlike
+  most reads here there is no second layer underneath: if the check is wrong, the figures are disclosed.
+  There is deliberately **NO `usage:rebuild` action**. Who may trigger a maintenance rebuild is an OPEN OWNER
+  DECISION (CDR-073 §3.2), and registering an action would encode an answer nobody gave. The rebuild is
+  nevertheless gated on `usage:read`, because it RETURNS the same figures the read does — without that, a viewer
+  refused by the read could call the rebuild and receive them anyway. That is the most restrictive posture
+  available, so a later ruling can narrow it to platform-only without having to widen anything. See `CDR-073 §3`.
 - **P5-012** (revision workflow) adds `artifact:revise`, **`owner`-only** — `API-CONTRACTS.md:55` scopes the
   Documents row explicitly (*"Member (read), owner (revise)"*), so unlike `task:delete` this is not a case where canon
   is silent and restricting would invent a requirement. It also commits the company to work: the new task it creates
