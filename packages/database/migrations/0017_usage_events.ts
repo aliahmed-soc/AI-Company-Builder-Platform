@@ -45,6 +45,23 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addForeignKeyConstraint('usage_events_company_fk', ['company_id'], 'companies', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
     .addForeignKeyConstraint('usage_events_account_fk', ['account_id'], 'accounts', ['id'], (cb) => cb.onDelete('cascade').onUpdate('no action'))
+    // ⚠️ WIDENING THIS SET SILENTLY REBILLS CLOSED PERIODS. READ THIS BEFORE ADDING A KIND.
+    //
+    // The account usage rollup (ACBP-P6-009; migration 0051) sums this table with NO `kind` predicate. That is
+    // correct ONLY because this CHECK admits exactly one value, so there is nothing else to count. Add a second
+    // kind — tool or worker usage, per the extension-point note above — and every rollup immediately starts
+    // counting it, INCLUDING for periods that are already closed and already invoiced. A customer's past bill
+    // changes with no code touching the rollup.
+    //
+    // AND RECONCILIATION CANNOT SEE IT. The drift check (CDR-073 §1-G11) recomputes down this same query, so it
+    // would agree with itself: the number moves, both sides match, nothing alerts. That is CDR-073 §0's failure
+    // mode in its purest form — wrong, plausible, and silent.
+    //
+    // A `kind` predicate was NOT added to the rollup pre-emptively: which kinds are billable is a commercial
+    // question (D-02 is open), and choosing now would invent a requirement. So the decision is DEFERRED, not
+    // made — and deferred decisions rot. `tools/check-usage-kind-predicate.mjs` therefore FAILS THE BUILD if this
+    // set ever holds more than one kind while the rollup queries still carry no predicate, which forces the
+    // question to be answered by whoever widens it rather than discovered on an invoice.
     .addCheckConstraint('usage_events_kind_valid', sql`kind in ('model_call')`)
     .addCheckConstraint('usage_events_task_class_valid', sql`task_class in ('interactive', 'extraction', 'classification', 'generation')`)
     .addCheckConstraint('usage_events_outcome_valid', sql`outcome in ('ok', 'error')`)
