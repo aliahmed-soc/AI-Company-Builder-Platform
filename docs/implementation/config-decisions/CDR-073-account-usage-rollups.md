@@ -448,3 +448,73 @@ exactly when the argument is `undefined` — so the case substituted a valid tol
 measuring the helper, not the guard. It is removed there with the reason recorded inline, and the case lives in
 the DB-free suite where no default can mask it. Worth stating: that suite skips without PostgreSQL, so hosted CI
 was the only thing that could have found it — the arrangement working, not failing.
+
+## §6 The third review pass — over the whole ticket, after CI was green
+
+A further independent pass was run across all five commits once CI passed on `fe14b11`, briefed on the diff
+scope, the governing canon and the repo's standards, and explicitly **not** on any previous pass's conclusions —
+so its findings are a re-derivation rather than a confirmation. **No Blockers.** Three HIGH, three MEDIUM, eight
+LOW. Every HIGH was the same shape, and it is the shape this ticket kept producing:
+
+> **a control the code genuinely had, that no test measured.**
+
+Each was closed by a test that fails when the control is removed, and each removal was actually performed and
+watched rather than reasoned about.
+
+### R4 — The UTC pin was unexercised, and three places said otherwise (HIGH)
+
+Two comments and §1-G8 claimed the integration suite proved the SQL and TypeScript derivations agree *"on the
+same rows"*. The test issued its **own third copy** of the expression and never called `sumCompanyUsage` or
+`sumCompanyCorrections` — which, at that point, nothing in the repository called. Deleting `at time zone 'UTC'`
+from both production queries left **every suite green**, because CI runs UTC and the two spellings are then
+byte-identical; on any other server timezone, boundary events change months and a bill changes with them.
+
+The replacement runs the real repository methods under a `Pacific/Kiritimati` (UTC+14) session zone. Mutation:
+removing the pin fails that test and nothing else. §1-G8's "exists in exactly one place" claim was false too and
+is corrected there. This one is worth dwelling on: it is the enforcement-claim failure this project treats as
+worse than no comment, committed *inside the gate written to prevent it*.
+
+### R5 — Corrections were only ever tested with a single-company account (HIGH)
+
+`sumCompanyCorrections` is confined to one company by its JOIN to the dual-keyed `usage_events`, not by its own
+RLS. That makes hoisting it out of the per-company loop look safe. Every correction fixture in the repo lived in
+one company, so the hoist stayed green while dropping every company's corrections except whichever sorted last —
+a permanently over-stated bill on any multi-company account, reproduced by each rebuild and reported as no drift.
+Closed by a two-company fixture; mutation fails it and 61 other usage tests stay green.
+
+### R6 — The advisory lock had no test at all (HIGH)
+
+The ticket's only concurrency control; deleting the call left everything green, against `CLAUDE.md`'s requirement
+for real-PostgreSQL race tests. Two concurrent reconciliations prove nothing — both succeed either way — so the
+new suite holds the same lock on a second connection and asserts the service BLOCKS, with a companion asserting a
+different *period* does not block (a lock keyed on the account alone would otherwise pass the first test for the
+wrong reason).
+
+That mutation also exposed a defect in the new test: the failing assertion threw before releasing the holder
+transaction, so three later suites hung to their timeouts and 46 tests reported as skipped. Release moved into
+`finally`. A failing test that breaks unrelated suites buries its own diagnosis under noise pointing elsewhere.
+
+### The MEDIUM and LOW findings
+
+Two weak assertions (a tenant-isolation refusal accepting *any* SQLSTATE in a file whose own helper forbids that;
+a grant control satisfied by an UPDATE matching zero rows). Two false sentences (a comment claiming transaction
+isolation the same file disclaims 200 lines later; §1-G14 calling the bigint guard *"mutation-tested"*, naming
+tooling this repo does not have — the checking was real, the word was not). Two silent gaps, now recorded in §2:
+company-move attribution and the corrections read policy. Plus `isAllowed` replacing `.kind !== 'deny'` on both
+authorization checks — identical today, different in posture — and six row types exported so the two new public
+repositories have nameable return types.
+
+**Two LOW findings were deliberately not actioned**, recorded so they are not mistaken for closed. The
+accumulator's safe-integer guard has no test because reaching it needs ~2^53 tokens in one period; a fixture
+faking that would misrepresent its own reachability, which is the failure this ticket kept making. And
+`usagePeriodStart` has no production caller — it is a forward contract, and §1-G8 now says production's
+derivation lives only on the SQL side.
+
+### What the three passes together say about this ticket
+
+Across all three, **the implementation was rarely the defect — the tests and the comments were.** Every HIGH in
+this pass was a real, correct control that nothing measured, and two of the three false enforcement claims were
+written by the author of the gate forbidding them. The comment audit that followed found nothing further: 1163
+added comment lines, 39 making guarantee-shaped claims, each naming a real and checkable enforcer. That is the
+audit confirming earlier remediation rather than finding new defects — which is the outcome to want, and not
+evidence the audit was unnecessary.
