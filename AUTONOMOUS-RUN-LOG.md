@@ -2097,3 +2097,32 @@ GREEN — 228/228 files, 3251/3251 tests, ZERO SKIPS.** C: 50.1 GB free (21.8%).
 
 - 2026-08-01T11:09Z scheduled wake stood down: last commit cf154f6 at 2026-08-01T11:00Z is 9 minutes old, inside the 25-minute serialisation window - a session is actively committing.
 - 2026-08-01T11:29Z scheduled wake stood down: last commit 02962e7 at 2026-08-01T11:28Z is 1 minute old, inside the 25-minute serialisation window - a session is actively committing (14:10, 14:16, 14:28 local, all pushed).
+
+### FINAL — P6-007 remediation complete; only owner gates remain
+
+**Both Blockers and all three Highs from the independent review are closed.** Exact-head CI `30699352077` on
+`d2505e5` GREEN; the code-bearing evidence is `30698900097` on `4f82b6c` — **229/229 files, 3285/3285 tests, ZERO
+SKIPS**, 33 stop-service cases, gate 8 at **4.5 ms measured through `activateStop` itself**.
+
+Blocker 1 was closed the way CANON specified (`WORKFLOW-STATE-MACHINES.md` §4 + `diagrams/13`), not by a design
+choice: activation pauses the RUNNING tasks it caught; only a CONFIRMED review resumes one; a DISCARD leaves it
+paused rather than cancelled; reviewing while the stop is still active is refused, because ADMIN-002 says clearing
+OPENS the review.
+
+**Three lessons this stretch produced, in order of how much they cost:**
+
+1. **A partial diagnosis stated confidently is worse than an open question, because it CLOSES the question.** I
+   found a real gap, described its blast radius as the smallest reading that was still bad news, and recorded that
+   as fact in the CDR, PROJECT-STATE and a direct report to the owner. Wrong documentation is worse than missing
+   documentation.
+2. **The independent pass found what two author passes could not** — 2 Blockers, 3 Highs, 10 Medium/Low, including
+   two of my own comments claiming "a test asserts this" where no test existed. Self-review has a ceiling.
+3. **Every CI failure during remediation was in my INSTRUMENTS, not the code.** The guards that assert their own
+   preconditions are the ones that caught things; every place I omitted one, the test passed while proving nothing.
+
+**Open, all owner-gated:** the `account_wide` held-work scoping (CDR-072 §1-G6, three options); ticket Done / PR
+#67 ready / merge / branch cleanup; whether policy evaluation point 1 refuses task planning; whether new companies
+start at L1 rather than L2. **ACBP-P6-008 (Decision Room) is a SCREEN and is blocked on UI direction**; P6-009 is
+the next backend-only Ready ticket and is deliberately not started while P6-007 is unmerged.
+
+C: 46.9 GB free.
