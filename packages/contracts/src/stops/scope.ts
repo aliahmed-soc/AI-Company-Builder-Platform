@@ -57,9 +57,17 @@ export function isEnforceableStopScope(value: unknown): value is StopScope {
   return isStopScope(value) && !NOT_YET_ENFORCEABLE_STOP_SCOPES.includes(value);
 }
 
-/** One activated stop. `targetId` names WHAT is stopped for the identity-based scopes; it is null for the rest. */
+/**
+ * One activated stop. `targetId` names WHAT is stopped for the identity-based scopes; it is null for the rest.
+ *
+ * `scope` IS TYPED `string`, NOT `StopScope`, AND THAT IS DELIBERATE. These rows come from a database, and a
+ * database can hold a value no TypeScript union knows about — a hand-written row, a future migration, a scope this
+ * release has never heard of. Narrowing the type here would push the validation onto the caller and let a cast
+ * paper over exactly the case `evaluateStops` exists to catch: it guards with `isStopScope` and returns
+ * `unreadable` for anything unrecognised, which only works if unrecognised values can actually reach it.
+ */
 export interface StopRecord {
-  readonly scope: StopScope;
+  readonly scope: string;
   readonly targetId: string | null;
 }
 

@@ -211,11 +211,31 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
   });
 
-  test('an emergency stop refuses, and an UNREACHABLE stop state refuses distinctly', async () => {
-    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'stopped' }) } });
+  // REWRITTEN BY ACBP-P6-007 (CDR-072 §1-G1). This used to inject `gates.stop`, which is exactly the bypass that
+  // ticket deleted: a caller could hand the dispatcher any stop answer it liked. Both cases now go through a REAL
+  // ROW in `emergency_stops`, so what is proven is the enforcement rather than the plumbing.
+  test('a REAL account-wide stop refuses the call', async () => {
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, null, 'account_wide', null, ${w.aOwner}::uuid)`.execute(owner.kysely);
+    const stopped = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
-    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] }, { gates: { stop: () => ({ kind: 'unavailable' }) } });
+  });
+
+  test('a stored stop this release CANNOT ENFORCE refuses distinctly — it never reads as clear', async () => {
+    // The §0 failure as a live row: a `capability` stop is storable but inert (no registry identity exists), so it
+    // must resolve to `stop_unavailable` rather than silently permitting the call. Inserted with the owner client
+    // because the SERVICE refuses to create one — which is the point of having both defences.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'capability', 'web_research', ${w.aOwner}::uuid)`.execute(owner.kysely);
+    const unreachable = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
     expect(unreachable).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
+  });
+
+  test('THE CONTROL: with no stop row at all the same call is NOT refused by the stop gate', async () => {
+    // Without this, "always denies" would satisfy both cases above.
+    const r = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: allowAll, context: [] });
+    expect(r).not.toMatchObject({ reason: 'emergency_stopped' });
+    expect(r).not.toMatchObject({ reason: 'stop_unavailable' });
   });
 
   // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow

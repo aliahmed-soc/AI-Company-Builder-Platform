@@ -10,7 +10,8 @@
 // WHY THE RECORD COMES FIRST. TOOL-002 wants 100% of calls recorded, and a row written after execution cannot exist
 // for a call that died mid-flight — precisely the call worth having a record of. So an authorized call is inserted
 // `requested` before it is handed back, and `reportToolCallOutcome` closes it later.
-import { ToolCallRepository, TaskRunRepository, ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { ToolCallRepository, TaskRunRepository, ApprovalRepository, StopRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { sql } from 'kysely';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   decideDispatch,
@@ -25,7 +26,9 @@ import {
   approvalConsumed,
   toolCallRequested,
   toolCallCompleted,
+  evaluateStops,
   type StopAnswer,
+  type StopEvaluation,
   type ToolDenialReason,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
@@ -48,33 +51,50 @@ import type { Logger } from '@acbp/observability';
  * human's deliberate deferral immediately.
  */
 
-/** The remaining Phase 5 gate port's default. See `ToolGates` for why stop is `clear` rather than `unavailable`. */
-const CLEAR = (): StopAnswer => ({ kind: 'clear' });
-
 /**
- * The gates the dispatcher consults through PORTS, with fail-closed defaults, because the engines behind them are
- * still a later ticket: `stop` is ACBP-P6-007.
+ * **THERE ARE NO GATE PORTS LEFT.** `policy` died in ACBP-P6-002, `approval` in ACBP-P6-003c (CDR-068 §0.1), and
+ * `stop` dies here in ACBP-P6-007 (CDR-072 §1-G1). The dispatcher consults all three stores ITSELF, so a caller can
+ * neither supply, override nor omit any of the three answers.
  *
- * **THERE IS NO `policy` PORT (ACBP-P6-002) AND NO `approval` PORT (ACBP-P6-003c; CDR-068 §0.1).** The dispatcher
- * consults both stores itself, so a caller cannot supply, override or omit either answer — and because the approval
- * REQUIREMENT rides the policy answer (`PolicyGateAnswer`), a caller cannot forge the requirement either.
  * `COMPONENT-CATALOG` names this component *"Trusted — the enforcement chokepoint"* and
  * `APPROVAL-AND-POLICY-ARCHITECTURE §5` marks the pre-execution check **never skippable**: a gate a caller may omit
- * will eventually be omitted, and the omission would be invisible, because the default (`unavailable`) *looks* like a
- * deliberate fail-closed answer.
+ * will eventually be omitted, and the omission would be invisible, because the default *looks* like a deliberate
+ * fail-closed answer.
  *
- * **WHY THE APPROVAL PORT SURVIVED P6-002 AND DIES HERE.** That ticket's adversarial review reported it as a bypass —
- * a caller passing `approval: () => ({ kind: 'allow' })` could satisfy an approval that policy DEMANDED, with no
- * approval record consulted anywhere. It was left open for exactly one reason: there was no approval store to consult,
- * so deleting it would have made every `require_approval` an unconditional deny and left the approve-and-proceed path
- * unexecuted by any test — the D1 unreachable-path shape. Migration 0047 and the P6-003c service ended that reason,
- * and `tools/check-approval-port.mjs` has been failing the build ever since to make sure it was not forgotten.
+ * **WHY THE STOP PORT SURVIVED THIS LONG AND DIES NOW.** Its own comment used to justify itself: the engine did not
+ * exist, so "no stop CAN be in force" made the `clear` default simply TRUE. That sentence stopped being true the
+ * moment migration 0050 and the stop controller landed. With a real engine behind it, a caller passing
+ * `stop: () => ({ kind: 'clear' })` would walk straight through a live emergency stop — the identical bypass the
+ * approval port was deleted for, on the one control whose entire purpose is to be un-bypassable.
  *
- * `stop` remains a port because its engine (P6-007) does not exist, and it defaults to `clear` rather than
- * `unavailable`: with no stop mechanism in existence, no stop CAN be in force, so `clear` is simply true.
+ * `tools/check-stop-port.mjs` fails the build if it comes back, exactly as `check-approval-port.mjs` does for
+ * approvals. The interface is kept (rather than removed outright) so both checkers still have a host to inspect —
+ * a vanished host is an ERROR in those checks, not a quiet pass.
  */
 export interface ToolGates {
-  readonly stop?: () => Promise<StopAnswer> | StopAnswer;
+  /**
+   * Deliberately empty. See above: every gate is read from its store inside `dispatchToolCall`.
+   *
+   * DO NOT ADD A GATE HERE. If a future engine needs a seam for testing, give it a store the test can write to —
+   * a caller-injectable answer to a safety question has been re-introduced and deleted twice already.
+   */
+  readonly _never?: never;
+}
+
+/**
+ * Translate the stop engine's answer into the dispatcher's gate vocabulary (CDR-072 §1-G3).
+ *
+ * THE ONLY INTERESTING LINE IS THE LAST ONE. `unreadable` becomes `unavailable`, never `clear` — canon's principle
+ * is that *"no stop is recorded" is a complete answer; "I could not check" is not*, and `decideDispatch` turns
+ * `unavailable` into `stop_unavailable` → denied. That single mapping is what makes a corrupt stop row, and a
+ * stored stop whose scope this release cannot enforce, both fail CLOSED instead of quietly permitting everything.
+ *
+ * Exported so the mapping is testable on its own rather than only through a database.
+ */
+export function toStopGateAnswer(evaluation: StopEvaluation): StopAnswer {
+  if (evaluation.kind === 'stopped') return { kind: 'stopped' };
+  if (evaluation.kind === 'clear') return { kind: 'clear' };
+  return { kind: 'unavailable' };
 }
 
 export interface DispatcherOptions {
@@ -346,13 +366,57 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // a `reject` is also `decided`.
       const approved = usability?.usable === true && decisionAuthorizes;
 
+      // ── EMERGENCY STOP, read from the store (ACBP-P6-007; CDR-072 §1-G1; invariant 14) ────────────────────
+      //
+      // `listActive` returns the covering CANDIDATES — RLS already restricts rows to this account and either this
+      // company or the account-wide ones, which is exactly the set that can cover a call here — and the pure
+      // `evaluateStops` decides. The covering rule is NOT re-implemented here: a duplicated rule is one that can
+      // drift, and the copy that drifts silently is the one that misses a scope.
+      //
+      // The run's task and worker are read so `task` and `worker` scopes can match. A run row that cannot be found
+      // leaves both null, which makes those scopes MISS rather than throw — deliberately, because an
+      // `account_wide` or `company` stop must still halt a call whose run row is missing. Nothing escapes a broad
+      // stop by having incomplete provenance.
+      const runRow = await sql<{ task_run_id: string; worker_id: string }>`
+        select task_run_id, worker_id from worker_runs where id = ${params.runId}::uuid
+      `.execute(scope.db);
+      const run = runRow.rows[0];
+      const activeStops = await new StopRepository(scope.db).listActive();
+      // Mapped field-by-field rather than cast. A cast would also silence the day a column is renamed, and this is
+      // the input to the function that decides whether the platform is halted.
+      const stopEvaluation = evaluateStops(
+        activeStops.map((s) => ({ scope: s.scope, targetId: s.target_id })),
+        {
+          taskId: run?.task_run_id ?? null,
+          workerId: run?.worker_id ?? null,
+          // Inert scopes (CDR-072 §1-G10): the registry carries no identity for either, so these stay null and a
+          // stored stop of that kind resolves to `unreadable` → denied rather than silently missing.
+          capabilityId: null,
+          integrationId: null,
+          // DERIVED from the registry's risk class via the contract's own helper. `tool_registrations` has no
+          // external-effect column, and CDR-051 §0.2 records that deriving it is the stand-in until a tool declares
+          // one. Never from model text (ADR-010 §5).
+          hasExternalEffect: hasExternalEffect(definition?.risk_class),
+          companyId: scope.tenant.companyId,
+        },
+      );
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
         allowlist: params.allowlist,
         untrustedContext: untrusted,
-        stop: (await (options.gates?.stop ?? CLEAR)()) ?? { kind: 'unavailable' },
+        // ── THE STOP GATE, read from the STORE inside this transaction (ACBP-P6-007; CDR-072 §1-G1/G3/G4) ──
+        //
+        // Same scope, same transaction as the call it authorizes. That is what bounds launch gate 8's <=5s
+        // propagation by TRANSACTION VISIBILITY rather than by a cache refresh: a stop committed before this read is
+        // visible to it, so there is nothing to propagate and no interval to tune.
+        //
+        // `unreadable` maps to `unavailable`, NOT to `clear`. Canon's own principle is that *"no stop is recorded"
+        // is a complete answer; "I could not check" is not* — and `decideDispatch` turns `unavailable` into
+        // `stop_unavailable` -> denied. That covers a corrupt record AND a scope this release cannot enforce.
+        stop: toStopGateAnswer(stopEvaluation),
         // The engine's OWN mapping, tested beside it, so the translation cannot be got wrong here. It never yields
         // `unavailable`: a RESULT is an answer, and only a thrown evaluation — which propagates and rolls the whole
         // dispatch back — means no answer at all. It DOES yield `require_approval`, which is what makes the approval

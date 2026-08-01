@@ -210,9 +210,9 @@ describe('CDR-072 §1-G3 — a record that cannot be interpreted is UNREADABLE, 
   );
 
   test('an unrecognised scope is unreadable', () => {
-    expect(evaluateStops([{ scope: 'whatever', targetId: null } as unknown as StopRecord], inCompany())).toMatchObject({
-      kind: 'unreadable',
-    });
+    // No cast needed: `StopRecord.scope` is `string`, because these rows come from a database that can hold a
+    // value no union knows about. That is precisely the case this assertion covers.
+    expect(evaluateStops([{ scope: 'whatever', targetId: null }], inCompany())).toMatchObject({ kind: 'unreadable' });
   });
 
   test('a malformed record makes the WHOLE evaluation unreadable even when another stop already covers the call', () => {
