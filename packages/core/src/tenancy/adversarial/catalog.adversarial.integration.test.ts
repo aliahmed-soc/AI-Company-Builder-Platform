@@ -135,6 +135,13 @@ const EXPECTED_GRANTS: Readonly<Record<string, readonly string[]>> = {
   // `approval_decisions` has no UPDATE at all, at any level. It is the record of a human exercising authority, and
   // canon §2 says an edited approval is superseded, never mutated.
   approval_decisions: ['INSERT', 'SELECT'],
+  // Emergency stop (ACBP-P6-007; CDR-072 §1-G6/G7). Both show only INSERT/SELECT here because their single legal
+  // mutation is COLUMN-level and column grants never appear in `role_table_grants` — asserted below. What matters
+  // is what is NOT in that column list: `scope`/`target_id` on a stop cannot be updated, so the record of WHAT was
+  // halted cannot be re-pointed after activation; and neither table has DELETE, so "nothing is lost" means a
+  // discarded held item is a REVIEWED row an operator can still see, not a vanished one.
+  emergency_stops: ['INSERT', 'SELECT'],
+  held_work: ['INSERT', 'SELECT'],
 };
 
 describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions (real PostgreSQL) — ACBP-P1-014/CDR-020', () => {
@@ -225,6 +232,32 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     `.execute(owner.kysely);
     const byTable = new Map<string, string[]>();
     for (const c of cols.rows) byTable.set(c.table_name, [...(byTable.get(c.table_name) ?? []), c.column_name]);
+
+    /**
+     * Assert the exact updatable set AND that each supposedly-immutable column REALLY EXISTS.
+     *
+     * The second half is the point. A `not.toContain('work_id')` against a table whose column is actually `task_id`
+     * passes — while asserting nothing at all. This suite's older forbidden-lists are hand-written names checked
+     * only by eye; a typo in one of them is silently a missing assertion rather than a failure. Resolving the names
+     * against `information_schema.columns` turns that class of mistake into a red test. (Written after a typo of
+     * exactly that shape went in below — caught by reading the migration, not by the suite.)
+     */
+    const expectUpdatableColumnsExactly = async (table: string, updatable: readonly string[], immutable: readonly string[]): Promise<void> => {
+      const real = await sql<{ column_name: string }>`
+        select column_name from information_schema.columns where table_schema = 'public' and table_name = ${table}
+      `.execute(owner.kysely);
+      const realNames = real.rows.map((r) => r.column_name);
+      expect(realNames.length, `${table} must exist for this assertion to mean anything`).toBeGreaterThan(0);
+      for (const name of [...updatable, ...immutable]) {
+        expect(realNames, `${table}.${name} is named in this assertion but is not a real column — the assertion is vacuous`).toContain(name);
+      }
+      const granted = byTable.get(table) ?? [];
+      expect([...granted].sort()).toEqual([...updatable].sort());
+      for (const name of immutable) {
+        expect(granted, `${table}.${name} must not be UPDATE-grantable to the product role`).not.toContain(name);
+      }
+    };
+
     const provisioning = byTable.get('provisioning_steps') ?? [];
     expect(provisioning.length).toBeGreaterThan(0);
     for (const forbidden of ['id', 'account_id', 'company_id', 'step', 'step_order']) {
@@ -263,6 +296,28 @@ describe.skipIf(!hasTestDatabase)('tenant-isolation catalog + role preconditions
     // And a DECISION takes no update grant at all, not even column-level: it is the record of a human exercising
     // authority, and canon §2 says an edited approval is superseded, never mutated.
     expect(byTable.get('approval_decisions')).toBeUndefined();
+    // Emergency stop (ACBP-P6-007; CDR-072 §1-G6/G7). CLEARING (and on held work, REVIEW) is the one legal
+    // mutation, and the WITHHELD columns are the substance: a stop whose `scope`/`target_id` could be re-pointed
+    // after activation would let the record of WHAT was halted be rewritten by the same product role the stop
+    // exists to restrain — and §0's failure is exactly an operator believing a stop reached somewhere it did not.
+    // Held work's `stop_id` is immutable for the mirror reason: what a stop caught cannot be re-attributed later.
+    await expectUpdatableColumnsExactly('emergency_stops', ['cleared_at', 'cleared_by_user_id', 'status'], [
+      'scope',
+      'target_id',
+      'account_id',
+      'company_id',
+      'activated_at',
+      'activated_by_user_id',
+      'reason',
+    ]);
+    await expectUpdatableColumnsExactly('held_work', ['reviewed_at', 'reviewed_by_user_id', 'status'], [
+      'id',
+      'account_id',
+      'company_id',
+      'stop_id',
+      'task_id',
+      'held_at',
+    ]);
     // Interview sessions (ACBP-P2-001): only state/started_at/updated_at are updatable; identity columns are not.
     const interview = byTable.get('interview_sessions') ?? [];
     expect(interview.length).toBeGreaterThan(0);

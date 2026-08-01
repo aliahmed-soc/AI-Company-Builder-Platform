@@ -750,7 +750,7 @@ describe.skipIf(!hasTestDatabase)('approval_requests + approval_decisions (real 
     // exact bytes before it was. P6-004 makes them exist — but only on `approval_requests`. A decision is still
     // exactly what a human said about a proposal, and it stayed append-only through a ticket that changed the
     // request's whole lifecycle. Inverting the old assertion rather than deleting it keeps that boundary asserted.
-    const decisionColumns = (await sql<{ column_name: string }>`select column_name from information_schema.columns where table_name = 'approval_decisions', 'emergency_stops', 'held_work'`.execute(su.kysely)).rows.map(
+    const decisionColumns = (await sql<{ column_name: string }>`select column_name from information_schema.columns where table_name = 'approval_decisions'`.execute(su.kysely)).rows.map(
       (r) => r.column_name,
     );
     for (const belongsToTheRequest of ['payload_hash', 'binding_version', 'expires_at', 'revoked_at', 'consumed_at', 'consumed_by_call_id']) {
