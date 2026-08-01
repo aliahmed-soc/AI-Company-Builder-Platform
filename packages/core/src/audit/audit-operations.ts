@@ -398,7 +398,7 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     // no test at all, so no stored payload was asserted anywhere. Deferring a proof to a suite that does not exist
     // reads exactly like having proved it. The stop-service integration suite is where that assertion now lives.
     case 'emergency_stop.activate':
-      return (subjectId) => emergencyStopActivated({ stopId: subjectId, scope: 'account_wide', target: null, heldCount: 0, pausedCount: 0 });
+      return (subjectId) => emergencyStopActivated({ stopId: subjectId, scope: 'account_wide', target: null, heldCount: 0, pausedCount: 0, stopRequestedCount: 0 });
     case 'emergency_stop.clear':
       return (subjectId) => emergencyStopCleared({ stopId: subjectId, scope: 'account_wide', pendingReviewCount: 0 });
     case 'emergency_stop.work.review':

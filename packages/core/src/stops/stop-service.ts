@@ -21,7 +21,7 @@ import {
   emergencyStopWorkReviewed,
   type StopScope,
 } from '@acbp/contracts';
-import { StopRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type TenantScope } from '@acbp/database';
+import { StopRepository, TaskRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient, type TenantScope } from '@acbp/database';
 import { sql } from 'kysely';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -86,6 +86,12 @@ export type ActivateStopResult =
       readonly heldCount: number;
       /** How many held tasks were actually transitioned `running → paused`. See `emergencyStopActivated`. */
       readonly pausedCount: number;
+      /**
+       * How many live RUNS were asked to safe-stop. Distinct from `pausedCount`: pausing the task blocks its
+       * completion, but only this makes the worker halt at its next checkpoint (WORKFLOW §4's "in-flight
+       * safe-stop"). A task can be paused with no live run, so the two counts legitimately differ.
+       */
+      readonly stopRequestedCount: number;
     }
   | { readonly status: 'refused'; readonly reason: StopRefusalReason }
   | { readonly status: 'forbidden' };
@@ -271,9 +277,29 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
       //   `waiting_for_approval`  any tool call it makes on resume anyway.
       // They are still HELD, because ADMIN-002's review is about what the operator must decide on, not only about
       // what changed state.
+      // ── THE LIVE RUNS OF THE TASKS THIS STOP CAUGHT (CDR-072 §1-G7, PM ruling on finding 6) ────────────────
+      //
+      // Pausing the TASK does not stop the RUN. An independent review found that a task paused by a stop keeps
+      // executing tools once the stop clears, because nothing on the dispatch path reads `tasks.state` — the pause
+      // only blocks completion. Canon's answer for work already in flight is not another gate read: WORKFLOW §4
+      // gives company pause the effect *"in-flight safe-stop"*, and the mechanism already exists —
+      // `task_runs.stop_requested_at`, which `decideStepAdmission` checks FIRST because *"an owner's request
+      // outranks every automatic rule and is not a failure"*, ending the run as `stopped` rather than failed.
+      // That is OQ-14's *"finish the current tool call, halt before the next"* exactly.
+      //
+      // ONE QUERY, NO LIMIT. `listRunning` takes a `limit`, and a silent truncation here would leave some caught
+      // runs never asked to stop — the silent-miss shape this whole ticket is about. Every running run in this
+      // company is read and matched against the caught set instead.
+      const liveRuns = await sql<{ id: string; task_id: string }>`
+        select id, task_id from task_runs where company_id = ${scope.tenant.companyId}::uuid and state = 'running'
+      `.execute(scope.db);
+      const runByTask = new Map(liveRuns.rows.map((r) => [r.task_id, r.id]));
+
       let heldCount = 0;
       let pausedCount = 0;
+      let stopRequestedCount = 0;
       const tasks = new TaskRepository(scope.db);
+      const runs = new TaskRunRepository(scope.db);
       for (const task of inFlight.rows) {
         const held = await stops.hold({
           accountId: scope.tenant.accountId,
@@ -285,18 +311,24 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
         // Guarded on `state = 'running'`, so a task that finished in this window is simply not paused — exactly one
         // transition can win and a completed task is never dragged backwards.
         if (task.state === 'running' && (await tasks.updateState(task.id, 'running', 'paused')) === 1) pausedCount += 1;
+        // SAFE-STOP THE RUN, not just the task. Guarded on `running` inside `requestStop` and idempotent by design
+        // (asking twice keeps the FIRST request time), so a run that ended in this window is simply not asked.
+        // Only runs of tasks this stop CAUGHT are asked — the negative half is asserted, because a stop that
+        // halted a run it does not cover would be the over-halt direction of §0.
+        const runId = runByTask.get(task.id);
+        if (runId !== undefined && (await runs.requestStop(runId)) !== undefined) stopRequestedCount += 1;
       }
 
       // The evidence names WHAT halted, not that something did (§1-G5).
       await audit(
         scope,
-        emergencyStopActivated({ stopId: created.id, scope: params.scope, target: requiresTarget ? target : null, heldCount, pausedCount }),
+        emergencyStopActivated({ stopId: created.id, scope: params.scope, target: requiresTarget ? target : null, heldCount, pausedCount, stopRequestedCount }),
         auditCtx(options),
       );
       options.logger?.warn('stop.activated', {
         metadata: { accountId: params.accountId, companyId: params.companyId, scope: params.scope, heldCount },
       });
-      return { status: 'ok', stopId: created.id, scope: params.scope, heldCount, pausedCount };
+      return { status: 'ok', stopId: created.id, scope: params.scope, heldCount, pausedCount, stopRequestedCount };
     },
     opts(options),
   );

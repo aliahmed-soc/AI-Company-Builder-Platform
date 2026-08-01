@@ -17,7 +17,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { type DatabaseClient, TaskRepository } from '@acbp/database';
-import { STOP_SCOPES, NOT_YET_ENFORCEABLE_STOP_SCOPES } from '@acbp/contracts';
+import { STOP_SCOPES, NOT_YET_ENFORCEABLE_STOP_SCOPES, decideStepAdmission } from '@acbp/contracts';
 import {
   hasTestDatabase,
   createOwnerFixtureClient,
@@ -306,6 +306,54 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
     expect(r).toMatchObject({ status: 'ok', heldCount: 2 });
     expect(await taskState(taskTwo)).toBe('queued');
     expect(await taskState(taskOne)).toBe('paused');
+  });
+
+  // ── IN-FLIGHT SAFE-STOP (CDR-072 §1-G7, PM ruling on finding 6) ──────────────────────────────────────────
+  //
+  // Pausing the TASK does not stop the RUN — an independent review found a paused task still executing tools once
+  // the stop cleared, because nothing on the dispatch path reads `tasks.state`. Canon's answer for in-flight work
+  // is WORKFLOW §4's "in-flight safe-stop", and the mechanism already existed and was simply never called from
+  // here: `task_runs.stop_requested_at`, which `decideStepAdmission` checks FIRST.
+
+  const runStopRequestedAt = async (id: string) =>
+    (await owner.kysely.selectFrom('task_runs').select(['stop_requested_at']).where('id', '=', id).executeTakeFirst())?.stop_requested_at;
+
+  test('activation SAFE-STOPS the live run of the task it caught, and the runtime halts on it', async () => {
+    expect(await runStopRequestedAt(runOne), 'the run must NOT be stop-requested before the stop').toBeNull();
+
+    const r = await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    expect(r).toMatchObject({ status: 'ok', pausedCount: 1, stopRequestedCount: 1 });
+
+    // (a) The request is DURABLE — a returning worker still sees it.
+    const requestedAt = await runStopRequestedAt(runOne);
+    expect(requestedAt).toBeInstanceOf(Date);
+
+    // (b) AND THE RUNTIME ACTUALLY HALTS ON IT. Reading the column proves the write; feeding it to the real
+    // admission function proves the wiring. Without this second half the test would show a flag being set and
+    // assume the consequence — the "nominal vs substantive" shape this ticket keeps producing.
+    expect(
+      decideStepAdmission({
+        maxSpendMicros: 1_000_000,
+        maxDurationMs: 600_000,
+        spentMicros: 0,
+        elapsedMs: 0,
+        stopRequested: requestedAt !== null && requestedAt !== undefined,
+      }),
+    ).toEqual({ kind: 'stop' });
+  });
+
+  test('a run the stop does NOT cover is left alone — the safe-stop is scoped, not a sweep', async () => {
+    // The negative half. `taskTwo` is in flight but is not this stop's target, so its work must continue: a stop
+    // that halted runs it does not cover is the over-halt direction of §0, and §1-G2 names it a defect in its own
+    // right. Its run is created here so "not stop-requested" is a real observation rather than an absent row.
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskTwo, 'queued', 'running'));
+    const other = await startRun(product, { ...asOwner(), taskId: taskTwo, attempt: 1 });
+    expect(other.status).toBe('ok');
+    const otherRunId = (other as { status: 'ok'; run: { id: string } }).run.id;
+
+    const r = await activateStop(product, { ...asOwner(), scope: 'task', targetId: taskOne });
+    expect(r).toMatchObject({ status: 'ok', stopRequestedCount: 1 });
+    expect(await runStopRequestedAt(otherRunId), "a run outside the stop's scope must not be asked to halt").toBeNull();
   });
 
   test('reviewing while the stop is STILL ACTIVE is refused — ADMIN-002 says clearing OPENS the review', async () => {

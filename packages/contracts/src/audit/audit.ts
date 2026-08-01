@@ -925,6 +925,16 @@ export function emergencyStopActivated(input: {
    * held total would leave them unable to tell a halted fleet from a queue that never started.
    */
   readonly pausedCount: number;
+  /**
+   * How many live RUNS were asked to safe-stop (`task_runs.stop_requested_at`), so the worker halts at its next
+   * checkpoint rather than merely being unable to complete.
+   *
+   * SEPARATE FROM `paused_count` ON PURPOSE. Pausing the task and stopping the run are different acts with
+   * different consequences: a paused task with no live run needs no safe-stop, and a run asked to stop is the only
+   * one of the two that actually interrupts work in progress. Collapsing them would leave an operator unable to
+   * tell "three tasks suspended" from "three workers told to down tools".
+   */
+  readonly stopRequestedCount: number;
 }): AuditEvent {
   // `held_scope` EXISTS BECAUSE THE COUNT ALONE MISLEADS (CDR-072 §1-G6 PM ruling, condition 1) — though nothing
   // forces a reader to consult it; it is recorded, not enforced. `held_count` is a FLOOR, not a
@@ -942,6 +952,7 @@ export function emergencyStopActivated(input: {
     scope: input.scope,
     held_count: input.heldCount,
     paused_count: input.pausedCount,
+    stop_requested_count: input.stopRequestedCount,
     held_scope: heldScope,
   };
   if (input.target !== null) metadata['target'] = input.target;
