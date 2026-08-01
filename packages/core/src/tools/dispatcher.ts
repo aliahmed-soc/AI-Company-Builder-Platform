@@ -373,22 +373,37 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // `evaluateStops` decides. The covering rule is NOT re-implemented here: a duplicated rule is one that can
       // drift, and the copy that drifts silently is the one that misses a scope.
       //
-      // The run's task and worker are read so `task` and `worker` scopes can match. A run row that cannot be found
-      // leaves both null, which makes those scopes MISS rather than throw — deliberately, because an
-      // `account_wide` or `company` stop must still halt a call whose run row is missing. Nothing escapes a broad
-      // stop by having incomplete provenance.
-      const runRow = await sql<{ task_run_id: string; worker_id: string }>`
-        select task_run_id, worker_id from worker_runs where id = ${params.runId}::uuid
+      // The run's task and worker are read so `task` and `worker` scopes can match. A missing worker run leaves
+      // `workerId` null, which makes that scope MISS rather than throw — deliberately, because an `account_wide`
+      // or `company` stop must still halt a call whose provenance is incomplete. Nothing escapes a broad stop by
+      // being poorly attributed.
+      //
+      // THE FIRST VERSION OF THIS READ WAS WRONG IN TWO WAYS AT ONCE, and hosted CI found it because a fixture
+      // guard refused to compare null against null. It ran
+      //   `select task_run_id, worker_id from worker_runs where id = <runId>`
+      // but `params.runId` is a `task_runs.id` — it is what `TaskRunRepository.findById` resolved above. So:
+      //   1. the join key was wrong (`worker_runs.id` against a task-run id) and matched NOTHING, ever; and
+      //   2. even had it matched, `task_run_id` is not a TASK id — a `task` stop targets a task (`held_work.task_id`
+      //      references `tasks`), so the comparison could never be true either.
+      // Both `task` and `worker` scopes therefore resolved to null on every call: two of the five enforceable
+      // scopes SILENTLY ENFORCED NOTHING while the stop appeared to work. That is CDR-072 §0's failure exactly —
+      // and it is the reason the enforcement matrix has to run through the dispatcher rather than stop at the
+      // pure covering relation, which was correct the whole time.
+      //
+      // `taskRun.task_id` is already in hand from the lookup above, so the task identity costs no query at all.
+      // The worker comes from the worker run OF this task run — exactly one can exist, because migration 0040
+      // carries `UNIQUE(task_run_id)` ("one worker executes one attempt"), so this is a lookup and not a choice.
+      const workerRow = await sql<{ worker_id: string }>`
+        select worker_id from worker_runs where task_run_id = ${params.runId}::uuid
       `.execute(scope.db);
-      const run = runRow.rows[0];
       const activeStops = await new StopRepository(scope.db).listActive();
       // Mapped field-by-field rather than cast. A cast would also silence the day a column is renamed, and this is
       // the input to the function that decides whether the platform is halted.
       const stopEvaluation = evaluateStops(
         activeStops.map((s) => ({ scope: s.scope, targetId: s.target_id })),
         {
-          taskId: run?.task_run_id ?? null,
-          workerId: run?.worker_id ?? null,
+          taskId: taskRun.task_id,
+          workerId: workerRow.rows[0]?.worker_id ?? null,
           // Inert scopes (CDR-072 §1-G10): the registry carries no identity for either, so these stay null and a
           // stored stop of that kind resolves to `unreadable` → denied rather than silently missing.
           capabilityId: null,

@@ -75,6 +75,14 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(started.status).toBe('ok');
     runId = (started as { status: 'ok'; run: { id: string } }).run.id;
 
+    // A WORKER STAMPED ONTO THAT RUN (ACBP-P6-007). Inserted directly as the OWNER rather than through
+    // `startWorkerRun`, which would drag a registered worker definition and its allowlist into a suite about the
+    // dispatcher. What matters here is only that `worker_runs` carries a real row for this task run, because
+    // without one the `worker` stop scope has no identity to match and its case would prove nothing.
+    // `UNIQUE(task_run_id)` (migration 0040) means this is the one and only worker run for the attempt.
+    await sql`insert into worker_runs (account_id, company_id, task_run_id, worker_id, worker_version, max_spend_micros, max_duration_ms)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, 'research', 1, 1000000, 600000)`.execute(owner.kysely);
+
     await register('web_research', 'informational');
     await register('memory_write', 'internal_reversible');
     await register('send_email', 'external_reversible');
@@ -256,14 +264,24 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
               values (${w.accountA}::uuid, ${companyId}::uuid, ${scope}, ${targetId}, ${w.aOwner}::uuid)`.execute(owner.kysely);
   };
 
-  /** The identities the dispatcher resolves from the run — the very values `task`/`worker` scopes match on. */
-  const runIdentities = async (): Promise<{ taskRunId: string; workerId: string }> => {
-    const r = await sql<{ task_run_id: string; worker_id: string }>`
-      select task_run_id, worker_id from worker_runs where id = ${runId}::uuid
+  /**
+   * The identities the dispatcher resolves from the run — the exact values `task`/`worker` scopes match on, read
+   * back from the database rather than assumed.
+   *
+   * THE THROW IS THE POINT, and it has already earned its place: the first version of this helper looked the run
+   * up as `worker_runs.id = runId`, found nothing, and would have compared null against null — a `task` and a
+   * `worker` case passing while proving that a stop targeting nothing fails to halt a call attached to nothing.
+   * It threw instead, and hosted CI turned that into the discovery that the DISPATCHER had the same wrong lookup.
+   */
+  const runIdentities = async (): Promise<{ taskId: string; workerId: string }> => {
+    const r = await sql<{ task_id: string; worker_id: string | null }>`
+      select tr.task_id, (select wr.worker_id from worker_runs wr where wr.task_run_id = tr.id) as worker_id
+      from task_runs tr where tr.id = ${runId}::uuid
     `.execute(owner.kysely);
     const row = r.rows[0];
-    if (row === undefined) throw new Error('the fixture run has no worker_runs row — the task/worker matrix below would pass vacuously');
-    return { taskRunId: row.task_run_id, workerId: row.worker_id };
+    if (row === undefined) throw new Error('the fixture task run does not exist — the task/worker matrix would pass vacuously');
+    if (row.worker_id === null) throw new Error('the fixture task run has no worker run — the worker scope case would compare null against null');
+    return { taskId: row.task_id, workerId: row.worker_id };
   };
 
   /** The LATEST requested-event payload, ordered by the ULID primary key — which is monotonic by construction, so
@@ -287,7 +305,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
   const COVERING_CASE: Record<string, () => CoveringCase | Promise<CoveringCase>> = {
     account_wide: () => ({ targetId: null, companyId: null, toolId: 'web_research' }),
     company: () => ({ targetId: w.companyA1, companyId: w.companyA1, toolId: 'web_research' }),
-    task: async () => ({ targetId: (await runIdentities()).taskRunId, companyId: w.companyA1, toolId: 'web_research' }),
+    // The TASK, not the task RUN. `held_work.task_id` references `tasks`, so a `task` stop names a task — the
+    // distinction the dispatcher's first lookup got wrong.
+    task: async () => ({ targetId: (await runIdentities()).taskId, companyId: w.companyA1, toolId: 'web_research' }),
     worker: async () => ({ targetId: (await runIdentities()).workerId, companyId: w.companyA1, toolId: 'web_research' }),
     // `send_email` is `external_reversible`, so the registry-derived external effect is true. The stop gate runs
     // BEFORE policy and approval, so the refusal below is the STOP's, not the approval requirement's — an emergency
@@ -365,9 +385,9 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // `denial_reason: emergency_stopped` alone cannot distinguish "the account is halted" from "one task is".
     // Both stops below cover this call, so the record must name BOTH — an evidence trail that reported only the
     // first would understate the halt while looking complete.
-    const { taskRunId } = await runIdentities();
+    const { taskId } = await runIdentities();
     await activateStop('account_wide', null, null);
-    await activateStop('task', taskRunId, w.companyA1);
+    await activateStop('task', taskId, w.companyA1);
     expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
 
     const metadata = await latestRequestedPayload();
