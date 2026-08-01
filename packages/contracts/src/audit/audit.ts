@@ -926,7 +926,8 @@ export function emergencyStopActivated(input: {
    */
   readonly pausedCount: number;
 }): AuditEvent {
-  // `held_scope` IS REQUIRED, NOT DECORATION (CDR-072 §1-G6 PM ruling, condition 1). `held_count` is a FLOOR, not a
+  // `held_scope` EXISTS BECAUSE THE COUNT ALONE MISLEADS (CDR-072 §1-G6 PM ruling, condition 1) — though nothing
+  // forces a reader to consult it; it is recorded, not enforced. `held_count` is a FLOOR, not a
   // total: an `account_wide` stop is enforced across every company but activation runs in ONE company's scope, and
   // the rest of the queue fills lazily as sibling companies' tasks hit the dispatcher and get refused. A reader who
   // takes this number as "everything the stop caught" is wrong in the direction that matters, and this ticket has

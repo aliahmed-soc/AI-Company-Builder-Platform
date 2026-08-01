@@ -498,14 +498,23 @@ export type ReadStopStateResult =
         readonly scope: string;
         readonly targetId: string | null;
         readonly activatedAt: Date;
-        /** NOT decoration — see {@link HeldQueueCompleteness}. A surface MUST render this beside any queue count. */
+        /**
+         * See {@link HeldQueueCompleteness}. Intended to be rendered beside any queue count — but NOTHING ENFORCES
+         * THAT, and no surface exists yet to enforce it in (the surface is an owner gate). This is a value a caller
+         * may ignore. An earlier version of this comment said a surface "MUST render this", which asserted a
+         * guarantee the codebase does not provide.
+         */
         readonly heldQueueCompleteness: HeldQueueCompleteness;
       }[];
       readonly scopes: readonly StopScopeAvailability[];
       /**
-       * The one sentence a surface must show beside the queue, so the boundary cannot be lost in translation.
-       * Returned as text rather than left to each surface to reinvent — an operator reading a queue that looks
-       * exhaustive and is not is the §0 failure wearing a read model.
+       * The boundary in one sentence, returned as TEXT so each surface does not reinvent (and soften) it — an
+       * operator reading a queue that looks exhaustive and is not is the §0 failure wearing a read model.
+       *
+       * IT IS SUPPLIED, NOT ENFORCED. A surface can ignore this field entirely and nothing in the codebase will
+       * notice; there is no surface yet, and no check that one renders it. An earlier version of this comment said
+       * the boundary "cannot be lost in translation", which is exactly the kind of guarantee-by-assertion this
+       * ticket has been correcting elsewhere.
        */
       readonly heldQueueCaveat: string;
     }
