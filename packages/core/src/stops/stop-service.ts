@@ -458,11 +458,44 @@ export interface StopScopeAvailability {
   readonly unavailableReason?: string;
 }
 
+/**
+ * How complete the held-work queue is (CDR-072 §1-G6 PM ruling, conditions 1 and 2).
+ *
+ * ⚠️ **THE QUEUE IS NEVER A ROSTER OF EVERYTHING A STOP COVERS.** It records what the stop actually INTERRUPTED.
+ * Two distinct reasons, and a surface that showed the queue without saying so would let an operator believe they
+ * had reviewed everything:
+ *
+ *   1. **A task that never attempts a tool call is never held.** Holding happens at the dispatcher, when a call is
+ *      refused. A covered task that reaches no tool is not held and not paused — nothing interrupted it.
+ *   2. **An `account_wide` stop starts with the raising company's work only.** Activation runs in one company's
+ *      scope; sibling companies' items appear LAZILY, as their tasks hit the dispatcher and are refused.
+ *
+ * So `held_count` on the activation event is a FLOOR, not a total, and this field says which reading applies.
+ */
+export type HeldQueueCompleteness =
+  /** Every in-flight task this stop covers was held at activation, and no more can be added. */
+  | 'complete_for_scope'
+  /** More items may appear as covered tasks reach the dispatcher — the count is a floor. */
+  | 'grows_lazily';
+
 export type ReadStopStateResult =
   | {
       readonly status: 'ok';
-      readonly activeStops: readonly { readonly stopId: string; readonly scope: string; readonly targetId: string | null; readonly activatedAt: Date }[];
+      readonly activeStops: readonly {
+        readonly stopId: string;
+        readonly scope: string;
+        readonly targetId: string | null;
+        readonly activatedAt: Date;
+        /** NOT decoration — see {@link HeldQueueCompleteness}. A surface MUST render this beside any queue count. */
+        readonly heldQueueCompleteness: HeldQueueCompleteness;
+      }[];
       readonly scopes: readonly StopScopeAvailability[];
+      /**
+       * The one sentence a surface must show beside the queue, so the boundary cannot be lost in translation.
+       * Returned as text rather than left to each surface to reinvent — an operator reading a queue that looks
+       * exhaustive and is not is the §0 failure wearing a read model.
+       */
+      readonly heldQueueCaveat: string;
     }
   | { readonly status: 'forbidden' };
 
@@ -491,7 +524,19 @@ export async function readStopState(
       const active = await new StopRepository(scope.db).listActive();
       return {
         status: 'ok',
-        activeStops: active.map((s) => ({ stopId: s.id, scope: s.scope, targetId: s.target_id, activatedAt: s.activated_at })),
+        activeStops: active.map((s) => ({
+          stopId: s.id,
+          scope: s.scope,
+          targetId: s.target_id,
+          activatedAt: s.activated_at,
+          // `account_wide` fills lazily across sibling companies; every other scope is confined to this company and
+          // was fully held at activation. Both still exclude tasks that never reach the dispatcher — see the caveat.
+          heldQueueCompleteness: s.scope === 'account_wide' ? ('grows_lazily' as const) : ('complete_for_scope' as const),
+        })),
+        heldQueueCaveat:
+          'The held-work queue records what this stop INTERRUPTED, not everything it covers. A covered task that ' +
+          'never attempts a tool call is never held and never paused. An account-wide stop additionally starts with ' +
+          'the raising company only and gains sibling companies as their tasks are refused, so its count is a floor.',
         scopes: STOP_SCOPES.map((s) => ({
           scope: s,
           enforceable: ENFORCEABLE_STOP_SCOPES.includes(s),

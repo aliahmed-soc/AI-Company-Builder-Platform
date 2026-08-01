@@ -10,7 +10,7 @@
 // WHY THE RECORD COMES FIRST. TOOL-002 wants 100% of calls recorded, and a row written after execution cannot exist
 // for a call that died mid-flight — precisely the call worth having a record of. So an authorized call is inserted
 // `requested` before it is handed back, and `reportToolCallOutcome` closes it later.
-import { ToolCallRepository, TaskRunRepository, ApprovalRepository, StopRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
+import { ToolCallRepository, TaskRunRepository, ApprovalRepository, StopRepository, TaskRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ToolCallRow } from '@acbp/database';
 import { sql } from 'kysely';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -537,6 +537,47 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
           // IN THE SAME TRANSACTION as the spend, so the event and the `consumed_at` column cannot disagree through
           // partial failure — audit-or-nothing (ADR-015), the same shape every other write in this file follows.
           await audit(scope, approvalConsumed({ requestId: consumed.id, callId: inserted.id, toolId: params.toolId }), auditCtx(options));
+        }
+      }
+
+      // ── HOLD THE WORK THIS STOP JUST CAUGHT (CDR-072 §1-G6, PM ruling: Option B) ───────────────────────────
+      //
+      // WHY THIS WRITE LIVES IN THE CHOKEPOINT, AND THE OBJECTION AGAINST IT. An `account_wide` stop is visible to
+      // every company in the account (dual-scope RLS) and the dispatcher refuses their calls correctly — but
+      // `activateStop` runs in ONE company's scope, so only that company's work got a `held_work` row and a
+      // `running → paused` transition. Sibling companies were halted with no review queue and no paused state, and
+      // on clear their work resumed with no confirm-or-discard decision.
+      //
+      // The PM ruled Option B over fanning out per company at activation (O(companies × tasks) statements before
+      // commit, on the control whose promise is speed) and over merely documenting the gap. THE ACCEPTED COST IS
+      // THIS LINE: the dispatcher now mutates task lifecycle state, which is a responsibility it did not previously
+      // have, on the most security-sensitive function in the codebase. That was weighed, not overlooked. If it
+      // causes trouble, the coherent retreat is to delete this block and keep the labelling — CDR-072 §1-G6.
+      //
+      // ⚠️ THE BOUNDARY, STATED WHERE IT IS EASIEST TO FORGET: this catches a task only when that task ATTEMPTS A
+      // CALL. A task halted by the stop that never reaches the dispatcher is never held and never paused. The queue
+      // is therefore a record of what the stop actually INTERRUPTED, never a roster of everything it covers.
+      //
+      // IDEMPOTENT BY CONSTRUCTION: `held_work_stop_task_uq` + `ON CONFLICT DO NOTHING`, because a stopped task
+      // typically retries and each retry lands here again. Proven against a real database, not argued.
+      if (finalReason === 'emergency_stopped' && stopEvaluation.kind === 'stopped') {
+        // ATTRIBUTED TO A STOP THAT ACTUALLY COVERED THIS CALL. `evaluateStops` names the covering SCOPES; the
+        // matching row is taken from the same `activeStops` list the evaluation was computed from, so the
+        // attribution cannot drift from the decision. Where several stops cover one call, the FIRST covering scope
+        // in the closed `STOP_SCOPES` order wins — deterministic, so two identical calls never attribute
+        // differently, and `held_work_stop_task_uq` stays meaningful.
+        const covering = activeStops.find((s) => (stopEvaluation.scopes as readonly string[]).includes(s.scope));
+        if (covering !== undefined) {
+          const stops = new StopRepository(scope.db);
+          await stops.hold({
+            accountId: scope.tenant.accountId,
+            companyId: scope.tenant.companyId,
+            stopId: covering.id,
+            taskId: taskRun.task_id,
+          });
+          // Guarded on `state = 'running'`: the only legal edge into `paused` (WORKFLOW §4). A task in any other
+          // state is held for review but not transitioned — `queued` is already gated by "stop-state clear".
+          await new TaskRepository(scope.db).updateState(taskRun.task_id, 'running', 'paused');
         }
       }
 

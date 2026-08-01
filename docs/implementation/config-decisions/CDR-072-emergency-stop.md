@@ -206,12 +206,44 @@ Two consequences, neither cosmetic:
 > The sibling-company scoping described above is still true and still open. It is a *second* defect, not the one
 > point 2 claimed to describe.
 
-**Why the sibling-company scoping is not fixed in this ticket:** writing `held_work` rows for sibling companies
-means establishing each company's scope inside one account-wide operation. That is a tenant-isolation decision — the
-charter makes it an **owner gate**, and guessing at it inside a stop implementation is precisely the kind of
-unilateral call the gate exists to prevent. Options for the owner: (a) fan out per company inside the account,
-(b) hold lazily at dispatch when a call is refused, or (c) accept the limitation and say so in the operator
-surface. Each has different tenancy and review-queue consequences.
+#### ✅ PM RULING (owner's authority) — OPTION B + OPTION C's LABELLING. NOT OPTION A.
+
+**Attribution matters here and is recorded deliberately: the options and the recommendation were the implementing
+engineer's; the CHOICE is the PM's, on the owner's authority.** This is a decision record, not a design the
+implementation talked itself into.
+
+The three options as they were put to the PM:
+
+| | Mechanism | Buys | Costs |
+|---|---|---|---|
+| **A** fan out per company | Activation repoints `app.current_company` per company in the account (a supported primitive — `transaction-scope.adversarial` §TX-SCOPE-MUTATION records that raw `SET LOCAL` is available to trusted internal code; the guard is against cross-ACCOUNT forgery, not intra-account scoping), re-resolves the actor's role per company, writes `held_work` + pauses tasks | Queue and pause state COMPLETE at activation; `held_count` means what a reader assumes | O(companies × tasks) statements **before commit**, on the control whose promise is speed; and it widens the actor's authority across companies |
+| **B** hold lazily at dispatch | When the dispatcher refuses with `emergency_stopped`, it writes the `held_work` row and pauses the task, in the company scope already established for that call | No scope switching, no new SECURITY DEFINER, no schema change; the property that matters becomes true | A halted task that never attempts a call is never held; the queue is "so far", not total; **a write on the refusal path** |
+| **C** accept + surface | Activation stays single-company; the counts and read model state plainly that an account-wide queue covers the raising company only | Zero risk, zero latency, smallest diff | Leaves the BROADEST control with the WEAKEST evidence |
+
+**RULING RATIONALE (PM):** *A pays its cost in critical-path latency on the one control whose entire promise is
+speed, and it widens authorization across companies in a way that deserves its own decision rather than riding
+along inside a stop implementation. B makes the consequential property true — nothing resumes unreviewed if it was
+actually doing anything — at near-zero architectural cost. C alone leaves the broadest control with the weakest
+evidence.*
+
+**THE OBJECTION AGAINST THE CHOSEN OPTION, RECORDED BECAUSE IT IS THE REAL ONE.** B puts a write on the
+dispatcher's **refusal path** and gives the chokepoint a **task-lifecycle responsibility it does not have today**.
+The dispatcher's job is to *decide*; making it also *mutate task state* widens the most security-sensitive function
+in the codebase. This was raised by the engineer against their own recommendation, and it was **weighed and
+accepted, not overlooked**. **If a later ticket finds that responsibility causing trouble, C is the coherent
+retreat** — drop the dispatcher write, keep the labelling, and the sibling-company gap becomes a documented,
+accepted limitation instead of a fixed one.
+
+**Three conditions are REQUIRED, not optional** (PM):
+
+1. **The counts must state what they measure.** `held_count` at activation is a **floor, not a total**. Both the
+   `emergency_stop.activated` payload and `readStopState` must say so explicitly. This is the piece that stops the
+   fix becoming a NEW false assurance — this ticket already shipped exactly that over-reading defect once.
+2. **The "a task that is halted but never attempts a tool call is never held" boundary must be stated LOUDLY**
+   wherever the review queue is described, in the same style as the seven-named/five-enforceable loudness. Someone
+   reading the queue must not be able to believe it is exhaustive.
+3. **Idempotency on the refusal path is load-bearing and must be PROVEN**, not argued: `ON CONFLICT DO NOTHING`
+   against `held_work_stop_task_uq` has to hold under repeated refusals against a real database.
 
 ### G7 — Resume requires REVIEW, and nothing auto-fires
 

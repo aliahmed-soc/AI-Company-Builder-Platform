@@ -926,7 +926,18 @@ export function emergencyStopActivated(input: {
    */
   readonly pausedCount: number;
 }): AuditEvent {
-  const metadata: Record<string, string | number | boolean> = { scope: input.scope, held_count: input.heldCount, paused_count: input.pausedCount };
+  // `held_scope` IS REQUIRED, NOT DECORATION (CDR-072 §1-G6 PM ruling, condition 1). `held_count` is a FLOOR, not a
+  // total: an `account_wide` stop is enforced across every company but activation runs in ONE company's scope, and
+  // the rest of the queue fills lazily as sibling companies' tasks hit the dispatcher and get refused. A reader who
+  // takes this number as "everything the stop caught" is wrong in the direction that matters, and this ticket has
+  // already shipped one over-reading defect of exactly that shape. So the count carries the scope of its own claim.
+  const heldScope = input.scope === 'account_wide' ? 'this_company_at_activation_floor' : 'complete_for_scope';
+  const metadata: Record<string, string | number | boolean> = {
+    scope: input.scope,
+    held_count: input.heldCount,
+    paused_count: input.pausedCount,
+    held_scope: heldScope,
+  };
   if (input.target !== null) metadata['target'] = input.target;
   // OUTCOME `success`, not `blocked`. The distinction matters and the first version got it wrong: activating a stop
   // is an owner action that SUCCEEDED. What gets BLOCKED is each subsequent tool call, and those are recorded on

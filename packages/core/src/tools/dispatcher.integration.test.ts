@@ -381,6 +381,62 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(await dispatch({ toolId: 'web_research' })).not.toMatchObject({ reason: 'emergency_stopped' });
   });
 
+  // ── CDR-072 §1-G6, PM RULING (Option B): THE CHOKEPOINT HOLDS THE WORK IT REFUSES ────────────────────────
+  //
+  // The accepted cost of that ruling is a WRITE on the refusal path, so these cases exist to prove the write is
+  // correct, idempotent, and does not fire when it should not. The objection recorded against the ruling — that the
+  // chokepoint gains a task-lifecycle responsibility — is exactly why this block is adversarial rather than happy-path.
+
+  const heldRows = async () => owner.kysely.selectFrom('held_work').selectAll().orderBy('id').execute();
+  const taskStateOf = async (id: string) =>
+    (await owner.kysely.selectFrom('tasks').select(['state']).where('id', '=', id).executeTakeFirst())?.state;
+
+  test('a refused call HOLDS its task and PAUSES it — the sibling-company gap closed at the chokepoint', async () => {
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    expect(await taskStateOf(taskId)).toBe('running');
+
+    await activateStop('account_wide', null, null);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const held = await heldRows();
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ task_id: taskId, status: 'held' });
+    expect(await taskStateOf(taskId)).toBe('paused');
+  });
+
+  test('IDEMPOTENT UNDER REPEATED REFUSALS — proven against the database, not argued', async () => {
+    // LOAD-BEARING (PM ruling condition 3). A stopped task typically RETRIES, so this path is hit again and again;
+    // without `held_work_stop_task_uq` + ON CONFLICT DO NOTHING the queue would gain a duplicate row per attempt and
+    // ADMIN-002's review would become unfinishable by design — the operator asked to decide the same item N times.
+    // Five refusals, because two would not distinguish "idempotent" from "the second one happened to fail".
+    const { taskId } = await runIdentities();
+    await asRestricted(product, { account: w.accountA, company: w.companyA1 }, (db) => new TaskRepository(db).updateState(taskId, 'queued', 'running'));
+    await activateStop('account_wide', null, null);
+    for (let i = 0; i < 5; i += 1) {
+      expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    }
+    expect(await heldRows()).toHaveLength(1);
+  });
+
+  test('a refusal for a DIFFERENT reason holds nothing — the write is bound to the stop, not to denial in general', async () => {
+    // Without this, "the dispatcher holds work when it refuses" and "the dispatcher holds work when a stop refuses"
+    // are indistinguishable, and every unrelated denial would pollute the review queue.
+    await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
+    expect(await heldRows()).toHaveLength(0);
+  });
+
+  test('an UNREADABLE stop refuses without holding — `stop_unavailable` is not a halt that caught anything', async () => {
+    // A `capability` stop is storable but inert, so the call is denied `stop_unavailable`. Nothing was interrupted
+    // BY A COVERING STOP, so nothing may be attributed to one — a held row here would name a stop that covers
+    // nothing, which is the §0 shape in the evidence rather than in the enforcement.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${w.companyA1}::uuid, 'capability', 'web_research', ${w.aOwner}::uuid)`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'stop_unavailable' });
+    expect(await heldRows()).toHaveLength(0);
+  });
+
   test('THE EVIDENCE NAMES WHAT HALTED IT — not merely that something did (CDR-072 §1-G5)', async () => {
     // `denial_reason: emergency_stopped` alone cannot distinguish "the account is halted" from "one task is".
     // Both stops below cover this call, so the record must name BOTH — an evidence trail that reported only the
