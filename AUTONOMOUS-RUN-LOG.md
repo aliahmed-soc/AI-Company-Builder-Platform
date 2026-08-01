@@ -2134,3 +2134,45 @@ C: 46.9 GB free.
   caught `running→paused` and reports `pausedCount`; `reviewHeldWork` does `paused→running` ONLY for `confirmed`,
   and a `discarded` item is deliberately left paused rather than cancelled. Nothing started: P6-008 is a screen, and
   P6-009 stays unstarted while P6-007 is unmerged. All that remains is owner-gated. C: 53.4 GB free.
+## ACBP-P6-007 — MERGED. Squash `1f3096d`.
+
+**Exact-head CI `30705908508` on `19f5013` and exact-main CI `30706308683` on `1f3096d`, both GREEN with
+229/229 files, 3294/3294 tests, ZERO SKIPS.** Branch deleted local + remote after verifying the branch tip's work
+is byte-identical in main (`git diff` across `packages`/`tools`/`docs` empty) — ancestry alone does not hold for a
+squash merge. Backlog row Done. C: 46.9 GB free.
+
+### What the ticket cost, stated plainly
+
+**Three independent review passes were needed, and every one found defects the previous work had reported as
+complete.** The second found a BLOCKER in code written an hour earlier that a green CI run had already passed
+over: a held row could name a stop that never covered the call, leaving a task permanently paused and
+uncompletable while the evidence said all was well.
+
+**The implementation was rarely the weak point. The author's own tests and comments were.**
+
+- Assertions that passed vacuously: a negative naming a column that did not exist; null compared against null; a
+  positional read over rows sharing a transaction timestamp; a fixture that never established the state it
+  claimed; and a guard test reproduced VERBATIM thirty lines above its own corrected twin and explanatory comment.
+- Comments claiming guarantees the code did not provide — six in total across the ticket. Three of them were in
+  the labelling added FOR the PM condition about not overclaiming.
+
+**What actually caught things**, in order of value:
+1. An independent reader who had not been told the author's conclusions.
+2. Guards that assert their OWN preconditions — `runIdentities` throwing rather than returning null,
+   `expectUpdatableColumnsExactly` resolving column names against `information_schema`, the fixture asserting it
+   left the task RUNNING. Every place one was omitted, the test passed while proving nothing.
+3. Hosted CI on the exact SHA. A green local gate proved nothing: every suite that mattered skips locally.
+
+### The rule worth carrying forward
+
+> A comment may describe what the code does and why. But the moment it claims a guarantee is ENFORCED, the
+> enforcement must be NAMEABLE — a test, a constraint, a checker — or the sentence goes. A comment that lies is
+> worse than no comment, because the next reader stops checking.
+
+### Open, all owner-gated
+
+- **ACBP-P6-008 (Decision Room) is a SCREEN** — blocked on the owner's UI direction. Do not start it.
+- **ACBP-P6-009** (account usage rollups) is the next backend-only Ready ticket. The collision risk that kept it
+  waiting is gone now that P6-007 is merged.
+- Whether policy evaluation point 1 refuses task planning; whether new companies start at L1 rather than L2.
+- CDR-051 §0.3's third risk class remains flagged and unruled; AOQ-14's limit values remain the owner's.
