@@ -83,6 +83,21 @@ direction. A suite with only positive cases cannot distinguish "each scope cover
 The matrix is therefore **seven scopes × {covered, not-covered}**, driven off the closed scope list so adding a
 scope without adding its two cases fails rather than passes quietly.
 
+**AND THE MATRIX MUST RUN THROUGH THE DISPATCHER, NOT ONLY THE PURE FUNCTION — A MEASURED DEFECT, NOT A
+PRECAUTION.** The covering relation being correct is *not* the same claim as the scope being enforced. A scope can
+be exhaustively right in `evaluateStops` and still never fire, because the dispatcher cannot populate the identity
+it matches on. That is not hypothetical: the first implementation resolved `task` and `worker` with
+`select task_run_id, worker_id from worker_runs where id = <runId>`, and `runId` is a **`task_runs.id`**. The join
+key matched nothing, ever — and `task_run_id` is not a task id either, so it could not have matched even had the
+join been right. **Both scopes were storable, activatable, visible in the read model, and halted nothing**, while
+the pure suite stayed green throughout. Two of five enforceable scopes silently enforcing nothing is §0 exactly,
+and it survived to hosted CI inside the ticket written to prevent it.
+
+It was caught by a **fixture guard that THREW instead of returning null**. Without that throw the `task` and
+`worker` cases would have compared null against null and gone green — certifying two dead scopes as enforced. A
+passing matrix is the most convincing way to ship this bug, so any helper resolving an identity the assertion
+depends on must fail loudly when it cannot produce one.
+
 ### G3 — UNAVAILABILITY IS NOT "CLEAR", and the dispatcher already knows it
 
 `decideDispatch` already distinguishes `emergency_stopped` from `stop_unavailable`, with canon's own note that
