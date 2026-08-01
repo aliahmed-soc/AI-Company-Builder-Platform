@@ -90,6 +90,21 @@ function toFigures(row: RawFigureRow | undefined): RollupFigureRow {
   };
 }
 
+/**
+ * Marshal a stored rollup row's four `bigint` figure columns into JS numbers (CDR-073 §1-G14).
+ *
+ * Exported so a caller that already holds the row (to read `computed_at`, say) converts it here rather than
+ * re-querying or — far worse — doing arithmetic on the raw strings the driver returned.
+ */
+export function rollupRowFigures(row: AccountUsageRollupRow): RollupFigureRow {
+  return {
+    eventCount: toRollupFigure(row.event_count),
+    inputTokens: toRollupFigure(row.input_tokens),
+    outputTokens: toRollupFigure(row.output_tokens),
+    estimatedCostMicros: toRollupFigure(row.estimated_cost_micros),
+  };
+}
+
 export class AccountUsageRollupRepository {
   readonly #db: UsageRollupExecutor;
   constructor(db: UsageRollupExecutor) {
@@ -104,6 +119,24 @@ export class AccountUsageRollupRepository {
       .where('account_id', '=', accountId)
       .where('period_start', '=', periodStart)
       .executeTakeFirst();
+  }
+
+  /**
+   * The stored projection's FIGURES, marshalled through the bigint seam, or `undefined` when no row exists.
+   *
+   * THE DISTINCTION IS LOAD-BEARING AND `find` CANNOT MAKE IT SAFELY. `find` hands back the raw row, whose four
+   * figure columns are `bigint` and therefore STRINGS (§1-G14). A drift check written as `computed - stored.
+   * event_count` would then subtract a string: JavaScript coerces it, so the arithmetic silently *works* for
+   * subtraction and silently *fails* for anything else — `computed + stored` concatenates, and an equality check
+   * against a number is always false. A comparison that is right by coercion is the §0 failure exactly: correct
+   * today, wrong the moment someone writes the obvious next line.
+   *
+   * `undefined` here means NEVER COMPUTED, which is a different fact from "computed and zero" — a caller that
+   * collapses them reports "no drift" for an account whose projection does not exist.
+   */
+  async findFigures(accountId: string, periodStart: string): Promise<RollupFigureRow | undefined> {
+    const row = await this.find(accountId, periodStart);
+    return row === undefined ? undefined : rollupRowFigures(row);
   }
 
   /**

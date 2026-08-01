@@ -147,6 +147,11 @@ describe('event-name registry (deny unregistered)', () => {
       // The credit ledger (ACBP-P5-014; CDR-058) - deliberate additions, NOT in EVENT-CATALOG.
       'credit.reserved',
       'credit.settled',
+      // Account usage rollups (ACBP-P6-009; CDR-073 §1-G15) — deliberate additions, NOT in EVENT-CATALOG.
+      // `usage.corrected` is the audit half of trust-critical #13; `usage.rollup_reconciled` is launch gate 7's
+      // drift record. There is deliberately no `usage.rollup_rebuilt`: a bare rebuild changes no fact.
+      'usage.corrected',
+      'usage.rollup_reconciled',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.

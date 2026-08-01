@@ -152,4 +152,21 @@ describe('lanesExceedingThreshold (the alert decision — the VALUE is the owner
     const drift: RollupFigures = { eventCount: 1, inputTokens: 0, outputTokens: 0, estimatedCostMicros: 0 };
     expect(lanesExceedingThreshold(drift, threshold)).toEqual(['eventCount']);
   });
+
+  // ⚠️ THIS TEST PINS A HAZARD, NOT A FEATURE. `Math.abs(x) > NaN` is `false` for every x, so a NaN tolerance
+  // does not alert loudly and does not throw — it SILENTLY DISABLES ALERTING for that lane, in the one mechanism
+  // launch gate 7 relies on to notice a wrong number. NaN reaches a threshold easily: `Number(undefined)`,
+  // `Number('')` from an unset config value, or a `parseInt` of a malformed setting.
+  //
+  // The behaviour asserted here is JavaScript's and is not something this function should paper over — a numeric
+  // comparison helper that special-cased NaN would hide the bad input rather than reject it. It is refused at the
+  // BOUNDARY instead, by `readThreshold` in `usage-rollup-service.ts`, which is what
+  // `reconcileAccountUsageRollup`'s `invalid_threshold` refusal reports. This test is the reason that guard
+  // exists; if it ever goes red because NaN started alerting, the guard is no longer load-bearing and the
+  // reconciliation service's refusal path should be re-examined rather than deleted.
+  it('a NaN tolerance silently suppresses the alert — which is why the SERVICE refuses one', () => {
+    const enormous: RollupFigures = { eventCount: 1e9, inputTokens: 1e9, outputTokens: 1e9, estimatedCostMicros: 1e9 };
+    const nan = { eventCount: NaN, inputTokens: NaN, outputTokens: NaN, estimatedCostMicros: NaN };
+    expect(lanesExceedingThreshold(enormous, nan)).toEqual([]);
+  });
 });

@@ -61,7 +61,7 @@ export type { UsageEventExecutor, NewUsageEventInput, ListUsageEventsOptions } f
 // Account usage rollups + compensating corrections (ACBP-P6-009; CDR-073). The rollup is an account-keyed
 // MUTABLE PROJECTION (never a source of truth); corrections are append-only. `toRollupFigure` is the required
 // seam for every bigint figure — this repo installs no int8 type parser, so they arrive as strings.
-export { AccountUsageRollupRepository, UsageCorrectionRepository, toRollupFigure } from './usage-rollup-repository.js';
+export { AccountUsageRollupRepository, UsageCorrectionRepository, toRollupFigure, rollupRowFigures } from './usage-rollup-repository.js';
 export type { UsageRollupExecutor, RollupFigureRow, NewUsageCorrectionInput } from './usage-rollup-repository.js';
 // Understanding generation (ACBP-P2-008; CDR-029). Versioned append-only documents + classified items; every
 // method requires a validated CompanyScope (dual-keyed RLS). Written in-tx with the audit event.
