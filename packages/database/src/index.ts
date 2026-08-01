@@ -179,6 +179,16 @@ export type {
   UsageEventsTable,
   UsageEventRow,
   NewUsageEvent,
+  // Account usage rollups + corrections (ACBP-P6-009; migration 0051). Exported for the same reason every other
+  // row type here is: `AccountUsageRollupRepository.find()` and `UsageCorrectionRepository.insert()` DECLARE these
+  // as their return types, so without this line both public repositories have return types a consumer outside the
+  // package cannot name.
+  AccountUsageRollupsTable,
+  AccountUsageRollupRow,
+  NewAccountUsageRollup,
+  UsageCorrectionsTable,
+  UsageCorrectionRow,
+  NewUsageCorrection,
   UnderstandingDocumentsTable,
   UnderstandingDocumentRow,
   NewUnderstandingDocument,

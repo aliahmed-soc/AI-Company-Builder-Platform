@@ -3,7 +3,8 @@
 // Canon, verbatim: **"Usage corrections create compensating records (never edits)."**
 //
 // "NEVER EDITS" IS NOT ENFORCED BY THIS FILE, AND SAYING SO IS THE POINT. There is no update path here because
-// there is no UPDATE or DELETE grant on `usage_corrections` or `usage_events` at all (migration 0051), and
+// there is no UPDATE or DELETE grant on `usage_corrections` (migration 0051) or `usage_events` (migration 0017,
+// where that ledger's append-only grants were set) at all, and
 // `UsageCorrectionRepository` exposes only `insert`. A future caller cannot edit recorded usage by being careless;
 // it would have to be granted a privilege that does not exist. That is what makes the clause structural rather
 // than conventional.
@@ -13,7 +14,7 @@
 //   - magnitude <= the corrected event    — a trigger, because a CHECK cannot see another row (§1-G10)
 //   - at most ONE correction per event    — a unique index (§1-G10b)
 // This service's job is authorization, scope, attribution and the audit record.
-import { isPlatformError, usageCorrected } from '@acbp/contracts';
+import { isAllowed, isPlatformError, usageCorrected } from '@acbp/contracts';
 import {
   UsageCorrectionRepository,
   elevateToCompanyScope,
@@ -102,7 +103,10 @@ export async function recordUsageCorrection(
     async (scope): Promise<RecordUsageCorrectionResult> => {
       const own = await resolveOwnMembershipBootstrap(scope.db, params.userId, params.accountId);
       const role = own !== null && isMemberRole(own.role) ? own.role : null;
-      if (checkAuthorization(role, 'usage:correct', { accountId: params.accountId, actorId: params.userId }, authzOpts(options)).kind === 'deny') {
+      // `!isAllowed(...)`, not `.kind === 'deny'`. Both are correct against today's closed two-variant
+      // `AuthzDecision`, but only the first stays deny-by-default if a third variant is ever added: "is not an
+      // allow" refuses the unknown case, "is a deny" falls through to permitting it.
+      if (!isAllowed(checkAuthorization(role, 'usage:correct', { accountId: params.accountId, actorId: params.userId }, authzOpts(options)))) {
         return { status: 'forbidden' };
       }
 

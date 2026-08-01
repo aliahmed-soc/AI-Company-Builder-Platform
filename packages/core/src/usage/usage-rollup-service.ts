@@ -25,6 +25,7 @@
 import {
   addRollupFigures,
   emptyRollupFigures,
+  isAllowed,
   isUsagePeriodStart,
   lanesExceedingThreshold,
   rollupFigureDrift,
@@ -58,8 +59,15 @@ import type { Logger } from '@acbp/observability';
  * possibly-wrong one. A drift check must recompute by the SAME path it is checking, or a shared bug is invisible
  * to it in exactly the case it exists to catch.
  *
- * Runs inside the caller's account scope and transaction, so a reconciliation reads the stored row and recomputes
- * the ledger without a concurrent rebuild slipping between the two.
+ * Runs inside the caller's account scope and transaction.
+ *
+ * THAT BUYS LESS THAN AN EARLIER VERSION OF THIS COMMENT CLAIMED. It said the transaction meant a reconciliation
+ * "reads the stored row and recomputes the ledger without a concurrent rebuild slipping between the two". It does
+ * not: `withAccountTransaction` sets no isolation level, so this is READ COMMITTED and every statement takes a
+ * fresh snapshot — a fact this same file states plainly further down, which made the two passages contradict each
+ * other. What actually serializes anything is `lockAccountPeriodForReconcile`, and it serializes reconciliations
+ * against EACH OTHER only; a plain rebuild does not take it. Corrected rather than deleted because the shape of
+ * the guarantee matters to anyone reasoning about drift.
  */
 async function computeAccountUsageFromLedger(
   scope: AccountScope,
@@ -201,7 +209,11 @@ async function callerMayReadAccountUsage(
 ): Promise<boolean> {
   const own = await resolveOwnMembershipBootstrap(scope.db, userId, accountId);
   const role = own !== null && isMemberRole(own.role) ? own.role : null;
-  return checkAuthorization(role, 'usage:read', { accountId, actorId: userId }, authzOpts(options)).kind !== 'deny';
+  // `isAllowed`, not `.kind !== 'deny'`. The two agree today because `AuthzDecision` is a closed two-variant
+  // union, but they differ in POSTURE: "not a deny" admits any future third variant, whereas "is an allow"
+  // refuses it. On a check that is the only thing between a viewer and account-wide spend, the default has to
+  // fall closed.
+  return isAllowed(checkAuthorization(role, 'usage:read', { accountId, actorId: userId }, authzOpts(options)));
 }
 
 // ── reconciliation (launch gate 7) ──────────────────────────────────────────────────────────────────────────

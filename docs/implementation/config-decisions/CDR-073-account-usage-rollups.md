@@ -262,7 +262,12 @@ codebase — a large, invisible blast radius for a local problem. The helper:
 - **throws** above `Number.MAX_SAFE_INTEGER` rather than returning a silently rounded number;
 - is the only path by which a rollup figure becomes a JS number.
 
-Its rejection branch is mutation-tested — a guard nobody has watched fail is not a guard.
+Its rejection branch is covered by real assertions in `usage-rollup-repository.test.ts`, and each branch was
+watched to fail by removing it by hand during development — a guard nobody has watched fail is not a guard.
+
+Stated that way deliberately: an earlier draft of this gate said the branch was *"mutation-tested"*, which names
+a mechanism this repository does not have. There is no mutation-testing tool configured, so nobody could
+reproduce or re-run what that word implied. The checking was real; the word for it was not.
 
 ### G15 — Two audit events, registered WITH their producers and not before
 
@@ -298,6 +303,36 @@ across a repeated rebuild (G12), across periods, or across companies. It does **
 model-call deliveries produce one ledger row; nothing in this ticket touches the gateway's write path.
 
 Stating this here because the alternative is a PROJECT-STATE line reading "#12 done" that nobody re-checks.
+
+### The backlog's "company-move attribution" — STRUCTURALLY UNREACHABLE, not implemented
+
+The backlog row asks for *"company-move/deactivation attribution"*. **Deactivation** is closed by §1-G4 and
+tested (a paused company's history still counts). **Move** is not implemented, and this section previously failed
+to say so in either direction — an acceptance criterion left silently unanswered, which is the documentation
+failure this project treats as worse than an absent one.
+
+It is unreachable rather than merely undone. `companies_update`'s `WITH CHECK (account_id = current_account)`
+(migration 0008) means the app role cannot change a company's account: the new row's `account_id` must equal the
+current account, which is the old one. There is no other mutation path — no admin surface moves a company, and
+`usage_events.account_id` is stamped at insert with no update grant.
+
+Recorded because the consequence if it ever *became* reachable is severe and silent: `usage_events` rows keep the
+OLD `account_id` while the company enumerates under the NEW account, so the history would vanish from both
+accounts' rollups with no error anywhere. Any future ticket that adds a company-move path owes this ledger a
+migration, not just a foreign key update.
+
+### The corrections read policy is account-keyed while its parent ledger is dual-keyed
+
+`usage_corrections` uses `account_id = current_account` (§1-G2's `credit_transactions` shape), but the
+`usage_events` rows it compensates are dual-keyed. A correction carries `company_id`, per-lane usage deltas and
+operator free text.
+
+Nothing over-serves today: the only reader is `sumCompanyCorrections`, confined by its JOIN to `usage_events`. But
+the analogy that justified the policy is imperfect and worth naming — a credit balance genuinely spans companies,
+whereas a correction is a per-company usage record. **A future company-scoped read of this table would return
+another company's usage deltas to a caller with no membership there.** Left as-is rather than narrowed, because
+narrowing it now would break the account-wide reconciliation read that is this ticket's whole point; flagged so
+the next reader treats a direct `usage_corrections` read as needing its own scoping decision.
 
 ## §3 Owner gates raised by this ticket
 

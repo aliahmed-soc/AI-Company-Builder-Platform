@@ -26,6 +26,8 @@ const APP_TEST_PASSWORD = `rollup_${'test'}_pw_1970`;
 const CHECK_VIOLATION = '23514';
 const UNIQUE_VIOLATION = '23505';
 const INSUFFICIENT_PRIVILEGE = '42501';
+/** An RLS `WITH CHECK` refusal. Same code as a privilege refusal — PostgreSQL does not distinguish them. */
+const RLS_VIOLATION = '42501';
 const FK_VIOLATION = '23503';
 
 const ALL = ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'usage_corrections', 'account_usage_rollups', 'usage_events', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
@@ -342,14 +344,19 @@ describe.skipIf(!hasTestDatabase)('account_usage_rollups + usage_corrections (re
     await insertRollup(accountA, '2026-08-01');
     const seen = await asApp(acct(accountB), async (k) => sql<{ id: string }>`select id from account_usage_rollups`.execute(k));
     expect(seen.rows).toHaveLength(0);
-    // Writing a row keyed to ANOTHER account is refused by the WITH CHECK, not silently accepted.
+    // Writing a row keyed to ANOTHER account is refused by the INSERT policy's WITH CHECK.
+    //
+    // PINNED TO THE EXACT SQLSTATE, per this file's own `sqlStateOf` rule. This assertion previously read
+    // `.not.toBe('no-error')`, which accepts ANY failure — a column typo, a bad cast, a missing NOT NULL — and
+    // so would have passed even if the policy did not exist and the statement failed for an unrelated reason.
+    // It was the one assertion in this file not pinned, and it happened to be the tenant-isolation one.
     expect(
       await sqlStateOf(
         asApp(acct(accountB), async (k) =>
           sql`insert into account_usage_rollups (account_id, period_start) values (${accountA}::uuid, '2026-09-01'::date)`.execute(k),
         ),
       ),
-    ).not.toBe('no-error');
+    ).toBe(RLS_VIOLATION);
   });
 
   test('the app role has NO DELETE on the rollup — a projection row is replaced, never removed', async () => {
@@ -368,7 +375,15 @@ describe.skipIf(!hasTestDatabase)('account_usage_rollups + usage_corrections (re
       await sqlStateOf(asApp(acct(accountA), async (k) => sql`update account_usage_rollups set account_id = ${accountB}::uuid`.execute(k))),
     ).toBe(INSUFFICIENT_PRIVILEGE);
     // ...while the figures ARE updatable, so the grant is not simply refusing everything.
-    await expect(asApp(acct(accountA), async (k) => sql`update account_usage_rollups set event_count = 9`.execute(k))).resolves.toBeDefined();
+    //
+    // READ THE VALUE BACK. This control was `resolves.toBeDefined()`, which is satisfied by an UPDATE that
+    // matched zero rows — it proved the statement was permitted, not that anything changed, so a policy that
+    // silently filtered every row would have passed it just as happily.
+    await asApp(acct(accountA), async (k) => sql`update account_usage_rollups set event_count = 9`.execute(k));
+    const after = await asApp(acct(accountA), async (k) =>
+      sql<{ event_count: string }>`select event_count from account_usage_rollups`.execute(k),
+    );
+    expect(toRollupFigure(after.rows[0]!.event_count), 'the figure column is genuinely writable').toBe(9);
   });
 
   // ── corrections: append-only, bounded, one per event ───────────────────────────────────────────────────────
