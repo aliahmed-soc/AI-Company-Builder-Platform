@@ -238,6 +238,154 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(r).not.toMatchObject({ reason: 'stop_unavailable' });
   });
 
+  // ── ACBP-P6-007: THE PER-SCOPE ENFORCEMENT MATRIX (CDR-072 §1-G2; launch gate 8) ───────────────────────────
+  //
+  // THE FAILURE THIS BLOCK EXISTS TO PREVENT (CDR-072 §0): a stop that silently fails to reach ONE scope is worse
+  // than no stop at all, because the operator believes it worked and stops watching. The contract suite proves the
+  // covering relation on paper; this proves it through a REAL ROW, the RLS predicates, and the live dispatcher —
+  // which is where a scope actually goes missing, because a scope can be correct in `evaluateStops` and still never
+  // fire if the dispatcher cannot populate the identity it matches on.
+  //
+  // Every enforceable scope is proven TWICE: it halts the call it claims, and it does NOT halt one it should not.
+  // The misses are not padding. Without them a dispatcher that denied EVERYTHING would satisfy all five positives.
+  //
+  // The two INERT scopes are deliberately absent from this matrix — they cannot appear here as passing rows,
+  // because they enforce nothing. Their behaviour (deny as `stop_unavailable`) is the test above.
+  const activateStop = async (scope: string, targetId: string | null, companyId: string | null): Promise<void> => {
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountA}::uuid, ${companyId}::uuid, ${scope}, ${targetId}, ${w.aOwner}::uuid)`.execute(owner.kysely);
+  };
+
+  /** The identities the dispatcher resolves from the run — the very values `task`/`worker` scopes match on. */
+  const runIdentities = async (): Promise<{ taskRunId: string; workerId: string }> => {
+    const r = await sql<{ task_run_id: string; worker_id: string }>`
+      select task_run_id, worker_id from worker_runs where id = ${runId}::uuid
+    `.execute(owner.kysely);
+    const row = r.rows[0];
+    if (row === undefined) throw new Error('the fixture run has no worker_runs row — the task/worker matrix below would pass vacuously');
+    return { taskRunId: row.task_run_id, workerId: row.worker_id };
+  };
+
+  /** The LATEST requested-event payload, ordered by the ULID primary key — which is monotonic by construction, so
+   *  this is a real "most recent". An unordered read with `.at(-1)` would assert against whichever row the planner
+   *  happened to return last, which is not the same thing and would pass or fail by luck. */
+  const latestRequestedPayload = async (): Promise<Record<string, unknown>> => {
+    const rows = await owner.kysely.selectFrom('audit_events').selectAll().where('name', '=', 'tool.call_requested').orderBy('event_id').execute();
+    const last = rows.at(-1);
+    if (last === undefined) throw new Error('no tool.call_requested event was written — the assertion below would be vacuous');
+    return last.payload;
+  };
+
+  test('COVERS — account_wide halts a call that names nothing', async () => {
+    await activateStop('account_wide', null, null);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — another ACCOUNT\'s account-wide stop does not halt this one', async () => {
+    // The dual-scope RLS predicate is what makes this true, and it is the one that would silently over-halt the
+    // whole platform if `company_id is null` had been written without the account check beside it.
+    await sql`insert into emergency_stops (account_id, company_id, scope, target_id, activated_by_user_id)
+              values (${w.accountB}::uuid, null, 'account_wide', null, ${w.bOwner}::uuid)`.execute(owner.kysely);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('COVERS — a company stop halts a call in THAT company', async () => {
+    await activateStop('company', w.companyA1, w.companyA1);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a SIBLING company\'s stop does not halt this company', async () => {
+    // Same account, different company: the case where an over-broad predicate would turn one company's halt into
+    // an outage for the whole account, and the operator would have no way to tell from the record.
+    await activateStop('company', w.companyA2, w.companyA2);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('COVERS — a task stop halts a call made by THAT task\'s run', async () => {
+    const { taskRunId } = await runIdentities();
+    await activateStop('task', taskRunId, w.companyA1);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a stop on a DIFFERENT task does not halt this one', async () => {
+    await activateStop('task', '00000000-0000-4000-8000-0000000000ff', w.companyA1);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('COVERS — a worker stop halts a call made by THAT worker', async () => {
+    const { workerId } = await runIdentities();
+    await activateStop('worker', workerId, w.companyA1);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — a stop on a DIFFERENT worker does not halt this one', async () => {
+    await activateStop('worker', 'some-other-worker', w.companyA1);
+    expect(await dispatch()).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('COVERS — external_actions_only halts an EXTERNAL call', async () => {
+    // `send_email` is `external_reversible`, so the registry-derived external effect is true. The stop gate runs
+    // BEFORE policy and approval, so this refusal is the stop's, not the approval requirement's — which is the
+    // point: an emergency stop must not be reachable only for calls that would have been allowed anyway.
+    await activateStop('external_actions_only', null, w.companyA1);
+    expect(await dispatch({ toolId: 'send_email' })).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+  });
+
+  test('MISSES — external_actions_only leaves an INTERNAL call running', async () => {
+    // The whole purpose of this scope: stop what reaches the outside world, let internal work continue. If it
+    // over-halted, an operator reaching for the narrow control would get a full outage instead.
+    await activateStop('external_actions_only', null, w.companyA1);
+    expect(await dispatch({ toolId: 'web_research' })).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('THE EVIDENCE NAMES WHAT HALTED IT — not merely that something did (CDR-072 §1-G5)', async () => {
+    // `denial_reason: emergency_stopped` alone cannot distinguish "the account is halted" from "one task is".
+    // Both stops below cover this call, so the record must name BOTH — an evidence trail that reported only the
+    // first would understate the halt while looking complete.
+    const { taskRunId } = await runIdentities();
+    await activateStop('account_wide', null, null);
+    await activateStop('task', taskRunId, w.companyA1);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+
+    const metadata = await latestRequestedPayload();
+    expect(metadata['denial_reason']).toBe('emergency_stopped');
+    const scopes = metadata['stop_scopes'];
+    // Narrowed rather than stringified: a non-string here (absent, or some object) would otherwise become the text
+    // "undefined"/"[object Object]" and then fail on the comparison for a reason that names the wrong problem.
+    if (typeof scopes !== 'string') throw new Error(`stop_scopes must be a comma-joined string; got ${typeof scopes}`);
+    expect(scopes.split(',').sort()).toEqual(['account_wide', 'task']);
+  });
+
+  test('a NON-STOP refusal never claims a stop halted it', async () => {
+    // The other half: `stop_scopes` on a policy denial would send an operator hunting for a halt that never existed.
+    await sql`delete from tool_definitions where tool_id = 'web_research'`.execute(owner.kysely);
+    expect(await dispatch()).toMatchObject({ status: 'denied', reason: 'not_registered' });
+    expect(Object.keys(await latestRequestedPayload())).not.toContain('stop_scopes');
+  });
+
+  test('LAUNCH GATE 8 — the halt reaches the dispatcher in well under 5s, MEASURED', async () => {
+    // TIMED, not asserted by construction. The requirement is a bound on how long a call can still be authorized
+    // after an operator halts the platform, and "it eventually stopped" is not evidence for a bound.
+    //
+    // WHAT THE NUMBER ACTUALLY MEASURES, stated so nobody reads more into it than it carries: propagation here is
+    // bounded by TRANSACTION VISIBILITY, not by a cache refresh. The stop is read inside the same transaction as
+    // the call it authorizes, so a stop committed before that read is visible to it — there is no interval to tune
+    // and no window in which a stale answer could be served. The measurement therefore confirms the mechanism has
+    // no hidden staleness, and it is NOT a claim about a distributed fleet, which P7 infrastructure has to prove.
+    const before = await dispatch();
+    expect(before).not.toMatchObject({ reason: 'emergency_stopped' }); // the control: it was running first
+
+    const activatedAt = Date.now();
+    await activateStop('account_wide', null, null);
+    const stopped = await dispatch();
+    const elapsedMs = Date.now() - activatedAt;
+
+    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    // Reported unconditionally so the number is in the CI log as evidence, not only on failure.
+    console.info(`[ACBP-P6-007] launch gate 8: first refusal ${elapsedMs}ms after the stop committed (bound 5000ms)`);
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
   // UPDATED BY ACBP-P6-002 (CDR-067 §2-G7; PM ruling). This asserted that a gated class needed BOTH engines to allow
   // — i.e. that an absent approval refused whatever policy said. That was the stand-in for a `GateAnswer` which could
   // not express `require_approval`: with the middle output flattened onto `allow`, the only way to keep a demanded

@@ -955,6 +955,16 @@ export function toolCallRequested(input: {
    * empty string never has to be read as either 'none matched' or 'not checked'.
    */
   readonly injectionSignals?: string;
+  /**
+   * WHICH emergency-stop scopes covered this call (ACBP-P6-007; CDR-072 §1-G5). Comma-joined, from the CLOSED
+   * `STOP_SCOPES` vocabulary, and recorded ONLY on an `emergency_stopped` refusal.
+   *
+   * Without it the refusal records that A stop was in force but not what it reached — and an account-wide halt and
+   * a single stopped task would leave identical evidence. The operator's question after pressing stop is precisely
+   * which scopes answered, so a record that cannot distinguish those two is the §0 failure surviving into the audit
+   * trail. Scope NAMES only: no target ids, which would put a task/worker identifier into the metadata.
+   */
+  readonly stopScopes?: string;
 }): AuditEvent {
   // `tool_version` is OMITTED when null rather than sent as null: audit metadata is scalars only, and an absent key
   // says "this tool had no registered version" exactly as well as a null would have — without breaking the bound.
@@ -965,9 +975,12 @@ export function toolCallRequested(input: {
     ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }),
     ...(input.injectionSignals === undefined || input.injectionSignals === '' ? {} : { injection_signals: input.injectionSignals }),
   };
+  // `stop_scopes` rides the DENIED branch only, and only for the reason it explains. On a permitted call it would
+  // claim a halt that did not happen; on a different refusal it would attribute that refusal to a stop.
+  const stopScopes = input.denialReason === 'emergency_stopped' && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
-    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason });
+    : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes });
 }
 
 /**

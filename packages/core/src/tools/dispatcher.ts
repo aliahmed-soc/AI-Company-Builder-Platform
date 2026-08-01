@@ -525,7 +525,7 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         }
       }
 
-      await audit(scope, requestedEvent(finalRow, finalReason, signals), auditCtx(options));
+      await audit(scope, requestedEvent(finalRow, finalReason, signals, stopEvaluation), auditCtx(options));
       if (finalReason !== null) {
         // Logged at WARN because a refusal at the chokepoint is the signal the platform alarms on (TOOL-003 asks for
         // owner notification on gate unavailability). Metadata is scalars only — no arguments, no digest.
@@ -625,9 +625,14 @@ export async function reportToolCallOutcome(client: DatabaseClient, params: Repo
 
 // ── audit events (the factories live in @acbp/contracts, so the registry types them) ─────────────────────────
 
-function requestedEvent(row: ToolCallRow, denialReason: string | null, injectionSignals: string) {
+function requestedEvent(row: ToolCallRow, denialReason: string | null, injectionSignals: string, stopEvaluation: StopEvaluation) {
   const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
-  return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason });
+  // WHICH SCOPES HALTED IT (CDR-072 §1-G5), taken from the evaluation that actually decided this call rather than
+  // re-derived — a second derivation is one that can disagree with the refusal it is supposed to explain. The
+  // factory records it only on an `emergency_stopped` refusal, so passing it unconditionally here is safe and
+  // keeps the "what halted this" answer next to the reason instead of behind a branch that could be missed.
+  const stopScopes = stopEvaluation.kind === 'stopped' ? stopEvaluation.scopes.join(',') : '';
+  return denialReason === null ? toolCallRequested(base) : toolCallRequested({ ...base, denialReason, stopScopes });
 }
 
 /** The DISTINCT signals across every untrusted item, comma-joined. Signals only — the content never leaves memory. */
