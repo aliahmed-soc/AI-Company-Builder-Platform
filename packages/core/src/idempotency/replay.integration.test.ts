@@ -70,7 +70,9 @@ describe.skipIf(!hasTestDatabase)('replay + duplicate delivery across jobs, even
   });
   beforeEach(async () => {
     await truncateFixtures(owner);
-    w = await seedTwoTenantWorld(product, owner, SEED_OPS);
+    // (owner, product) — that order, and both parameters are `DatabaseClient`, so swapping them typechecks
+    // cleanly and fails only at runtime as an RLS violation inside the harness.
+    w = await seedTwoTenantWorld(owner, product, SEED_OPS);
   }, 60_000);
 
   // ── jobs: the same key enqueued twice is ONE job (trust-critical #11) ────────────────────────────────────
