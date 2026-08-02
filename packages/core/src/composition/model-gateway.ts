@@ -10,7 +10,7 @@
 // providers are injected (in P2-003, the deterministic fake; live adapters are a deferred owner gate, CDR-026 §0).
 import { UsageEventRepository, withTenantTransaction, type DatabaseClient, type TenantContext } from '@acbp/database';
 import type { ModelGatewayRequest, ModelGatewayResult, NewModelCallUsageEvent } from '@acbp/contracts';
-import type { Logger } from '@acbp/observability';
+import { recordSuppression, type Logger } from '@acbp/observability';
 import { callModel, type CostInput, type GatewayConfig, type ModelGatewayDeps, type OutputValidation, type PolicyDecision, type ResolvedProvider } from '../model/model-gateway.js';
 
 export interface ModelGatewayCompositionConfig {
@@ -29,14 +29,26 @@ export interface CallModelOptions {
 
 export type BoundModelGateway = (request: ModelGatewayRequest, options?: CallModelOptions) => Promise<ModelGatewayResult>;
 
-/** Persist one usage event under the request's company scope (fail-closed: a write failure throws → rollback). */
-async function writeUsageEvent(client: DatabaseClient, event: NewModelCallUsageEvent, correlationId: string | undefined): Promise<void> {
+/**
+ * Persist one usage event under the request's company scope (fail-closed: a write failure throws → rollback).
+ *
+ * A SUPPRESSED DUPLICATE IS NOT A FAILURE and must not throw (CDR-074 §2): metering is fail-closed, so throwing
+ * here would withhold a model output the customer has already been charged for. It is recorded instead, because
+ * a suppression that writes nothing and says nothing is indistinguishable from a suppression path that stopped
+ * working — the ambiguity CDR-074 §0 is built around.
+ */
+async function writeUsageEvent(
+  client: DatabaseClient,
+  event: NewModelCallUsageEvent,
+  correlationId: string | undefined,
+  logger: Logger | undefined,
+): Promise<void> {
   const tenant: TenantContext = { accountId: event.accountId, companyId: event.companyId };
-  await withTenantTransaction(
+  const result = await withTenantTransaction(
     client,
     tenant,
     async (scope) => {
-      await new UsageEventRepository(scope.db).insert({
+      return new UsageEventRepository(scope.db).insert({
         accountId: event.accountId,
         companyId: event.companyId,
         provider: event.provider,
@@ -52,10 +64,17 @@ async function writeUsageEvent(client: DatabaseClient, event: NewModelCallUsageE
         fallbackUsed: event.fallbackUsed,
         latencyMs: event.latencyMs,
         correlationId: event.correlationId ?? null,
+        ...(event.idempotencyKey !== undefined ? { idempotencyKey: event.idempotencyKey } : {}),
       });
     },
     correlationId !== undefined ? { correlationId } : {},
   );
+
+  // RECORDED AFTER THE TRANSACTION COMMITS, not inside it. Inside, a rollback would erase the row while the log
+  // line survived, claiming a suppression that never happened.
+  if (result.status === 'suppressed') {
+    recordSuppression(logger, { surface: 'usage_event', accountId: event.accountId, companyId: event.companyId });
+  }
 }
 
 /**
@@ -68,7 +87,7 @@ export function createModelGateway(client: DatabaseClient, cfg: ModelGatewayComp
     const deps: ModelGatewayDeps = {
       primary: cfg.primary,
       estimateCost: cfg.estimateCost,
-      recordUsage: (event) => writeUsageEvent(client, event, correlationId),
+      recordUsage: (event) => writeUsageEvent(client, event, correlationId, cfg.logger),
       ...(cfg.fallback !== undefined ? { fallback: cfg.fallback } : {}),
       ...(cfg.validateOutput !== undefined ? { validateOutput: cfg.validateOutput } : {}),
       ...(cfg.policyPrecheck !== undefined ? { policyPrecheck: cfg.policyPrecheck } : {}),

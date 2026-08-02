@@ -48,4 +48,20 @@ export interface NewModelCallUsageEvent {
   readonly fallbackReason?: ModelErrorCategory;
   readonly latencyMs: number;
   readonly correlationId?: string;
+  /**
+   * Duplicate-suppression key for this DELIVERY of the usage record (ACBP-P6-011; CDR-074 §2/§5). Optional, and
+   * NO CALLER SUPPLIES ONE TODAY — deliberately, not by oversight. Today's metering is inline and fail-closed, so
+   * a failed write leaves nothing behind and a genuine retry means the model really was called again. The field
+   * exists so the mechanism is REACHABLE when usage delivery becomes message-driven (NFR-006, ADR-008).
+   *
+   * TWO RULES FOR WHOEVER FIRST SUPPLIES ONE, because getting either wrong is a silent billing error:
+   *   1. It identifies the CALL, so every re-delivery of that call carries the same value.
+   *   2. It must be UNIQUE PER CALL. Deriving it from the call's attributes (provider, model, tokens, cost, even
+   *      a timestamp) makes two legitimate identical calls collapse into one — an UNDER-count, and unlike an
+   *      over-count nothing downstream will ever contradict it.
+   *
+   * NOT `correlationId`: one correlation can cover several model calls, so reusing it would suppress every call
+   * after the first.
+   */
+  readonly idempotencyKey?: string;
 }

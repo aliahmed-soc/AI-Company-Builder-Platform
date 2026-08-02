@@ -9,6 +9,7 @@ import type {
   VerifiedIdentityWebhookEvent,
 } from '@acbp/contracts';
 import { ErrorCodes, platformError } from '@acbp/contracts';
+import { createTestLogger } from '@acbp/observability';
 import { createIdentityWebhookService, type IdentityEventProcessor } from './webhook-service.js';
 
 const REQUEST: IdentityWebhookRequest = { rawBody: new Uint8Array([1, 2, 3]), headers: { 'svix-id': 'msg_1' } };
@@ -89,5 +90,48 @@ describe('createIdentityWebhookService', () => {
     });
     await svc.handle(REQUEST, { correlationId: 'cid-7' });
     expect(seen).toEqual({ correlation: { correlationId: 'cid-7' } });
+  });
+
+  test('the logger is threaded into the processor, so a suppressed re-delivery can be recorded', async () => {
+    // ACBP-P6-011 / CDR-074 §5. FOUND IN REVIEW, not by a failing test: `processVerifiedIdentityEvent` recorded
+    // the suppression incident, but this service never passed it a logger and `IdentityEventProcessor` could not
+    // carry one. Webhook re-delivery is the ONLY duplicate that actually occurs in production today, so the one
+    // surface where the counter would ever fire was structurally incapable of firing. Suppression still worked —
+    // it was the visibility that was missing, which is precisely the failure CDR-074 §0 is about.
+    let seenOptions: unknown;
+    const logger = createTestLogger().logger;
+    const svc = createIdentityWebhookService({
+      verifier: verifier({ status: 'verified', event: verifiedEvent() }),
+      client: DUMMY_CLIENT,
+      logger,
+      process: (_c, _e, o) => {
+        seenOptions = o;
+        return Promise.resolve({ outcome: 'duplicate' });
+      },
+    });
+
+    await svc.handle(REQUEST, { correlationId: 'cid-8' });
+
+    // Asserted by IDENTITY, not by presence: a logger that is not the one supplied would satisfy `toBeDefined`.
+    expect((seenOptions as { logger?: unknown }).logger).toBe(logger);
+    expect(seenOptions).toEqual({ correlationId: 'cid-8', logger });
+  });
+
+  test('no logger supplied means no logger key — the processor is never handed an undefined one', async () => {
+    // Keeps the options object exact-shaped rather than accumulating `logger: undefined`, which is what the
+    // sibling assertion above (`toEqual({ correlationId: 'cid-9' })`) already depends on.
+    let seenOptions: unknown;
+    const svc = createIdentityWebhookService({
+      verifier: verifier({ status: 'verified', event: verifiedEvent() }),
+      client: DUMMY_CLIENT,
+      process: (_c, _e, o) => {
+        seenOptions = o;
+        return Promise.resolve({ outcome: 'applied' });
+      },
+    });
+
+    await svc.handle(REQUEST);
+    expect(seenOptions).toEqual({});
+    expect('logger' in (seenOptions as object)).toBe(false);
   });
 });

@@ -42,3 +42,6 @@ export * from './usage/index.js';
 // Approvals: request content (APPR-002), the five decision paths (APPR-007), and the actor-type restriction that
 // makes invariant 5 a type rather than a check (ACBP-P6-003a; CDR-068).
 export * from './approvals/index.js';
+// Duplicate-suppression incidents: the shape a suppressed re-delivery is recorded in, built so a caller-authored
+// idempotency key can never ride along into a log (ACBP-P6-011; CDR-074 §0/§5).
+export * from './idempotency/index.js';

@@ -10,11 +10,43 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { parseDatabaseConfig } from '@acbp/config';
-import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, type DatabaseClient } from '../index.js';
+import { createDatabase, closeDatabase, migrateToLatest, createMigrator, withTransaction, UsageEventRepository, type DatabaseClient, type NewUsageEventInput } from '../index.js';
 
 const url = process.env['ACBP_TEST_DATABASE_URL'];
 const hasTestDatabase = typeof url === 'string' && url.length > 0;
 const APP_TEST_PASSWORD = `usage_${'test'}_pw_1970`;
+
+const CHECK_VIOLATION = '23514';
+
+/** The exact SQLSTATE of a rejected statement, or 'no-error'. Pinned, never a bare `.rejects.toThrow()`. */
+const isSqlState = (v: unknown): v is string => typeof v === 'string' && /^[0-9A-Z]{5}$/.test(v);
+const sqlStateOf = (p: Promise<unknown>): Promise<string> =>
+  p.then(() => 'no-error').catch((e: unknown) => {
+    for (let cur: unknown = e, hops = 0; cur !== null && cur !== undefined && hops < 5; hops += 1) {
+      const node = cur as { code?: unknown; cause?: unknown };
+      if (isSqlState(node.code)) return node.code;
+      cur = node.cause;
+    }
+    return /sqlstate=([0-9A-Z]{5})/.exec(String(e))?.[1] ?? 'unknown';
+  });
+
+/** A minimal well-formed repository input — the duplicate-suppression tests vary only the key. */
+const repoInput = (accountId: string, companyId: string): NewUsageEventInput => ({
+  accountId,
+  companyId,
+  provider: 'fake',
+  model: 'fake-1@2026-01',
+  taskClass: 'interactive',
+  outcome: 'ok',
+  errorCategory: null,
+  inputTokens: 10,
+  outputTokens: 5,
+  estimatedCostMicros: 0,
+  fallbackUsed: false,
+  fallbackReason: null,
+  latencyMs: 12,
+  correlationId: null,
+});
 
 const ALL = ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'usage_corrections', 'account_usage_rollups', 'usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
 
@@ -34,6 +66,8 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
   let accountA = '';
   let accountB = '';
   let companyA1 = '';
+  /** A SECOND company in account A — the per-company key-space assertion needs one. */
+  let companyA2 = '';
   let companyB1 = '';
 
   async function asApp<T>(gucs: Record<string, string>, fn: (trx: DatabaseClient['kysely']) => Promise<T>): Promise<T> {
@@ -77,6 +111,7 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
     accountA = (await sql<{ id: string }>`insert into accounts (created_by_user_id) values (${userU}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
     accountB = (await sql<{ id: string }>`insert into accounts (created_by_user_id) values (${userV}::uuid) returning id`.execute(su.kysely)).rows[0]!.id;
     companyA1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
+    companyA2 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountA}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
     companyB1 = (await sql<{ id: string }>`insert into companies (account_id, creation_mode) values (${accountB}::uuid, 'own_idea') returning id`.execute(su.kysely)).rows[0]!.id;
 
     // down/up/reapply BY NAME — proves 0017 is reversible + idempotent through the migrator.
@@ -147,6 +182,58 @@ describe.skipIf(!hasTestDatabase)('usage_events (real PostgreSQL, restricted rol
         sql`insert into usage_events (account_id, company_id, provider, model, task_class, outcome, input_tokens, output_tokens, estimated_cost_micros, fallback_used, latency_ms) values (${accountA}::uuid, ${companyA1}::uuid, 'fake', 'm@1', 'interactive', 'ok', 1, 1, 0, true, 1)`.execute(k),
       ),
     ).resolves.toBeDefined();
+  });
+
+  // ── duplicate suppression (ACBP-P6-011; CDR-074 §2; trust-critical #12) ────────────────────────────────────
+  //
+  // These go through the REPOSITORY, not raw SQL, because the behaviour under test is the repository's — a
+  // duplicate must come back as a SUCCESS (`suppressed`), never as a throw. Metering is fail-closed, so a
+  // duplicate surfaced as a write failure would withhold a model output the customer has already been charged
+  // for: the suppression feature would cause the harm it exists to prevent.
+
+  test('A RE-DELIVERED USAGE ROW IS SUPPRESSED, not written and not thrown (trust-critical #12)', async () => {
+    const key = `dup_${Date.now()}_a`;
+    const first = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA1), idempotencyKey: key }));
+    const second = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA1), idempotencyKey: key }));
+
+    expect(first.status).toBe('inserted');
+    expect(second.status, 'the second delivery must be a SUCCESS reporting suppression, not an error').toBe('suppressed');
+
+    // THE LEDGER IS THE ASSERTION, not the return value. CDR-073's reconciliation recomputes FROM this table, so
+    // a second row here would inflate the rollup and read as "no drift" on both sides.
+    const rows = await asApp(scope(accountA, companyA1), (k) => sql<{ n: string }>`select count(*)::text as n from usage_events where idempotency_key = ${key}`.execute(k));
+    expect(rows.rows[0]!.n).toBe('1');
+  });
+
+  test('TWO KEYLESS WRITES ARE NOT DUPLICATES OF EACH OTHER — the partial index is the point', async () => {
+    // A NULL key matches no index predicate, so keyless rows never collide. Making the column NOT NULL, or the
+    // index total, would silently discard a second genuine call from any caller that supplies no key.
+    const a = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert(repoInput(accountA, companyA1)));
+    const b = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert(repoInput(accountA, companyA1)));
+    expect(a.status).toBe('inserted');
+    expect(b.status, 'a second keyless call is a real second call and must count').toBe('inserted');
+  });
+
+  test('A BLANK KEY IS NO KEY — it is stored as NULL, so blanks do not suppress each other', async () => {
+    // `''` satisfies `is not null` and WOULD collide in the partial index, so two unrelated calls that both sent
+    // an empty key would suppress one another. The repository normalises blank to NULL; the CHECK refuses a
+    // blank that reaches the column anyway.
+    const a = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA1), idempotencyKey: '   ' }));
+    const b = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA1), idempotencyKey: '' }));
+    expect(a.status).toBe('inserted');
+    expect(b.status).toBe('inserted');
+    expect(await sqlStateOf(asApp(scope(accountA, companyA1), (k) => sql`insert into usage_events (account_id, company_id, provider, model, task_class, outcome, input_tokens, output_tokens, estimated_cost_micros, fallback_used, latency_ms, idempotency_key) values (${accountA}::uuid, ${companyA1}::uuid, 'fake', 'm@1', 'interactive', 'ok', 1, 1, 0, false, 1, '   ')`.execute(k)))).toBe(CHECK_VIOLATION);
+  });
+
+  test('THE SAME KEY IN A DIFFERENT COMPANY IS NOT A DUPLICATE — the index is per company', async () => {
+    // Per company, not per account: a unique index is enforced regardless of RLS, so an account-wide key space
+    // would let one company's key suppress another company's usage row — a cross-tenant effect that trips no
+    // policy. `usage_events` is company-owned and dual-keyed, and its suppression must be too.
+    const key = `dup_${Date.now()}_shared`;
+    const one = await asApp(scope(accountA, companyA1), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA1), idempotencyKey: key }));
+    const two = await asApp(scope(accountA, companyA2), (k) => new UsageEventRepository(k).insert({ ...repoInput(accountA, companyA2), idempotencyKey: key }));
+    expect(one.status).toBe('inserted');
+    expect(two.status, 'another company reusing the key must still be recorded').toBe('inserted');
   });
 
   test('APPEND-ONLY: no UPDATE and no DELETE grant (both refused for the app role)', async () => {

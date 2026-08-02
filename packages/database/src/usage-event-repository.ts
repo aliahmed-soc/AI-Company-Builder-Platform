@@ -40,7 +40,29 @@ export interface NewUsageEventInput {
    * the link is writable the moment a worker actually calls a model, which is P5-006/007/008's wiring.
    */
   readonly workerRunId?: string | null;
+  /**
+   * Duplicate-suppression key for this DELIVERY of the usage record (ACBP-P6-011; CDR-074 §2; trust-critical
+   * #12). Optional: absent means no suppression, and two keyless writes are never duplicates of each other.
+   *
+   * It identifies the CALL, so a re-delivered write of the same call carries the same key. It must NOT be
+   * derived from the call's attributes — two distinct calls with identical provider, model, tokens and cost in
+   * the same instant are legitimate, and collapsing them would UNDER-count.
+   */
+  readonly idempotencyKey?: string | null;
 }
+
+/**
+ * The outcome of appending a usage event.
+ *
+ * TWO OUTCOMES, NOT A ROW OR A THROW, and the distinction is what makes suppression safe. Metering is
+ * FAIL-CLOSED (CDR-026 §5): a write failure throws and the model output is withheld. If a duplicate surfaced as
+ * a failure, a re-delivered write would withhold an output the customer has already been charged for — the
+ * suppression feature would create the harm it exists to prevent. So `suppressed` is a SUCCESS.
+ */
+export type UsageEventInsertResult =
+  | { readonly status: 'inserted'; readonly row: UsageEventRow }
+  /** A row with this `(company_id, idempotency_key)` already exists. Nothing was written; the ledger is correct. */
+  | { readonly status: 'suppressed' };
 
 /** Bounded list options. `limit` is clamped by the caller/use case. */
 export interface ListUsageEventsOptions {
@@ -58,10 +80,12 @@ export class UsageEventRepository {
    * counters, and bounded lengths are enforced by the table; the gateway builds a consistent row. Returns
    * the server-generated row.
    */
-  insert(input: NewUsageEventInput): Promise<UsageEventRow> {
-    return this.#db
+  async insert(input: NewUsageEventInput): Promise<UsageEventInsertResult> {
+    const key = (input.idempotencyKey ?? '').trim() === '' ? null : (input.idempotencyKey ?? null);
+    const row = await this.#db
       .insertInto('usage_events')
       .values({
+        idempotency_key: key,
         account_id: input.accountId,
         company_id: input.companyId,
         kind: 'model_call',
@@ -78,8 +102,17 @@ export class UsageEventRepository {
         correlation_id: input.correlationId,
         worker_run_id: input.workerRunId ?? null,
       })
+      // SCOPED TO THE EXACT PARTIAL INDEX, never a blanket conflict handler. `(company_id, idempotency_key)
+      // where idempotency_key is not null` is the only collision that means "already delivered"; swallowing any
+      // other constraint violation here would turn a genuine data defect into a silent no-op on a billing
+      // ledger. A keyless row matches no index predicate, so it is inserted unconditionally.
+      .onConflict((oc) => oc.columns(['company_id', 'idempotency_key']).where('idempotency_key', 'is not', null).doNothing())
+      // `executeTakeFirst`, not `...OrThrow`: DO NOTHING returns ZERO rows on suppression, and that is the
+      // success path (see UsageEventInsertResult).
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+
+    return row === undefined ? { status: 'suppressed' } : { status: 'inserted', row };
   }
 
   /**

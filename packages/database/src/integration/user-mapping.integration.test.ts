@@ -156,11 +156,30 @@ describe.skipIf(!hasTestDatabase)('user-mapping foundation (real PostgreSQL)', (
       const r = await sql<{ n: number }>`select count(*)::int as n from information_schema.tables where table_schema='public' and table_name in ('users','identity_webhook_receipts')`.execute(client.kysely);
       return r.rows[0]?.n ?? 0;
     };
-    for (let i = 0; i < 50 && (await usersTables()) > 0; i++) {
+    // THE BOUND IS COUPLED TO THE MIGRATION COUNT, which is why it is 1000 and not a tidy small number.
+    // `migrateDown` reverses exactly ONE migration, and `users` is created by 0002 — so removing it costs one
+    // reversal per migration above it. At the old bound of 50 and 52 migrations (ACBP-P6-011's 0052) the loop
+    // stopped with 0002 and 0001 still applied, and the test failed on a later ticket that had nothing to do with
+    // user mapping. `tools/check-migration-drain-loops.mjs` now fails the build before that can recur.
+    //
+    // THE EXIT REASON IS RECORDED, not inferred. Three different things end this loop -- the tables went away
+    // (the pass), the migration stack emptied while the tables survived (a `down` that does not drop), and the
+    // iteration cap (the bug above). A bare `expect(count).toBe(0)` reports all three as "expected 2 to be 0" and
+    // leaves the reader to work out which, so the reason is asserted instead.
+    let exit: 'tables_gone' | 'stack_empty' | 'iteration_cap' = 'iteration_cap';
+    for (let i = 0; i < 1000; i++) {
+      if ((await usersTables()) === 0) {
+        exit = 'tables_gone';
+        break;
+      }
       const down = await migrateDown(client);
       expect(down.error).toBeUndefined();
-      if ((down.results?.length ?? 0) === 0) break;
+      if ((down.results?.length ?? 0) === 0) {
+        exit = 'stack_empty';
+        break;
+      }
     }
+    expect(exit).toBe('tables_gone');
     expect(await usersTables()).toBe(0);
     const reapply = await migrateToLatest(client);
     expect(reapply.error).toBeUndefined();

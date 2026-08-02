@@ -18,6 +18,7 @@ import {
   type IdentityWebhookReceiptRow,
 } from '@acbp/database';
 import type { VerifiedIdentityWebhookEvent } from '@acbp/contracts';
+import { recordSuppression, type Logger } from '@acbp/observability';
 
 /** Terminal outcome of processing a verified identity event. */
 export type IdentityEventOutcome = 'applied' | 'duplicate' | 'stale' | 'deleted_identity_noop' | 'security_conflict';
@@ -152,12 +153,12 @@ export async function applyIdentityEvent(users: UserMappingStore, receipts: Webh
  * Process a verified event in one transaction: receipt + user mutation commit atomically, or roll
  * back together. Unexpected database failures surface as sanitized PlatformErrors (withTransaction).
  */
-export function processVerifiedIdentityEvent(
+export async function processVerifiedIdentityEvent(
   client: DatabaseClient,
   event: VerifiedIdentityWebhookEvent,
-  options: { readonly correlationId?: string } = {},
+  options: { readonly correlationId?: string; readonly logger?: Logger } = {},
 ): Promise<IdentityEventProcessingResult> {
-  return withTransaction(
+  const result = await withTransaction(
     client,
     async (tx) => {
       const outcome = await applyIdentityEvent(new UserMappingRepository(tx.kysely), new WebhookReceiptRepository(tx.kysely), event);
@@ -165,4 +166,14 @@ export function processVerifiedIdentityEvent(
     },
     options,
   );
+
+  // A RE-DELIVERED WEBHOOK IS THE CANONICAL REPLAY (ACBP-P6-011; CDR-074 §0): providers retry, and the receipt
+  // key is what stops the second delivery from mutating the user again. Recorded AFTER the commit — inside the
+  // transaction a rollback would erase the receipt while the log line survived, claiming a suppression that never
+  // happened. Both tenant fields are null because identity mappings are global and carry no tenant context; the
+  // incident says WHERE suppression fired, and the provider's own delivery log says which event.
+  if (result.outcome === 'duplicate') {
+    recordSuppression(options.logger, { surface: 'identity_event', accountId: null, companyId: null });
+  }
+  return result;
 }

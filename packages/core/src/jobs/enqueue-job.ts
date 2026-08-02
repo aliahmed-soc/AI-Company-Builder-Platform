@@ -17,7 +17,7 @@ import { JobRepository, writeAuditEvent, type DatabaseClient, type AuditWriteCon
 import { validateJobRequest, validateJobTenancy, jobEnqueued, type JobKind, type JobRequestFailure } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
-import type { Logger } from '@acbp/observability';
+import { recordSuppression, type Logger } from '@acbp/observability';
 
 export interface EnqueueJobOptions {
   readonly correlationId?: string;
@@ -148,6 +148,11 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
         // Audited even though no row was created: an enqueue attempt that collapsed into an existing job is exactly
         // the event a run trail would otherwise be missing, and the caller was told `ok`.
         await audit(scope, jobEnqueued({ jobId: existing.id, kind: request.kind, deduplicated: true }), auditCtx(options));
+        // Counted as well as audited (ACBP-P6-011; CDR-074 §0). The audit row answers "what happened to THIS job",
+        // which is a per-job question; the incident answers "is suppression firing at all", which is a
+        // cross-surface one. Neither substitutes for the other, and only the second distinguishes a working
+        // mechanism from a quiet one.
+        recordSuppression(options.logger, { surface: 'job_enqueue', accountId: scope.tenant.accountId, companyId: scope.tenant.companyId });
         return { status: 'ok', job: toEnqueuedJob(existing, request.kind), deduplicated: true };
       }
 
