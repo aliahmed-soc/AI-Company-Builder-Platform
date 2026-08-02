@@ -67,7 +67,45 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-009 Account usage rollups and reconciliation — IMPLEMENTATION COMPLETE, AWAITING OWNER GATES**
+- **ACBP-P6-011 Idempotency and replay hardening — IMPLEMENTATION COMPLETE, AWAITING MERGE** (CDR-074; TASK-009,
+  NFR-006; ADR-008/ADR-013; launch gate 5; trust-critical **#11 and #12**). Branch `p6-011-idempotency-replay`,
+  draft PR #69, migration **0052** (`usage_events.idempotency_key` + partial unique index). Exact-head CI
+  `30727298208` on `723b19b` green with **ZERO SKIPS** (240 files / 3449 tests).
+  - **Closes the LEDGER HALF of trust-critical #12**, which ACBP-P6-009 explicitly declined. Together with
+    P6-009's rollup half, #12 is now closed end to end. Also closes **#11** (replayed jobs do not duplicate
+    authoritative effects).
+  - **It does NOT fix a live double-count and CDR-074 §2 says so.** Today's usage write is inline and
+    fail-closed, so a failed write leaves nothing behind and a genuine retry means the model really was called
+    again. The key closes a structural hole ahead of message-driven delivery. Do not read "#12 done" as "a
+    double-count was found and fixed" — none was.
+  - **The usage key is REACHABLE but UNWIRED, deliberately** (CDR-074 §5.4). Request → event → column is complete
+    and exercised end to end; no production caller supplies one, because a *wrong* key UNDER-counts and nothing
+    downstream ever contradicts an under-count. Two rules bind whoever first supplies one, stated at both
+    contract fields.
+  - **The incident counter cannot tell a broken path from a quiet week** (CDR-074 §5.2), and the doc leads with
+    that rather than burying it. A zero count is ambiguous; the counter is evidence suppression FIRED, not that
+    it WOULD have. A live canary is the only thing that fixes that, and it is P7-006's — owner-gated.
+  - **Independent review found the defect that green CI did not** (CDR-074 §5.2a): `createIdentityWebhookService`
+    — the live production entry point, and the ONLY surface that suppresses anything in production today —
+    never passed a logger to the processor, so the counter was structurally incapable of recording the one
+    duplicate that actually happens. Suppression itself worked throughout; the visibility did not. The replay
+    suite missed it by calling the internal `processVerifiedIdentityEvent` instead of the entry point.
+  - **A second-occurrence defect, now guarded:** migration 0052 broke a user-mapping test whose migration-drain
+    loop capped at 50. P6-009's 0051 had broken the same pattern elsewhere and that fix did not sweep.
+    `tools/check-migration-drain-loops.mjs` now fails the build statically; the loop records WHY it ended.
+  - **Deliberately out of scope, not overlooked:** the `Idempotency-Key` HTTP surface (no HTTP mutation surface
+    exists for these paths yet), and the four §1 suppression surfaces this ticket does not instrument — naming a
+    surface nothing reports would claim coverage the ticket does not have.
+
+- **ACBP-P6-009 Account usage rollups and reconciliation — DONE** (CDR-073; USAGE-001 amended; ACT-004;
+  ADR-013/ADR-003 §16; launch gate 7; trust-critical #13/#14). Merged as squash `c43acf8`, PR #68; exact-main CI
+  `30723999693` green with **ZERO SKIPS** (237 files / 3426 tests); branch deleted after verifying the branch
+  tip's tree is byte-identical in `main` — ancestry does not hold across a squash merge. **Still owner-gated and
+  NOT closed by this line:** the **drift threshold value** (§3.1 — required, defaulted nowhere) and **who may
+  trigger a rebuild** (§3.2). *(This DONE line was added by the P6-011 session: the merge happened but the line
+  was never written, so by this file's own rule the merged ticket was reading as in flight.)*
+
+- **ACBP-P6-009 Account usage rollups and reconciliation — working block**
   (CDR-073; USAGE-001 amended; ACT-004; ADR-013/ADR-003 §16; launch gate 7; trust-critical #13/#14). Branch
   `p6-009-usage-rollups`, draft PR #68, migration **0051** (`account_usage_rollups`, `usage_corrections`).
   Built by TWO SESSIONS on one branch: Slices 1–3 and 5 here, Slice 4 by a concurrent session, coordinated by the
