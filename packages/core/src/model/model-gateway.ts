@@ -61,9 +61,18 @@ export interface CostInput {
   readonly outputTokens: number;
 }
 
-/** The caps/tier pre-check decision (ADR-011 company-policy pre-check). `allowed:false` → `budget_exceeded`. */
+/**
+ * The caps/tier pre-check decision (ADR-011 company-policy pre-check).
+ *
+ * `errorCategory` exists because "you have spent your budget" and "we cannot tell what you have spent" are
+ * different facts that a single boolean collapses (ACBP-P6-010; CDR-075 §3-G6). Reporting an unreadable total as
+ * `budget_exceeded` sends a founder to top up an account that was never the problem, and hides a platform outage
+ * behind a plausible business explanation. Defaults to `budget_exceeded` when omitted, which is the historical
+ * behaviour and the right default for a refusal that really is about money.
+ */
 export interface PolicyDecision {
   readonly allowed: boolean;
+  readonly errorCategory?: ModelErrorCategory;
 }
 
 /** Overridable gateway config. Defaults come from the owner-ratified contract constants (IOQ-13; CDR-026 §1). */
@@ -269,8 +278,11 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
   if (deps.policyPrecheck !== undefined) {
     const decision = await deps.policyPrecheck(request);
     if (!decision.allowed) {
-      deps.logger?.info('model.call_blocked', { metadata: redactedMeta(deps.primary.name, composeModel(deps.primary, undefined), request.taskClass, 'error', 'budget_exceeded', false, Math.max(0, now() - started), correlationId) });
-      return errorResult('budget_exceeded', deps.primary, false, Math.max(0, now() - started), correlationId);
+      // The refusal's own category, not a fixed one: a cap that could not be READ is `internal`, ours to fix,
+      // and must not be reported as the founder having spent their budget (CDR-075 §3-G6).
+      const category = decision.errorCategory ?? 'budget_exceeded';
+      deps.logger?.info('model.call_blocked', { metadata: redactedMeta(deps.primary.name, composeModel(deps.primary, undefined), request.taskClass, 'error', category, false, Math.max(0, now() - started), correlationId) });
+      return errorResult(category, deps.primary, false, Math.max(0, now() - started), correlationId);
     }
   }
 

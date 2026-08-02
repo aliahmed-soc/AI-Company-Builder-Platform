@@ -72,6 +72,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       // There is deliberately NO `usage.rebuild`: a bare rebuild changes no fact.
       'usage.correct',
       'usage.reconcile',
+      // Usage caps (ACBP-P6-010; CDR-075). ONE operation covering both thresholds, matching the single event
+      // name — a soft/hard split would fragment the count and force every reader to know both names.
+      'usage.limit_reach',
       // Task model (ACBP-P4-002; CDR-033 §4) — deliberately approved addition.
       'task.plan',
       // Strategy option generation (ACBP-P3-001; CDR-034 §4) — deliberately approved addition.
@@ -147,6 +150,7 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
     expect(AUDITED_OPERATIONS['worker.run_fail']).toBe('worker.failed');
     expect(AUDITED_OPERATIONS['usage.correct']).toBe('usage.corrected');
     expect(AUDITED_OPERATIONS['usage.reconcile']).toBe('usage.rollup_reconciled');
+    expect(AUDITED_OPERATIONS['usage.limit_reach']).toBe('usage.limit_reached');
   });
 
   test('every REGISTERED audit event is produced by exactly one approved operation (no orphan events)', () => {
