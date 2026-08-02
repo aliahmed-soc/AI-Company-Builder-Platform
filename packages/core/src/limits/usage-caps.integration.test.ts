@@ -177,14 +177,28 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
   test('a NEW period records again — dedupe is per period, not forever', async () => {
     // The failure mode on the other side of §3-G8: dedupe that never resets would silence the alert from the
     // second day onward, and the trail would show one incident for an account that hit its ceiling every day.
-    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', DAY_CAP);
-    await seedSpend(accountA, companyA1, '2026-08-03T09:00:00Z', DAY_CAP);
+    // ── THE DATES ARE FIRMLY IN THE PAST, AND THAT IS THE ASSERTION'S TEETH ────────────────────────────────
+    //
+    // This case originally ran on 2026-08-02/03 and passed for a reason that had nothing to do with the dedupe
+    // being right: `audit_events.occurred_at` is the DATABASE clock (`writeAuditEvent` never sets it, so the
+    // column default `now()` wins), while the dedupe's window came from the INJECTED `at`. Mixing two clocks is
+    // invisible whenever the injected instant sits near the real one — true on the day this was written, false
+    // the very next midnight, at which point the first row falls inside the second period's window, the crossing
+    // is wrongly suppressed, and the case fails forever.
+    //
+    // Dating both periods in the past makes the clocks disagree ON EVERY RUN, so a dedupe keyed on `occurred_at`
+    // fails here immediately and permanently rather than on a timer. The production fix is that the dedupe is
+    // keyed on the DECISION's own period (`limit_period_start`), derived from the same `at` on both sides.
+    await seedSpend(accountA, companyA1, '2026-07-01T09:00:00Z', DAY_CAP);
+    await seedSpend(accountA, companyA1, '2026-07-02T09:00:00Z', DAY_CAP);
 
-    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-08-02T12:00:00.000Z'));
-    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-08-03T12:00:00.000Z'));
+    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-07-01T12:00:00.000Z'));
+    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-07-02T12:00:00.000Z'));
 
     const daily = (await limitEvents()).filter((e) => e.payload['threshold'] === 'hard' && e.payload['limit_period'] === 'day');
     expect(daily).toHaveLength(2);
+    // Distinguished by the period they were DECIDED against, not by when they were written.
+    expect(daily.map((e) => e.payload['limit_period_start'])).toEqual(['2026-07-01', '2026-07-02']);
   });
 
   // ── the account sum genuinely spans companies ───────────────────────────────────────────────────────────
