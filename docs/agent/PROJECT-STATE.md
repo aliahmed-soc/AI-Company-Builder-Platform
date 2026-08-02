@@ -67,10 +67,16 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-010 Limits and alerts — IMPLEMENTATION COMPLETE, AWAITING MERGE** (CDR-075; NFR-015, POL-001;
-  ADR-010/ADR-013; CDR-008's interim values). Branch `p6-010-limits-and-alerts`, PR #70, **no migration** — the
-  ledger it reads is ACBP-P6-009's. Exact-head CI `30770810296` on `32d872f` green, **ZERO SKIPS** (246 files /
-  3502 tests).
+- **ACBP-P6-010 Limits and alerts — DONE** (CDR-075; NFR-015, POL-001; ADR-010/ADR-013; CDR-008's interim
+  values). Merged as squash `f540fec`, PR #70, **no migration** — the ledger it reads is ACBP-P6-009's.
+  Exact-head CI `30772614367` on `486dadc` and exact-main `30772966226` on `f540fec` both green with **ZERO
+  SKIPS** (246 files / 3502 tests, and no `N skipped` line in either job log); branch deleted local + remote
+  after verifying the tip's tree is byte-identical in `main` (`e86da7f1…`) — ancestry does not hold across a
+  squash merge. **NOT closed by this line:** no production caller passes `caps`, so the gateway still enforces no
+  ceiling on any real path (§4.3); and **AOQ-14's final values remain open**.
+
+- **ACBP-P6-010 Limits and alerts — working block** (CDR-075; NFR-015, POL-001; ADR-010/ADR-013). Branch
+  `p6-010-limits-and-alerts`, PR #70, no migration.
   - **THE CEILING IS REACHABLE AND UNREACHED, and that is the first thing to know** (CDR-075 §4.3). No production
     caller passes `caps`, because `createModelGateway` has no production composition at all — only demos, journey
     helpers and tests. **The gateway still enforces no ceiling on any real path.** One already-typed argument
