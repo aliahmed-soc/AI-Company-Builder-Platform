@@ -116,7 +116,37 @@ The mechanism is identical either way; only the config file differs. §4 carries
 - **G11 — Values are config, and config is not a secret.** Cap values are operational settings, not credentials.
   They may appear in logs and audit metadata; the amounts spent may not be attributed to a person.
 
-## §4 Open owner decision — ONE, and it is about posture, not numbers
+## §4 RULED BY THE OWNER — ship CDR-008's interim values as active configuration
+
+**Decision (owner, this session): ship them.** The caps below are active configuration from this ticket forward,
+carrying CDR-008's own labelling: **interim**, and **mandatory-revisit-bound at first alpha telemetry review**
+(CDR-008 §21). AOQ-14 stays open for the *final* values; it is not closed by this ruling, and nothing here should
+be read as answering it.
+
+Active interim values, every one traced to **CDR-008 §8** and none invented here:
+
+| Cap | Value | Scope |
+|---|---|---|
+| Platform model spend, daily | **$5 / day** | per company |
+| Platform model spend, monthly | **$50 / month** | per company |
+| Account ceiling | **3× the company cap** | per account, across its companies |
+| Soft alert threshold | **75%** of any hard cap | per scope, per period |
+
+Consequences that follow, and are gates in their own right:
+
+- **G4.1 — The values live in configuration, never in `@acbp/contracts` or `@acbp/core`** (§2-G2.2 stands
+  unchanged). Shipping them active changes *what the config contains*, not *where values may live*.
+- **G4.2 — Every shipped value is labelled interim at the point of definition**, with CDR-008 §21's revisit
+  trigger named there rather than only here. A number whose provisional status lives only in a document three
+  hops away will be read as settled by the next person who finds it.
+- **G4.3 — A cap that is active must be visible.** Because these now block real work, the block must say which
+  cap fired, at which scope, and against which period — a refusal a founder cannot attribute is indistinguishable
+  from a bug in their own product.
+
+*(The original framing of this section is kept below, because the reasoning that produced the recommendation is
+what a later reader will want when the revisit trigger fires.)*
+
+### The decision as it stood before the ruling
 
 **Does P6-010 ship CDR-008's interim values as active configuration, or ship the mechanism with caps unset?**
 
