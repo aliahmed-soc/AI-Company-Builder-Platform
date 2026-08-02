@@ -425,6 +425,17 @@ export interface UsageEventsTable {
   estimated_cost_micros: ColumnType<number, number, never>;
   fallback_used: ColumnType<boolean, boolean, never>;
   /**
+   * Duplicate suppression for the usage ledger (ACBP-P6-011; CDR-074 §2; trust-critical #12; migration 0052).
+   *
+   * Nullable BY DESIGN, with a PARTIAL unique index on `(company_id, idempotency_key)`: rows without a key never
+   * collide with one another, so two calls that both omitted one are not treated as duplicates of each other.
+   * A blank string is refused by CHECK rather than treated as absent — `''` satisfies `is not null` and so WOULD
+   * collide, which is the opposite of what omitting a key means.
+   *
+   * `never` on update like every other column here: the ledger is append-only (invariant 9).
+   */
+  idempotency_key: ColumnType<string | null, string | null | undefined, never>;
+  /**
    * The worker run that caused this call (ACBP-P5-014; the link CDR-057 section 4 deferred to P5-014). Nullable:
    * calls made outside a worker run - planning, strategy, the interview - legitimately have none.
    */
