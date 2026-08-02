@@ -153,30 +153,48 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
   });
 
   // ── the account sum genuinely spans companies ───────────────────────────────────────────────────────────
+  /**
+   * Spread spend so the ACCOUNT ceiling is the one that binds and NO company is over its own.
+   *
+   * FOUR COMPANIES, NOT TWO, and the arithmetic is a real property of CDR-008's values rather than a fixture
+   * detail: the account ceiling is 3× the company one, so three companies each just under their own cap still
+   * total just under the account cap. **The account ceiling can only bind at four or more companies.** An
+   * earlier version of this test split the account cap across two companies, which put each of them at 1.5× its
+   * own ceiling — the COMPANY cap fired, correctly, and the assertion that caught it was the system being right
+   * and the test being wrong.
+   */
+  async function spreadToAccountCeiling(): Promise<number> {
+    const per = 4_000_000; // under the 5,000,000 company daily cap
+    const companyA3 = await seedCompany(accountA, [ownerBoth]);
+    const companyA4 = await seedCompany(accountA, [ownerBoth]);
+    for (const c of [companyA1, companyA2, companyA3, companyA4]) await seedSpend(accountA, c, '2026-08-02T09:00:00Z', per);
+    return per * 4; // 16,000,000 ≥ the 15,000,000 account daily ceiling
+  }
+
   test('the ACCOUNT ceiling counts spend in OTHER companies — the one thing a company-scoped read cannot do', async () => {
-    // The defect this catches is the whole reason the account read loops: if the account figure were read from
-    // the calling company alone, a founder could spend the account ceiling three times over by using three
-    // companies, and every per-company check would report everything fine.
-    const accountDayCap = DAY_CAP * USAGE_CAP_DEFAULTS.accountMultiplier;
-    // Split across both companies so NEITHER company is at its own ceiling, but the account is at its own.
-    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', accountDayCap / 2);
-    await seedSpend(accountA, companyA2, '2026-08-02T09:30:00Z', accountDayCap / 2);
+    // The defect this catches is the whole reason the account read loops: if the account figure came from the
+    // calling company alone, a founder could stay under every per-company cap forever while the account total
+    // ran away, and every check would report everything fine.
+    const accountSpend = await spreadToAccountCeiling();
 
     const { decision } = await check(companyA1);
 
     expect(decision.outcome).toBe('block');
     if (decision.outcome !== 'block') throw new Error('unreachable');
     expect(decision.blocking.cap.scope).toBe('account');
-    expect(decision.blocking.spentMicros).toBe(accountDayCap);
+    expect(decision.blocking.cap.period).toBe('day');
+    // The figure is the SUM across companies, not the caller's own 4,000,000.
+    expect(decision.blocking.spentMicros).toBe(accountSpend);
   });
 
   test('the totals do not depend on the caller having COMPANY membership', async () => {
     // ACBP-P6-009's determinism claim (CDR-073 §1-G3) applied to enforcement, where it bites harder: a ceiling
-    // that moves with the caller's memberships is not a ceiling. `ownerNeither` holds the account but no company
-    // membership at all, and must be measured against the identical total.
-    const accountDayCap = DAY_CAP * USAGE_CAP_DEFAULTS.accountMultiplier;
-    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', accountDayCap / 2);
-    await seedSpend(accountA, companyA2, '2026-08-02T09:30:00Z', accountDayCap / 2);
+    // that moves with the caller's memberships is not a ceiling.
+    //
+    // USES THE ACCOUNT-SPANNING FIXTURE DELIBERATELY. An earlier version asserted a company-scoped block, which
+    // would have passed even with the account loop completely broken — the company figure needs no loop at all.
+    // Only the account total actually exercises the membership-independent read.
+    const accountSpend = await spreadToAccountCeiling();
 
     const asMember = await withAccountTransaction(app, { accountId: accountA, actorId: ownerBoth }, async (s) => checkUsageCaps(s, { companyId: companyA1, at: NOW }, USAGE_CAP_DEFAULTS));
     const asNonMember = await withAccountTransaction(app, { accountId: accountA, actorId: ownerNeither }, async (s) => checkUsageCaps(s, { companyId: companyA1, at: NOW }, USAGE_CAP_DEFAULTS));
@@ -184,7 +202,11 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
     expect(asMember.outcome).toBe('block');
     expect(asNonMember.outcome).toBe('block');
     if (asMember.outcome !== 'block' || asNonMember.outcome !== 'block') throw new Error('unreachable');
-    expect(asNonMember.blocking.spentMicros).toBe(asMember.blocking.spentMicros);
+    expect(asMember.blocking.cap.scope).toBe('account');
+    expect(asNonMember.blocking.cap.scope).toBe('account');
+    // `ownerNeither` is a member of NO company, and must still see the full cross-company total.
+    expect(asNonMember.blocking.spentMicros).toBe(accountSpend);
+    expect(asMember.blocking.spentMicros).toBe(accountSpend);
   });
 
   // ── the buckets are the buckets ─────────────────────────────────────────────────────────────────────────

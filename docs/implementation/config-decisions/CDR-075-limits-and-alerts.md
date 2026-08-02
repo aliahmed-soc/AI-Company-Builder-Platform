@@ -200,6 +200,22 @@ Decided, so the next slice implements rather than re-derives:
 - **§3-G8 still applies**: emission is once per (scope, period, threshold) crossing, and the mechanism making
   "once" true must be named rather than assumed.
 
+### §4.2 A property of CDR-008's numbers, found by the real-PG suite
+
+**The account ceiling can only bind when an account holds FOUR OR MORE companies.** It is 3× the company cap, so
+three companies each sitting just under their own ceiling still total just under the account ceiling; the
+per-company cap always fires first. With one to three companies the account ceiling is unreachable.
+
+That is not a defect — the per-company caps are doing the work, and the account ceiling exists to stop a founder
+multiplying their allowance by creating companies, which is exactly the ≥4 case. It is recorded because it is
+invisible from the numbers alone and will look like a broken account cap to whoever first tests it with two
+companies. **It also means the account ceiling is untested by any fixture with fewer than four companies** — the
+first version of the integration suite made precisely that mistake, asserted an account block, and got a company
+block instead. The system was right and the test was wrong.
+
+Worth re-examining at CDR-008 §21's revisit: if the intent was for the account ceiling to bind earlier, the
+multiplier is the lever, not the per-company value.
+
 ### The decision as it stood before the ruling
 
 **Does P6-010 ship CDR-008's interim values as active configuration, or ship the mechanism with caps unset?**
