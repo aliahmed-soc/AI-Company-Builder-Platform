@@ -127,7 +127,15 @@ async function alreadyRecorded(scope: AccountScope, companyId: string, breach: B
     .selectFrom('audit_events')
     .select('payload')
     .where('name', '=', 'usage.limit_reached')
-    .where('company_id', '=', companyId)
+    // MATCHED ON `subject_id`, NOT `company_id`. This event is written under an ACCOUNT scope — that is where the
+    // account-spanning read happens, and the company GUC after `readSpendTotals` points at whichever company the
+    // loop visited last, so writing company-scoped would stamp an arbitrary one. `writeAuditEvent` therefore
+    // leaves the tenant stamp `company_id` NULL and the row identifies its company through the SUBJECT.
+    //
+    // Filtering on `company_id` matched nothing at all, so the dedupe silently never fired — five calls wrote
+    // five rows. Caught only because the new cases assert an EXACT count; the previous `>= 1` assertion would
+    // have passed on all five.
+    .where('subject_id', '=', companyId)
     .where('occurred_at', '>=', new Date(periodStartInstant(breach.cap.period, at)))
     .execute();
   return rows.some((r) => {
