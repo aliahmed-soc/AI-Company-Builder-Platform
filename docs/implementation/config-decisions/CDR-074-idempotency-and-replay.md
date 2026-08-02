@@ -150,12 +150,35 @@ separate things close that gap, and only the third is this counter:
 | Question | Answered by | Status |
 |---|---|---|
 | Does the mechanism **exist**? | `check:conflict-targets` (partial-index inference) + `check:migration-drain-loops` | automated, every build |
-| Is it **reachable** — does a key actually flow from a caller to the column? | the replay suite calls the real use cases, not the repositories | automated, hosted CI |
+| Is it **reachable** from the real entry point? | the replay suite drives production entry points — see §5.3 for what "production entry point" means per surface | automated, hosted CI |
 | Does it **fire** on a real duplicate? | the replay suite delivers the duplicate and asserts the incident | automated, hosted CI |
 
 A live canary — deliberately re-delivering a known duplicate in production and alarming if it is not suppressed —
 is the only thing that would make a *running* system's silence trustworthy. That needs real infrastructure and is
 **P7-006's**, which is owner-gated. Recorded here so the gap is a known one rather than an assumed absence.
+
+### 5.2a The three surfaces are NOT equally live, and the first draft of this section implied they were
+
+Found in the review pass, not by a failing test — everything was green:
+
+| Surface | Production caller today | Records the incident? |
+|---|---|---|
+| `identity_event` | `createIdentityWebhookService` — **live**; providers genuinely re-deliver | **yes, after this fix** |
+| `usage_event` | `createModelGateway` — live path, but §5.4: no caller supplies a key, so nothing suppresses | yes, when a key is supplied |
+| `job_enqueue` | **none** — ACBP-P5-001a built the job store ahead of its callers | yes, when something enqueues |
+
+The defect: `processVerifiedIdentityEvent` recorded the incident, but `createIdentityWebhookService` never passed
+it a logger and `IdentityEventProcessor` could not carry one. **The one surface that actually suppresses anything
+in production was structurally incapable of reporting it.** Suppression itself worked throughout — a re-delivered
+webhook was correctly ignored — so nothing was ever double-applied. What was missing was the visibility, which is
+exactly the failure §0 is written about, reproduced inside the fix for it.
+
+Why the tests did not catch it: the replay suite called `processVerifiedIdentityEvent` directly. That is an
+internal function, not the production entry, so the suite proved the processor records when handed a logger and
+said nothing about whether anything ever hands it one. Both identity cases now drive
+`createIdentityWebhookService` with only the signature verifier faked, and `webhook-service.test.ts` asserts the
+logger reaches the processor **by identity, not by presence** — mutation-verified by removing the pass-through and
+watching it fail.
 
 ### 5.3 Why only three surfaces report
 

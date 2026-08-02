@@ -36,7 +36,7 @@ import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
 import { enqueueJob } from '../jobs/index.js';
-import { processVerifiedIdentityEvent } from '../identity/webhook-processor.js';
+import { createIdentityWebhookService } from '../identity/webhook-service.js';
 import { createModelGateway, type ResolvedProvider } from '../index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -142,12 +142,32 @@ describe.skipIf(!hasTestDatabase)('replay + duplicate delivery across jobs, even
     });
     const receipts = () => owner.kysely.selectFrom('identity_webhook_receipts').selectAll().execute();
 
-    test('a provider re-delivery applies once and records the suppression', async () => {
+    /**
+     * The REAL production entry point, with only the signature verifier faked.
+     *
+     * Driven through `createIdentityWebhookService` rather than `processVerifiedIdentityEvent` because review
+     * found the two disagreed: the processor recorded the incident, the service never passed it a logger, and
+     * the seam type could not carry one. A test that called the processor directly was green while the only
+     * surface that suppresses anything in production recorded nothing. The verifier is the one thing faked —
+     * it owns signature checking, which needs a real signing secret and is not what this asserts.
+     */
+    const service = (logger: ReturnType<typeof createTestLogger>['logger'], verified: VerifiedIdentityWebhookEvent) =>
+      createIdentityWebhookService({
+        client: owner,
+        logger,
+        verifier: { verify: () => Promise.resolve({ status: 'verified', event: verified }) },
+      });
+    const RAW_REQUEST = { rawBody: new Uint8Array([1, 2, 3]), headers: { 'svix-id': 'msg_replay' } };
+
+    test('a provider re-delivery through the webhook SERVICE applies once and records the suppression', async () => {
       const t = createTestLogger();
       const e = event('u_replay_1', 'replay-1@synthetic.test');
+      const svc = service(t.logger, e);
 
-      const first = await processVerifiedIdentityEvent(owner, e, { logger: t.logger });
-      const second = await processVerifiedIdentityEvent(owner, e, { logger: t.logger });
+      const firstHandled = await svc.handle(RAW_REQUEST);
+      const secondHandled = await svc.handle(RAW_REQUEST);
+      const first = { outcome: firstHandled.kind === 'processed' ? firstHandled.outcome : firstHandled.kind };
+      const second = { outcome: secondHandled.kind === 'processed' ? secondHandled.outcome : secondHandled.kind };
 
       // 1. Applied once. `duplicate` is a distinct outcome from `applied` — this is the assertion that a second
       // user mutation did NOT run, which a row count alone cannot show for an idempotent upsert.
@@ -166,10 +186,10 @@ describe.skipIf(!hasTestDatabase)('replay + duplicate delivery across jobs, even
       // would file an attack under "the mechanism is working".
       const t = createTestLogger();
       const e = event('u_replay_2', 'replay-2@synthetic.test');
-      await processVerifiedIdentityEvent(owner, e, { logger: t.logger });
-      const tampered = await processVerifiedIdentityEvent(owner, { ...e, payloadSha256: hex('b') }, { logger: t.logger });
+      await service(t.logger, e).handle(RAW_REQUEST);
+      const tampered = await service(t.logger, { ...e, payloadSha256: hex('b') }).handle(RAW_REQUEST);
 
-      expect(tampered.outcome).toBe('security_conflict');
+      expect(tampered.kind === 'processed' ? tampered.outcome : tampered.kind).toBe('security_conflict');
       expect(suppressions(t.records, 'identity_event')).toHaveLength(0);
     });
   });
