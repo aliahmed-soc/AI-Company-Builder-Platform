@@ -322,6 +322,11 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
     ...(fallbackReason !== undefined ? { fallbackReason } : {}),
     latencyMs,
     ...(correlationId !== undefined ? { correlationId } : {}),
+    // Carried through unchanged from the request (ACBP-P6-011; CDR-074 §2). Deliberately NOT derived here from
+    // the event's own fields: two legitimate identical calls in the same instant would then collapse into one
+    // usage row, which under-counts real spend and nothing downstream would ever contradict it. Only a caller
+    // that knows which DELIVERY this is can supply a correct key, so only a caller ever does.
+    ...(request.idempotencyKey !== undefined ? { idempotencyKey: request.idempotencyKey } : {}),
   };
   try {
     await deps.recordUsage(event);

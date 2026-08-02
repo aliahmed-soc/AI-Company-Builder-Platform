@@ -150,6 +150,17 @@ export interface ModelGatewayRequest {
   readonly companyId: string;
   readonly accountId: string;
   readonly correlationId?: string;
+  /**
+   * Duplicate-suppression key for the USAGE RECORD this call produces (ACBP-P6-011; CDR-074 §2/§5). Optional and
+   * unset by every caller today — see the field on `NewModelCallUsageEvent` for the two rules that make supplying
+   * one safe, and CDR-074 §5 for why it is deliberately unwired rather than forgotten.
+   *
+   * SAFE AT REQUEST LEVEL because `callModel` records usage exactly ONCE per invocation: a fallover to the
+   * secondary provider is reported as `fallbackUsed`/`fallbackReason` on that single event, not as a second one.
+   * If that ever changes — a usage event per attempt — one key per request would suppress the second attempt's
+   * event and UNDER-count real spend, so the two must change together.
+   */
+  readonly idempotencyKey?: string;
   /** Opaque policy inputs (tier/caps) for the pre-check hook. Never provider- or prompt-content. */
   readonly policyContext?: Readonly<Record<string, string | number | boolean>>;
 }

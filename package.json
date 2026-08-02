@@ -20,6 +20,7 @@
     "check:approval-port": "node tools/check-approval-port.mjs",
     "check:stop-port": "node tools/check-stop-port.mjs",
     "check:usage-kind-predicate": "node tools/check-usage-kind-predicate.mjs",
+    "check:migration-drain-loops": "node tools/check-migration-drain-loops.mjs",
     "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs",
     "test:config": "vitest run packages/config",
     "test:observability": "vitest run packages/observability",
@@ -42,7 +43,7 @@
     "local:db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action start",
     "local:db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action stop",
     "local:db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action status",
-    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run check:stop-port && pnpm run check:usage-kind-predicate && pnpm run test:boundaries",
+    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run check:stop-port && pnpm run check:usage-kind-predicate && pnpm run check:migration-drain-loops && pnpm run test:boundaries",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm run check:static && pnpm run test"
