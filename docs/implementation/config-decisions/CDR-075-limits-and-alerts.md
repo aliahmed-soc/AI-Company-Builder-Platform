@@ -171,6 +171,35 @@ Consequences that follow, and are gates in their own right:
 *(The original framing of this section is kept below, because the reasoning that produced the recommendation is
 what a later reader will want when the revisit trigger fires.)*
 
+### §4.1 `usage.limit_reached` — designed, deliberately NOT yet registered
+
+The event's shape is settled; its registration waits for its producer, and the reason is a guard doing its job.
+
+**Attempting to register it early was refused**, by `audit-operations.test.ts`'s *"every REGISTERED audit event is
+produced by exactly one approved operation (no orphan events)"*. The same guard caught ACBP-P6-009 registering
+names a slice ahead of their emitters, and `audit.ts`'s own comment records that `DEFERRED_REGISTERED_EVENTS` was
+deliberately **not** used to route around it then. It is not being used to route around it now either: the
+registration ships in the same commit as the gateway cap check that emits it.
+
+Decided, so the next slice implements rather than re-derives:
+
+- **Name and fields are EVENT-CATALOG:277's, not invented**: `limit_type`, `scope`, `threshold` (`hard`/`soft`),
+  audited, retention ≥ billing. Plus the amounts needed to make a refusal attributable (§4-G4.3): the cap value,
+  the spend, and the threshold crossed.
+- **Subject is the COMPANY, even when an ACCOUNT-scoped cap fired**, because the company is what was stopped —
+  a reader asking "why did this company's work halt" starts there. `limit_scope` distinguishes them, so an
+  account ceiling is never misread as a company one.
+- **ONE event name for both thresholds.** A second name would fragment the count exactly as per-surface
+  suppression names would have (CDR-074 §5.1's reasoning, same shape).
+- **A soft event does NOT mean work stopped.** `threshold: 'soft'` is emitted while the call proceeds (§3-G7).
+  Only `'hard'` accompanies a refusal. A reader treating every one as an outage would mis-report three quarters
+  of them, and the field is the only thing preventing that.
+- **Audit outcome is `success` for both**, deliberately. The outcome describes whether the PLATFORM acted
+  correctly, not whether the founder liked the answer — a cap that fires is the control working. `failure` is
+  reserved for the `halt` case, where the spend could not be read and the platform genuinely failed.
+- **§3-G8 still applies**: emission is once per (scope, period, threshold) crossing, and the mechanism making
+  "once" true must be named rather than assumed.
+
 ### The decision as it stood before the ruling
 
 **Does P6-010 ship CDR-008's interim values as active configuration, or ship the mechanism with caps unset?**
