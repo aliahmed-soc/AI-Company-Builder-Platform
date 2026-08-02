@@ -200,6 +200,24 @@ Decided, so the next slice implements rather than re-derives:
 - **§3-G8 still applies**: emission is once per (scope, period, threshold) crossing, and the mechanism making
   "once" true must be named rather than assumed.
 
+### §4.3 The ceiling is REACHABLE and UNREACHED — found by the independent review
+
+**No production caller passes `caps`, because there is no production gateway composition at all.**
+`createModelGateway` is constructed only by demo scripts, journey helpers and integration tests. So after this
+ticket the gateway still enforces no ceiling on any real path.
+
+This is the same defect §1 diagnoses in `policyPrecheck` — "an optional seam whose default is *always allowed*,
+with no production caller" — reproduced one layer up by the fix for it. The review caught it because §1's own
+wording ("**this is the function that fills it**") reads as though the gap were closed. It is not closed; it is
+**closeable**, which is a different claim and the only one this ticket can make.
+
+Deliberately NOT worked around: wiring `caps` into the demo scripts would make the ceiling *look* enforced in the
+one place it does not matter, and would leave the real gap exactly where it is. The honest state is recorded here
+instead, matching CDR-074 §5.4's treatment of the usage idempotency key.
+
+**It becomes live the moment a production composition passes `caps`** — one argument, already typed, already
+tested, and guarded against being silently overridden (`caps` + `policyPrecheck` together throws).
+
 ### §4.2 A property of CDR-008's numbers, found by the real-PG suite
 
 **The account ceiling can only bind when an account holds FOUR OR MORE companies.** It is 3× the company cap, so

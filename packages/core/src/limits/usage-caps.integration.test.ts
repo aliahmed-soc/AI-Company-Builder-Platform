@@ -148,8 +148,43 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
 
     expect(decision.outcome).toBe('allow');
     const events = await limitEvents();
-    expect(events.filter((e) => e.payload['threshold'] === 'soft').length).toBeGreaterThanOrEqual(1);
+    // EXACT COUNTS, not `>= 1`. The first version of this assertion used `toBeGreaterThanOrEqual(1)`, which
+    // passes with one soft row or with fifty — so it could not have failed for the firehose defect sitting
+    // directly under it. An assertion that cannot fail for the bug in front of it is not coverage.
+    expect(events.filter((e) => e.payload['threshold'] === 'soft')).toHaveLength(1);
     expect(events.filter((e) => e.payload['threshold'] === 'hard')).toHaveLength(0);
+  });
+
+  test('a soft alert is recorded ONCE per period, however many calls follow it', async () => {
+    // CDR-075 §3-G8, and the defect the independent review found: every call past the soft threshold used to
+    // write another row into a trail retained for the billing lifetime, which is the noise the gate exists to
+    // prevent. Five calls, one row.
+    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', Math.floor((DAY_CAP * USAGE_CAP_DEFAULTS.softPercent) / 100));
+
+    for (let i = 0; i < 5; i += 1) expect((await check(companyA1)).decision.outcome).toBe('allow');
+
+    expect((await limitEvents()).filter((e) => e.payload['threshold'] === 'soft')).toHaveLength(1);
+  });
+
+  test('a hard block is recorded ONCE per period too — a retrying job does not flood the trail', async () => {
+    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', DAY_CAP);
+
+    for (let i = 0; i < 4; i += 1) expect((await check(companyA1)).decision.outcome).toBe('block');
+
+    expect((await limitEvents()).filter((e) => e.payload['threshold'] === 'hard')).toHaveLength(1);
+  });
+
+  test('a NEW period records again — dedupe is per period, not forever', async () => {
+    // The failure mode on the other side of §3-G8: dedupe that never resets would silence the alert from the
+    // second day onward, and the trail would show one incident for an account that hit its ceiling every day.
+    await seedSpend(accountA, companyA1, '2026-08-02T09:00:00Z', DAY_CAP);
+    await seedSpend(accountA, companyA1, '2026-08-03T09:00:00Z', DAY_CAP);
+
+    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-08-02T12:00:00.000Z'));
+    await check(companyA1, USAGE_CAP_DEFAULTS, new Date('2026-08-03T12:00:00.000Z'));
+
+    const daily = (await limitEvents()).filter((e) => e.payload['threshold'] === 'hard' && e.payload['limit_period'] === 'day');
+    expect(daily).toHaveLength(2);
   });
 
   // ── the account sum genuinely spans companies ───────────────────────────────────────────────────────────

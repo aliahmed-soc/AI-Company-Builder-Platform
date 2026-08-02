@@ -4,7 +4,14 @@
 // THE GATEWAY'S CAPS SEAM WAS NEVER FILLED. `ModelGatewayDeps.policyPrecheck` is optional and describes itself
 // as "the caps/tier pre-check", but its default is *always allowed* and no production caller supplied one — so
 // the gateway enforced no cap at all, and that comment described an intention rather than a behaviour
-// (CDR-075 §1). This is the function that fills it.
+// (CDR-075 §1).
+//
+// THIS FUNCTION CAN FILL IT; NOTHING FILLS IT YET, and saying so is the point (CDR-075 §4.3). `createModelGateway`
+// has no production composition anywhere in the repo — only demo scripts, journey helpers and tests construct
+// one, and none of them pass `caps`. An earlier draft of this header claimed "this is the function that fills
+// it", which is the same overclaim §1 criticises in the P2-003 comment, reproduced one layer up. It becomes true
+// the moment a real composition passes `caps`; until then this is a ceiling that is reachable, tested, and
+// unreached.
 //
 // ── WHY `elevateToCompanyScope` AND NOT `runInCompanyScope` ─────────────────────────────────────────────────
 //
@@ -14,7 +21,7 @@
 // asking is not a ceiling. `elevateToCompanyScope` verifies only that the company belongs to the caller's
 // ACCOUNT, via the account-scoped `companies` SELECT policy, and consults no membership.
 import { AccountUsageRollupRepository, elevateToCompanyScope, writeAuditEvent, type AccountScope, type AuditWriteContext, type TenantScope } from '@acbp/database';
-import { evaluateCaps, softThresholdMicros, usageDayStart, usagePeriodStart, usageLimitReached, type CapDecision } from '@acbp/contracts';
+import { evaluateCaps, softThresholdMicros, usageDayStart, usagePeriodStart, usageLimitReached, type BreachedCap, type CapDecision, type LimitPeriod, type LimitThreshold } from '@acbp/contracts';
 import type { UsageCapsConfig } from '@acbp/config';
 import type { Logger } from '@acbp/observability';
 import { observedCapsFrom, type SpendReads } from './usage-caps.js';
@@ -93,6 +100,42 @@ async function readSpendTotals(scope: AccountScope, companyId: string, at: Date)
   return { company, account: { dayMicros: dayTotal, monthMicros: monthTotal } };
 }
 
+/** The UTC period this cap is measured over, as an ISO instant — the lower bound of "already recorded". */
+function periodStartInstant(period: LimitPeriod, at: Date): string {
+  return period === 'day' ? `${usageDayStart(at)}T00:00:00.000Z` : `${usagePeriodStart(at)}T00:00:00.000Z`;
+}
+
+/**
+ * Has this exact crossing already been recorded in this period?
+ *
+ * ── WHY A READ AND NOT A UNIQUE KEY (CDR-075 §3-G8) ────────────────────────────────────────────────────────
+ *
+ * `audit_events.idempotency_key` is unique-when-present, so a deterministic key looks like the obvious mechanism.
+ * It is a trap: `writeAuditEvent` inserts with NO `ON CONFLICT`, so the second write raises `23505` — and a
+ * constraint violation ABORTS THE ENCLOSING TRANSACTION. Catching it in JavaScript does not un-abort it; every
+ * later statement then fails with `25P02` and the commit fails. A soft ALERT would have become a hard OUTAGE,
+ * which is a worse failure than the noise it was meant to fix.
+ *
+ * So the mechanism is a read, and it is NAMED here rather than assumed, which is what §3-G8 asks for. Its limit
+ * is stated too: two concurrent calls can both find nothing and both write, so this is "once per crossing" under
+ * ordinary traffic and "at most a handful" under a race — not an exactly-once guarantee. That is the right
+ * trade at this granularity, because the failure it prevents is hundreds of rows per period and the failure it
+ * admits is two.
+ */
+async function alreadyRecorded(scope: AccountScope, companyId: string, breach: BreachedCap, threshold: LimitThreshold, at: Date): Promise<boolean> {
+  const rows = await scope.db
+    .selectFrom('audit_events')
+    .select('payload')
+    .where('name', '=', 'usage.limit_reached')
+    .where('company_id', '=', companyId)
+    .where('occurred_at', '>=', new Date(periodStartInstant(breach.cap.period, at)))
+    .execute();
+  return rows.some((r) => {
+    const p = r.payload as Record<string, unknown>;
+    return p['limit_scope'] === breach.cap.scope && p['limit_period'] === breach.cap.period && p['threshold'] === threshold;
+  });
+}
+
 /**
  * Decide whether a metered call may proceed, and RECORD what was decided.
  *
@@ -100,8 +143,15 @@ async function readSpendTotals(scope: AccountScope, companyId: string, at: Date)
  * that can exceed a ceiling is the single call already decided. Same shape as `decideStepAdmission`
  * (ACBP-P5-005) at the worker-run level, deliberately rather than coincidentally.
  *
- * AN EVENT IS WRITTEN FOR EVERY THRESHOLD CROSSED — each soft breach, and the hard block. A block with no record
- * would leave a founder's work stopped with nothing to point at, which §4-G4.3 forbids.
+ * ONE EVENT PER (SCOPE, PERIOD, THRESHOLD) PER PERIOD — not one per call (CDR-075 §3-G8). A company sitting just
+ * past its soft threshold makes model calls all day; recording each one would put hundreds of rows into a trail
+ * retained for the billing lifetime and make the incident count worthless at exactly the moment it matters. The
+ * per-call refusal still reaches the caller as `budget_exceeded`; the audit row is the durable fact that the
+ * ceiling was reached in this period, which is a different question and a different cardinality.
+ *
+ * A HARD BLOCK IS DEDUPED THE SAME WAY, deliberately: a founder whose job retries would otherwise write a row per
+ * attempt. If a per-attempt count is ever wanted, it needs its own counter — CDR-074 §5's lesson, that a count
+ * and an audit fact are not the same artefact.
  *
  * NOTHING IS RECORDED FOR A HALT. An unreadable total means no threshold is KNOWN to have been crossed, and
  * writing `usage.limit_reached` there would assert a cap event that may never have happened. The halt surfaces
@@ -131,6 +181,7 @@ export async function checkUsageCaps(
   if (decision.outcome === 'block') crossings.unshift({ breach: decision.blocking, threshold: 'hard' });
 
   for (const { breach, threshold } of crossings) {
+    if (await alreadyRecorded(scope, input.companyId, breach, threshold, input.at)) continue;
     await audit(
       scope,
       usageLimitReached({
