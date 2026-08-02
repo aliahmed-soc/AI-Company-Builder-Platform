@@ -435,7 +435,7 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     // row in `usage-caps.integration.test.ts`, not here. This factory only proves the operation maps to the event.
     case 'usage.limit_reach':
       return (subjectId) =>
-        usageLimitReached({ companyId: subjectId, limitScope: 'company', limitPeriod: 'day', threshold: 'hard', limitMicros: 0, spentMicros: 0, thresholdMicros: 0 });
+        usageLimitReached({ companyId: subjectId, limitScope: 'company', limitPeriod: 'day', limitPeriodStart: '2026-08-01', threshold: 'hard', limitMicros: 0, spentMicros: 0, thresholdMicros: 0 });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

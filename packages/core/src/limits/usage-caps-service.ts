@@ -100,9 +100,9 @@ async function readSpendTotals(scope: AccountScope, companyId: string, at: Date)
   return { company, account: { dayMicros: dayTotal, monthMicros: monthTotal } };
 }
 
-/** The UTC period this cap is measured over, as an ISO instant — the lower bound of "already recorded". */
-function periodStartInstant(period: LimitPeriod, at: Date): string {
-  return period === 'day' ? `${usageDayStart(at)}T00:00:00.000Z` : `${usagePeriodStart(at)}T00:00:00.000Z`;
+/** The period key a cap is decided against — `YYYY-MM-DD` for a day, `YYYY-MM-01` for a month. */
+function periodKey(period: LimitPeriod, at: Date): string {
+  return period === 'day' ? usageDayStart(at) : usagePeriodStart(at);
 }
 
 /**
@@ -136,11 +136,23 @@ async function alreadyRecorded(scope: AccountScope, companyId: string, breach: B
     // five rows. Caught only because the new cases assert an EXACT count; the previous `>= 1` assertion would
     // have passed on all five.
     .where('subject_id', '=', companyId)
-    .where('occurred_at', '>=', new Date(periodStartInstant(breach.cap.period, at)))
     .execute();
+
+  // ── NO `occurred_at` WINDOW, DELIBERATELY: IT MIXED TWO CLOCKS ──────────────────────────────────────────
+  //
+  // The first version bounded this read by `occurred_at >= periodStart(at)`. `occurred_at` is the DATABASE clock
+  // (`writeAuditEvent` never sets it, so the column default `now()` wins) while the window came from the
+  // caller-supplied `at`. Those agree in production and diverge the moment they do not — a row written today
+  // falls inside tomorrow's window, the crossing is wrongly suppressed, and the alert for a NEW period never
+  // fires. Invisible on the day it is written, wrong the next midnight.
+  //
+  // The period the decision was made against is now carried IN THE PAYLOAD, so both sides of the comparison come
+  // from the same clock. Unbounded by time on purpose: the row count per company is a handful of caps times a
+  // handful of periods, and a coarse time prefilter would reintroduce exactly the clock it removes.
+  const key = periodKey(breach.cap.period, at);
   return rows.some((r) => {
     const p = r.payload as Record<string, unknown>;
-    return p['limit_scope'] === breach.cap.scope && p['limit_period'] === breach.cap.period && p['threshold'] === threshold;
+    return p['limit_scope'] === breach.cap.scope && p['limit_period'] === breach.cap.period && p['limit_period_start'] === key && p['threshold'] === threshold;
   });
 }
 
@@ -196,6 +208,8 @@ export async function checkUsageCaps(
         companyId: input.companyId,
         limitScope: breach.cap.scope,
         limitPeriod: breach.cap.period,
+        // Same derivation the dedupe reads, from the same `at` — that identity is the fix, not a coincidence.
+        limitPeriodStart: periodKey(breach.cap.period, input.at),
         threshold,
         limitMicros: breach.cap.limitMicros,
         spentMicros: breach.spentMicros,

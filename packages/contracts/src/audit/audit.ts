@@ -1279,6 +1279,17 @@ export function usageLimitReached(input: {
   readonly companyId: string;
   readonly limitScope: string;
   readonly limitPeriod: string;
+  /**
+   * The period the decision was made AGAINST (`YYYY-MM-DD` for a day, `YYYY-MM-01` for a month).
+   *
+   * Carried explicitly rather than inferred from `occurred_at`, and that is a correctness requirement rather than
+   * convenience: `occurred_at` is the DATABASE clock (`writeAuditEvent` never sets it, so the column default
+   * `now()` wins), while the decision is made against a caller-supplied instant. Deriving the period from
+   * `occurred_at` mixes two clocks, which is invisible whenever they happen to agree and wrong the moment they
+   * do not — and the once-per-period dedupe (CDR-075 §3-G8) reads this field precisely so both sides of it come
+   * from the same clock.
+   */
+  readonly limitPeriodStart: string;
   readonly threshold: string;
   readonly limitMicros: number;
   readonly spentMicros: number;
@@ -1290,6 +1301,7 @@ export function usageLimitReached(input: {
     limit_type: 'model_spend',
     limit_scope: input.limitScope,
     limit_period: input.limitPeriod,
+    limit_period_start: input.limitPeriodStart,
     threshold: input.threshold,
     limit_micros: input.limitMicros,
     spent_micros: input.spentMicros,
