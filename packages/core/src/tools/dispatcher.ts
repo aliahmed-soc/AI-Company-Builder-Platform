@@ -34,6 +34,8 @@ import {
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
+import { spendingLimitObservation } from '../limits/usage-caps.js';
+import { readCompanyMonthSpendMicros } from '../limits/usage-caps-reader.js';
 import { computePayloadBinding } from '../approvals/binding.js';
 import type { Logger } from '@acbp/observability';
 
@@ -280,13 +282,38 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // different instant than the evaluation recorded, making "was this authorized at time T?" unanswerable from
       // the record — which is the whole reason the clock is an input here rather than ambient.
       const now = options.now ?? new Date();
+
+      // ── THE SPEND OBSERVATION (ACBP-P6-010; CDR-075 §0/§3-G1) ──────────────────────────────────────────────
+      //
+      // WITHOUT THIS LINE, THE FIRST SPEND RULE ANYONE WRITES TAKES A TENANT OFFLINE. CDR-067's post-review
+      // correction says it outright: the dispatcher supplied exactly one observation, so a rule on
+      // `spending_limit` had nothing to read, was UNEVALUABLE, and by CDR-066 §3-G9 contributed `deny` — "a
+      // company whose policy carried a spend cap would have every tool call refused", latent only "because no
+      // product path writes rules until P6-010". ACBP-P6-010 is that product path.
+      //
+      // Read inside the scope already open, one company-confined query, no elevation and no per-company loop:
+      // this is on the hot path of every tool call. The ACCOUNT-wide figure is deliberately NOT read here —
+      // policies are company-scoped, and summing an account per tool call would put a loop over companies in
+      // front of every action to answer a question no company rule asks.
+      //
+      // FROM THE LEDGER, NOT `account_usage_rollups` (§3-G12): the rollup is a projection rebuilt on a schedule,
+      // and a cap decided from a stale projection under-counts silently and in the customer's favour.
+      //
+      // An unreadable total yields `undefined`, leaving the dimension unobserved → unevaluable → deny. That is
+      // fail-closed, and the opposite of substituting zero, which would put the company under every cap.
+      const spendMicros = await readCompanyMonthSpendMicros(scope, now);
+      const spendObservation = spendingLimitObservation(spendMicros);
+
       const policyResult = await evaluatePolicyInScope(
         scope,
         {
           accountId: params.accountId,
           companyId: params.companyId,
           evaluationPoint: 'pre_execution',
-          observations: { risk_class: { value: definition?.risk_class, provenance: 'registry' } },
+          observations: {
+            risk_class: { value: definition?.risk_class, provenance: 'registry' },
+            ...(spendObservation !== undefined ? { spending_limit: spendObservation } : {}),
+          },
           evaluatedAt: now,
         },
         opts(options),

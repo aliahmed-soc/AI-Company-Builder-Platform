@@ -604,17 +604,43 @@ describe.skipIf(!hasTestDatabase)('policy enforcement at the dispatcher (real Po
     // described it as "limit … wired here", which claimed a capability that does not exist. This test is what makes
     // the real behaviour a fact rather than a paragraph, and it will fail the day an observation for this dimension
     // is supplied — which is the correct moment to revisit §1.
+    // ── UPDATED BY ACBP-P6-010, on this test's own instructions ─────────────────────────────────────────────
+    //
+    // The paragraph above ends "it will fail the day an observation for this dimension is supplied — which is the
+    // correct moment to revisit §1." This is that day. ACBP-P6-010 supplies `spending_limit` from the usage
+    // ledger (CDR-075 §0/§3-G1), which is precisely what stops the first spend rule anyone writes from taking a
+    // tenant offline. The old expectations are kept below in the second case, moved to a dimension that is still
+    // genuinely unobserved — supplying ONE observation must not quietly delete the coverage for all the others.
     await addRule(JSON.stringify([{ id: 'spend-cap', dimension: 'spending_limit', condition: 'at_or_over_limit', operand: 100, decision: 'require_approval' }]));
+
+    const r = await dispatch();
+    expect(r).not.toMatchObject({ status: 'denied', reason: 'policy_denied' });
+
+    const evaluation = row(await evaluations());
+    // THE ASSERTION CARRYING THE FIX: the rule is neither unevaluable nor fired. Unevaluable would mean the
+    // observation never arrived — the landmine, back. Fired would mean a company that has spent nothing was
+    // judged to be at or over a 100-micro cap.
+    expect(evaluation.unevaluable_rule_ids).not.toContain('spend-cap');
+    expect(evaluation.fired_rule_ids).not.toContain('spend-cap');
+  });
+
+  test('a rule on a dimension STILL not observed refuses the call — it does not silently pass', async () => {
+    // The assertions the case above used to make, preserved on a dimension that genuinely has no observation.
+    // ACBP-P6-010 supplied `spending_limit` ONLY; `working_hours`, `allowed_tools`, `emergency_stop` and the rest
+    // remain unobserved, and CDR-066 §3-G9's fail-closed behaviour must stay proven for them. Without this,
+    // supplying one observation would have deleted the coverage for every other dimension while the suite still
+    // looked complete.
+    await addRule(JSON.stringify([{ id: 'hours-rule', dimension: 'working_hours', condition: 'flag_is_set', operand: null, decision: 'require_approval' }]));
 
     const r = await dispatch();
     expect(r).toMatchObject({ status: 'denied', reason: 'policy_denied' });
 
     const evaluation = row(await evaluations());
     expect(evaluation.decision).toBe('deny');
-    // The rule is named as UNEVALUABLE, not as fired — the distinction a reader needs to tell "policy refused you"
-    // from "policy could not be applied to you".
-    expect(evaluation.unevaluable_rule_ids).toContain('spend-cap');
-    expect(evaluation.fired_rule_ids).not.toContain('spend-cap');
+    // Named UNEVALUABLE, not fired — the distinction a reader needs to tell "policy refused you" from "policy
+    // could not be applied to you".
+    expect(evaluation.unevaluable_rule_ids).toContain('hours-rule');
+    expect(evaluation.fired_rule_ids).not.toContain('hours-rule');
   });
 
   // ──────────────── THE IDEMPOTENCY SHORT CIRCUIT IS NOT A WAY PAST THE GATE (CDR-067 §2-G10) ─────────────────
