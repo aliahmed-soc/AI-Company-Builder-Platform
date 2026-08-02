@@ -67,10 +67,17 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P6-011 Idempotency and replay hardening — IMPLEMENTATION COMPLETE, AWAITING MERGE** (CDR-074; TASK-009,
-  NFR-006; ADR-008/ADR-013; launch gate 5; trust-critical **#11 and #12**). Branch `p6-011-idempotency-replay`,
-  draft PR #69, migration **0052** (`usage_events.idempotency_key` + partial unique index). Exact-head CI
-  `30727298208` on `723b19b` green with **ZERO SKIPS** (240 files / 3449 tests).
+- **ACBP-P6-011 Idempotency and replay hardening — DONE** (CDR-074; TASK-009, NFR-006; ADR-008/ADR-013; launch
+  gate 5; trust-critical **#11 and #12**). Merged as squash `a3eea48`, PR #69, migration **0052**; exact-head CI
+  `30728026202` on `a259948` and exact-main `30728297200` on `a3eea48` both green with **ZERO SKIPS** (240 files
+  / 3449 tests, and not one `N skipped` line in either job log); branch deleted local + remote after verifying
+  the branch tip's tree is byte-identical in `main` (`dfdd228e…`) — ancestry does not hold across a squash merge.
+  **Not closed by this line:** a zero suppression count is still ambiguous, and the live canary that would fix
+  that is P7-006's (owner-gated).
+
+- **ACBP-P6-011 Idempotency and replay hardening — working block** (CDR-074; TASK-009, NFR-006; ADR-008/ADR-013;
+  launch gate 5; trust-critical **#11 and #12**). Branch `p6-011-idempotency-replay`, PR #69, migration **0052**
+  (`usage_events.idempotency_key` + partial unique index).
   - **Closes the LEDGER HALF of trust-critical #12**, which ACBP-P6-009 explicitly declined. Together with
     P6-009's rollup half, #12 is now closed end to end. Also closes **#11** (replayed jobs do not duplicate
     authoritative effects).
