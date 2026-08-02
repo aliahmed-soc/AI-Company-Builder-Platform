@@ -65,8 +65,11 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
     `.execute(seed.kysely);
   }
 
+  // `payload`, `occurred_at`, `event_id` — the real column names. An earlier version of this helper guessed
+  // `metadata`, `created_at` and `id`, which threw inside every case that read a record and left the five cases
+  // that only inspect the DECISION passing. A green-looking half-suite is what a mis-typed fixture buys.
   const limitEvents = async () =>
-    (await sql<{ subject_id: string; metadata: Record<string, unknown> }>`select subject_id, metadata from audit_events where name = 'usage.limit_reached' order by created_at, id`.execute(seed.kysely)).rows;
+    (await sql<{ subject_id: string; payload: Record<string, unknown> }>`select subject_id, payload from audit_events where name = 'usage.limit_reached' order by occurred_at, event_id`.execute(seed.kysely)).rows;
 
   const check = (companyId: string, config: UsageCapsConfig = USAGE_CAP_DEFAULTS, at: Date = NOW) => {
     const t = createTestLogger();
@@ -125,10 +128,10 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
 
     // CDR-075 §4-G4.3: a refusal a founder cannot attribute is indistinguishable from a bug in their own product.
     const events = await limitEvents();
-    const hard = events.filter((e) => e.metadata['threshold'] === 'hard');
+    const hard = events.filter((e) => e.payload['threshold'] === 'hard');
     expect(hard).toHaveLength(1);
     expect(hard[0]?.subject_id).toBe(companyA1);
-    expect(hard[0]?.metadata).toMatchObject({ limit_type: 'model_spend', limit_scope: 'company', limit_period: 'day', threshold: 'hard', limit_micros: DAY_CAP, spent_micros: DAY_CAP });
+    expect(hard[0]?.payload).toMatchObject({ limit_type: 'model_spend', limit_scope: 'company', limit_period: 'day', threshold: 'hard', limit_micros: DAY_CAP, spent_micros: DAY_CAP });
   });
 
   test('ONE micro-unit under the ceiling still passes — the boundary is exact', async () => {
@@ -145,8 +148,8 @@ describe.skipIf(!hasTestDatabase)('usage caps (real PostgreSQL) — ACBP-P6-010/
 
     expect(decision.outcome).toBe('allow');
     const events = await limitEvents();
-    expect(events.filter((e) => e.metadata['threshold'] === 'soft').length).toBeGreaterThanOrEqual(1);
-    expect(events.filter((e) => e.metadata['threshold'] === 'hard')).toHaveLength(0);
+    expect(events.filter((e) => e.payload['threshold'] === 'soft').length).toBeGreaterThanOrEqual(1);
+    expect(events.filter((e) => e.payload['threshold'] === 'hard')).toHaveLength(0);
   });
 
   // ── the account sum genuinely spans companies ───────────────────────────────────────────────────────────
