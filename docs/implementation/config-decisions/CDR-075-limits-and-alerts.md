@@ -1,0 +1,136 @@
+# CDR-075 — Limits and alerts (ACBP-P6-010)
+
+Governing: **NFR-015** (cost control, hard caps ≤1 billing increment overrun), **POL-001** (spending limits);
+ADR-010 (policy evaluation), ADR-013 (usage and cost ledger), ADR-003 §16 (pre-beta control list);
+`diagrams/10-usage-and-cost-flow.mmd`; **CDR-008** (interim values, Accepted).
+Depends on **ACBP-P6-001** (policy engine, Done) and **ACBP-P6-009** (account rollups, Done).
+
+---
+
+## §0 The finding that reorders this whole ticket
+
+**CDR-067 left a landmine pointed directly at ACBP-P6-010, and said so in writing.** Quoting its post-review
+correction verbatim:
+
+> The dispatcher supplies the engine exactly ONE observation: `risk_class`, from `tool_definitions`. A rule on any
+> other dimension — `spending_limit`, `usage_limit`, `working_hours`, `emergency_stop`, `allowed_tools` — has no
+> observation to read, is therefore **unevaluable**, and by CDR-066 §3-G9 contributes `deny`. So a company whose
+> policy carried a spend cap would have **every tool call refused**, not approval-gated. Fail-closed and therefore
+> not a hole, and **latent today because no product path writes rules until P6-010** […]
+
+Read that last clause again: *latent today because no product path writes rules until P6-010*. **This ticket is the
+product path that writes the rules.** So the naive shape of P6-010 — "add a `spending_limit` rule carrying the cap"
+— **bricks every company it is applied to.** Not a subtle degradation: every tool call denied, for a company whose
+only sin was having a spend cap configured.
+
+That inverts the ticket's centre of gravity. The hard part is not *deciding* the cap. It is **supplying the
+observation** so a cap rule is evaluable at all. A rule without its observation is not a weaker control — under
+CDR-066 §3-G9 it is a total outage wearing a control's clothing.
+
+**Consequence for sequencing (§3-G1):** the observation supply ships **before or with** any rule-writing path, never
+after. A commit that can write a spend rule while the dispatcher still supplies only `risk_class` is a commit that
+can brick a tenant, and no test of the rule-writing path would show it — the rule would look correctly stored.
+
+## §1 What already exists — this is WIRING, not greenfield
+
+| Piece | Where | State |
+|---|---|---|
+| `spending_limit` / `usage_limit` dimensions | `contracts/policy/evaluate.ts` | exist, are **trust-critical** (never model-sourced) |
+| `at_or_over_limit` condition | same | exists, total, unit-tested |
+| Unevaluable → `deny` | CDR-066 §3-G9 | enforced — **this is the landmine's mechanism** |
+| Per-run budget, ≤1 increment | `decideStepAdmission` (P5-005) | **built and enforced** — runs check BEFORE the step |
+| Account/company usage totals | `account_usage_rollups`, `sumCompanyUsage` (P6-009) | built; account-keyed RLS |
+| `usage.limit_reached` event | EVENT-CATALOG:277 — `limit_type, scope, threshold (hard/soft)`, audited | **catalogued, never emitted** |
+| Gateway caps pre-check | `ModelGatewayDeps.policyPrecheck` | **an optional seam; "omit → always allowed", and NO production caller supplies one** |
+| Interim cap values | CDR-008 §8 | **Accepted, owner-authorized** |
+
+Two of those rows are holes of the same shape this programme keeps finding: a mechanism that exists, is documented,
+and is wired to nothing. `usage.limit_reached` is catalogued but never emitted. `policyPrecheck` defaults to
+*allow* and no caller fills it — so **the gateway enforces no cap today**, and the P2-003 comment calling it "the
+caps/tier pre-check" describes an intention, not a behaviour.
+
+## §2 The values are ALREADY RULED, and the two open-question registers disagree about it
+
+This needs stating plainly because a standing instruction to this session says *"AOQ-14 limit values remain the
+owner's"*, and the repo says two different things:
+
+| Register | Entry | Status |
+|---|---|---|
+| `IMPLEMENTATION-OPEN-QUESTIONS.md:17` | **IOQ-09** — initial usage caps and rate limits, consumer ticket **P6-010** | **Resolved (CDR-008)** |
+| `ARCHITECTURE-OPEN-QUESTIONS.md:22` | **AOQ-14** — initial usage caps, rate limits, alert thresholds | **open**, `[PHASE — before beta]`, *needs alpha usage data* |
+| `PROJECT-STATE.md:400` | — | *"AOQ-14's limit values remain unruled and unshipped."* |
+
+**These are reconcilable, and the reconciliation is the ruling this section makes.** CDR-008 is Accepted, dated
+2026-07-18, owner-authorized, explicitly **interim**, mandatory-revisit-bound at first alpha telemetry, and its
+§20 names *"ACBP-P6-010 (values)"* as the ticket that consumes it. AOQ-14 stays open because the **final** values
+need alpha data that does not exist yet — there is no live deployment (P7-006 is owner-gated).
+
+So: **interim values are ruled; final values are not.** DECIDED accordingly —
+
+- **G2.1 — No value is invented by this ticket.** Every number traces to CDR-008 §8 or does not ship.
+- **G2.2 — No value lives in `@acbp/contracts` or `@acbp/core`.** CDR-066 §3-G8 is explicit that contracts carry no
+  default limits, and its stated reason is the right one: *"a default limit is a statement about when a founder's
+  money is spent without asking them."* Values live in **configuration**, read at the edge.
+- **G2.3 — A cap is a POLICY RULE, not a code constant.** The enforceable cap for a company is whatever rule its
+  policy carries. CDR-008's numbers are the recommended **starting configuration**, not a fallback baked into the
+  evaluator.
+- **G2.4 — An ABSENT cap is not an infinite cap, and not a denial either.** Rules restrict; they do not grant
+  (CDR-066). A company with no spend rule is unrestricted *by that dimension*, exactly as today. What this ticket
+  must never do is make "the owner has not configured a cap" evaluate to `deny` — that is the landmine again, from
+  the other side.
+
+**Flagged for the owner, not silently resolved:** if the intent is that AOQ-14 blocks *shipping any value at all*,
+then this ticket ships the mechanism with configuration left unset and the recommended values documented only.
+The mechanism is identical either way; only the config file differs. §4 carries this as the single open decision.
+
+## §3 Design gates
+
+- **G1 — Observation before rules.** (§0.) The `spending_limit` and `usage_limit` observations must be supplied at
+  every evaluation point that can see a rule, in the same change that makes rules writable — or earlier.
+- **G2 — Values: see §2** (G2.1–G2.4).
+- **G3 — The check happens BEFORE the spend.** NFR-015's *≤1 billing increment* overrun bound holds only if the
+  decision precedes the call. This is the shape `decideStepAdmission` already uses and the reason it holds; the
+  gateway and dispatcher checks copy it rather than inventing a second discipline.
+- **G4 — Both evaluation points, and they are not redundant.** The **gateway** bounds model spend (the money);
+  the **dispatcher** bounds tool calls (the actions). A cap enforced only at the gateway leaves tool-driven spend
+  unbounded; only at the dispatcher leaves direct model calls unbounded. The backlog says *"policy gate + gateway"*
+  and means both.
+- **G5 — Per company AND per account.** Company usage comes from `sumCompanyUsage`; the account figure is the
+  account-keyed rollup (P6-009), which is the only place an account-spanning total may be read — the
+  `credit_transactions` precedent. An account cap enforced from a company-scoped sum would under-count by exactly
+  the other companies it is supposed to include.
+- **G6 — Unreadable usage HALTS.** If the total cannot be read, the cap is unevaluable. Consistent with
+  `decideStepAdmission` ("an unreadable bound HALTS rather than reading as no limit") and with CDR-066 §3-G9. A
+  cap that fails open is not a cap.
+- **G7 — Soft alert is an EVENT, never a block.** CDR-008 §8 sets the soft threshold at **75% of any hard cap**.
+  At the soft threshold the work proceeds and `usage.limit_reached` is emitted with `threshold: 'soft'`. Blocking
+  at 75% would be a hard cap wearing a soft cap's name.
+- **G8 — The alert must not become a firehose.** A soft alert emitted on every call once usage passes 75% is
+  indistinguishable from noise and will be filtered out, which makes it worth nothing at the moment it matters.
+  Emission is once per (scope, period, threshold) crossing — and the mechanism that makes "once" true has to be
+  named, not assumed. **This is where P6-011's suppression work is reused rather than re-invented.**
+- **G9 — `usage.limit_reached` carries the catalogued fields.** EVENT-CATALOG:277 fixes them: `limit_type`,
+  `scope`, `threshold`. Audited, retention ≥ billing. The event is not free-form.
+- **G10 — A cap block is not a usage event.** CDR-026 §4 already rules this for the gateway: usage records model
+  CALLS, and a blocked call is not a call. A cap block must not inflate the very total it is bounding.
+- **G11 — Values are config, and config is not a secret.** Cap values are operational settings, not credentials.
+  They may appear in logs and audit metadata; the amounts spent may not be attributed to a person.
+
+## §4 Open owner decision — ONE, and it is about posture, not numbers
+
+**Does P6-010 ship CDR-008's interim values as active configuration, or ship the mechanism with caps unset?**
+
+- **Ship them (CDR-008's own reading).** §20 names this ticket as the consumer; §8's values are authorized; §21
+  binds a mandatory revisit at first alpha telemetry. Runaway-cost protection is active from the first model call,
+  which is ADR-003 §16's stated intent.
+- **Ship unset (the AOQ-14 register's reading).** No cap fires until the owner sets one. Nothing can wrongly block
+  a founder's work, and no number ships that alpha data has not justified.
+
+**Recommendation: ship them, as clearly-labelled interim configuration**, because CDR-008 already made this
+decision at owner level and the alternative leaves the platform with no cost ceiling at all while its stated
+purpose is to have one. **Not actioned until the owner confirms**, because the standing instruction to this session
+names AOQ-14 as owner-held, and a session cannot resolve a contradiction between the instruction it was given and a
+document it found — it can only surface it, which is what this section is.
+
+**Everything else in this ticket proceeds regardless**: the mechanism, the observations, both evaluation points,
+the event, the audit, and the tests are identical under either answer. Only the config file's contents differ.
