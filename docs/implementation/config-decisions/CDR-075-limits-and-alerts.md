@@ -115,6 +115,31 @@ The mechanism is identical either way; only the config file differs. §4 carries
   CALLS, and a blocked call is not a call. A cap block must not inflate the very total it is bounding.
 - **G11 — Values are config, and config is not a secret.** Cap values are operational settings, not credentials.
   They may appear in logs and audit metadata; the amounts spent may not be attributed to a person.
+- **G12 — A cap is decided against the LEDGER, never against `account_usage_rollups`.** Found while wiring: the
+  rollup is a **projection** (CDR-073 §0 — "the ledger is the truth and the rollup is a bug" when they disagree)
+  and is rebuilt on a schedule. A cap decided from a projection under-counts by exactly however stale that
+  projection is, and the failure is silent, self-consistent, and in the customer's favour — which is the shape
+  that survives longest. The rollup remains the right source for *reporting*; it is the wrong source for
+  *enforcement*, and the two must not be conflated because they carry the same numbers.
+- **G13 — Daily buckets are UTC, for a sharper reason than monthly ones.** A daily cap read in the session's
+  local zone resets at local midnight, so a founder in UTC+14 gets a fresh daily allowance fourteen hours before
+  one in UTC, and the same account enforces two different ceilings depending on which server answered.
+
+### §3.1 A gap P6-009 left that only a daily cap reveals
+
+**Every aggregation shipped by ACBP-P6-009 buckets by MONTH.** `sumCompanyUsage`, `sumCompanyCorrections`, the
+`account_usage_rollups` period key — all `date_trunc('month', …)`. CDR-008 §8 sets a **daily** ceiling next to the
+monthly one, and a day cannot be derived from a month in the direction needed.
+
+So this ticket adds `sumCompanyUsageForDay`, deliberately mirroring `sumCompanyUsage` rather than generalising it
+into a parameterised bucket. A `bucket: 'day' | 'month'` argument would put the UTC discipline and the exact
+`date_trunc` expression behind a branch, and CDR-073 §1-G8 requires that expression to agree *exactly* with
+`usagePeriodStart` in contracts — an agreement that is currently pinned by a test calling the method under a
+UTC+14 session zone. Two explicit readers each pinned by their own test is worth more here than one clever one.
+
+**The account-scope loop is unchanged and reused**: an account total is the sum over the account's companies,
+each read under `elevateToCompanyScope` (P6-009 §1-G3), never under `runInCompanyScope` — a membership-filtered
+total is a per-caller view, and a cap must not depend on who asked.
 
 ## §4 RULED BY THE OWNER — ship CDR-008's interim values as active configuration
 
