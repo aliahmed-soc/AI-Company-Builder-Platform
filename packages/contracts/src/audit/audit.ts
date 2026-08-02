@@ -268,6 +268,12 @@ export const AUDIT_EVENTS = {
   // (CDR-073 §1-G1), and the only production path that triggers one is reconciliation, which records it below.
   'usage.corrected': { schemaVersion: 1, subjectType: 'usage_correction' },
   'usage.rollup_reconciled': { schemaVersion: 1, subjectType: 'account' },
+  // Usage caps (ACBP-P6-010; CDR-075; NFR-015, POL-001). Unlike the two credit events above, this one IS in
+  // EVENT-CATALOG:277 — `limit_type, scope, threshold (hard/soft)`, audited, retention ≥ billing — and had never
+  // been emitted by anything. Registered in the same commit as `checkUsageCaps`, which emits it: an earlier
+  // attempt to register it a slice ahead of its producer was correctly refused by `audit-operations.test.ts`'s
+  // no-orphan-events guard, and `DEFERRED_REGISTERED_EVENTS` was again NOT used to route around it.
+  'usage.limit_reached': { schemaVersion: 1, subjectType: 'company' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -1245,4 +1251,60 @@ export function memoryItemSuperseded(input: { readonly supersededItemId: string;
  */
 export function memoryItemDeleted(input: { readonly memoryItemId: string; readonly itemType: string; readonly sourceType: string }): AuditEvent {
   return makeEvent('memory.item_deleted', input.memoryItemId, 'success', { item_type: input.itemType, source_type: input.sourceType, transition: 'active_to_deleted' });
+}
+
+/**
+ * A usage cap was reached (ACBP-P6-010; CDR-075 §4.1/§3-G7/G9; EVENT-CATALOG:277; NFR-015, POL-001).
+ *
+ * ONE EVENT NAME FOR BOTH THRESHOLDS, with `threshold` distinguishing them. A second name would fragment the
+ * count exactly as per-surface suppression names would have (CDR-074 §5.1, same reasoning).
+ *
+ * A SOFT EVENT DOES NOT MEAN WORK STOPPED. `threshold: 'soft'` is emitted while the call PROCEEDS (§3-G7 —
+ * blocking at the soft threshold would be a hard cap wearing a soft cap's name). Only `'hard'` accompanies a
+ * refusal. A reader treating every one of these as an outage would mis-report the majority of them, and this
+ * field is the only thing preventing that.
+ *
+ * SUBJECT IS THE COMPANY even when an ACCOUNT-scoped cap fired, because the company is what was stopped — the
+ * reader asking "why did this company's work halt" starts there. `limit_scope` says which cap it was, so an
+ * account ceiling is never misread as a company one.
+ *
+ * OUTCOME IS `success` FOR BOTH, deliberately: the audit outcome describes whether the PLATFORM acted correctly,
+ * not whether the founder liked the answer. A cap that fires is the control working. The platform failing at this
+ * job is the `halt` case — spend unreadable — which is not this event.
+ *
+ * Amounts are cap values and spend totals, both operational figures (CDR-075 §3-G11). No actor, and no
+ * attribution of spend to a person.
+ */
+export function usageLimitReached(input: {
+  readonly companyId: string;
+  readonly limitScope: string;
+  readonly limitPeriod: string;
+  /**
+   * The period the decision was made AGAINST (`YYYY-MM-DD` for a day, `YYYY-MM-01` for a month).
+   *
+   * Carried explicitly rather than inferred from `occurred_at`, and that is a correctness requirement rather than
+   * convenience: `occurred_at` is the DATABASE clock (`writeAuditEvent` never sets it, so the column default
+   * `now()` wins), while the decision is made against a caller-supplied instant. Deriving the period from
+   * `occurred_at` mixes two clocks, which is invisible whenever they happen to agree and wrong the moment they
+   * do not — and the once-per-period dedupe (CDR-075 §3-G8) reads this field precisely so both sides of it come
+   * from the same clock.
+   */
+  readonly limitPeriodStart: string;
+  readonly threshold: string;
+  readonly limitMicros: number;
+  readonly spentMicros: number;
+  readonly thresholdMicros: number;
+}): AuditEvent {
+  return makeEvent('usage.limit_reached', input.companyId, 'success', {
+    // EVENT-CATALOG's own field name. The value is the metered quantity; every cap this ticket ships meters model
+    // spend. A future message-count cap (POL-002) reuses this field rather than adding a second event.
+    limit_type: 'model_spend',
+    limit_scope: input.limitScope,
+    limit_period: input.limitPeriod,
+    limit_period_start: input.limitPeriodStart,
+    threshold: input.threshold,
+    limit_micros: input.limitMicros,
+    spent_micros: input.spentMicros,
+    threshold_micros: input.thresholdMicros,
+  });
 }

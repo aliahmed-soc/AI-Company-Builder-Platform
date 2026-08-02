@@ -72,6 +72,7 @@ import {
   taskCompleted,
   usageCorrected,
   usageRollupReconciled,
+  usageLimitReached,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -194,6 +195,9 @@ export const AUDITED_OPERATIONS = {
   // production path that triggers one is reconciliation, which records it.
   'usage.correct': 'usage.corrected',
   'usage.reconcile': 'usage.rollup_reconciled',
+  // Usage caps (ACBP-P6-010; CDR-075). ONE operation for both thresholds, matching the single event name — a
+  // `usage.limit_soft` / `usage.limit_hard` split would fragment the count and force every reader to know both.
+  'usage.limit_reach': 'usage.limit_reached',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -236,7 +240,7 @@ export type EmergencyStopAuditedOperation = 'emergency_stop.activate' | 'emergen
 // user-visible CREDIT ledger, whereas these are TECHNICAL USAGE and the projection over it — two of the five
 // numbers `USAGE-AND-BILLING` §1 keeps separate, and collapsing their audit domains would be the first step to
 // collapsing the numbers.
-export type UsageAuditedOperation = 'usage.correct' | 'usage.reconcile';
+export type UsageAuditedOperation = 'usage.correct' | 'usage.reconcile' | 'usage.limit_reach';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -258,7 +262,7 @@ export const ARTIFACT_AUDITED_OPERATION_IDS: readonly ArtifactAuditedOperation[]
 export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[] = ['approval.request', 'approval.decide', 'approval.decide.rejected', 'approval.revoke', 'approval.revoke_failed', 'approval.consume'];
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 export const EMERGENCY_STOP_AUDITED_OPERATION_IDS: readonly EmergencyStopAuditedOperation[] = ['emergency_stop.activate', 'emergency_stop.clear', 'emergency_stop.work.review'];
-export const USAGE_AUDITED_OPERATION_IDS: readonly UsageAuditedOperation[] = ['usage.correct', 'usage.reconcile'];
+export const USAGE_AUDITED_OPERATION_IDS: readonly UsageAuditedOperation[] = ['usage.correct', 'usage.reconcile', 'usage.limit_reach'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
@@ -427,6 +431,11 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'usage.reconcile':
       return (subjectId) =>
         usageRollupReconciled({ accountId: subjectId, periodStart: '2026-08-01', eventCountDrift: 0, inputTokensDrift: 0, outputTokensDrift: 0, estimatedCostMicrosDrift: 0, lanesExceedingThreshold: [], rebuildApplied: false, storedExisted: true });
+    // The real payload — which scope and period fired, and against what figures — is asserted against the STORED
+    // row in `usage-caps.integration.test.ts`, not here. This factory only proves the operation maps to the event.
+    case 'usage.limit_reach':
+      return (subjectId) =>
+        usageLimitReached({ companyId: subjectId, limitScope: 'company', limitPeriod: 'day', limitPeriodStart: '2026-08-01', threshold: 'hard', limitMicros: 0, spentMicros: 0, thresholdMicros: 0 });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

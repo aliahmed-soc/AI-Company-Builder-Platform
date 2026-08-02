@@ -497,3 +497,7 @@ export function loadClerkConfig(): ClerkConfig {
 export function loadClerkWebhookConfig(): ClerkWebhookConfig {
   return parseClerkWebhookConfig(process.env);
 }
+
+// Usage caps: CDR-008's interim per-company and per-account spend ceilings and the soft-alert threshold
+// (ACBP-P6-010; CDR-075 §4). INTERIM — CDR-008 §21 binds a mandatory revisit at first alpha telemetry.
+export * from './usage-caps.js';

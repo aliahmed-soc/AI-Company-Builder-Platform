@@ -218,6 +218,37 @@ export class AccountUsageRollupRepository {
   }
 
   /**
+   * Sum the CURRENT COMPANY's usage events falling in `dayStart`'s UTC DAY (ACBP-P6-010; CDR-075 §3-G5).
+   *
+   * WHY A SEPARATE READ RATHER THAN REUSING THE MONTHLY ONE. CDR-008 §8 sets a daily ceiling ($5/day interim)
+   * alongside the monthly one, and every P6-009 aggregation buckets by MONTH — there was no daily read in the
+   * codebase at all. Deriving a day from a month is not possible in the direction needed.
+   *
+   * BUCKETED IN UTC, by the same `at time zone 'UTC'` discipline as `sumCompanyUsage` and for a sharper reason
+   * here: a daily cap read in the session's local zone would reset at local midnight, so a founder in UTC+14
+   * would get a fresh $5 fourteen hours before one in UTC, and the same account would enforce two different
+   * ceilings depending on which server answered.
+   *
+   * READS THE LEDGER, NOT `account_usage_rollups`. The rollup is a PROJECTION (CDR-073 §0) and may lag; a cap
+   * decided from a stale projection under-counts and lets spend through. The ledger is the truth, and a cap must
+   * be decided against the truth.
+   *
+   * Confined to one company by the dual-keyed `usage_events` policy, so the caller must already have elevated.
+   */
+  async sumCompanyUsageForDay(dayStart: string): Promise<RollupFigureRow> {
+    const result = await sql<RawFigureRow>`
+      select
+        count(*) as event_count,
+        coalesce(sum(input_tokens), 0) as input_tokens,
+        coalesce(sum(output_tokens), 0) as output_tokens,
+        coalesce(sum(estimated_cost_micros), 0) as estimated_cost_micros
+      from public.usage_events
+      where date_trunc('day', created_at at time zone 'UTC') = ${dayStart}::date
+    `.execute(this.#db);
+    return toFigures(result.rows[0]);
+  }
+
+  /**
    * Sum the CURRENT COMPANY's corrections for `periodStart`, bucketed by the CORRECTED EVENT's month.
    *
    * THE JOIN IS THE POINT (CDR-073 §1-G10c). A July event corrected in August belongs to JULY: bucketing by the

@@ -67,6 +67,34 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-010 Limits and alerts — IMPLEMENTATION COMPLETE, AWAITING MERGE** (CDR-075; NFR-015, POL-001;
+  ADR-010/ADR-013; CDR-008's interim values). Branch `p6-010-limits-and-alerts`, PR #70, **no migration** — the
+  ledger it reads is ACBP-P6-009's. Exact-head CI `30770810296` on `32d872f` green, **ZERO SKIPS** (246 files /
+  3502 tests).
+  - **THE CEILING IS REACHABLE AND UNREACHED, and that is the first thing to know** (CDR-075 §4.3). No production
+    caller passes `caps`, because `createModelGateway` has no production composition at all — only demos, journey
+    helpers and tests. **The gateway still enforces no ceiling on any real path.** One already-typed argument
+    makes it live. Disclosed rather than papered over, and NOT worked around by wiring demos, which would make it
+    look enforced where it does not matter.
+  - **What it defused:** CDR-067 left a landmine aimed by name at this ticket — a `spending_limit` rule was
+    UNEVALUABLE, so by CDR-066 §3-G9 a company with a spend cap would have had **every tool call refused**. The
+    dispatcher now supplies the spend observation from the ledger. `policy-enforcement.integration.test.ts` had
+    predicted this exact day and was updated on its own instructions; its original assertions were MOVED to
+    `working_hours`, not deleted.
+  - **The values are the owner's**, from CDR-008 §8 and ruled active this session: $5/day and $50/month per
+    company, account ceiling 3×, soft alert 75%. **Labelled interim at the definition**, revisit-bound at
+    CDR-008 §21's first alpha telemetry review. **AOQ-14 is NOT closed by this** — the final values still need
+    telemetry no deployment exists to produce.
+  - **A property of those numbers worth knowing** (§4.2): the account ceiling can only bind at **four or more
+    companies**, since three each just under their own cap still total under 3×. It will read as a broken account
+    cap to whoever next tests it with two.
+  - **The review found the ticket's own gate unimplemented.** §3-G8 required one alert per crossing; the code
+    wrote one per CALL, into a trail retained for the billing lifetime. The obvious fix is a trap — a unique
+    idempotency key raises `23505`, which ABORTS the transaction, turning a soft alert into a hard outage. The
+    mechanism is a read-before-write, and its limit (not exactly-once under a race) is stated where it lives.
+  - **Deliberately not actioned:** no alert threshold beyond CDR-008's 75% is invented; `readSpendTotals` catches
+    unconditionally (fail-closed, platform-wide blast radius, now written down).
+
 - **ACBP-P6-011 Idempotency and replay hardening — DONE** (CDR-074; TASK-009, NFR-006; ADR-008/ADR-013; launch
   gate 5; trust-critical **#11 and #12**). Merged as squash `a3eea48`, PR #69, migration **0052**; exact-head CI
   `30728026202` on `a259948` and exact-main `30728297200` on `a3eea48` both green with **ZERO SKIPS** (240 files

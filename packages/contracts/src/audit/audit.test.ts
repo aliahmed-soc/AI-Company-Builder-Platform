@@ -152,6 +152,9 @@ describe('event-name registry (deny unregistered)', () => {
       // drift record. There is deliberately no `usage.rollup_rebuilt`: a bare rebuild changes no fact.
       'usage.corrected',
       'usage.rollup_reconciled',
+      // Usage caps (ACBP-P6-010; CDR-075). Unlike the two above, this one IS in EVENT-CATALOG:277 and had simply
+      // never been emitted — a catalogued mechanism wired to nothing, the same shape ACBP-P6-011 found twice.
+      'usage.limit_reached',
       // Typed memory (ACBP-P2-006; CDR-024 §4) — a memory item creation is audited.
       'memory.item_created',
       // Memory browser (ACBP-P2-010; CDR-025 §4) — a memory item supersede is audited.
