@@ -97,7 +97,10 @@ ticket without a DONE line above it is genuinely in flight._
     no dead-letter/job section.
   - **Local gate green** at `25e8840`: `pnpm test` **250 files / 3562 tests, ZERO SKIPS** against real
     PostgreSQL; typecheck, lint, `check:secrets`, `check:boundaries`, `test:boundaries` (51) all clean.
-    **Hosted CI on the exact SHA is still required before this can be called done.**
+    **Exact-head hosted CI [`30918231209`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30918231209)
+    on `4bab40f` is green with ZERO SKIPS** — the same 250 files / 3562 tests, no `N skipped` line in the job
+    log, DB preflight passed. The finalization commit that flips this ticket's backlog row moves the head, so
+    the run proving the MERGED SHA is named on the DONE line above rather than here.
 
 - **ACBP-P6-010 Limits and alerts — DONE** (CDR-075; NFR-015, POL-001; ADR-010/ADR-013; CDR-008's interim
   values). Merged as squash `f540fec`, PR #70, **no migration** — the ledger it reads is ACBP-P6-009's.
