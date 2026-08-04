@@ -29,6 +29,9 @@ export * from './artifacts/index.js';
 export * from './policy/index.js';
 // Emergency stop controller (ACBP-P6-007; CDR-072; ADMIN-001/002; invariant 14).
 export * from './stops/index.js';
+// Decision Room (ACBP-P6-008; CDR-076; DEC-001). Ten composed queues in one snapshot, each in its own savepoint
+// so a broken section degrades alone instead of rendering the other nine as "nothing needs your decision".
+export * from './decision-room/index.js';
 // Account usage rollups (ACBP-P6-009; CDR-073; trust-critical #14). The rollup is a PROJECTION, never a source of
 // truth — nothing may authorize a billing, limit or entitlement decision from it.
 export * from './usage/index.js';
