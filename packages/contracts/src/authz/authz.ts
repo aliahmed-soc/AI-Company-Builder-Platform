@@ -196,6 +196,14 @@ export const AUTHZ_ACTIONS = [
   // an answer nobody has given. Until it is ruled, rebuild is a core use case with no API surface.
   'usage:read',
   'usage:correct',
+  // Decision Room entry (ACBP-P6-008; CDR-076 §3-G2; DEC-001). ONE action, and it grants NOTHING new: it is the
+  // same authority class as `activity:read` (any active company member), because the room is a composed READ over
+  // surfaces this member could already read one at a time. It exists as its own name rather than reusing
+  // `activity:read` so the room can later be narrowed without narrowing the feed — and so a reader of this matrix
+  // can see that entering the room is a distinct, auditable decision.
+  // Each SECTION inside the room additionally re-checks its own domain action (`approval:read`, `stop:read`,
+  // `usage:read`), unchanged and un-widened; a section the caller lacks renders as `restricted`, never as empty.
+  'decision_room:read',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -368,6 +376,11 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // (and in `usage:correct`'s case alter) the account's spend.
   'usage:read': ['owner'],
   'usage:correct': ['owner'],
+  // Decision Room entry (ACBP-P6-008; CDR-076 §3-G2; DEC-001): any active COMPANY member (owner|viewer) — exactly
+  // `activity:read`'s allow-list, and deliberately not one role wider. The room composes reads the member already
+  // has; the owner-only surfaces inside it (usage) keep their own owner-only action and render as `restricted`,
+  // so entering the room can never become a back door around a narrower action.
+  'decision_room:read': ['owner', 'viewer'],
 };
 
 /**

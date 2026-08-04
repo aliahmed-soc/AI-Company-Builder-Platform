@@ -48,3 +48,6 @@ export * from './idempotency/index.js';
 // Usage caps: the total, value-free cap decision shared by the gateway and the dispatcher. Blocks at `spent >=
 // limit` so NFR-015's one-increment overrun bound holds; an unreadable total halts (ACBP-P6-010; CDR-075).
 export * from './limits/index.js';
+// Decision Room: the ten queues, and the tri-state section that keeps "there is nothing here" distinguishable
+// from "this section broke" (ACBP-P6-008; CDR-076 §0; DEC-001, ACT-003/004; invariant 20).
+export * from './decision-room/index.js';

@@ -13,7 +13,7 @@
 //      artifact would satisfy a naive count check while proving nothing about the work this task did.
 //   3. The state change and its audit row are ONE transaction (ADR-015, audit-or-nothing). A completion nobody can
 //      later account for is the record failing at the one moment it matters.
-import { ArtifactRepository, TaskRepository, TaskRunRepository, writeAuditEvent, type DatabaseClient } from '@acbp/database';
+import { ArtifactRepository, TaskRepository, TaskRunRepository, writeAuditEvent, projectCompanyActivity, type DatabaseClient, type ActivityWriteFn } from '@acbp/database';
 import { completionArtifactCount, isLegalTaskTransition, isTaskState, taskCompleted, validateCompletionEvidence, type CompletionEvidence, type CompletionRefusal } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -23,6 +23,8 @@ export interface CompleteTaskOptions {
   readonly correlationId?: string;
   readonly logger?: Logger;
   readonly auditWriter?: typeof writeAuditEvent;
+  /** TEST SEAM ONLY: override the in-tx activity projector (ACBP-P6-008), same fail-closed contract as audit. */
+  readonly activityWriter?: ActivityWriteFn;
 }
 
 export interface CompleteTaskParams {
@@ -100,7 +102,13 @@ export async function completeTask(client: DatabaseClient, params: CompleteTaskP
       if (updated !== 1) return { status: 'illegal_transition', from: task.state };
 
       const artifactCount = completionArtifactCount(evidence);
-      await audit(scope, taskCompleted({ taskId: params.taskId, runId: params.runId, artifactCount, hasNoArtifactRationale: evidence.kind === 'no_artifact' }));
+      // THE COMPLETION A FOUNDER ACTUALLY SEES (ACBP-P6-008). It is projected only here — after the evidence
+      // check and the guarded transition — so the feed inherits TASK-005's guarantee rather than restating it:
+      // there is no path that writes "completed" to the feed for work that produced neither an artifact nor a
+      // reason for having none.
+      const completedEvent = taskCompleted({ taskId: params.taskId, runId: params.runId, artifactCount, hasNoArtifactRationale: evidence.kind === 'no_artifact' });
+      const auditEventId = await audit(scope, completedEvent);
+      await (options.activityWriter ?? projectCompanyActivity)(scope, completedEvent, auditEventId);
       return { status: 'ok', artifactCount };
     },
     optionsFor(options),

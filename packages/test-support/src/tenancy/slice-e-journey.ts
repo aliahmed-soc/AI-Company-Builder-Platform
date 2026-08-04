@@ -328,18 +328,21 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   // ── 10. the trail: activity + audit, carrying no content ───────────────────────────────────────────────
   const activity = await ops.getCompanyActivity(product, { ...ids, limit: 50 });
   if (activity.status !== 'ok' || activity.page === undefined) return bail('activity feed reads', 'ACT-001', `expected ok, got ${activity.status}`);
-  // THE HONEST ASSERTION, and the first draft of this step got it wrong. `ACTIVITY_TYPES` is exactly
-  // ['company.created','company.updated','company.paused','company.resumed'] — NO task, run or execution event
-  // projects into the founder-facing feed. A "the feed is non-empty" check therefore passed on the `company.created`
-  // event left by SEEDING, while the step claimed the feed recorded the run. It did not, and does not.
+  // THE STEP THAT CHANGED WHEN ACBP-P6-008 SHIPPED, and the way it changed is the point.
   //
-  // So this asserts what is actually true: execution is fully AUDITED, and the activity feed does not yet show it.
-  // Asserting the ABSENCE is deliberate — if someone widens the taxonomy to project execution, this step goes red and
-  // forces the claim to be re-examined rather than silently becoming an overstatement again. P5-013 already widened
-  // ACTIVITY_TYPES once without a migration; the divergence was caught and reverted (see the contract's own note).
+  // It used to assert the ABSENCE of execution in the feed. That was the honest reading at the time: the taxonomy
+  // was the four `company.*` events, so a "the feed is non-empty" check passed on the `company.created` event left
+  // by SEEDING while the step claimed the feed recorded the run — it did not. Asserting the absence was deliberate,
+  // so that widening the taxonomy would turn this step RED and force the claim to be restated rather than let an
+  // overstatement quietly become true-by-accident. CDR-076 §7 widened it; this is the restatement.
+  //
+  // What is asserted now is the same shape of claim, pointed the other way: the run this journey performed must be
+  // VISIBLE to the founder, by name, not merely present in an audit table they cannot read.
   const executionInFeed = activity.page.items.filter((i) => !i.type.startsWith('company.'));
-  if (executionInFeed.length > 0) {
-    return bail('activity feed scope is as documented', 'ACT-001', `the feed now projects ${executionInFeed.map((i) => i.type).join(', ')} — execution events reached the founder-facing feed, so this journey's "audited but not yet shown" claim is out of date and P6-008's scope has moved`);
+  const feedTypes = new Set(executionInFeed.map((i) => i.type));
+  const unseen = ['task.created', 'task.started', 'task.completed'].filter((t) => !feedTypes.has(t));
+  if (unseen.length > 0) {
+    return bail('the founder can SEE the run in their feed', 'ACT-001', `the feed is missing ${unseen.join(', ')} — the run happened and the founder's window on it is blank (saw: ${[...feedTypes].join(', ') || 'nothing but company lifecycle'})`);
   }
 
   const events = await sql<{ name: string }>`select name from audit_events where company_id = ${companyId}::uuid order by occurred_at, event_id`.execute(owner.kysely);
@@ -354,7 +357,17 @@ export async function runSliceEJourney(deps: SliceEJourneyDeps): Promise<{ reado
   const forbidden = [QUESTION, 'Size the UK independent gym market', 'UK independent gym market', SOURCE_A.url, SOURCE_A.content, 'Growth is expected to continue next year.'];
   const leaked = forbidden.filter((needle) => payloads.rows.some((r) => r.blob.includes(needle)));
   if (leaked.length > 0) return bail('audit payloads carry no content', 'NFR-008', `content leaked into audit metadata: ${leaked.join(' | ')}`);
-  record('the run is fully audited, carries no content, and is NOT yet in the founder-facing feed', 'ACT-002 / NFR-008', true, `${names.length} audit event(s) — ${expected.length} required names present, 0 content leaks. The activity feed holds ${activity.page.items.length} item(s), all company-lifecycle: ACTIVITY_TYPES projects no execution event, so a founder cannot yet SEE this run in their feed (P6-008 owns that)`);
+  // The feed must show the run WITHOUT showing what the run was about. Both halves are checked against the exact
+  // strings this journey authored, so a rename in the fixture cannot make either half vacuously pass.
+  const feedBlob = JSON.stringify(activity.page.items);
+  const feedLeak = forbidden.filter((needle) => feedBlob.includes(needle));
+  if (feedLeak.length > 0) return bail('the feed carries no content', 'NFR-008', `content reached the founder-facing feed: ${feedLeak.join(' | ')}`);
+  record(
+    'the run is fully audited, carries no content, and the founder can SEE it in their feed',
+    'ACT-001 / ACT-002 / NFR-008',
+    true,
+    `${names.length} audit event(s) — ${expected.length} required names present, 0 content leaks. The feed holds ${activity.page.items.length} item(s) including ${[...feedTypes].sort().join(', ')}: execution is now visible to the founder (ACBP-P6-008 / CDR-076 §7), still with no content in any summary`,
+  );
 
   // ── 11. revision (J-13) — and it charges NOTHING at request time ───────────────────────────────────────
   const balanceBeforeRevision = ledger.balance;

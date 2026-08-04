@@ -71,9 +71,11 @@ ticket without a DONE line above it is genuinely in flight._
   ADMIN-001, TASK-009, TASK-006, USAGE-001; ADR-009/ADR-010; **M6's exit criterion**). Branch
   `p6-012-slice-f-integration`, **no migration, and no production code at all** — the ticket is composed
   evidence, not new behaviour (CDR-077 §3-G11).
-  - **Branched from `main`, NOT from `p6-008-decision-room`.** P6-008 is a pushed draft PR (#71) awaiting the
-    owner's merge gate, and Slice F depends on none of it — it sits on policy, approvals, stops, idempotency
-    and usage, all already in `main`. The two do not conflict, but they also do not verify each other.
+  - **Branched from `main` before P6-008, and `main` was merged INTO it after P6-008 landed** (`1f4acaa`).
+    Slice F depends on none of the Decision Room — it sits on policy, approvals, stops, idempotency and usage,
+    all of which predate it — so the two verified each other only at this merge, not before it. A rebase was
+    NOT used: the branch was already pushed, and rewriting pushed history is not authorized. The squash merge
+    collapses the merge commit anyway.
   - **What it adds that the five mechanism suites do not** (CDR-077 §0). Every scenario already has a dedicated
     real-PostgreSQL suite; re-running those assertions would cost time and yield nothing. What nothing tested is
     that the controls hold TOGETHER in one company's continuous lifetime: a deny that still refuses with a live
@@ -98,13 +100,62 @@ ticket without a DONE line above it is genuinely in flight._
     log, and the DB preflight step (which fails if the integration suites would silently skip) passed. Local
     gate matched it exactly: typecheck, lint, secret scan, boundaries, `test:boundaries`, `test`, `run check`,
     `audit --audit-level high` (1 moderate, nothing at or above high) and `diff --check` all exit 0.
-  - **Status is NOT set to Done in `BACKLOG.csv`** — that, marking PR #72 ready, and merging are owner gates.
+  - **Backlog row flipped to Done in this branch**, following this repository's convention that the Status flip
+    rides in the ticket's own commit before the squash (as `f540fec` did for P6-010). The owner authorized the
+    finalization sequence for PR #71 and PR #72 on 2026-08-04.
 
-- **BACKLOG.csv drift, found while checking P6 completion and deliberately NOT fixed here.** `ACBP-P6-003`,
-  `ACBP-P6-004`, `ACBP-P6-005` and `ACBP-P6-008` all still read `Planned`. The first three are merged in `main`
-  (`9e339a3`, `7a5a9ea`, `7b4cc32`); P6-008 is draft PR #71, exact-head CI green. Setting a row to Done is an
-  owner gate and this is outside the active ticket's scope, so it is reported rather than edited. `ACBP-P6-002`
-  is separately and correctly marked OPEN — its evaluation point 1 is owner-gated by CDR-067 §1.
+- **BACKLOG.csv drift, still open and deliberately NOT fixed here.** `ACBP-P6-003`, `ACBP-P6-004` and
+  `ACBP-P6-005` read `Planned` for work that is merged in `main` (`9e339a3`, `7a5a9ea`, `7b4cc32`). The owner's
+  authorization named this ticket's row and P6-008's, so those three are reported rather than edited — setting
+  a row to Done is an owner gate and they are outside the authorized scope. `ACBP-P6-002` is separately and
+  correctly marked OPEN: its evaluation point 1 is owner-gated by CDR-067 §1.
+
+- **ACBP-P6-008 Decision Room and activity completion — DONE** (CDR-076; DEC-001, ACT-001/003/004/005; ADR-015;
+  invariant 20; trust-critical #18). Merged as squash **`1f4acaa`**, PR #71, migration **0053**. Exact-head CI
+  [`30928545553`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30928545553) on
+  `868e68a` and exact-main
+  [`30929427397`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30929427397) on
+  `1f4acaa` both green with **ZERO SKIPS** (250 files / 3562 tests, no `N skipped` line in either job log, DB
+  preflight passed in both). Branch deleted local + remote **after** verifying the tip's tree is byte-identical
+  in `main` (`112c582b…` on both `868e68a` and `1f4acaa`) — ancestry is the wrong check across a squash merge.
+  **NOT closed by this line:** there is still **no rendered UI** — the room ships as a read model and an API,
+  and hollow-success prevention is enforced at the DTO boundary rather than by a renderer; the room accepts no
+  writes; and there is no dead-letter/job section.
+
+- **ACBP-P6-008 Decision Room and activity completion — working block** (CDR-076; DEC-001, ACT-001/003/004/005;
+  ADR-015; invariant 20; trust-critical #18). Branch `p6-008-decision-room`, **one migration: `0053`** (widens the
+  `activity_events_type_valid` CHECK; no new table, so no reset-list change).
+
+  - **THE TWO THINGS THIS TICKET IS ACTUALLY ABOUT.** (1) The Decision Room composes ten queues from existing
+    entities and refuses two specific lies: a `completed` task with no succeeded run cannot be returned at all
+    (invariant 20 is an `EXISTS` in the SQL, not a filter afterwards), and a section that failed or that the
+    caller may not read carries `count: null` rather than `0` — *"nothing needs your decision"* and *"we could
+    not tell you"* must not render identically. (2) Execution finally reaches the founder-facing activity feed.
+  - **Per-section SAVEPOINTS are the load-bearing mechanism**, not a refinement. One transaction with a
+    per-section `try/catch` would let the first failed statement abort the transaction, and the other nine
+    sections would then report nothing — an empty room that looks calm. The suite forces a section to fail and
+    asserts the other nine still answer with their real counts.
+  - **The live channel is poll-backed and says so in every message.** There is no outbox and no LISTEN/NOTIFY in
+    this system, so calling it push would claim a mechanism that does not exist. It re-authorizes on EVERY tick
+    through the same request path a plain GET uses (a membership revoked mid-stream ends the stream at the next
+    tick), never opens for an unauthorized caller (the first read happens before any 200 is written), carries
+    counts and a digest but never item payloads, and always ends with a named `closed` reason.
+  - **Activity completion (CDR-076 §7)** — the gap PROJECT-STATE recorded below at "P6-008 owns the fix". Seven
+    new projected types with all four required changes made together for each (contract type, CHECK, summary
+    allowlist, call site). ACT-003's marking stopped being decorative: `executionStateFor` was a constant, and
+    `approval.requested` is the first genuine PROPOSAL in the feed. **No backfill** — 0053 widens forward only.
+  - **CDR-076 §4's "no new activity taxonomy" bullet is struck through by §7 of the same document.** Deferring it
+    would have been a silent reduction of the ticket's named scope ("Decision Room and *activity completion*").
+  - **NOT closed by this ticket:** no rendered UI (the repository is API-first and a first UI would be
+    unreviewable against the trust criteria in the same pass — hollow-success prevention is therefore enforced at
+    the DTO boundary, where no renderer can display what the contract cannot represent); no writes from the room;
+    no dead-letter/job section.
+  - **Local gate green** at `25e8840`: `pnpm test` **250 files / 3562 tests, ZERO SKIPS** against real
+    PostgreSQL; typecheck, lint, `check:secrets`, `check:boundaries`, `test:boundaries` (51) all clean.
+    **Exact-head hosted CI [`30918231209`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30918231209)
+    on `4bab40f` is green with ZERO SKIPS** — the same 250 files / 3562 tests, no `N skipped` line in the job
+    log, DB preflight passed. The finalization commit that flips this ticket's backlog row moves the head, so
+    the run proving the MERGED SHA is named on the DONE line above rather than here.
 
 - **ACBP-P6-010 Limits and alerts — DONE** (CDR-075; NFR-015, POL-001; ADR-010/ADR-013; CDR-008's interim
   values). Merged as squash `f540fec`, PR #70, **no migration** — the ledger it reads is ACBP-P6-009's.
@@ -490,7 +541,9 @@ ticket without a DONE line above it is genuinely in flight._
   **A finding worth carrying forward:** `ACTIVITY_TYPES` is only the four `company.*` events, so **no execution
   event reaches the founder-facing activity feed at all**. The first draft of step 10 claimed the feed recorded
   the run and passed — on the `company.created` event left by seeding. The step now asserts the *absence*, so
-  widening the taxonomy turns it red instead of quietly restoring the overstatement. P6-008 owns the fix.
+  widening the taxonomy turns it red instead of quietly restoring the overstatement. **CLOSED by ACBP-P6-008
+  (CDR-076 §7): the taxonomy was widened, the step went red exactly as designed, and it now asserts the opposite —
+  that `task.created`, `task.started` and `task.completed` ARE in the founder's feed, still with no content.**
   Guard demonstrated, not assumed: feeding the fabricated-citation step a valid document turns it red
   (`expected uncertified, got ok`).
   Locally verified. **CI-CONFIRMED 2026-07-31 as part of main's tip**, run `30632188407` on `4c12da3`, which
@@ -1320,7 +1373,8 @@ ticket without a DONE line above it is genuinely in flight._
   under the same restricted `acbp_app` CompanyScope; `audit_events` authoritative; **no outbox/async/worker/
   checkpoint/lease/owner-connection/4th SECURITY DEFINER**; `activity:read` = owner|viewer company member; keyset
   pagination (occurred_at DESC, event_id DESC; opaque versioned cursor; default 25/max 100); honest `as_of`;
-  **API-only** `GET /api/companies/[companyId]/activity`; no rendered page, no SSE (SSE deferred to P6-008).
+  **API-only** `GET /api/companies/[companyId]/activity`; no rendered page, no SSE (SSE deferred to P6-008, which
+  shipped it as a POLL-BACKED channel on the Decision Room — there is still no outbox).
 
 ## Concurrent work — DO NOT TOUCH
 - **PR #10** `p1-004-last-owner-race-fix` (separate session, now deleted) is **OPEN/unmerged**, base main. Its

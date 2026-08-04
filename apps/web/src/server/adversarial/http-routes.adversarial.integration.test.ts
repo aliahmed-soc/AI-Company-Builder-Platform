@@ -104,6 +104,8 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   let companyRoute: ParamRoute<{ companyId: string }>;
   let pauseRoute: ParamPostRoute<{ companyId: string }>;
   let activityRoute: ParamRoute<{ companyId: string }>;
+  let decisionRoomRoute: ParamRoute<{ companyId: string }>;
+  let decisionRoomStreamRoute: ParamRoute<{ companyId: string }>;
   let provisioningRoute: ParamRoute<{ companyId: string }>;
   let adminReadRoute: ParamPostRoute<{ accountId: string; companyId: string }>;
 
@@ -127,6 +129,8 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     companyRoute = await import('../../app/api/companies/[companyId]/route.js');
     pauseRoute = await import('../../app/api/companies/[companyId]/pause/route.js');
     activityRoute = await import('../../app/api/companies/[companyId]/activity/route.js');
+    decisionRoomRoute = await import('../../app/api/companies/[companyId]/decision-room/route.js');
+    decisionRoomStreamRoute = await import('../../app/api/companies/[companyId]/decision-room/stream/route.js');
     provisioningRoute = await import('../../app/api/companies/[companyId]/provisioning/route.js');
     adminReadRoute = await import('../../app/api/admin/accounts/[accountId]/companies/[companyId]/read/route.js');
   }, 90_000);
@@ -248,6 +252,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       const responses = [
         await companyRoute.GET(new Request(`https://app.test/api/companies/${companyId}`), { params: Promise.resolve({ companyId }) }),
         await activityRoute.GET(new Request(`https://app.test/api/companies/${companyId}/activity`), { params: Promise.resolve({ companyId }) }),
+        await decisionRoomRoute.GET(new Request(`https://app.test/api/companies/${companyId}/decision-room`), { params: Promise.resolve({ companyId }) }),
         await provisioningRoute.GET(new Request(`https://app.test/api/companies/${companyId}/provisioning`), { params: Promise.resolve({ companyId }) }),
         await pauseRoute.POST(jsonRequest(`https://app.test/api/companies/${companyId}/pause`), { params: Promise.resolve({ companyId }) }),
       ];
@@ -294,6 +299,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     const responses = [
       await companyRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}`), { params: Promise.resolve({ companyId: w.companyA1 }) }),
       await activityRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/activity`), { params: Promise.resolve({ companyId: w.companyA1 }) }),
+      await decisionRoomRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/decision-room`), { params: Promise.resolve({ companyId: w.companyA1 }) }),
       await provisioningRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/provisioning`), { params: Promise.resolve({ companyId: w.companyA1 }) }),
       await pauseRoute.POST(jsonRequest(`https://app.test/api/companies/${w.companyA1}/pause`), { params: Promise.resolve({ companyId: w.companyA1 }) }),
     ];
@@ -304,6 +310,59 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       for (const forbidden of ['Alpha One', 'Alpha Two', w.accountA, w.aOwner, 'select', 'constraint', 'pg_', 'stack']) {
         expect(text.toLowerCase()).not.toContain(forbidden.toLowerCase());
       }
+    }
+  });
+
+  // ── ACBP-P6-008: the Decision Room and its live channel ────────────────────────────────────────────
+  test('[SCOPE-SELECTOR-HARVESTED] the LIVE CHANNEL never opens for a caller who may not read the room', async () => {
+    // The dangerous shape for a stream is "200 text/event-stream, then close": to a browser that is a network
+    // blip, so a client retries forever and a denial is never surfaced. An unauthorized caller must get the
+    // ORDINARY JSON denial instead, and no stream body at all.
+    for (const [user, companyId] of [
+      [w.outsider, w.companyA1],
+      [w.bOwner, w.companyA1],
+      [w.platformAdmin, w.companyA1],
+    ] as const) {
+      await signInAs(user);
+      const res = await decisionRoomStreamRoute.GET(new Request(`https://app.test/api/companies/${companyId}/decision-room/stream`), { params: Promise.resolve({ companyId }) });
+      expect([401, 403, 404], `${user} must not open a stream`).toContain(res.status);
+      expect(res.headers.get('content-type') ?? '', 'a denied caller must not receive an event stream').not.toContain('text/event-stream');
+      const text = await res.text();
+      expect(Object.keys(JSON.parse(text) as Record<string, unknown>)).toEqual(['error']);
+      expect(text).not.toContain('Alpha One');
+    }
+  });
+
+  test('a member gets the whole room — ten sections, and the stream opens and carries NO item payload', async () => {
+    await signInAs(w.aOwner);
+    const res = await decisionRoomRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/decision-room`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { room: { sections: { queue: string; status: string }[]; integrity: unknown; digest: string } };
+    expect(body.room.sections).toHaveLength(10);
+    expect(body.room.sections.every((s) => s.status !== 'unavailable'), 'a healthy read must not degrade any section').toBe(true);
+
+    const stream = await decisionRoomStreamRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/decision-room/stream?intervalMs=2000`), {
+      params: Promise.resolve({ companyId: w.companyA1 }),
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get('content-type')).toContain('text/event-stream');
+    const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
+    try {
+      const first = new TextDecoder().decode((await reader.read()).value);
+      expect(first).toContain('event: room');
+      expect(first).toContain('"deliveryMode":"poll_backed"');
+      expect(first, 'the wire carries counts, never queue payloads').not.toContain('"items"');
+      expect(first).not.toContain('Alpha One');
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  test('the room refuses a query surface: a caller cannot ask for a subset that looks like a whole room', async () => {
+    await signInAs(w.aOwner);
+    for (const qs of ['?queue=results', '?limit=1', `?companyId=${w.companyB1}`]) {
+      const res = await decisionRoomRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/decision-room${qs}`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+      expect(res.status, `query '${qs}' must be rejected outright`).toBe(400);
     }
   });
 

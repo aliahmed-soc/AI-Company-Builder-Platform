@@ -8,7 +8,8 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { PublicErrorEnvelope, ActivityPage, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
+import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
+import type { ReadDecisionRoomResult } from '@acbp/core';
 import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult } from '@acbp/core';
 
 export type CompaniesRequestResult =
@@ -27,6 +28,7 @@ export type CompaniesRequestResult =
   | { readonly status: 'renamed'; readonly changed: boolean; readonly version?: number }
   | { readonly status: 'transitioned'; readonly companyStatus: string }
   | { readonly status: 'activity'; readonly page: ActivityPage }
+  | { readonly status: 'decision_room'; readonly room: DecisionRoomView }
   | { readonly status: 'portfolio'; readonly page: PortfolioPage }
   | { readonly status: 'provisioning'; readonly provisioning: ProvisioningStatusDTO }
   | { readonly status: 'interview'; readonly session: InterviewSessionDTO }
@@ -49,6 +51,7 @@ export interface CompanyRuntime {
   pauseCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
   resumeCompany(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<StatusTransitionResult>;
   getCompanyActivity(params: { userId: string; accountId: string; companyId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetActivityResult>;
+  readDecisionRoom(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ReadDecisionRoomResult>;
   getCompanyPortfolio(params: { userId: string; accountId: string; cursor?: unknown; limit?: unknown }, options?: { logger?: Logger }): Promise<GetPortfolioResult>;
   getProvisioningStatus(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<GetProvisioningResult>;
   resumeProvisioning(params: { userId: string; accountId: string; companyId: string }, options?: { logger?: Logger }): Promise<ResumeProvisioningResult>;
@@ -192,6 +195,27 @@ export async function getCompanyActivityForRequest(companyId: string, query: { c
       return { status: 'forbidden' };
     case 'invalid_cursor':
       return { status: 'invalid_cursor' };
+  }
+}
+
+/**
+ * Read the Decision Room (ACBP-P6-008; DEC-001). accountId + userId are server-resolved; companyId is a
+ * membership-validated selector. There is no query surface at all: no filters, no cursor, no section selector,
+ * because the room's whole claim is that the ten queues are shown TOGETHER and that a caller cannot be handed a
+ * subset that looks complete.
+ */
+export async function getDecisionRoomForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.readDecisionRoom({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'decision_room', room: r.room };
+    case 'forbidden':
+      // There is no `not_found` arm to map: the domain answers an unknown, foreign and unauthorized company
+      // identically, so this surface cannot become a company-existence oracle.
+      return { status: 'forbidden' };
   }
 }
 

@@ -10,7 +10,7 @@
 // The execution transitions (planned→queued credit reservation, running/holds, terminals) are DEFINED-legal in the
 // contract but their EFFECTS belong to later P5/P6 tickets — this ticket implements only create→draft and draft→planned
 // (the `interview.ts` precedent). No content or PII in any audit metadata; only `{has_milestone}`.
-import { TaskRepository, writeAuditEvent, type DatabaseClient, type AuditScope, type AuditWriteContext, type TaskRow } from '@acbp/database';
+import { TaskRepository, writeAuditEvent, projectCompanyActivity, type DatabaseClient, type AuditScope, type AuditWriteContext, type TaskRow, type ActivityWriteFn } from '@acbp/database';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { taskCreated, isLegalTaskTransition, toTaskDisplayPhase, isTaskState, TASK_TITLE_MAX, TASK_DESCRIPTION_MAX, type AuditEvent, type TaskDTO, type TaskState } from '@acbp/contracts';
@@ -23,6 +23,8 @@ export interface TaskOptions {
   readonly logger?: Logger;
   /** TEST SEAM ONLY: override the in-tx audit writer to force a failure (prove the write rolls back). */
   readonly auditWriter?: AuditWriteFn;
+  /** TEST SEAM ONLY: override the in-tx activity projector (ACBP-P6-008), same fail-closed contract. */
+  readonly activityWriter?: ActivityWriteFn;
 }
 
 /** Map a persisted task row to the redacted client DTO (approved fields only; honest display phase). */
@@ -126,7 +128,12 @@ export async function planTask(client: DatabaseClient, params: PlanTaskParams, o
 
       const updated = await tasks.updateState(params.taskId, from, to);
       if (updated === 0) return { status: 'illegal_transition', from, to }; // raced: the row left `from` before we advanced it
-      await audit(scope, taskCreated({ taskId: params.taskId, hasMilestone: task.milestone_id !== null }), auditCtx(options));
+      // Audit AND feed projection, in this transaction (ACBP-P6-008). The projector is fail-closed: if the
+      // founder-facing row cannot be written, the task does not reach the board either. That is the right way
+      // round — a board entry nobody is told about is the silent-progress failure this feed exists to prevent.
+      const createdEvent = taskCreated({ taskId: params.taskId, hasMilestone: task.milestone_id !== null });
+      const auditEventId = await audit(scope, createdEvent, auditCtx(options));
+      await (options.activityWriter ?? projectCompanyActivity)(scope, createdEvent, auditEventId);
       options.logger?.info('task.created', { metadata: { accountId: params.accountId, companyId: params.companyId, hasMilestone: task.milestone_id !== null } });
       const fresh = await tasks.findById(params.taskId);
       return { status: 'ok', task: toTaskDTO(fresh ?? { ...task, state: to }) };
