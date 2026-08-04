@@ -46,6 +46,7 @@ import {
   type CompanyLifecycleOptions,
 } from '../company/company-lifecycle.js';
 import { getCompanyActivity, type GetActivityParams, type GetActivityResult, type GetActivityOptions } from '../company/activity-service.js';
+import { readDecisionRoom, type ReadDecisionRoomParams, type ReadDecisionRoomResult, type ReadDecisionRoomOptions } from '../decision-room/decision-room-service.js';
 import { getCompanyPortfolio, type GetPortfolioParams, type GetPortfolioResult, type GetPortfolioOptions } from '../company/portfolio-service.js';
 import { getProvisioningStatus, resumeProvisioning, type ProvisioningParams, type GetProvisioningResult, type ResumeProvisioningResult, type ProvisioningOpOptions } from '../company/provisioning-service.js';
 import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, type AdminOpOptions } from '../admin/admin-service.js';
@@ -127,6 +128,11 @@ export interface ClerkIdentityRuntime {
   resumeCompany(params: PauseParams, options?: CompanyLifecycleOptions): Promise<StatusTransitionResult>;
   /** Read a page of the company activity feed (ACBP-P1-009). Owner|viewer company member; keyset-paginated. */
   getCompanyActivity(params: GetActivityParams, options?: GetActivityOptions): Promise<GetActivityResult>;
+  /**
+   * Read the Decision Room (ACBP-P6-008; DEC-001). Owner|viewer company member; always ten queues, each `ok`,
+   * `restricted` or `unavailable` — a section the caller may not read or whose query failed is never an empty one.
+   */
+  readDecisionRoom(params: ReadDecisionRoomParams, options?: ReadDecisionRoomOptions): Promise<ReadDecisionRoomResult>;
   /**
    * Read a page of the caller's company portfolio (ACBP-P1-011; CDR-017). Active account member (owner|viewer);
    * rows are filtered to the actor's ACTIVE company memberships (account ownership grants none). Keyset-paginated;
@@ -236,6 +242,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getCompanyActivity(params, options) {
       return getCompanyActivity(client, params, options ?? {});
+    },
+    readDecisionRoom(params, options) {
+      return readDecisionRoom(client, params, options ?? {});
     },
     getCompanyPortfolio(params, options) {
       return getCompanyPortfolio(client, params, options ?? {});

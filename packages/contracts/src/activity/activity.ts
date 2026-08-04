@@ -5,29 +5,45 @@
 // metadata, and the keyset cursor) — not how it is stored or read. Zero-dependency, pure-ECMAScript (no Buffer,
 // no Node typings) like the rest of @acbp/contracts.
 //
-// Visibility (CDR-016): the feed renders company events ONLY — exactly the four durable company lifecycle events.
-// Account-level audit events (membership.*, company_id NULL), Logger-only events, and any undeclared future event
-// are NOT projectable and never appear. All four company events are EXECUTED facts (ACT-003 marking is present
-// but trivially 'executed' for P1-009's event set).
+// Visibility (CDR-016 + CDR-076 §7): the feed renders COMPANY-SCOPED events only — the four company lifecycle
+// events, plus the task and approval events that make execution visible to the founder whose company performed
+// it. Account-level audit events (membership.*, company_id NULL), Logger-only events, and any undeclared future
+// event are NOT projectable and never appear. ACT-003's marking is real rather than decorative now that
+// `approval.requested` (a PROPOSAL) shares the feed with facts that already happened.
 import { isUlid } from '../audit/ulid.js';
 import { asciiToBase64Url, base64UrlToAscii } from '../codec/base64url.js';
 import type { AuditMetadata } from '../audit/audit.js';
 
 /**
- * The CLOSED set of activity types the feed may render — the four durable company events (CDR-016).
+ * The CLOSED set of activity types the feed may render (CDR-016 + CDR-076 §7).
  *
- * ACT-005 (failure visibility) is NOT served here, and that is deliberate. ACBP-P5-013 added `task.failed` to this
- * set and then found the widening was half a feature: the `activity_events_type_valid` CHECK in migration 0009 still
- * names only these four, nothing calls `projectCompanyActivity` on the failure path, and the projector is
- * FAIL-CLOSED — so the first caller to wire projection correctly would have made every run failure roll back its own
- * audit write. A contract that disagrees with its own database is worse than an absent feature, so the widening was
- * reverted rather than completed unverified.
+ * WIDENING THIS LIST IS THREE CHANGES, NOT ONE, and ACBP-P5-013 is the standing proof of what happens when only
+ * the first is made: it added `task.failed` here with no migration, no call site and no summary entry. Nothing
+ * failed at build time — the projector is fail-closed and only rejects at INSERT, so the first correctly-wired
+ * caller would have made every run failure roll back its own audit write. The widening was reverted.
  *
- * The deferral follows the `interview.started` precedent (P2-001/CDR-022 §4): the event is AUDITED, its feed
- * projection is deferred, and the deferral is recorded in EVENT-CATALOG rather than left to be rediscovered.
- * `activityTypesMatchDatabase` below is the guard that makes this divergence impossible to reintroduce silently.
+ * A new type requires, together: this list, {@link ACTIVITY_TYPES_IN_DATABASE_CHECK} with a migration that moves
+ * the real CHECK, an entry in the summary allowlist (the type is otherwise unrepresentable), and a production
+ * call site that projects it in the source transaction. ACT-005 (failure visibility) is served by `task.failed`;
+ * ACT-003's proposed marking by `approval.requested`.
  */
-export const ACTIVITY_TYPES = ['company.created', 'company.updated', 'company.paused', 'company.resumed'] as const;
+export const ACTIVITY_TYPES = [
+  'company.created',
+  'company.updated',
+  'company.paused',
+  'company.resumed',
+  // ACBP-P6-008 (CDR-076 §7): execution, at last. Until this widening the feed could tell a founder their
+  // company existed and nothing about the work done inside it — every task and approval was audited and
+  // invisible. Each name below is written by exactly one production call site, in the SAME transaction as the
+  // state change it reports, and migration 0053 carries the matching CHECK.
+  'task.created',
+  'task.started',
+  'task.completed',
+  'task.failed',
+  'approval.requested',
+  'approval.approved',
+  'approval.rejected',
+] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 export function isActivityType(value: unknown): value is ActivityType {
   return typeof value === 'string' && (ACTIVITY_TYPES as readonly string[]).includes(value);
@@ -42,10 +58,23 @@ export function isProjectableActivity(auditEventName: unknown): auditEventName i
   return isActivityType(auditEventName);
 }
 
-/** Proposed-vs-executed marking (ACT-003, invariant 20). Every P1-009 company event is an executed fact. */
+/**
+ * Proposed-vs-executed marking (ACT-003, invariant 20).
+ *
+ * THIS FUNCTION WAS A CONSTANT UNTIL ACBP-P6-008, and the marking was therefore decorative: every projectable
+ * event was a company lifecycle fact that had already happened, so `'executed'` was true by accident of the
+ * taxonomy rather than by any decision the code made. `approval.requested` is the first event that is
+ * genuinely a PROPOSAL — an action a run wants to take and has not taken — and it is what makes the
+ * distinction load-bearing: a founder reading their feed must be able to tell "the platform asked to send
+ * three emails" from "the platform sent three emails".
+ *
+ * The default is `'executed'` only because every OTHER name in the taxonomy reports a completed state
+ * transition. A new proposal-shaped event must be added here, and `activity.test.ts` asserts the mapping name
+ * by name so that adding one and forgetting this line fails rather than silently claiming execution.
+ */
 export type ExecutionState = 'proposed' | 'executed';
-export function executionStateFor(_type: ActivityType): ExecutionState {
-  return 'executed';
+export function executionStateFor(type: ActivityType): ExecutionState {
+  return type === 'approval.requested' ? 'proposed' : 'executed';
 }
 
 /**
@@ -59,17 +88,43 @@ const SUMMARY_ALLOWLIST: Readonly<Record<ActivityType, readonly string[]>> = {
   'company.updated': ['changed_fields'],
   'company.paused': [],
   'company.resumed': [],
+  // ACBP-P6-008. Every key below is a BOUNDED value from a closed set or a count — no titles, no descriptions,
+  // no reasons, no provider messages, no ids of other rows. `task.failed` carries `failure_category` and
+  // `retry_state` because both come from `describeRunFailure`'s closed sets, which is what lets ACT-005 show a
+  // failure honestly without ever putting a stack trace or a provider string in front of a founder. `run_id` is
+  // deliberately NOT allowlisted anywhere: the feed is a human-readable trail, not a join key, and the audit
+  // event it is projected from keeps the linkage for anyone entitled to follow it.
+  'task.created': ['has_milestone'],
+  'task.started': ['attempt'],
+  'task.completed': ['artifact_count', 'no_artifact_rationale'],
+  'task.failed': ['attempt', 'failure_category', 'retry_state'],
+  'approval.requested': ['tool_id', 'risk_class', 'scope', 'estimated_cost_credits'],
+  'approval.approved': ['decision_path', 'decider_type'],
+  'approval.rejected': ['decider_type'],
 };
 
 /**
- * The activity-type literals migration 0009's `activity_events_type_valid` CHECK permits.
+ * The activity-type literals the live `activity_events_type_valid` CHECK permits (created in migration 0009,
+ * widened in 0053).
  *
  * DUPLICATED ON PURPOSE, so a test can assert the two agree. ACBP-P5-013 widened {@link ACTIVITY_TYPES} without a
  * migration and nothing caught it: the contracts set and the database constraint diverged silently, and because the
  * projector is fail-closed the divergence would have surfaced as run failures rolling back their own audit writes.
  * A set-equality test over these two lists is a few lines; the alternative was a booby trap.
  */
-export const ACTIVITY_TYPES_IN_DATABASE_CHECK: readonly string[] = ['company.created', 'company.updated', 'company.paused', 'company.resumed'];
+export const ACTIVITY_TYPES_IN_DATABASE_CHECK: readonly string[] = [
+  'company.created',
+  'company.updated',
+  'company.paused',
+  'company.resumed',
+  'task.created',
+  'task.started',
+  'task.completed',
+  'task.failed',
+  'approval.requested',
+  'approval.approved',
+  'approval.rejected',
+];
 
 /** True IFF the contracts taxonomy and the database CHECK still permit exactly the same set. */
 export function activityTypesMatchDatabase(): boolean {

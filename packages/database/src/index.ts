@@ -39,6 +39,24 @@ export type { CompanyExecutor } from './company-repositories.js';
 export { projectCompanyActivity, ActivityFeedRepository } from './activity-repository.js';
 export type { ActivityWriteFn, ActivityExecutor, ActivityKeyset, ActivityFeedRow } from './activity-repository.js';
 
+// Decision Room source reads (ACBP-P6-008; CDR-076; DEC-001). Read-only, company-scoped; the completed-work read
+// carries invariant 20 as an EXISTS over a succeeded run, so an unevidenced completion cannot be returned at all.
+export { DecisionRoomRepository } from './decision-room-repository.js';
+export type {
+  DecisionRoomExecutor,
+  DecisionRoomList,
+  ApprovalRequestSummaryRow,
+  ApprovalDecisionSummaryRow,
+  HeldWorkSummaryRow,
+  TaskSummaryRow,
+  FailedTaskRow,
+  CompletedTaskRow,
+  OpenQuestionRow,
+  StrategyOptionSummaryRow,
+  StrategyDecisionSummaryRow,
+  CompanyUsageTotals,
+} from './decision-room-repository.js';
+
 // Company portfolio read repository (ACBP-P1-011; CDR-017). Account-scoped, membership-filtered keyset listing
 // of the actor's active-membership companies. No name (enriched separately under CompanyScope); reads only.
 export { PortfolioRepository } from './portfolio-repository.js';

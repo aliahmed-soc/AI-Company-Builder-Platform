@@ -32,7 +32,7 @@ import {
   type ApprovalDecisionInput,
   type ApprovalScope,
 } from '@acbp/contracts';
-import { ApprovalRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type ApprovalRequestRow, type ApprovalDecisionRow } from '@acbp/database';
+import { ApprovalRepository, writeAuditEvent, projectCompanyActivity, type DatabaseClient, type AuditWriteContext, type ApprovalRequestRow, type ApprovalDecisionRow, type ActivityWriteFn } from '@acbp/database';
 import { computePayloadBinding } from './binding.js';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
 import { checkAuthorization } from '../authz/authz-service.js';
@@ -43,6 +43,8 @@ export interface ApprovalServiceOptions {
   readonly correlationId?: string;
   readonly logger?: Logger;
   readonly auditWriter?: typeof writeAuditEvent;
+  /** TEST SEAM ONLY: override the in-tx activity projector (ACBP-P6-008), same fail-closed contract as audit. */
+  readonly activityWriter?: ActivityWriteFn;
 }
 
 function opts(options: ApprovalServiceOptions): { correlationId?: string; logger?: Logger; auditWriter?: typeof writeAuditEvent } {
@@ -216,18 +218,19 @@ export async function requestApproval(client: DatabaseClient, params: RequestApp
         policyEvalId: evaluation.evaluationId,
       });
 
-      await audit(
-        scope,
-        approvalRequested({
-          requestId: request.id,
-          toolId: request.tool_id,
-          riskClass: request.risk_class,
-          scope: request.scope,
-          policyVersion: evaluation.policyVersion,
-          estimatedCostCredits: request.estimated_cost_credits,
-        }),
-        auditCtx(options),
-      );
+      // THE ONE PROPOSED FACT IN THE FEED (ACBP-P6-008; ACT-003). Projected as `proposed`, which is what lets a
+      // founder tell "the platform asked to send three emails" from "the platform sent three emails" — a
+      // distinction the feed could not express while every projectable event had already happened.
+      const requestedEvent = approvalRequested({
+        requestId: request.id,
+        toolId: request.tool_id,
+        riskClass: request.risk_class,
+        scope: request.scope,
+        policyVersion: evaluation.policyVersion,
+        estimatedCostCredits: request.estimated_cost_credits,
+      });
+      const requestedAuditId = await audit(scope, requestedEvent, auditCtx(options));
+      await (options.activityWriter ?? projectCompanyActivity)(scope, requestedEvent, requestedAuditId);
       return { status: 'ok', request };
     },
     opts(options),
@@ -397,13 +400,15 @@ export async function decideApproval(client: DatabaseClient, params: DecideAppro
       });
 
       const version = Number(request.policy_version);
-      await audit(
-        scope,
+      // The human's answer, projected next to the proposal it answers (ACBP-P6-008). Rejections are projected
+      // too: a feed that showed approvals and quietly dropped refusals would read as though the platform were
+      // never told no.
+      const decidedEvent =
         parsed.decision.path === 'reject'
           ? approvalRejected({ requestId: request.id, deciderType: parsed.decision.decidedBy.type, policyVersion: version })
-          : approvalApproved({ requestId: request.id, path: parsed.decision.path, deciderType: parsed.decision.decidedBy.type, policyVersion: version }),
-        auditCtx(options),
-      );
+          : approvalApproved({ requestId: request.id, path: parsed.decision.path, deciderType: parsed.decision.decidedBy.type, policyVersion: version });
+      const decidedAuditId = await audit(scope, decidedEvent, auditCtx(options));
+      await (options.activityWriter ?? projectCompanyActivity)(scope, decidedEvent, decidedAuditId);
 
       // `authorizes` is computed from the DECISION, at the decision's own instant, by the same pure function the
       // dispatcher uses — so "did this authorize?" has one answer, not one per caller.

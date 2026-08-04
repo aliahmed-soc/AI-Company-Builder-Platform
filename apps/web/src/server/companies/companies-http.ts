@@ -115,6 +115,11 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
         sourceThrough: result.page.sourceThrough,
         lagSeconds: result.page.lagSeconds,
       });
+    case 'decision_room':
+      // The whole room in one body: ten sections, each carrying its own status, so a client cannot render a
+      // section it never received. `integrity` and `usage` are part of the room, not a separate endpoint —
+      // splitting them would let a UI show the queues while silently dropping the unverified-completion count.
+      return jsonResponse(200, { room: result.room });
     case 'portfolio':
       // The typed portfolio page: redacted items {companyId,name,status,role,createdAt} + the opaque nextCursor.
       // No accountId, actor ids, totals, metrics or aggregates (CDR-017 §9).

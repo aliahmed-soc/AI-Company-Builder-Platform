@@ -7,7 +7,7 @@
 // EVERY MUTATION IS GUARDED on the state the caller believed the run was in. A coordinator, a worker and an owner can
 // all act on one run at the same moment, and the guard is what turns "someone else already decided" into a reported
 // outcome instead of a silent overwrite.
-import { TaskRunRepository, TaskRepository, WorkerRunRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type TaskRunRow } from '@acbp/database';
+import { TaskRunRepository, TaskRepository, WorkerRunRepository, writeAuditEvent, projectCompanyActivity, type DatabaseClient, type AuditWriteContext, type TaskRunRow, type ActivityWriteFn } from '@acbp/database';
 import {
   canStartRunForTask,
   canTransitionRun,
@@ -31,9 +31,16 @@ export interface CoordinatorOptions {
   readonly correlationId?: string;
   readonly logger?: Logger;
   readonly auditWriter?: typeof writeAuditEvent;
+  /** TEST SEAM ONLY: override the in-tx activity projector (ACBP-P6-008), same fail-closed contract as audit. */
+  readonly activityWriter?: ActivityWriteFn;
   /** Injected so liveness is reproducible in tests and identical across a sweep. Defaults to the real clock. */
   readonly now?: Date;
   readonly heartbeatGraceMs?: number;
+}
+
+/** The in-transaction feed projector for this module's events (ACBP-P6-008; fail-closed, like the audit write). */
+function project(options: CoordinatorOptions): ActivityWriteFn {
+  return options.activityWriter ?? projectCompanyActivity;
 }
 
 interface ScopeParams {
@@ -127,7 +134,9 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
       // loud failure. The throw rolls back the claim, leaving no half-started run.
       if (started === undefined) throw new Error('task run claimed but could not be started — invariant violated');
 
-      await audit(scope, taskStarted({ taskId: params.taskId, runId: claimed.id, attempt: params.attempt }), auditCtx(options));
+      const startedEvent = taskStarted({ taskId: params.taskId, runId: claimed.id, attempt: params.attempt });
+      const startedAuditId = await audit(scope, startedEvent, auditCtx(options));
+      await project(options)(scope, startedEvent, startedAuditId);
       return { status: 'ok', run: toRunDTO(started) };
     },
     opts(options),
@@ -227,19 +236,19 @@ async function finish(client: DatabaseClient, params: FinishRunParams, nextState
       if (updated === undefined) return { status: 'not_running' };
 
       if (nextState === 'failed') {
-        await audit(
-          scope,
-          // The retry state comes from the SAME function the run read uses (ACBP-P5-013), so the audit trail and
-          // what a founder is shown can never disagree about whether another attempt is coming.
-          taskFailed({
-            taskId: updated.task_id,
-            runId: updated.id,
-            attempt: updated.attempt,
-            failureCategory: params.failureCategory as RunFailureCategory,
-            retryState: retryStateFor(updated.attempt, params.failureCategory),
-          }),
-          auditCtx(options),
-        );
+        // The retry state comes from the SAME function the run read uses (ACBP-P5-013), so the audit trail and
+        // what a founder is shown can never disagree about whether another attempt is coming.
+        const failedEvent = taskFailed({
+          taskId: updated.task_id,
+          runId: updated.id,
+          attempt: updated.attempt,
+          failureCategory: params.failureCategory as RunFailureCategory,
+          retryState: retryStateFor(updated.attempt, params.failureCategory),
+        });
+        const auditEventId = await audit(scope, failedEvent, auditCtx(options));
+        // ACT-005: the failure reaches the FOUNDER, not just the audit store. This projection is why the feed
+        // can no longer show a company where nothing ever goes wrong.
+        await project(options)(scope, failedEvent, auditEventId);
       }
       return { status: 'ok', run: toRunDTO(updated) };
     },
@@ -364,17 +373,18 @@ export async function reclaimLostRuns(client: DatabaseClient, params: ReclaimLos
         // The guard did not match: the worker came back and finished, or an owner cancelled, between the read and the
         // write. That is a normal race and the other outcome wins — reclaiming anyway would overwrite a real result.
         if (failed === undefined) continue;
-        await audit(
-          scope,
-          taskFailed({
-            taskId: failed.task_id,
-            runId: failed.id,
-            attempt: failed.attempt,
-            failureCategory: 'worker_lost',
-            retryState: retryStateFor(failed.attempt, 'worker_lost'),
-          }),
-          auditCtx(options),
-        );
+        // A REAPED RUN IS STILL A FAILURE THE FOUNDER OWNS. Projecting here too is what stops the feed from
+        // being honest about failures a worker reported and silent about the ones where the worker vanished —
+        // the second kind being the one most worth seeing.
+        const reapedEvent = taskFailed({
+          taskId: failed.task_id,
+          runId: failed.id,
+          attempt: failed.attempt,
+          failureCategory: 'worker_lost',
+          retryState: retryStateFor(failed.attempt, 'worker_lost'),
+        });
+        const reapedAuditId = await audit(scope, reapedEvent, auditCtx(options));
+        await project(options)(scope, reapedEvent, reapedAuditId);
 
         // REAP THE WORKER RUN TOO (ACBP-P5-005, review pass 2). A reclaimed attempt's worker run would otherwise sit
         // at `running` for ever: no `worker.failed` record of how it ended, and a permanent entry in the safe-stop
