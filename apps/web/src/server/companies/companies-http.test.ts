@@ -1,5 +1,6 @@
 // ACBP-P1-010 — unit tests for companies HTTP mapping + bounded body parsing.
 import { describe, test, expect } from 'vitest';
+import { DECISION_ROOM_QUEUES, okSection, nonAnsweringSection, type DecisionRoomView } from '@acbp/contracts';
 import { parseCreateCompanyBody, parseRenameCompanyBody, toCompaniesResponse, MAX_COMPANIES_BODY_BYTES } from './companies-http.js';
 import type { CompaniesRequestResult } from './companies-request.js';
 
@@ -30,6 +31,14 @@ describe('body parsing', () => {
   });
 });
 
+const ROOM: DecisionRoomView = {
+  sections: DECISION_ROOM_QUEUES.map((q) => (q === 'blocked_work' ? nonAnsweringSection(q, 'restricted') : okSection(q, [], 0))),
+  integrity: { unverifiedCompletions: 2 },
+  usage: { status: 'restricted', figures: null },
+  asOf: '2026-08-01T00:00:00.000Z',
+  digest: 'd1',
+};
+
 describe('toCompaniesResponse', () => {
   const cases: ReadonlyArray<[CompaniesRequestResult, number]> = [
     [{ status: 'created', companyId: 'co', companyStatus: 'draft', creationMode: 'own_idea' }, 201],
@@ -38,6 +47,7 @@ describe('toCompaniesResponse', () => {
     [{ status: 'transitioned', companyStatus: 'paused' }, 200],
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],
     [{ status: 'activity', page: { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } }, 200],
+    [{ status: 'decision_room', room: ROOM }, 200],
     [{ status: 'portfolio', page: { items: [], nextCursor: null } }, 200],
     [{ status: 'provisioning', provisioning: { companyId: 'co', companyStatus: 'onboarding', steps: [], nextIncompleteStep: null, resumable: false, exhausted: false, completed: false } }, 200],
     [{ status: 'interview', session: { sessionId: 's', companyId: 'co', state: 'in_progress', phase: 'in_progress', startedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' } }, 200],
@@ -80,6 +90,20 @@ describe('toCompaniesResponse', () => {
     const res = toCompaniesResponse({ status: 'portfolio', page: { items: [item], nextCursor: 'nc' } });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ items: [item], nextCursor: 'nc' });
+  });
+
+  // ACBP-P6-008 — the room travels WHOLE or not at all.
+  test('decision_room returns all ten sections WITH their statuses, plus integrity and usage', async () => {
+    const res = toCompaniesResponse({ status: 'decision_room', room: ROOM });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { room: DecisionRoomView };
+    expect(body.room.sections.map((s) => s.queue)).toEqual([...DECISION_ROOM_QUEUES]);
+    // A restricted section arrives as restricted with a NULL count — it must not reach a client looking empty.
+    const restricted = body.room.sections.find((s) => s.queue === 'blocked_work');
+    expect(restricted).toMatchObject({ status: 'restricted', count: null, items: [] });
+    // The integrity counter is part of the room, never an optional extra a client can forget to fetch.
+    expect(body.room.integrity).toEqual({ unverifiedCompletions: 2 });
+    expect(body.room.usage).toEqual({ status: 'restricted', figures: null });
   });
 
   test('invalid_limit is a 400 (rejected, never clamped)', async () => {

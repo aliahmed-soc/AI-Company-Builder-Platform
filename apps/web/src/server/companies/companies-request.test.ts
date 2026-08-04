@@ -1,5 +1,6 @@
 // ACBP-P1-010 — unit tests for the authenticated companies request use cases (injected deps; no Clerk/DB).
 import { describe, test, expect } from 'vitest';
+import { DECISION_ROOM_QUEUES, okSection, type DecisionRoomView } from '@acbp/contracts';
 import type { VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import {
   createCompanyForRequest,
@@ -8,6 +9,7 @@ import {
   pauseCompanyForRequest,
   resumeCompanyForRequest,
   getCompanyActivityForRequest,
+  getDecisionRoomForRequest,
   getPortfolioForRequest,
   getProvisioningForRequest,
   resumeProvisioningForRequest,
@@ -46,6 +48,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     pauseCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'paused' }),
     resumeCompany: () => Promise.resolve({ status: 'ok', companyStatus: 'active' }),
     getCompanyActivity: () => Promise.resolve({ status: 'ok', page: EMPTY_PAGE }),
+    readDecisionRoom: () => Promise.resolve({ status: 'ok', room: EMPTY_ROOM }),
     getCompanyPortfolio: () => Promise.resolve({ status: 'ok', page: EMPTY_PORTFOLIO }),
     getProvisioningStatus: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
     resumeProvisioning: () => Promise.resolve({ status: 'ok', provisioning: PROVISIONING_DTO }),
@@ -70,6 +73,13 @@ const QA_DTO = { sessionId: 'sess_1', items: [] as const };
 const MEMORY_DTO = { memoryItemId: 'mem_1', type: 'user_fact' as const, content: 'hi', sourceType: 'interview_answer' as const, sourceRef: 'q1:1', confidence: null, confirmationState: 'proposed' as const, supersededBy: null, createdAt: '2026-01-01T00:00:00.000Z' };
 const EMPTY_PAGE = { items: [], nextCursor: null, projectionMode: 'synchronous', asOf: '2026-07-22T00:00:00.000Z', sourceThrough: null, lagSeconds: 0 } as const;
 const EMPTY_PORTFOLIO = { items: [], nextCursor: null } as const;
+const EMPTY_ROOM: DecisionRoomView = {
+  sections: DECISION_ROOM_QUEUES.map((q) => okSection(q, [], 0)),
+  integrity: { unverifiedCompletions: 0 },
+  usage: { status: 'ok', figures: null },
+  asOf: '2026-08-01T00:00:00.000Z',
+  digest: 'd1',
+};
 const PORTFOLIO_ITEM = { companyId: 'co_1', name: 'Acme', status: 'active', role: 'owner', createdAt: '2026-01-01T00:00:00.000000Z' } as const;
 const PROVISIONING_DTO = {
   companyId: 'co_1',
@@ -132,6 +142,35 @@ describe('rename/pause/resume', () => {
     const runtime = fakeRuntime({ ensurePersonalAccount: () => Promise.resolve({ accountId: 'a', created: false }), pauseCompany: (p) => { calls.push(p); return Promise.resolve({ status: 'ok', companyStatus: 'paused' }); } });
     await pauseCompanyForRequest('c', { identity: identityDeps(), runtime });
     expect(calls).toEqual([{ userId: 'u1', accountId: 'a', companyId: 'c' }]);
+  });
+});
+
+// ACBP-P6-008 — the Decision Room request use case (DEC-001).
+describe('getDecisionRoomForRequest', () => {
+  test('passes ONLY server-resolved ids and the selector — the caller cannot name a section, filter or account', async () => {
+    const calls: unknown[] = [];
+    const runtime = fakeRuntime({
+      ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_mine', created: false }),
+      readDecisionRoom: (p) => {
+        calls.push(p);
+        return Promise.resolve({ status: 'ok', room: EMPTY_ROOM });
+      },
+    });
+    const r = await getDecisionRoomForRequest('co_req', { identity: identityDeps(), runtime });
+    expect(r).toEqual({ status: 'decision_room', room: EMPTY_ROOM });
+    expect(calls).toEqual([{ userId: 'u1', accountId: 'acc_mine', companyId: 'co_req' }]);
+  });
+  test('a non-member is refused with the SAME coarse forbidden as every other company read (no oracle)', async () => {
+    // The domain has no `not_found` outcome here BY DESIGN, so unknown, foreign and unauthorized companies are
+    // one answer: this surface cannot be used to discover whether a company id exists.
+    expect((await getDecisionRoomForRequest('c', { identity: identityDeps(), runtime: fakeRuntime({ readDecisionRoom: () => Promise.resolve({ status: 'forbidden' }) }) })).status).toBe('forbidden');
+  });
+  test('an unauthenticated or unverified caller never reaches the domain', async () => {
+    let reached = false;
+    const runtime = fakeRuntime({ readDecisionRoom: () => { reached = true; return Promise.resolve({ status: 'ok', room: EMPTY_ROOM }); } });
+    expect((await getDecisionRoomForRequest('c', { identity: identityDeps({ userId: null }), runtime })).status).toBe('unauthenticated');
+    expect((await getDecisionRoomForRequest('c', { identity: identityDeps({ verified: false }), runtime })).status).toBe('email_unverified');
+    expect(reached).toBe(false);
   });
 });
 
