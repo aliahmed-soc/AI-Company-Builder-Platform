@@ -107,6 +107,10 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // spend, unlike the halted-work and pending-approval reads that were deliberately widened to viewer.
   'usage:read': ['owner'],
   'usage:correct': ['owner'],
+  // Decision Room entry (ACBP-P6-008; CDR-076 §3-G2). Owner|viewer — identical to `activity:read`, because the
+  // room composes reads the member already has. Entering it grants nothing: the owner-only surfaces inside keep
+  // their own actions and render `restricted` to a viewer.
+  'decision_room:read': ['owner', 'viewer'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];
