@@ -39,12 +39,29 @@ describe('exact temporal serialization', () => {
   });
 });
 
-describe('activity taxonomy (company events only)', () => {
-  test('the visible types are exactly the four company events', () => {
-    // The set is CLOSED. P5-013 widened it for ACT-005, then reverted: the contracts set and the database CHECK
-    // had diverged, and the fail-closed projector would have turned that into failures rolling back their own audits.
-    expect([...ACTIVITY_TYPES].sort()).toEqual(['company.created', 'company.paused', 'company.resumed', 'company.updated']);
+describe('activity taxonomy (company-scoped events)', () => {
+  test('the visible types are the four company events PLUS the execution events P6-008 added', () => {
+    // The set is CLOSED, and it is written out in full here rather than derived: a test that recomputed the
+    // expectation from the constant would accept any widening, which is the opposite of what this guards.
+    expect([...ACTIVITY_TYPES].sort()).toEqual([
+      'approval.approved',
+      'approval.rejected',
+      'approval.requested',
+      'company.created',
+      'company.paused',
+      'company.resumed',
+      'company.updated',
+      'task.completed',
+      'task.created',
+      'task.failed',
+      'task.started',
+    ]);
     for (const t of ACTIVITY_TYPES) expect(isActivityType(t)).toBe(true);
+  });
+  test('EVERY type has a summary entry — a projectable type with no allowlist is unrepresentable, not empty', () => {
+    // P5-013's failure mode in miniature: widening the type list is only one of the changes required. A type with
+    // no allowlist entry would project `undefined` keys rather than a redacted summary.
+    for (const t of ACTIVITY_TYPES) expect(activitySummaryFor(t, { anything: 'x' })).toBeDefined();
   });
   test('account-level / Logger-only / unknown names are NOT projectable', () => {
     for (const bad of ['membership.invited', 'membership.revoked', 'authz.denied', 'account.created', 'webhook.x', 'reconcile.done', 'company.deleted', '', 1, null, {}]) {
@@ -52,8 +69,15 @@ describe('activity taxonomy (company events only)', () => {
       expect(isProjectableActivity(bad)).toBe(false);
     }
   });
-  test('every company event is an executed fact (ACT-003 marking)', () => {
-    for (const t of ACTIVITY_TYPES) expect(executionStateFor(t)).toBe('executed');
+  test('ACT-003 marking is real: the PROPOSAL is proposed and every completed transition is executed', () => {
+    // Named one by one, not derived. Until P6-008 this function returned a constant, so the marking was true by
+    // accident of the taxonomy; the point of naming each type is that adding a proposal-shaped event and
+    // forgetting `executionStateFor` fails here instead of silently telling a founder something was done.
+    expect(executionStateFor('approval.requested')).toBe('proposed');
+    for (const t of ACTIVITY_TYPES) {
+      if (t === 'approval.requested') continue;
+      expect(executionStateFor(t), `${t} reports an action that already happened`).toBe('executed');
+    }
   });
 });
 
@@ -170,13 +194,38 @@ describe('activity cursor (opaque base64url; versioned; account+company bound; a
   });
 });
 
-describe('ACT-005 is DEFERRED, and the taxonomy matches the database (ACBP-P5-013)', () => {
-  test('task.failed is NOT projectable — the widening was reverted, not completed', () => {
-    // P5-013 added it, then found the widening was half a feature: no migration widened the
-    // activity_events_type_valid CHECK, nothing projects on the failure path, and the projector is FAIL-CLOSED, so
-    // the first correct wiring would have made every run failure roll back its own audit write.
-    expect(isProjectableActivity('task.failed')).toBe(false);
-    expect(ACTIVITY_TYPES).not.toContain('task.failed');
+describe('ACT-005 is SERVED, and the taxonomy matches the database (ACBP-P5-013 → ACBP-P6-008)', () => {
+  test('task.failed IS projectable now — the widening P5-013 reverted was completed, all four parts', () => {
+    // P5-013 added the type alone and found it was half a feature: no migration widened the
+    // activity_events_type_valid CHECK, nothing projected on the failure path, and the projector is FAIL-CLOSED,
+    // so the first correct wiring would have made every run failure roll back its own audit write. P6-008 ships
+    // the four parts together — type, CHECK (migration 0053), summary allowlist, and the two call sites in the
+    // coordinator (reported failure and reaped failure).
+    expect(isProjectableActivity('task.failed')).toBe(true);
+    expect(ACTIVITY_TYPES).toContain('task.failed');
+    // The summary is the CLOSED-SET half of "no blank failures": a category and a retry state, never a message.
+    expect(activitySummaryFor('task.failed', { attempt: 2, failure_category: 'worker_lost', retry_state: 'retry_eligible', provider_message: 'connection reset by peer', run_id: 'r1' })).toEqual({
+      attempt: 2,
+      failure_category: 'worker_lost',
+      retry_state: 'retry_eligible',
+    });
+  });
+
+  test('the execution summaries carry counts and closed-set values ONLY — no title, reason or free text', () => {
+    // The redaction that matters most, stated against the exact keys the audit factories produce. A founder's own
+    // words and a provider's error text are the two things most likely to be waved through by a summary that
+    // simply copied the payload.
+    expect(activitySummaryFor('task.created', { has_milestone: true, title: 'Email three suppliers' })).toEqual({ has_milestone: true });
+    expect(activitySummaryFor('task.started', { attempt: 1, run_id: 'r1' })).toEqual({ attempt: 1 });
+    expect(activitySummaryFor('task.completed', { artifact_count: 2, no_artifact_rationale: false, rationale: 'we found nothing' })).toEqual({ artifact_count: 2, no_artifact_rationale: false });
+    expect(activitySummaryFor('approval.requested', { tool_id: 'send_email', risk_class: 'external_reversible', scope: 'one_action', estimated_cost_credits: 1, preview: 'To: 3 suppliers', action: 'Email three suppliers' })).toEqual({
+      tool_id: 'send_email',
+      risk_class: 'external_reversible',
+      scope: 'one_action',
+      estimated_cost_credits: 1,
+    });
+    expect(activitySummaryFor('approval.approved', { decision_path: 'approve', decider_type: 'human', policy_version: 3, note: 'go ahead' })).toEqual({ decision_path: 'approve', decider_type: 'human' });
+    expect(activitySummaryFor('approval.rejected', { decider_type: 'human', reason: 'too expensive for us right now' })).toEqual({ decider_type: 'human' });
   });
 
   test('THE CONTRACTS TAXONOMY AND THE DATABASE CHECK PERMIT THE SAME SET', () => {

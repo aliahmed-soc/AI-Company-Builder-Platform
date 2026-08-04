@@ -150,8 +150,12 @@ account ids. Same posture as the P1-009 feed DTO.
   a UI here would be the first, and would be unreviewable against the trust criteria in the same pass. *"Hollow
   success rendering impossible"* is therefore enforced **at the DTO boundary** (G3) — the strongest available
   place, since no renderer can display what the contract cannot represent.
-- **No new activity taxonomy.** `activity_events` still projects the four company events; widening it is a
-  separate change with its own CHECK-constraint migration.
+- ~~**No new activity taxonomy.**~~ **Superseded within this ticket — see §7.** This bullet deferred the widening
+  as "a separate change with its own CHECK-constraint migration". That was wrong about the ticket, not about the
+  work: ACBP-P6-008 is titled *"Decision Room and activity completion"*, `docs/agent/PROJECT-STATE.md` records
+  that no execution event reaches the founder-facing feed and names this ticket as the owner of the fix, and the
+  Slice E journey asserts the absence with a message that says P6-008's scope has moved if it ever becomes
+  visible. Deferring it would have been a silent reduction of named scope. §7 records what was built instead.
 - **No writes.** The Decision Room decides nothing and mutates nothing; decisions are taken through the existing
   approval, stop and strategy endpoints.
 - **No dead-letter job queue section.** `jobs` is an infrastructure table, not a tenant surface; exposing it would
@@ -181,3 +185,46 @@ account ids. Same posture as the P1-009 feed DTO.
   Under-reporting is the safe direction (it never claims work that is not there), and the exclusions are named.
 - **A `restricted` section tells the caller the section exists.** That is intended: the shape of the room is not
   secret, only its contents.
+
+## §7 Activity completion — the taxonomy widening (ACT-001, ACT-003, ACT-005)
+
+**The gap.** Until this ticket the founder-facing feed rendered exactly four `company.*` events. Every task and
+every approval was fully audited and completely invisible to the founder whose company performed it: they could
+read that their company had been created and nothing about the work done inside it. ACBP-P5-013 tried to close
+part of it, widened `ACTIVITY_TYPES` alone, and reverted — no migration moved the CHECK, nothing called the
+projector, and the projector is fail-closed, so the first correct wiring would have made every run failure roll
+back its own audit write.
+
+**What shipped.** Seven types, and all four required changes made together for each:
+
+| Type | Marking | Summary (the ONLY fields projected) |
+|---|---|---|
+| `task.created` | executed | `has_milestone` |
+| `task.started` | executed | `attempt` |
+| `task.completed` | executed | `artifact_count`, `no_artifact_rationale` |
+| `task.failed` | executed | `attempt`, `failure_category`, `retry_state` |
+| `approval.requested` | **proposed** | `tool_id`, `risk_class`, `scope`, `estimated_cost_credits` |
+| `approval.approved` | executed | `decision_path`, `decider_type` |
+| `approval.rejected` | executed | `decider_type` |
+
+**Decisions inside the widening.**
+
+- **ACT-003 became real.** `executionStateFor` was a constant returning `'executed'`; the marking was true by
+  accident of the taxonomy. `approval.requested` is the first genuine proposal in the feed, which is what lets a
+  founder distinguish *"the platform asked to send three emails"* from *"the platform sent three emails"*.
+- **`run_id` is projected nowhere.** The feed is a human-readable trail, not a join key; the audit event keeps
+  the linkage for whoever is entitled to follow it.
+- **Rejections project.** A feed that showed approvals and dropped refusals would read as though the platform
+  had never been told no.
+- **Reaped failures project too** (`worker_lost`, from the reclaim sweep). A feed honest about failures a worker
+  reported and silent about the ones where the worker vanished would hide the more alarming kind.
+- **No backfill.** Migration 0053 widens the CHECK going forward only. The historical audit rows exist, but a
+  projection is a redacted view built by an allowlist that did not exist when they were written; replaying them
+  would present today's redaction rules as though they had governed yesterday's events.
+- **Fail-closed is preserved and now proven.** If the feed row cannot be written the state change is undone —
+  `activity-execution.integration.test.ts` forces a projector failure on `planTask` and asserts the task stays
+  `draft` with no audit row.
+
+**The tripwire fired as designed.** Three contract tests and the Slice E journey step asserted the OLD truth
+(*"task.failed is NOT projectable"*, *"every company event is an executed fact"*, *"execution has NOT reached the
+feed"*). All four were rewritten to assert the new one, which is the outcome those assertions existed to force.

@@ -38,13 +38,24 @@ redacted payload), so a rebuild = re-running it over the audit company rows. No 
 comparison). `acbp_app` is granted **INSERT + SELECT only** — no UPDATE/DELETE/TRUNCATE grant or policy, so the
 projection is append-only by persistence constraint. Keyset index `(company_id, occurred_at DESC, event_id DESC)`.
 
-## Visible taxonomy — company events only
+## Visible taxonomy — company-scoped events
 
-The feed renders EXACTLY the four company events. Account-level audit events (`membership.invited`/`.revoked`,
+The feed renders the four company lifecycle events **plus the execution events added by ACBP-P6-008**
+(CDR-076 §7): `task.created`, `task.started`, `task.completed`, `task.failed`, `approval.requested`,
+`approval.approved`, `approval.rejected`. Account-level audit events (`membership.invited`/`.revoked`,
 `company_id` NULL), Logger-only events (`authz.denied`, `tenant.context_denied`, `account.created`,
 `membership.accepted`, `webhook.*`, `reconcile.*`), and any undeclared future event are **not projectable** and
-can never appear (the projector no-ops on non-company events AND the type CHECK rejects them). All four company
-events are **executed** facts → `executionState = 'executed'` (ACT-003 marking present, trivially executed here).
+can never appear (the projector no-ops on non-company events AND the type CHECK rejects them).
+
+**ACT-003 marking is load-bearing now.** `approval.requested` projects as `proposed`; every other type reports a
+completed state transition and projects as `executed`. Before P6-008 `executionStateFor` returned a constant,
+because the taxonomy contained nothing that had not already happened.
+
+**Widening this taxonomy is four changes, not one** — the contract's `ACTIVITY_TYPES`, the
+`activity_events_type_valid` CHECK (a migration), the per-type summary allowlist, and a production call site
+that projects inside the source transaction. ACBP-P5-013 made only the first and the divergence was silent until
+INSERT; a set-equality test now reads the live constraint out of `pg_constraint` and compares it to the
+contract.
 
 ## Historical backfill + rebuild
 
@@ -108,9 +119,12 @@ activity-write endpoint (the only writer is the in-tx projector).
 
 ## Out of scope (deferred)
 
-Transactional outbox + async projector/worker (later, with the higher-volume task/tool event sources); **SSE / live
-feed (P6-008)**; rendered activity UI; broad search/export; audit/activity retention/purge; proposed-vs-executed
-evidence joins for task/tool events; account-level/portfolio activity (P1-011+).
+Transactional outbox + async projector/worker (the live channel shipped in ACBP-P6-008 is **poll-backed** for
+exactly this reason — there is no outbox and no LISTEN/NOTIFY, so it re-reads on an interval and says so in its
+own payload); rendered activity UI; broad search/export; audit/activity retention/purge; account-level/portfolio
+activity (P1-011+). **No historical backfill of the execution events**: migration 0053 widens the CHECK going
+forward only, because replaying pre-P6-008 audit rows would present today's redaction allowlist as though it had
+governed yesterday's events (the audit trail remains complete for everything before it).
 
 ## Residual risks (accepted; from independent review)
 
