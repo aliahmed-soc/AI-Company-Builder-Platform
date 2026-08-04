@@ -93,7 +93,18 @@ ticket without a DONE line above it is genuinely in flight._
     it and spent the approval — CDR-069 §1-G7), and policy RULES are installed on the owner connection because
     no product surface authors them (CDR-077 §3-G4). One stop scope (`company`) is exercised; the per-scope
     matrix stays the stop suite's job.
+  - **Exact-head hosted CI [`30924099670`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30924099670)
+    on `14e5a88` is GREEN with ZERO SKIPS** — 247 files / 3503 tests, no `N skipped` line anywhere in the job
+    log, and the DB preflight step (which fails if the integration suites would silently skip) passed. Local
+    gate matched it exactly: typecheck, lint, secret scan, boundaries, `test:boundaries`, `test`, `run check`,
+    `audit --audit-level high` (1 moderate, nothing at or above high) and `diff --check` all exit 0.
   - **Status is NOT set to Done in `BACKLOG.csv`** — that, marking PR #72 ready, and merging are owner gates.
+
+- **BACKLOG.csv drift, found while checking P6 completion and deliberately NOT fixed here.** `ACBP-P6-003`,
+  `ACBP-P6-004`, `ACBP-P6-005` and `ACBP-P6-008` all still read `Planned`. The first three are merged in `main`
+  (`9e339a3`, `7a5a9ea`, `7b4cc32`); P6-008 is draft PR #71, exact-head CI green. Setting a row to Done is an
+  owner gate and this is outside the active ticket's scope, so it is reported rather than edited. `ACBP-P6-002`
+  is separately and correctly marked OPEN — its evaluation point 1 is owner-gated by CDR-067 §1.
 
 - **ACBP-P6-010 Limits and alerts — DONE** (CDR-075; NFR-015, POL-001; ADR-010/ADR-013; CDR-008's interim
   values). Merged as squash `f540fec`, PR #70, **no migration** — the ledger it reads is ACBP-P6-009's.
