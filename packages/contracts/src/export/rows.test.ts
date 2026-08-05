@@ -1,6 +1,6 @@
 // @acbp/contracts — per-row ownership and identity for the archive (ACBP-P7-001; CDR-078 §6.3; invariant 19).
 import { describe, expect, it } from 'vitest';
-import { exportRowIdentity, partitionRowsByOwnership } from './rows.js';
+import { exportRowIdentity, partitionRowsByOwnership, WITHHELD_IDENTITY } from './rows.js';
 
 // THESE IDS CONTAIN HEX LETTERS ON PURPOSE. The obvious fixture — `1111…-1111-…` — is all digits and hyphens, so
 // `toUpperCase()` on it is a NO-OP, and mutation testing showed both case-insensitivity tests below were passing
@@ -41,7 +41,7 @@ describe('partitionRowsByOwnership', () => {
     ];
     const result = partitionRowsByOwnership('tasks', rows, OWN);
     expect(result.owned.map((r) => r['id'])).toEqual(['a', 'c']);
-    expect(result.foreign).toEqual(['b']);
+    expect(result.foreignCount).toBe(1);
   });
 
   it('is UNREACHABLE while RLS holds, and that is exactly why it exists', () => {
@@ -50,7 +50,7 @@ describe('partitionRowsByOwnership', () => {
     // being a pure function is what lets it be tested and mutated without first having to break RLS.
     const result = partitionRowsByOwnership('tasks', [{ id: 'x', company_id: OTHER }], OWN);
     expect(result.owned).toEqual([]);
-    expect(result.foreign).toEqual(['x']);
+    expect(result.foreignCount).toBe(1);
   });
 
   it('treats a row with NO readable company_id as foreign', () => {
@@ -59,7 +59,7 @@ describe('partitionRowsByOwnership', () => {
     const rows = [{ id: 'a' }, { id: 'b', company_id: null }, { id: 'c', company_id: 42 }, { id: 'd', company_id: '' }];
     const result = partitionRowsByOwnership('tasks', rows, OWN);
     expect(result.owned).toEqual([]);
-    expect(result.foreign).toEqual(['a', 'b', 'c', 'd']);
+    expect(result.foreignCount).toBe(4);
   });
 
   it('treats an unusable scope id as owning NOTHING, rather than everything', () => {
@@ -68,7 +68,7 @@ describe('partitionRowsByOwnership', () => {
     for (const bad of ['', '   ', undefined as unknown as string, null as unknown as string, 42 as unknown as string]) {
       const result = partitionRowsByOwnership('tasks', [{ id: 'a', company_id: OWN }], bad);
       expect(result.owned).toEqual([]);
-      expect(result.foreign).toEqual(['a']);
+      expect(result.foreignCount).toBe(1);
     }
   });
 
@@ -79,7 +79,7 @@ describe('partitionRowsByOwnership', () => {
     // the one where the last ownership check becomes a rubber stamp.
     const result = partitionRowsByOwnership('tasks', [{ id: 'a', company_id: '' }], '');
     expect(result.owned).toEqual([]);
-    expect(result.foreign).toEqual(['a']);
+    expect(result.foreignCount).toBe(1);
   });
 
   it('normalises the ROW’s value too, not only the scope’s', () => {
@@ -88,7 +88,7 @@ describe('partitionRowsByOwnership', () => {
     // are normalised, so both sides need a case that proves it.
     const result = partitionRowsByOwnership('tasks', [{ id: 'a', company_id: OWN.toUpperCase() }], OWN);
     expect(result.owned.map((r) => r['id'])).toEqual(['a']);
-    expect(result.foreign).toEqual([]);
+    expect(result.foreignCount).toBe(0);
   });
 
   it('compares case-INSENSITIVELY, because PostgreSQL renders uuid lowercase and a request may not', () => {
@@ -97,10 +97,27 @@ describe('partitionRowsByOwnership', () => {
     // enumerates the founder's entire business as unverified, and fails closed all the way to useless.
     const result = partitionRowsByOwnership('tasks', [{ id: 'a', company_id: OWN }], OWN.toUpperCase());
     expect(result.owned.map((r) => r['id'])).toEqual(['a']);
-    expect(result.foreign).toEqual([]);
+    expect(result.foreignCount).toBe(0);
   });
 
   it('handles a non-array row set as an empty one rather than throwing', () => {
-    expect(partitionRowsByOwnership('tasks', undefined as unknown as [], OWN)).toEqual({ owned: [], foreign: [] });
+    expect(partitionRowsByOwnership('tasks', undefined as unknown as [], OWN)).toEqual({ owned: [], foreignCount: 0 });
+  });
+
+  it('reports only HOW MANY rows failed, never WHICH', () => {
+    // FOUND IN THE INDEPENDENT REVIEW. An earlier version returned the failing rows' identities, and the only
+    // consumer is a manifest the FOUNDER reads — so a leaked row would have had its id written into their archive,
+    // confirming that another tenant's record exists and naming it. That is exactly the disclosure CDR-078 §3-G8
+    // forbids a refusal from making, and it would have shipped looking like diligence.
+    //
+    // The count is what they actually need: "how many rows in this collection could not be verified as mine".
+    const result = partitionRowsByOwnership('tasks', [{ id: 'someone-elses-row', company_id: OTHER }], OWN);
+    expect(Object.keys(result).sort()).toEqual(['foreignCount', 'owned']);
+    expect(JSON.stringify(result)).not.toContain('someone-elses-row');
+    expect(JSON.stringify(result)).not.toContain(OTHER);
+  });
+
+  it('names the withheld-identity placeholder, so a manifest never has to invent one', () => {
+    expect(WITHHELD_IDENTITY).toBe('<withheld>');
   });
 });

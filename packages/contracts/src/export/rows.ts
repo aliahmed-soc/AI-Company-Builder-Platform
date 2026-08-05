@@ -37,10 +37,26 @@ export function exportRowIdentity(table: string, row: ExportRowLike): string {
     .join(':');
 }
 
+/**
+ * What an `ownership_unverified` omission is NAMED, in place of the row's real identifier.
+ *
+ * The manifest is a document the FOUNDER reads. A row that failed the ownership check is by definition not theirs,
+ * so naming it would confirm another tenant's record exists and hand over its id — the exact disclosure CDR-078
+ * §3-G8 forbids a refusal from making. One omission is emitted per withheld row, so "how many rows here could not
+ * be verified as mine" stays answerable while "whose were they" does not.
+ */
+export const WITHHELD_IDENTITY = '<withheld>';
+
 export interface OwnershipPartition {
   readonly owned: readonly ExportRowLike[];
-  /** Identities of rows that could NOT be verified as this company's. Enumerated, never silently dropped. */
-  readonly foreign: readonly string[];
+  /**
+   * HOW MANY rows could not be verified as this company's — deliberately not WHICH.
+   *
+   * An earlier version returned their identities. Nothing may use them: they are another tenant's row ids, and the
+   * only consumer is a manifest the founder reads. A return value that must never be used is an invitation, so it
+   * is not returned. ENFORCED BY: "reports only HOW MANY rows failed, never WHICH".
+   */
+  readonly foreignCount: number;
 }
 
 /**
@@ -63,12 +79,12 @@ export function partitionRowsByOwnership(table: string, rows: readonly ExportRow
   const safeRows: readonly ExportRowLike[] = Array.isArray(rows) ? rows : [];
   const expected = typeof companyId === 'string' ? companyId.trim().toLowerCase() : '';
   const owned: ExportRowLike[] = [];
-  const foreign: string[] = [];
+  let foreignCount = 0;
   for (const row of safeRows) {
     const actual: unknown = row?.['company_id'];
     const matches = expected !== '' && typeof actual === 'string' && actual.trim().toLowerCase() === expected;
     if (matches) owned.push(row);
-    else foreign.push(exportRowIdentity(table, row ?? {}));
+    else foreignCount += 1;
   }
-  return { owned, foreign };
+  return { owned, foreignCount };
 }

@@ -25,6 +25,7 @@ import {
   sanitizeExportValue,
   partitionRowsByOwnership,
   exportRowIdentity,
+  WITHHELD_IDENTITY,
   companyObjectKey,
   keyString,
   verifyPersistedObject,
@@ -182,9 +183,16 @@ export async function exportCompanyData(
 
         // Ownership re-verified beneath RLS (CDR-078 §6-G6). Unreachable while RLS holds; this is the layer that
         // still refuses if it ever does not.
-        const { owned, foreign } = partitionRowsByOwnership(collection.table, kept, companyId);
-        for (const identity of foreign) {
-          omissions.push({ itemType: collection.table, itemId: identity, reason: 'ownership_unverified' });
+        //
+        // THE FOREIGN ROW'S IDENTITY IS WITHHELD, and that is not fastidiousness. This manifest is a document the
+        // FOUNDER reads: writing another tenant's row id into it would confirm that another tenant's record exists
+        // and name it, which is precisely what §3-G8 forbids a refusal from doing. They still learn everything
+        // actionable — which collection, and how many rows — because each withheld row is its own enumerated
+        // omission. `partitionRowsByOwnership` does not return the identities at all, so this cannot regress by
+        // someone deciding the manifest would be "more helpful" with them.
+        const { owned, foreignCount } = partitionRowsByOwnership(collection.table, kept, companyId);
+        for (let i = 0; i < foreignCount; i += 1) {
+          omissions.push({ itemType: collection.table, itemId: WITHHELD_IDENTITY, reason: 'ownership_unverified' });
         }
 
         const emitted: unknown[] = [];

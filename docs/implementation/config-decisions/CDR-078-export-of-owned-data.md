@@ -162,6 +162,12 @@ archive, not of the query that filled it:
 - **G6.6 — A row whose `company_id` is not the scope's is OMITTED with `ownership_unverified`**, never included.
   Unreachable while RLS holds — which is the point: this is the layer that still refuses if RLS ever does not,
   and it is a pure function so it can be tested and mutated without needing RLS to be broken first.
+- **G6.6a — The withheld row is COUNTED, never NAMED** (found in the independent review). The first
+  implementation returned the failing rows' identities and wrote them into the manifest. The manifest is a
+  document the *founder* reads, so that would have confirmed another tenant's record exists and handed over its
+  id — the exact disclosure §3-G8 forbids a refusal from making, shipped in the shape of diligence. The ownership
+  check now returns a **count only**: "how many rows here could not be verified as mine" stays answerable, "whose
+  were they" does not. Every other omission reason still names its row, because those rows are the founder's own.
 
 ### §6.4 Truncation is an omission, never a silent cap
 
@@ -198,6 +204,23 @@ poll it — so the table would have exactly one writer, no reader, and no status
 catalogued, reaches nothing" shape again, this time built on purpose. The **audit event is the durable record**
 (EVENT-CATALOG already calls it audit-grade, permanent), and its subject is the archive. When the export API
 ticket arrives and something needs a status to poll, the table belongs to it.
+
+### §6.8 The whole export runs inside ONE database transaction, and that is a real cost
+
+The reads must happen under the resolved company scope, and `runInCompanyScope` gives one transaction — so the
+storage writes and read-backs happen inside it. With the in-memory adapter that is instantaneous. **Against a real
+S3-compatible provider it would hold a PostgreSQL transaction open across ~56 network round trips** (a put and a
+head per collection), which is a long-running transaction on a shared connection pool.
+
+Disclosed rather than designed around, because every alternative costs something this ticket should not spend:
+
+- reading everything into memory first, closing the transaction, then writing, unbounds the memory the §6-G7 cap
+  exists to bound;
+- writing under a second transaction reopens the ownership question the first one settled;
+- moving the whole thing to a background job needs the async surface §4 ruled out.
+
+**This belongs to the ticket that brings the real adapter**, which is the first point at which the cost is more
+than theoretical. Recorded here so that whoever writes it inherits the problem rather than discovering it.
 
 ## §7 Open owner decisions
 
