@@ -221,7 +221,15 @@ trusted core/use-case seam:
   nevertheless gated on `usage:read`, because it RETURNS the same figures the read does — without that, a viewer
   refused by the read could call the rebuild and receive them anyway. That is the most restrictive posture
   available, so a later ruling can narrow it to platform-only without having to widen anything. See `CDR-073 §3`.
-- **P5-012** (revision workflow) adds `artifact:revise`, **`owner`-only** — `API-CONTRACTS.md:55` scopes the
+- **P7-001** (export of owned data) adds `export:create`, **`owner`-only** — `API-CONTRACTS.md:77` scopes the
+  Exports row to Owner. Deliberately **NARROWER than every read it composes**: an export walks 28 collections a
+  viewer may legitimately read in-product, so a naive reading would grant it to `owner|viewer` on the grounds
+  that it discloses nothing new. It does disclose something new, in the only sense that matters — an export is
+  the one product path whose purpose is to move a COPY of everything the company owns OUT of the platform's
+  control, to a destination it will never see again. "Can see" and "can take" are different powers, and this is
+  where they part. **RLS is not the second layer here either**: it scopes the read correctly, so a wrongly-granted
+  viewer would receive a perfectly tenant-correct archive of data they were never entitled to remove. The per-row
+  ownership re-check (invariant 19) defends the tenant boundary, not this one. See `CDR-078 §3-G1`.
   Documents row explicitly (*"Member (read), owner (revise)"*), so unlike `task:delete` this is not a case where canon
   is silent and restricting would invent a requirement. It also commits the company to work: the new task it creates
   is metered when it is queued. The lineage READ is deliberately NOT this action — it rides `task:read`, so a viewer

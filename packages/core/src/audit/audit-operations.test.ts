@@ -55,6 +55,9 @@ describe('audit completeness registry (ACBP-P1-008 / CDR-014)', () => {
       'emergency_stop.activate',
       'emergency_stop.clear',
       'emergency_stop.work.review',
+      // Export of owned data (ACBP-P7-001; CDR-078). One operation for complete AND partial archives — a partial
+      // export is canon's specified behaviour, not an incident, so it does not get an operation of its own.
+      'export.generate',
       'tool.dispatch',
       'tool.complete',
       'tool.fail',

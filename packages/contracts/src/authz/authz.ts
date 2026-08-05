@@ -204,6 +204,12 @@ export const AUTHZ_ACTIONS = [
   // Each SECTION inside the room additionally re-checks its own domain action (`approval:read`, `stop:read`,
   // `usage:read`), unchanged and un-widened; a section the caller lacks renders as `restricted`, never as empty.
   'decision_room:read',
+  // Export of owned data (ACBP-P7-001; CDR-078; EXPORT-001). OWNER-ONLY, and narrower than the reads it composes:
+  // an export moves a copy of everything the company owns OUT of the platform's control, to a destination it will
+  // never see again. A viewer who may READ the understanding in-product is not thereby entitled to walk out with
+  // an archive of it — API-CONTRACTS `:77` says Owner, and this is one of the places where "can see" and "can
+  // take" genuinely differ.
+  'export:create',
 ] as const;
 export type AuthzAction = (typeof AUTHZ_ACTIONS)[number];
 
@@ -381,6 +387,8 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // has; the owner-only surfaces inside it (usage) keep their own owner-only action and render as `restricted`,
   // so entering the room can never become a back door around a narrower action.
   'decision_room:read': ['owner', 'viewer'],
+  // Owner only. See the note on the action above: reading in-product and taking a copy away are different powers.
+  'export:create': ['owner'],
 };
 
 /**

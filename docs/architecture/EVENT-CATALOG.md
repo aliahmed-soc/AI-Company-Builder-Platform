@@ -277,6 +277,16 @@ Retention default: activity-projected events with company data; audit-relevant e
 | usage.limit_reached | Usage ledger | Policy engine, notification, Decision Room | limit_type, scope, threshold (hard/soft) | audited | ≥ billing |
 | document.generated | Document module | activity, Decision Room results | document_id, version, provenance_ref (worker, run, model_version) | audited | with company |
 | artifact.exported | Export module | audit | export_job_id, scope, manifest_digest | **audit-grade** (ownership check logged) | permanent record |
+<!-- ACBP-P7-001 gave `artifact.exported` its first producer (`exportCompanyData`), after it had been catalogued
+     here since long before anything could emit it. Two notes for a reader comparing the row above with the code.
+     SUBJECT IS THE ARCHIVE, NOT A JOB: `export_job_id` is emitted as `export_id`, because this ticket persists no
+     job row (CDR-078 §6.7) — a job exists to be POLLED and §4 ruled out the surface that would poll it, so the
+     archive itself is the durable thing. COUNTS ONLY, never content: collection/item/omission/redaction counts,
+     plus `complete` and `faithful` SEPARATELY, because a partial archive must not be able to describe itself as
+     an untouched one and neither flag can be derived from the other after the archive has left. Outcome is
+     `success` even for a partial export — canon's failure behaviour IS "partial export enumerates missing", so
+     recording it as a failure would make every truncated collection look like an outage. -->
+
 | integration.connected / integration.revoked | Integration module | Dispatcher (fail closed on revoked, invariant 15), activity | integration_id, provider, scopes (connected), revoked_by | audit-grade | permanent record |
 | emergency_stop.activated / emergency_stop.cleared | Emergency-stop controller | Dispatcher (immediate check), Coordinator, notification | scope, scope_id, activated_by / cleared_by, held_work_count (clear) | **audit-grade, in-tx** | permanent record |
 

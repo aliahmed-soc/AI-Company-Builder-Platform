@@ -39,3 +39,7 @@ export * from './usage/index.js';
 // line existed the module could not be imported from outside `@acbp/core` at all, which is why every one of its
 // guards survived mutation: nothing could call them.
 export * from './approvals/index.js';
+// Export of owned data (ACBP-P7-001; CDR-078; EXPORT-001, NFR-014; ADR-002; trust-critical #2; invariant 19).
+// MECHANISM-complete, not production-complete: there is no S3-compatible adapter (CDR-078 §1), so an archive
+// landing DURABLY in object storage is proven nowhere and claimed nowhere.
+export * from './exports/index.js';

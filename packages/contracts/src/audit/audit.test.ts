@@ -186,6 +186,9 @@ describe('event-name registry (deny unregistered)', () => {
       'task.repeated',
       'task.deleted',
       'artifact.revision_requested',
+      // Export of owned data (ACBP-P7-001; CDR-078 §3-G7; EXPORT-001). EVENT-CATALOG `:279` has carried this name
+      // since long before anything could emit it; it is registered in the same commit as `exportCompanyData`.
+      'artifact.exported',
     ]).sort());
     for (const name of Object.keys(AUDIT_EVENTS)) expect(isAuditEventName(name)).toBe(true);
   });
