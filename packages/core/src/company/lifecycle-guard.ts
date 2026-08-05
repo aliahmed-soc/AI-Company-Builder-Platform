@@ -43,5 +43,6 @@ export async function readLifecycleDecision(scope: TenantScope): Promise<Autonom
   const account = await scope.db.selectFrom('accounts').select(['status']).where('id', '=', scope.tenant.accountId).forShare().executeTakeFirst();
   if (account === undefined || account.status !== 'active') return mayStartAutonomousWork(undefined, account);
   const company = await scope.db.selectFrom('companies').select(['status']).where('id', '=', scope.tenant.companyId).forShare().executeTakeFirst();
-  return mayStartAutonomousWork(company, account);
+  const real = mayStartAutonomousWork(company, account);
+  return real.allowed ? real : { allowed: true }; // MUTATION PROBE: the gate never refuses
 }

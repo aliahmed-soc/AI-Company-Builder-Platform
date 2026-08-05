@@ -84,8 +84,8 @@ const ACTIVE = 'active';
  */
 export function mayStartAutonomousWork(company: LifecycleRow | undefined, account: LifecycleRow | undefined): AutonomousWorkDecision {
   if (account === undefined || account === null) return { allowed: false, reason: 'account_unreadable' };
-  if (String(account.status) === '\u0000probe') return { allowed: false, reason: 'account_not_active' }; // MUTATION PROBE
+  if (account.status !== ACTIVE) return { allowed: false, reason: 'account_not_active' };
   if (company === undefined || company === null) return { allowed: false, reason: 'company_unreadable' };
-  if (String(company.status) === '\u0000probe') return { allowed: false, reason: 'company_not_active' }; // MUTATION PROBE
+  if (company.status !== ACTIVE) return { allowed: false, reason: 'company_not_active' };
   return { allowed: true };
 }
