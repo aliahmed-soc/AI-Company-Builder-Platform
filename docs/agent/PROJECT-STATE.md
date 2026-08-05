@@ -67,6 +67,61 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P6-012 Slice F integration: safety and recovery — working block** (CDR-077; POL-005, APPR-004,
+  ADMIN-001, TASK-009, TASK-006, USAGE-001; ADR-009/ADR-010; **M6's exit criterion**). Branch
+  `p6-012-slice-f-integration`, **no migration, and no production code at all** — the ticket is composed
+  evidence, not new behaviour (CDR-077 §3-G11).
+  - **Branched from `main` before P6-008, and `main` was merged INTO it after P6-008 landed** (`1f4acaa`).
+    Slice F depends on none of the Decision Room — it sits on policy, approvals, stops, idempotency and usage,
+    all of which predate it — so the two verified each other only at this merge, not before it. A rebase was
+    NOT used: the branch was already pushed, and rewriting pushed history is not authorized. The squash merge
+    collapses the merge commit anyway.
+  - **What it adds that the five mechanism suites do not** (CDR-077 §0). Every scenario already has a dedicated
+    real-PostgreSQL suite; re-running those assertions would cost time and yield nothing. What nothing tested is
+    that the controls hold TOGETHER in one company's continuous lifetime: a deny that still refuses with a live
+    human approval standing against the same call; a stop that outranks that approval and leaves it UNSPENT; a
+    re-delivery that spends NO second approval (two single-use guards, never run against each other before); a
+    halted company that can actually be resumed from; and totals that still reconcile after all of it.
+  - **All ten steps pass live** against real PostgreSQL under the restricted `acbp_app` role with FORCE RLS —
+    one control step, the backlog's five scenarios, and M6's sixth criterion (usage reconciliation, which the
+    backlog's scope column omits and the milestone sentence names). `pnpm demo:slice-f` prints each step with
+    its evidence and exits non-zero on any failure; `packages/core/src/tools/slice-f.e2e.integration.test.ts`
+    asserts the same shared journey, so the milestone demo cannot drift from the suite.
+  - **The journey was checked for vacuity, not just for green.** Setting the "edited" payload equal to the
+    approved one made step 4 fail as it must, truncated the run at 4 steps, tripped the sequence-length guard
+    and exited 1 — so the binding assertion discriminates and a short run cannot read as a pass.
+  - **Two honest limitations, stated in the demo's own output rather than only in the CDR.** No external action
+    has ever executed (no tool implementation exists; "the approved action ran" means the chokepoint authorized
+    it and spent the approval — CDR-069 §1-G7), and policy RULES are installed on the owner connection because
+    no product surface authors them (CDR-077 §3-G4). One stop scope (`company`) is exercised; the per-scope
+    matrix stays the stop suite's job.
+  - **Exact-head hosted CI [`30924099670`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30924099670)
+    on `14e5a88` is GREEN with ZERO SKIPS** — 247 files / 3503 tests, no `N skipped` line anywhere in the job
+    log, and the DB preflight step (which fails if the integration suites would silently skip) passed. Local
+    gate matched it exactly: typecheck, lint, secret scan, boundaries, `test:boundaries`, `test`, `run check`,
+    `audit --audit-level high` (1 moderate, nothing at or above high) and `diff --check` all exit 0.
+  - **Backlog row flipped to Done in this branch**, following this repository's convention that the Status flip
+    rides in the ticket's own commit before the squash (as `f540fec` did for P6-010). The owner authorized the
+    finalization sequence for PR #71 and PR #72 on 2026-08-04.
+
+- **BACKLOG.csv drift, still open and deliberately NOT fixed here.** `ACBP-P6-003`, `ACBP-P6-004` and
+  `ACBP-P6-005` read `Planned` for work that is merged in `main` (`9e339a3`, `7a5a9ea`, `7b4cc32`). The owner's
+  authorization named this ticket's row and P6-008's, so those three are reported rather than edited — setting
+  a row to Done is an owner gate and they are outside the authorized scope. `ACBP-P6-002` is separately and
+  correctly marked OPEN: its evaluation point 1 is owner-gated by CDR-067 §1.
+
+- **ACBP-P6-008 Decision Room and activity completion — DONE** (CDR-076; DEC-001, ACT-001/003/004/005; ADR-015;
+  invariant 20; trust-critical #18). Merged as squash **`1f4acaa`**, PR #71, migration **0053**. Exact-head CI
+  [`30928545553`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30928545553) on
+  `868e68a` and exact-main
+  [`30929427397`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/30929427397) on
+  `1f4acaa` both green with **ZERO SKIPS** (250 files / 3562 tests, no `N skipped` line in either job log, DB
+  preflight passed in both). Branch deleted local + remote **after** verifying the tip's tree is byte-identical
+  in `main` (`112c582b…` on both `868e68a` and `1f4acaa`) — ancestry is the wrong check across a squash merge.
+  **NOT closed by this line:** there is still **no rendered UI** — the room ships as a read model and an API,
+  and hollow-success prevention is enforced at the DTO boundary rather than by a renderer; the room accepts no
+  writes; and there is no dead-letter/job section.
+
 - **ACBP-P6-008 Decision Room and activity completion — working block** (CDR-076; DEC-001, ACT-001/003/004/005;
   ADR-015; invariant 20; trust-critical #18). Branch `p6-008-decision-room`, **one migration: `0053`** (widens the
   `activity_events_type_valid` CHECK; no new table, so no reset-list change).
@@ -1478,13 +1533,25 @@ ticket without a DONE line above it is genuinely in flight._
   updates) + independent reviews + final verification (owner gate).
 
 ## Next executable action
-Phase 1 is complete and merged (`85fcb8f`). Begin Phase 2: `git fetch --prune`, confirm clean/equal
-exact-main hosted-green state, inspect PR #10 via GitHub state only, read the Phase 2 backlog, and select the
-first canonical Ready/unblocked ticket by dependency + milestone order (never by ticket number alone). Run
-canonical discovery; when canon resolves every foundational decision and no mandatory owner gate applies, make
-the least-authority reversible recommendation, record it, open one branch + draft PR, and implement in TDD
-slices — each pushed, each exact-head hosted-green (zero-skip PG), independently reviewed before finalization,
-squash-merged, exact-main-CI-verified, branch deleted — then continue to the next Ready/unblocked ticket.
+
+**CORRECTED 2026-08-04.** This section still read "Phase 1 is complete… begin Phase 2" while every P6 ticket was
+being worked, which made the one pointer the file's own header sends a resuming reader to the most stale line in
+it. The generic procedure it described is now in CLAUDE.md; what belongs here is the actual next move.
+
+**Phase 6 is code-complete pending two owner merges.** Both remaining tickets are pushed draft PRs, each locally
+green and each awaiting the same gate:
+
+- **ACBP-P6-008** Decision Room — branch `p6-008-decision-room`, PR **#71**, migration **0053**, hosted CI green.
+- **ACBP-P6-012** Slice F integration — branch `p6-012-slice-f-integration`, PR **#72**, no migration, no
+  production code; ten live steps green, and M6's exit criterion is satisfied by it.
+
+**Owner gates blocking the phase:** mark #71 and #72 ready, merge them bottom-up (they are independent, both
+rooted at `main`), verify exact-main CI zero-skip after each, delete the branches once each tip's tree is
+verified byte-identical in `main` (ancestry does not survive a squash merge), and set both backlog rows to Done.
+
+**After those merges, Phase 6 closes and Phase 7 opens.** Its first Ready/unblocked rows by dependency order are
+`ACBP-P7-007` (security test pass), `ACBP-P7-008` (failure-injection pass) and `ACBP-P7-009` (end-to-end MVP
+suite) — all three list `ACBP-P6-012` as their dependency, which is why they were unstartable until now.
 
 ## Local integration environment (learned 2026-07-24)
 Local real-PostgreSQL runs ARE possible on this machine, contrary to the older "unrunnable" note below — two

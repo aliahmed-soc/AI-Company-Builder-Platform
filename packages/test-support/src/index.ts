@@ -22,3 +22,6 @@ export type { SliceDOps, SliceDJourneyDeps, SliceDFakeBehavior, SliceDGateway, S
 // ACBP-P5-015 / CDR-065 — the Slice E (safe internal execution) journey, shared by `pnpm demo:slice-e` and the CI suite.
 export { runSliceEJourney } from './tenancy/slice-e-journey.js';
 export type { SliceEOps, SliceEJourneyDeps, SliceEFakeBehavior, SliceEGateway, SliceEArtifact, SliceELineageArtifact, SliceESource } from './tenancy/slice-e-journey.js';
+// ACBP-P6-012 / CDR-077 — the Slice F (safety and recovery) journey, shared by `pnpm demo:slice-f` and the CI suite.
+export { runSliceFJourney } from './tenancy/slice-f-journey.js';
+export type { SliceFOps, SliceFJourneyDeps, SliceFDispatchResult, SliceFGateway, SliceFLogCapture, SliceFLogRecord } from './tenancy/slice-f-journey.js';
