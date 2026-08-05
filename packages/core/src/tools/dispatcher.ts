@@ -601,7 +601,20 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // typically retries and each retry lands here again. Proven against a real database, not argued.
       let heldByStopId: string | undefined;
       let pausedTask = false;
-      if (finalReason === 'emergency_stopped' && stopEvaluation.kind === 'stopped') {
+      // KEYED ON THE STOP EVALUATION, NOT ON WHICH REFUSAL WAS REPORTED (ACBP-P7-002; independent review).
+      //
+      // This read `finalReason === 'emergency_stopped' && …` until P7-002 added a lifecycle gate that outranks the
+      // stop gate in `decideDispatch`. The consequence was invisible and real: for a company that was BOTH
+      // non-active AND covered by a live stop, `finalReason` became `company_not_active`, so this block stopped
+      // running — no `held_work` row, no `running`→`paused` — and P6-007's ADMIN-002 confirm-or-discard review
+      // silently lost that task. Clearing the stop then reported nothing to review, and the task resumed with no
+      // review at all. A merged trust-critical control disabled as a side effect of a new gate, with no test and
+      // nothing in the record; found by the independent review, not by a green CI.
+      //
+      // The stop's CAPTURE and the refusal's REPORTED REASON are now independent. The reason still says
+      // `company_not_active`, because the lifecycle refusal is the broader and truer answer; the capture happens
+      // because a stop really did cover this call. Both facts are recorded, neither overwrites the other.
+      if (stopEvaluation.kind === 'stopped') {
         // ── WHICH STOP CAUGHT THIS CALL — RE-ASKED, NOT NAME-MATCHED (independent review, Blocker) ───────────
         //
         // The first version matched the covering SCOPE NAMES back against `activeStops` and took the first hit.

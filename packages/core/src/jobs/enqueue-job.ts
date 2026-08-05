@@ -146,6 +146,14 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
       if (!lifecycle.allowed) {
         const alreadyEnqueued = request.idempotencyKey === null ? undefined : await jobs.findByIdempotencyKey(request.idempotencyKey);
         if (alreadyEnqueued !== undefined) {
+          // AUDITED AND COUNTED, exactly like the dedupe branch below — the independent review caught that this
+          // one did neither. The rationale there transfers verbatim and was already written down: an enqueue that
+          // collapsed into an existing job "is exactly the event a run trail would otherwise be missing, and the
+          // caller was told `ok`". Being ALSO lifecycle-blocked changes nothing about that: the caller still got
+          // `ok`, so the trail still owes the record. Two `status: 'ok'` paths that differ in what they record is
+          // how a run trail acquires a hole nobody can see.
+          await audit(scope, jobEnqueued({ jobId: alreadyEnqueued.id, kind: request.kind, deduplicated: true }), auditCtx(options));
+          recordSuppression(options.logger, { surface: 'job_enqueue', accountId: scope.tenant.accountId, companyId: scope.tenant.companyId });
           options.logger?.info('job.enqueue_replayed_while_blocked', { metadata: { jobId: alreadyEnqueued.id, kind: request.kind, reason: lifecycle.reason } });
           return { status: 'ok', job: toEnqueuedJob(alreadyEnqueued, request.kind), deduplicated: true };
         }

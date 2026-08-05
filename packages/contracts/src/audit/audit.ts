@@ -1053,15 +1053,18 @@ export function toolCallRequested(input: {
     ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }),
     ...(input.injectionSignals === undefined || input.injectionSignals === '' ? {} : { injection_signals: input.injectionSignals }),
   };
-  // `stop_scopes` rides the DENIED branch only, and only for the reason it explains. On a permitted call it would
-  // claim a halt that did not happen; on a different refusal it would attribute that refusal to a stop.
-  const stopScopes = input.denialReason === 'emergency_stopped' && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
-  // The hold/pause facts ride the same branch and the same condition — they can only have happened on an
-  // `emergency_stopped` refusal, so recording them anywhere else would assert a halt that did not occur.
-  const heldFacts =
-    input.denialReason === 'emergency_stopped' && input.heldByStopId !== undefined
-      ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true }
-      : {};
+  // `stop_scopes` rides the DENIED branch only — on a permitted call it would claim a halt that did not happen.
+  //
+  // IT NO LONGER REQUIRES THE REASON TO BE `emergency_stopped` (ACBP-P7-002; independent review). That conjunct
+  // was correct while the stop was the only gate that could produce these facts. P7-002's lifecycle gate outranks
+  // the stop gate, so a call that is BOTH stopped and lifecycle-refused reports `company_not_active` while a stop
+  // genuinely covered it — and the old condition silently dropped the evidence of that stop from the permanent
+  // record. The facts are now keyed on WHETHER THEY HAPPENED, which is what the values themselves say.
+  const stopScopes = input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
+  // Same correction: the hold and pause are recorded when they OCCURRED. `heldByStopId` is set only by the
+  // dispatcher's capture block, which runs only when a stop actually covered the call, so its presence is the
+  // fact — the reason that happened to be reported alongside it is not.
+  const heldFacts = input.heldByStopId !== undefined ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true } : {};
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
     : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes, ...heldFacts });

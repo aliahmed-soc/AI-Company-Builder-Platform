@@ -134,12 +134,33 @@ crosses — fails three ways: the seam has **no production composition** (CDR-07
 - **G4.1 — The lifecycle gate MUST NOT occupy `policyPrecheck`.** Whatever the enforcement location turns out to
   be, it may not be the seam the caps ticket needs.
 
-### §4.3 What this means for the ticket's shape
+### §4.3 WHAT WAS ACTUALLY BUILT — the ruling §4.1 and §4.2 left open
 
-The enforcement location is now **the largest open question in the ticket** (§9.3), not a detail. The two
-candidate shapes are: gate each worker body immediately before its spend and its outbound fetch, or introduce a
-single non-injectable chokepoint the bodies must cross. Both are real work beyond this CDR, and neither is
-settled here.
+> **This section was added after the enforcement landed.** For several commits this record still said enforcement
+> was "blocked on §9.3" while the branch shipped four of the five points §4.1 had declared killed. The
+> independent review found it, and it is the same defect as PROJECT-STATE's stale forward pointer on ACBP-P7-001:
+> **the decision record went stale first, and the only place the ruling was argued was a code comment.**
+
+**Ruled (owner, this session): land COMPANY-PAUSE enforcement first; defer the account half.** On that ruling the
+ticket enforces **new-work refusal** — Gate 14's headline — at four points, and does NOT attempt in-flight halt:
+
+| Point | Placement, and why the ordering is the argument |
+|---|---|
+| `startRun` | Before `claimAttempt`, so a refusal does not burn an attempt number |
+| `dispatchToolCall` | Beside the other gate facts, NOT an early return, so the refusal is still RECORDED (TOOL-002) |
+| `enqueueJob` | AFTER the idempotency question, so a replay of a pre-pause success still answers `deduplicated` (NFR-006) |
+| `runJobStep` | After the already-completed short-circuit, before the step closure |
+
+**Why four and not five.** `runWorkerStep` is the in-flight shape, and in-flight halt needs the durable-stop
+sweep (§6.1) that §9.5 still gates. Deferring it keeps this ticket's claim exactly "no NEW autonomous work".
+
+**§4.1's objection is NOT dissolved, and this is the honest limit of what shipped.** The three worker bodies
+still reach the network and the metered gateway without crossing any gated function. `startRun` closes
+run *creation*, so no new run row exists for a non-active company — but a `runId` parameter is provenance
+metadata, not a check, and `runResearch` validates it against nothing: it fetches and spends **before its first
+database statement**. A stale or fabricated uuid reaches both identically. **Gating the worker bodies remains
+§9.3, open.** An earlier version of the comment at `runs/coordinator.ts` claimed otherwise; it was corrected
+(§9.14).
 
 ## §5 What must keep working — the permit list
 
@@ -240,7 +261,9 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
    only canon lifecycle containing the literal word "deactivated" is the User, not the Account.
    **The gate does not depend on this**: an allowlist on `'active'` is correct whichever value means deactivated.
    Only the *transition* needs the answer.
-3. **WHERE THE GATE GOES (§4.3)** — the largest open item. Not `policyPrecheck` (G4.1).
+3. **WHERE THE GATE GOES FOR THE WORKER BODIES (§4.3)** — the remaining half. The four run/job/dispatch points
+   shipped; `runResearch`, `runDocumentWorker` and `runStrategyComparison` still spend without crossing any of
+   them. **Not `policyPrecheck`** (G4.1 — it would preclude NFR-015's caps).
 4. **Is work CREATION gated, or disclosed?** (§7.)
 5. **Does pause now raise a real halt?** (§6.2 — a behavioural change to merged code.)
 6. **No HTTP caller for the transition on merge**, and `API-CONTRACTS.md:28,30` already names `deactivate` for
@@ -263,7 +286,19 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
     clicked deactivate by mistake"* has no answer today.
 13. **THE TICKET IS SIZED `M` AND IS NOT AN `M`.** On the evidence above it is at minimum: a gate, a behavioural
     change to pause, a durable-stop sweep, an enforcement location that does not yet exist, a migration, two
-    consequential fixes, and an unruled HTTP surface. Splitting it is an owner decision.
+    consequential fixes, and an unruled HTTP surface. Splitting it is an owner decision — and the owner has now
+    taken the first cut (§4.3): company-pause enforcement first, account half deferred.
+14. **A REGRESSION THIS TICKET CAUSED AND FIXED, recorded because the class matters more than the instance.**
+    The lifecycle gate outranks the stop gate in `decideDispatch`, and P6-007's held-work capture was keyed on
+    *which refusal was reported* (`finalReason === 'emergency_stopped'`). So for a company that was both
+    non-active AND covered by a live stop, the capture silently stopped running: no `held_work` row, no
+    `running`→`paused`, and ADMIN-002's confirm-or-discard review lost that task. **A merged trust-critical
+    control disabled as a side effect of a new gate, with no test and nothing in the record.** Fixed by keying
+    the capture on `stopEvaluation.kind === 'stopped'` — what actually happened — rather than on which of two
+    true refusals won the race to be reported; the audit event's `stop_scopes`/`held_by_stop_id` guards were
+    corrected the same way. **The general rule: a new gate that outranks an existing one inherits responsibility
+    for every side effect the old one carried.** Nothing in this repo enforces that rule; it is a review finding,
+    and a future gate inserted above another will need the same check made by hand.
 
 ## §10 Slices
 
@@ -271,7 +306,13 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
 2. **Contracts** — the widened vocabulary, the two-phase transition table, and the gate as a pure total
    function. **Unblocked by every open question above**, because the allowlist form is correct whichever value
    the account vocabulary settles on.
-3. **Migration** — widen `companies_status_valid`; the account half waits on §9.2.
-4. **Enforcement** — blocked on §9.3.
-5. **The transitions + the durable-stop sweep** — blocked on §9.5.
-6. **Real-PostgreSQL Gate-14 suite, review, mutation testing, docs, finalization.**
+3. **Migration** — DONE (`0054`): `companies_status_valid` widened, and `tool_calls_denial_reason_valid` widened
+   for the new denial reason (without which the dispatcher's denial INSERT raises 23514 and aborts the
+   transaction, losing the refusal's own evidence). The account half waits on §9.2.
+4. **Enforcement** — DONE for the four new-work points (§4.3). The worker bodies remain §9.3.
+5. **The transitions + the durable-stop sweep** — NOT DONE, blocked on §9.5. Consequence, stated plainly:
+   **nothing can reach `deactivating` in production yet**, so the two new states are reachable only by a direct
+   database write. The GATE is live for `paused`, which is what the owner's ruling asked for first.
+6. **Real-PostgreSQL Gate-14 suite** — DONE, and **mutation-proven**: a disposable probe branch that neutralised
+   the gate without touching a test turned 8 of 17 cases red through production paths. Review, docs and
+   finalization follow.

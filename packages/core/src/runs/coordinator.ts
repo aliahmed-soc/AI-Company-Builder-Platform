@@ -134,9 +134,23 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
       // BEFORE `claimAttempt`, deliberately. A refusal after the claim would burn an attempt number the caller
       // can never reuse — the task's attempt budget consumed by a company that was never allowed to run.
       //
-      // THIS IS THE POINT THAT MAKES "no NEW autonomous work" TRUE. `task_runs` has exactly one insert path,
-      // `TaskRunRepository.claimAttempt`, and this is its only production caller — so a refusal here means no new
-      // run exists, and therefore no worker body can be invoked for new work, since every body takes a `runId`.
+      // WHAT THIS POINT ACTUALLY GUARANTEES, stated exactly — an earlier version of this comment overclaimed and
+      // the independent review caught it (CDR-079 §9.14).
+      //
+      // TRUE: `task_runs` has exactly one insert path, `TaskRunRepository.claimAttempt`, and this is its only
+      // production caller, so a refusal here means NO NEW RUN ROW EXISTS. That much is proved against the
+      // database in `gate-14.integration.test.ts`, not against this function's return value.
+      //
+      // NOT TRUE, AND THE EARLIER COMMENT SAID IT: that no worker body can therefore be invoked, "since every
+      // body takes a `runId`". A `runId` PARAMETER IS NOT A CHECK — it is provenance metadata, and its own
+      // docstring says so (`workers/research.ts`: "the artifact's provenance"). `runResearch` validates it
+      // against nothing: it fetches externally and calls the metered gateway BEFORE its first database
+      // statement, so a stale or fabricated uuid reaches the network and the spend identically. Only the
+      // artifact persist would fail, after the money is gone.
+      //
+      // Gating the worker bodies is CDR-079 §9.3, still open. This gate closes the run-creation path; it does
+      // not close that one, and nothing here should be read as saying otherwise.
+      //
       // In-flight work already under way is a separate concern (safe-stop, CDR-079 §6) and is NOT handled here.
       const lifecycle = await readLifecycleDecision(scope);
       if (!lifecycle.allowed) {

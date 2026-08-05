@@ -30,6 +30,7 @@ import { startRun } from '../runs/index.js';
 import { enqueueJob } from '../jobs/index.js';
 import { runJobStep } from '../jobs/checkpoint.js';
 import { dispatchToolCall } from '../tools/dispatcher.js';
+import { initializeCompanyPolicy } from '../policy/index.js';
 import { exportCompanyData } from '../exports/index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -203,20 +204,43 @@ describe.skipIf(!hasTestDatabase)('LAUNCH GATE 14 — no new autonomous work (re
 
   // ── dispatchToolCall ───────────────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * A run, a registered tool, AND AN ACTIVE POLICY.
+   *
+   * THE POLICY IS THE PART THE INDEPENDENT REVIEW CAUGHT MISSING. The dispatcher evaluates policy unconditionally,
+   * and with no active policy `evaluatePolicyInScope` answers `no_active_policy`, which maps to `deny` and lands
+   * as `policy_denied`. So an ACTIVE company in a policy-less fixture is denied too — and the dispatcher cases
+   * below were passing against a fixture that could never have authorized anything. `dispatcher.integration.
+   * test.ts` states the same trap in its own words: "a suite that seeded none would only ever be testing the
+   * no-policy refusal."
+   */
+  async function dispatchableRun(): Promise<string> {
+    const taskId = await queuedTask();
+    const started = await startRun(product, { ...base(), taskId, attempt: 1 });
+    expect(started.status).toBe('ok');
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+              values ('web_research', 1, 'informational', 'gate-14 fixture', 'active')
+              on conflict do nothing`.execute(owner.kysely);
+    expect((await initializeCompanyPolicy(product, base())).status).toBe('ok');
+    return (started as { status: 'ok'; run: { id: string } }).run.id;
+  }
+
+  test('CONTROL: an ACTIVE company DISPATCHES successfully — without this the refusals below prove nothing', async () => {
+    // The fixture-guard lesson, applied to the dispatcher specifically. An earlier version of this suite had no
+    // such control, and its dispatcher cases would have passed identically against a fixture whose every call was
+    // refused for an unrelated reason.
+    const runId = await dispatchableRun();
+    const authorized = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: ['web_research'], context: [] });
+    expect(authorized.status).toBe('authorized');
+  });
+
   test('a paused company CANNOT dispatch a tool call, and the refusal IS RECORDED as `company_not_active`', async () => {
     // THE POINT CANON NAMES EXPLICITLY (SECURITY-VERIFICATION-PLAN:23, "lifecycle checks in job pickup +
     // dispatcher), and the one that needed migration 0054's SECOND constraint. `tool_calls.denial_reason` is
     // CHECKed against a closed vocabulary, so if the migration had been forgotten this insert would raise 23514,
     // ABORT the transaction, and the call would be neither executed nor recorded — a refusal that loses its own
     // evidence. The recorded row below is what proves the constraint was widened.
-    const taskId = await queuedTask();
-    const started = await startRun(product, { ...base(), taskId, attempt: 1 });
-    expect(started.status).toBe('ok');
-    const runId = (started as { status: 'ok'; run: { id: string } }).run.id;
-    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
-              values ('web_research', 1, 'informational', 'gate-14 fixture', 'active')
-              on conflict do nothing`.execute(owner.kysely);
-
+    const runId = await dispatchableRun();
     await setCompanyStatus('paused');
 
     const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: ['web_research'], context: [] });
@@ -233,13 +257,7 @@ describe.skipIf(!hasTestDatabase)('LAUNCH GATE 14 — no new autonomous work (re
   test('the tool-call refusal is NOT `emergency_stopped`, and no stop row exists to explain it', async () => {
     // Reusing that value would send an operator hunting a stop somebody activated, and would additionally trip
     // the held-work + `running`→`paused` block that belongs to the emergency-stop controller.
-    const taskId = await queuedTask();
-    const started = await startRun(product, { ...base(), taskId, attempt: 1 });
-    const runId = (started as { status: 'ok'; run: { id: string } }).run.id;
-    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
-              values ('web_research', 1, 'informational', 'gate-14 fixture', 'active')
-              on conflict do nothing`.execute(owner.kysely);
-
+    const runId = await dispatchableRun();
     await setCompanyStatus('deactivated');
     const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: ['web_research'], context: [] });
     expect(denied).toMatchObject({ status: 'denied' });
