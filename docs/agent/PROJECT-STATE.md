@@ -67,8 +67,10 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **DONE — ACBP-P7-001 export of documents and owned data.** Squash `<pending>`, PR **#73**, exact-head CI
-  `31012939070` on `e1accb2` (**256 files / 3631 tests, zero skips**). No migration. **Mechanism-complete, NOT
+- **DONE — ACBP-P7-001 export of documents and owned data.** Squash `cf67c7f`, PR **#73**, exact-head CI
+  `31026433291` on `2c5a4c0` and exact-main CI `31027343426` on `cf67c7f` — both **256 files / 3631 tests, zero
+  skips**, with the export real-PostgreSQL suite running **12/12**. Branch deleted after its tree hash was
+  verified identical to `main`'s (`4d863ce`), because ancestry does not survive a squash merge. No migration. **Mechanism-complete, NOT
   production-complete**: there is no S3-compatible adapter (CDR-078 §1), so nothing here proves an archive lands
   durably and nothing claims it does. Two owner decisions stay open — the catalogue rows that still say Post-MVP
   (§2), archive retention (§7.2) — plus a third the review raised: the exclusion rulings for `memberships` and the
@@ -1610,8 +1612,8 @@ this paragraph.
 
 **Phase 6 is 12/12 and closed.** Only **ACBP-P6-002** remains owner-gated, and a Done ticket does not close it.
 
-**Phase 7 is open, and ACBP-P7-001 is the ticket in flight** — branch `p7-001-export`, PR **#73**, no migration,
-exact-head CI green with zero skips. See its working block above.
+**Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
+block above. **Nothing is currently in flight.**
 
 **Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
 blocked):
