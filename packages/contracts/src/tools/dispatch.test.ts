@@ -16,6 +16,58 @@ import {
 import { RISK_CLASSES, MOST_RESTRICTIVE_RISK_CLASS } from './risk-class.js';
 import { toolCallRequested } from '../audit/audit.js';
 
+/**
+ * ACBP-P7-002 — the lifecycle gate at the dispatcher (CDR-079; launch Gate 14).
+ *
+ * These sit here rather than in a suite of their own because the ORDER is the assertion: the broadest refusal
+ * must win, and a test that only checked the reason in isolation would not notice it moving down the chain.
+ */
+const lifecycleCases = [
+  { reason: 'company_not_active' as const, label: 'a paused / deactivating / deactivated company' },
+  { reason: 'account_not_active' as const, label: 'a non-active account' },
+  { reason: 'company_unreadable' as const, label: 'an unreadable company row' },
+  { reason: 'account_unreadable' as const, label: 'an unreadable account row' },
+];
+
+describe('lifecycle gate (ACBP-P7-002 / CDR-079 / Gate 14)', () => {
+  for (const c of lifecycleCases) {
+    test(`${c.label} is denied 'company_not_active'`, () => {
+      // ALL FOUR gate reasons collapse to ONE denial reason. They are not four denial reasons because every one
+      // sends a reader to the same place — the company's lifecycle state. The precise cause reaches the log.
+      expect(decideDispatch(clear({ lifecycle: { allowed: false, reason: c.reason } }))).toMatchObject({ kind: 'denied', reason: 'company_not_active' });
+    });
+  }
+
+  test('the lifecycle refusal OUTRANKS allowlist, policy and approval', () => {
+    // The broadest refusal is the truest one. Answering `not_allowlisted` to a paused company would send an
+    // operator to edit a worker's allowlist; answering `policy_denied` would send them to edit a policy.
+    const denied = decideDispatch(
+      clear({ lifecycle: { allowed: false, reason: 'company_not_active' }, allowlist: undefined, policy: { kind: 'deny' }, approval: { kind: 'deny' } }),
+    );
+    expect(denied).toMatchObject({ kind: 'denied', reason: 'company_not_active' });
+  });
+
+  test('but an UNREGISTERED tool still outranks it, because the risk class comes from the registry', () => {
+    // `not_registered` resolves the risk class every later denial carries, so it cannot move.
+    expect(decideDispatch(clear({ registered: false, lifecycle: { allowed: false, reason: 'company_not_active' } }))).toMatchObject({ kind: 'denied', reason: 'not_registered' });
+  });
+
+  test('it does NOT reuse `emergency_stopped`', () => {
+    // That value is persisted, re-validated on read, and drives the held-work + running→paused block. Reusing it
+    // would misattribute the refusal and send an operator hunting a stop row that does not exist.
+    const denied = decideDispatch(clear({ lifecycle: { allowed: false, reason: 'company_not_active' } }));
+    expect(denied).not.toMatchObject({ reason: 'emergency_stopped' });
+  });
+
+  test('a MALFORMED lifecycle answer refuses, rather than being treated as permission', () => {
+    // Trust boundary: the value arrives from a caller. Anything that is not an explicit `allowed: true` refuses —
+    // including `undefined`, which is what a caller that forgot the field would pass at runtime.
+    for (const bad of [undefined, null, {}, { allowed: 'yes' }, { allowed: 1 }] as unknown[]) {
+      expect(decideDispatch(clear({ lifecycle: bad as never }))).toMatchObject({ kind: 'denied', reason: 'company_not_active' });
+    }
+  });
+});
+
 /** Everything permissible. Each test breaks ONE field, so a passing result always names its own cause. */
 const clear = (over: Partial<DispatchRequestFacts> = {}): DispatchRequestFacts => ({
   toolId: 'web_research',
@@ -25,6 +77,10 @@ const clear = (over: Partial<DispatchRequestFacts> = {}): DispatchRequestFacts =
   stop: { kind: 'clear' },
   policy: { kind: 'allow' },
   approval: { kind: 'allow' },
+  // ACBP-P7-002: the company may act. REQUIRED, so making it optional would silently re-permit every existing
+  // case — which is why 42 of these tests failed the moment the field landed, naming every caller that had not
+  // answered it.
+  lifecycle: { allowed: true },
   ...over,
 });
 

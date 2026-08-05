@@ -32,6 +32,9 @@ import {
   type ToolDenialReason,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+// ACBP-P7-002: the lifecycle gate's read. NOT a `ToolGates` member and NOT injectable — see the instruction on
+// `ToolGates` about caller-supplied answers to safety questions, which have been deleted from here twice.
+import { readLifecycleDecision } from '../company/lifecycle-guard.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
 import { spendingLimitObservation } from '../limits/usage-caps.js';
@@ -446,10 +449,16 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         stoppableCall,
       );
 
+      // ACBP-P7-002 / CDR-079 / launch **Gate 14**. Read here, beside the other gate facts, so the decision is
+      // made from one assembled set rather than by an early return that bypasses the recording below: a call
+      // refused for lifecycle reasons is still a call, and TOOL-002 wants 100% of them recorded.
+      const lifecycle = await readLifecycleDecision(scope);
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
+        lifecycle,
         allowlist: params.allowlist,
         untrustedContext: untrusted,
         // ── THE STOP GATE, read from the STORE inside this transaction (ACBP-P6-007; CDR-072 §1-G1/G3/G4) ──

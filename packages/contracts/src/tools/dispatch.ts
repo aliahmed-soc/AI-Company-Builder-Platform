@@ -8,6 +8,7 @@
 // The decision is kept PURE and separate from `dispatchToolCall` for one reason: a gate that can only be exercised
 // through a database is a gate that is mostly untested. Here every combination is a function call.
 import { resolveRiskClass, MOST_RESTRICTIVE_RISK_CLASS, type RiskClass } from './risk-class.js';
+import type { AutonomousWorkDecision } from '../company/lifecycle-gate.js';
 
 /**
  * CLOSED. TOOL-002.
@@ -45,6 +46,18 @@ export const TOOL_DENIAL_REASONS = [
   // ACBP-P5-003c: the ONLY thing that refused this call was the untrusted provenance of the working context.
   // Distinct from `policy_unavailable` on purpose - it names a call that WOULD have proceeded on the trusted path.
   'untrusted_context',
+  // ACBP-P7-002 (CDR-079; launch Gate 14): the company was not in a state permitting autonomous work.
+  //
+  // ONE VALUE, NOT FOUR. The gate distinguishes account-vs-company and not-active-vs-unreadable, and those four
+  // reasons reach the LOG, where an operator diagnoses. They are not four denial reasons, because every one of
+  // them sends a reader to the same place - the company's lifecycle state. That is the test `stop_unavailable`
+  // and `emergency_stopped` pass and these fail: those two are separate values precisely because one sends a
+  // reader to look for a broken engine and the other to a stop somebody activated.
+  //
+  // MUST NOT REUSE `emergency_stopped`. That value is persisted, re-validated on read, and additionally drives
+  // the held-work + `running`->`paused` block, so reusing it would misattribute the refusal and send an operator
+  // hunting a stop row that does not exist.
+  'company_not_active',
 ] as const;
 export type ToolDenialReason = (typeof TOOL_DENIAL_REASONS)[number];
 
@@ -105,6 +118,18 @@ export interface DispatchRequestFacts {
    * allows is still obeyed, because the waiver only ever stood in for a missing answer.
    */
   readonly untrustedContext?: boolean;
+  /**
+   * May this company do autonomous work at all? (ACBP-P7-002; CDR-079; launch **Gate 14**.)
+   *
+   * REQUIRED, NOT OPTIONAL, and that is the whole point of adding it here rather than checking it at the call
+   * site. An optional field defaulting to permitted is the shape CDR-075 §4.3 had to disclose about the caps
+   * seam and CDR-079 §1 found again in `canPickUpAutonomousWork`: a control that is configured, documented and
+   * inert. Making it required means the compiler names every caller that has not answered it.
+   *
+   * It is a DECISION, not a status: the caller reads both lifecycle rows under a lock and passes the verdict, so
+   * this type never has to know what a company status is.
+   */
+  readonly lifecycle: AutonomousWorkDecision;
 }
 
 export type DispatchDecision =
@@ -157,6 +182,16 @@ export function decideDispatch(facts: DispatchRequestFacts): DispatchDecision {
   // needs no rule of its own anywhere below — it is simply gated like the most dangerous class there is.
   const riskClass = resolveRiskClass(facts.riskClass);
   const deny = (reason: ToolDenialReason): DispatchDecision => ({ kind: 'denied', reason, riskClass });
+
+  // LIFECYCLE FIRST, before any question about WHICH tool (ACBP-P7-002; CDR-079). A company that may not act at
+  // all does not get asked whether this particular tool is allowlisted — the broadest refusal is the truest one,
+  // and answering `not_allowlisted` to a paused company would send an operator to edit a worker's allowlist.
+  //
+  // It sits after `not_registered` only because that branch resolves the risk class every later denial carries.
+  //
+  // The `!== true` form is deliberate: `AutonomousWorkDecision` is a discriminated union, but this is a trust
+  // boundary and the value arrives from a caller — anything that is not an explicit `allowed: true` refuses.
+  if (facts.lifecycle?.allowed !== true) return deny('company_not_active');
 
   if (facts.allowlist === undefined) return deny('no_allowlist');
   if (!facts.allowlist.includes(facts.toolId)) return deny('not_allowlisted');

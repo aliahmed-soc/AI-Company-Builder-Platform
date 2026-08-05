@@ -24,6 +24,9 @@ import {
   type RunFailureCategory,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+// ACBP-P7-002: the lifecycle gate's read. Imported directly — it is not a port and has no injectable answer.
+import { readLifecycleDecision } from '../company/lifecycle-guard.js';
+import type { AutonomousWorkRefusal } from '@acbp/contracts';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
 
@@ -85,7 +88,16 @@ export type StartRunResult =
   | { readonly status: 'task_not_found' }
   // The task exists but cannot be executing — finished, called off, or never queued. Carries the state so the caller
   // can say WHY rather than retrying forever against a task that will never be startable.
-  | { readonly status: 'task_not_startable'; readonly taskState: string };
+  | { readonly status: 'task_not_startable'; readonly taskState: string }
+  /**
+   * The COMPANY may not do autonomous work (ACBP-P7-002; CDR-079; launch **Gate 14**).
+   *
+   * A DISTINCT MEMBER, not a reuse of `task_not_startable`. That would be a false statement — the task is
+   * perfectly startable; the company is not — and it would send an operator to look at the task's state machine
+   * instead of at the company's lifecycle. Carries the gate's precise reason, which distinguishes the account
+   * level from the company level and a deliberate pause from an unreadable row.
+   */
+  | { readonly status: 'company_not_active'; readonly reason: AutonomousWorkRefusal };
 
 /**
  * Claim an attempt and put it straight into `running`.
@@ -116,6 +128,21 @@ export async function startRun(client: DatabaseClient, params: StartRunParams, o
       // And the task must be in a state where execution can legitimately be under way. Without this the coordinator
       // would put a `completed` or `cancelled` task straight into `running` — the AI starting work that is over.
       if (!canStartRunForTask(task.state)) return { status: 'task_not_startable', taskState: task.state };
+
+      // ACBP-P7-002 / CDR-079 / launch **Gate 14**: the company must be permitted to do autonomous work at all.
+      //
+      // BEFORE `claimAttempt`, deliberately. A refusal after the claim would burn an attempt number the caller
+      // can never reuse — the task's attempt budget consumed by a company that was never allowed to run.
+      //
+      // THIS IS THE POINT THAT MAKES "no NEW autonomous work" TRUE. `task_runs` has exactly one insert path,
+      // `TaskRunRepository.claimAttempt`, and this is its only production caller — so a refusal here means no new
+      // run exists, and therefore no worker body can be invoked for new work, since every body takes a `runId`.
+      // In-flight work already under way is a separate concern (safe-stop, CDR-079 §6) and is NOT handled here.
+      const lifecycle = await readLifecycleDecision(scope);
+      if (!lifecycle.allowed) {
+        options.logger?.info('run.start_refused', { metadata: { accountId: scope.tenant.accountId, companyId: scope.tenant.companyId, taskId: params.taskId, reason: lifecycle.reason } });
+        return { status: 'company_not_active', reason: lifecycle.reason };
+      }
 
       const claimed = await runs.claimAttempt({
         accountId: scope.tenant.accountId,
