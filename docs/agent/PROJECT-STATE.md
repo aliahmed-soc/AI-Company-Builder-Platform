@@ -67,6 +67,70 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — ACBP-P7-001 export of documents and owned data.** Squash `<pending>`, PR **#73**, exact-head CI
+  `31012939070` on `e1accb2` (**256 files / 3631 tests, zero skips**). No migration. **Mechanism-complete, NOT
+  production-complete**: there is no S3-compatible adapter (CDR-078 §1), so nothing here proves an archive lands
+  durably and nothing claims it does. Two owner decisions stay open — the catalogue rows that still say Post-MVP
+  (§2), archive retention (§7.2) — plus a third the review raised: the exclusion rulings for `memberships` and the
+  billing ledgers are engineering defaults on a privacy question (§7.3).
+
+- **ACBP-P7-001 export of documents and owned data — working block** (CDR-078; EXPORT-001, NFR-014; ADR-002,
+  ADR-016; trust-critical #2; invariant 19; SECURITY-VERIFICATION-PLAN gate 12 support). Branch `p7-001-export`,
+  PR **#73**, **no migration**.
+  - **The ticket argues with itself, and canon settles it.** Acceptance asks for BOTH "archive matches in-product
+    data" AND "zero secrets"; when a founder has typed their own key into their own document those conflict.
+    `SECURITY-ARCHITECTURE:19` rules it — archives never contain secret values — so the value is redacted and the
+    surrounding document STAYS, because dropping a document over one span loses the founder's actual work, which
+    is the failure export exists to prevent. That forces a third manifest category: included WITH REDACTIONS.
+    `manifestIsFaithful` answers the stronger question `complete` cannot.
+  - **The classification is TOTAL and DECLARED** (§6). Every table carrying a `company_id` is in exactly one of
+    two closed lists — 28 exported, 18 excluded with a ruling from a closed vocabulary — and a real-PostgreSQL
+    guard compares them against `information_schema`, deliberately a DIFFERENT anchor from the `DatabaseSchema`
+    interface the export reads through. A future migration adding a company-scoped table fails that guard until
+    someone rules on it. Without it, the likeliest failure of "archive matches in-product data" — a collection
+    nobody remembered — would be invisible to every test written against the code that forgot it.
+  - **One generic reader over a closed allowlist**, not a mapper per entity (§6.1). A mapper that forgets a
+    column under-delivers SILENTLY, which is ADR-002's failure; a generic whole-row read can only pick a new
+    column UP, and that lands in the secret guard, which redacts, counts and reports.
+  - **The value walk is recursive** (§6.2), because a row is not a text field: a secret at `payload.notes[2]` is
+    exactly as gone as one in a top-level column. A leaf that cannot be represented excludes its WHOLE ROW; a
+    secret in a KEY excludes too, because redacting keys would collide and one would silently overwrite another.
+  - **Truncation is an omission, never a silent cap** (§6-G7): the read asks for `cap + 1`, so the extra row makes
+    the collection ship what it can AND enumerate itself as `truncated`.
+  - **The omission vocabulary SHRANK** (§6.5). `unsupported_format` shipped in the manifest slice and never
+    acquired a producer — artifact BYTES are not copied by this ticket — and a reason nothing can produce is a
+    case a reader will wrongly believe can occur. Removed; `truncated` added, which something does produce.
+  - **Objects first, audit last** (§6.6), each object READ BACK before anything records it (TASK-005's quiet
+    failure half, reused rather than re-derived). Audit-then-write would leave a permanent record asserting an
+    export that does not exist; this ordering leaves objects with no record, which are inert.
+  - **No `export_jobs` table** (§6.7), though the BACKLOG data-objects cell and EVENT-CATALOG `:279` both name
+    one. A job row exists to be POLLED and §4 ruled out the surface that would poll it, so it would have one
+    writer, no reader and no observable status. `artifact.exported` — catalogued since long before anything could
+    emit it — is the durable record, registered in the same commit as its emitter.
+  - **`export:create` is OWNER-ONLY** and deliberately narrower than the reads it composes: a viewer who may READ
+    the understanding in-product is not thereby entitled to walk out with an archive of it.
+  - **The independent review found a DISCLOSURE defect** (§6-G6a). The ownership check returned the failing rows'
+    IDENTITIES and the export wrote them into the manifest — so a row that leaked past RLS would have had its id
+    handed to the wrong founder, confirming another tenant's record exists and naming it, which is exactly what
+    §3-G8 forbids. It would have shipped LOOKING LIKE DILIGENCE. Fixed at the source: the function now returns a
+    COUNT, because a return value that must never be used is an invitation.
+  - **Mutation testing: 17 guards, four findings** — see `P7-001-REVIEW-COVERAGE.md`. Two were tests that could
+    not fail: `expected !== ''` was unmeasured because no case crossed the two blank values, and both
+    case-insensitivity tests used a fixture uuid of ALL DIGITS, so `toUpperCase()` was a no-op and they compared a
+    string to itself. A third was a fake control — two allowlist conditions that both derive from the same
+    constant, so deleting either left everything green.
+  - **Disclosed rather than designed around** (§6.8): the whole export runs inside ONE database transaction,
+    which against a real provider means holding it open across ~56 network round trips. Belongs to the ticket
+    that brings the adapter.
+  - **Backlog row flipped to Done in this branch**, per this repository's convention that the Status flip lands
+    with the ticket.
+
+- **DONE — ACBP-P6-012 Slice F integration: safety and recovery.** Squash `b36a079`, PR **#72**, exact-main CI
+  `30972753666` (zero skips). M6's exit criterion is satisfied by it. **Phase 6 is 12/12.**
+
+- **DONE — ACBP-P6-008 Decision Room and activity completion.** Squash `1f4acaa`, PR **#71**, migration `0053`,
+  exact-main CI `30929427397` (zero skips).
+
 - **ACBP-P6-012 Slice F integration: safety and recovery — working block** (CDR-077; POL-005, APPR-004,
   ADMIN-001, TASK-009, TASK-006, USAGE-001; ADR-009/ADR-010; **M6's exit criterion**). Branch
   `p6-012-slice-f-integration`, **no migration, and no production code at all** — the ticket is composed
@@ -1538,20 +1602,30 @@ ticket without a DONE line above it is genuinely in flight._
 being worked, which made the one pointer the file's own header sends a resuming reader to the most stale line in
 it. The generic procedure it described is now in CLAUDE.md; what belongs here is the actual next move.
 
-**Phase 6 is code-complete pending two owner merges.** Both remaining tickets are pushed draft PRs, each locally
-green and each awaiting the same gate:
+**CORRECTED AGAIN 2026-08-05.** This section claimed Phase 6 was "code-complete pending two owner merges" after
+both of them had already merged — `1f4acaa` (P6-008) and `b36a079` (P6-012), each with a green exact-main run.
+That is the same failure mode the 2026-08-04 correction was written about: the file's own forward pointer went
+stale first. Trust `git log origin/main` and an `Import-Csv` of BACKLOG.csv over any prose in this file, including
+this paragraph.
 
-- **ACBP-P6-008** Decision Room — branch `p6-008-decision-room`, PR **#71**, migration **0053**, hosted CI green.
-- **ACBP-P6-012** Slice F integration — branch `p6-012-slice-f-integration`, PR **#72**, no migration, no
-  production code; ten live steps green, and M6's exit criterion is satisfied by it.
+**Phase 6 is 12/12 and closed.** Only **ACBP-P6-002** remains owner-gated, and a Done ticket does not close it.
 
-**Owner gates blocking the phase:** mark #71 and #72 ready, merge them bottom-up (they are independent, both
-rooted at `main`), verify exact-main CI zero-skip after each, delete the branches once each tip's tree is
-verified byte-identical in `main` (ancestry does not survive a squash merge), and set both backlog rows to Done.
+**Phase 7 is open, and ACBP-P7-001 is the ticket in flight** — branch `p7-001-export`, PR **#73**, no migration,
+exact-head CI green with zero skips. See its working block above.
 
-**After those merges, Phase 6 closes and Phase 7 opens.** Its first Ready/unblocked rows by dependency order are
-`ACBP-P7-007` (security test pass), `ACBP-P7-008` (failure-injection pass) and `ACBP-P7-009` (end-to-end MVP
-suite) — all three list `ACBP-P6-012` as their dependency, which is why they were unstartable until now.
+**Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
+blocked):
+
+- **ACBP-P7-002** account and company deactivation — the lifecycle half of what P7-001 began.
+- **ACBP-P7-007** security test pass, **ACBP-P7-008** failure-injection pass — both listed `ACBP-P6-012` as their
+  dependency, which is why they were unstartable until it merged.
+- **ACBP-P7-009** end-to-end MVP suite — unblocked by P7-001.
+- **ACBP-P7-006 stays owner-gated**: it needs real live infrastructure, and it is the only thing that can turn
+  P6-011's suppression counter from "it fired" into "it would have".
+
+**Three stale draft PRs are still open and unaddressed**, none of them Phase 7: **#63** (P5-012), **#62**
+(P5-014), and **#10** (P1-004's last-owner revoke race, open since Phase 1). **ACBP-P3-006** is `Planned`,
+unblocked, and has never been picked up.
 
 ## Local integration environment (learned 2026-07-24)
 Local real-PostgreSQL runs ARE possible on this machine, contrary to the older "unrunnable" note below — two
