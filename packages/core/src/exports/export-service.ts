@@ -110,6 +110,10 @@ function sha256(bytes: Uint8Array): string {
  * THROWS rather than omitting. A dropped write is not a partial-data condition; the archive is broken, and
  * throwing here means the audit event is never written, so nothing claims an export that did not happen (CDR-078
  * §6.6). ENFORCED BY: "refuses the whole export when storage reports success for bytes that never landed".
+ *
+ * THE MESSAGE IS FOR THE LOG, NOT THE CALLER. This throws inside the company scope, so the transaction wrapper
+ * sanitises it into a bounded `PlatformError` before anything outside sees it; the reason survives only in the
+ * cause chain, which is where an operator needs it and a caller does not.
  */
 async function putVerified(storage: ObjectStorage, key: ObjectKey, bytes: Uint8Array): Promise<void> {
   await storage.put({ key, body: bytes, contentType: 'application/json', checksum: { algorithm: 'sha256', value: sha256(bytes) } });

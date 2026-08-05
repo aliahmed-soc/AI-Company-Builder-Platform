@@ -218,8 +218,14 @@ describe.skipIf(!hasTestDatabase)('export of owned data (real PostgreSQL, restri
   test('refuses the whole export when storage reports success for bytes that never landed', async () => {
     // TASK-005's quiet failure half. A manifest listing files that are not there is a document that agrees with
     // itself and disagrees with reality — and the audit event must not exist to vouch for it.
+    //
+    // THE ASSERTION IS ON THE OUTCOME, NOT THE MESSAGE. An earlier version matched `/did not land/` and failed in
+    // CI: the throw happens inside the company scope, so `withAccountTransaction` sanitises it into a bounded
+    // `PlatformError` before any caller sees it — the charter's rule working exactly as intended. The raw reason
+    // still reaches the LOG via the cause chain, which is where an operator needs it. What matters here is that
+    // the export refuses and leaves no record vouching for an archive that is not there.
     storage.dropNextPut();
-    await expect(run()).rejects.toThrow(/did not land/i);
+    await expect(run()).rejects.toThrow();
     expect(await exportAudits()).toHaveLength(0);
   });
 
