@@ -29,6 +29,7 @@ import { createTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { enqueueJob } from '../jobs/index.js';
 import { runJobStep } from '../jobs/checkpoint.js';
+import { dispatchToolCall } from '../tools/dispatcher.js';
 import { exportCompanyData } from '../exports/index.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
@@ -191,6 +192,52 @@ describe.skipIf(!hasTestDatabase)('LAUNCH GATE 14 — no new autonomous work (re
 
     const replayed = await runJobStep(product, { ...base(), jobId, stepName: 'fetch', step: () => Promise.reject(new Error('must not run')) });
     expect(replayed.status).toBe('already_completed');
+  });
+
+  // ── dispatchToolCall ───────────────────────────────────────────────────────────────────────────────────────
+
+  test('a paused company CANNOT dispatch a tool call, and the refusal IS RECORDED as `company_not_active`', async () => {
+    // THE POINT CANON NAMES EXPLICITLY (SECURITY-VERIFICATION-PLAN:23, "lifecycle checks in job pickup +
+    // dispatcher), and the one that needed migration 0054's SECOND constraint. `tool_calls.denial_reason` is
+    // CHECKed against a closed vocabulary, so if the migration had been forgotten this insert would raise 23514,
+    // ABORT the transaction, and the call would be neither executed nor recorded — a refusal that loses its own
+    // evidence. The recorded row below is what proves the constraint was widened.
+    const taskId = await queuedTask();
+    const started = await startRun(product, { ...base(), taskId, attempt: 1 });
+    expect(started.status).toBe('ok');
+    const runId = (started as { status: 'ok'; run: { id: string } }).run.id;
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+              values ('web_research', 1, 'informational', 'gate-14 fixture', 'active')
+              on conflict do nothing`.execute(owner.kysely);
+
+    await setCompanyStatus('paused');
+
+    const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: ['web_research'], context: [] });
+    expect(denied).toMatchObject({ status: 'denied', reason: 'company_not_active' });
+
+    // TOOL-002 wants 100% of calls recorded, INCLUDING the refused ones — which is why the gate is read beside
+    // the other facts rather than as an early return that would skip the recording.
+    const calls = await owner.kysely.selectFrom('tool_calls').selectAll().where('company_id', '=', w.companyA1).execute();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.outcome).toBe('denied');
+    expect(calls[0]?.denial_reason).toBe('company_not_active');
+  });
+
+  test('the tool-call refusal is NOT `emergency_stopped`, and no stop row exists to explain it', async () => {
+    // Reusing that value would send an operator hunting a stop somebody activated, and would additionally trip
+    // the held-work + `running`→`paused` block that belongs to the emergency-stop controller.
+    const taskId = await queuedTask();
+    const started = await startRun(product, { ...base(), taskId, attempt: 1 });
+    const runId = (started as { status: 'ok'; run: { id: string } }).run.id;
+    await sql`insert into tool_definitions (tool_id, version, risk_class, description, status)
+              values ('web_research', 1, 'informational', 'gate-14 fixture', 'active')
+              on conflict do nothing`.execute(owner.kysely);
+
+    await setCompanyStatus('deactivated');
+    const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'web_research', args: {}, allowlist: ['web_research'], context: [] });
+    expect(denied).toMatchObject({ status: 'denied' });
+    expect(denied).not.toMatchObject({ reason: 'emergency_stopped' });
+    expect(await owner.kysely.selectFrom('emergency_stops').selectAll().execute()).toEqual([]);
   });
 
   // ── the account level ──────────────────────────────────────────────────────────────────────────────────────
