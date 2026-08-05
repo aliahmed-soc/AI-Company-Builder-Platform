@@ -106,13 +106,20 @@ describe.skipIf(!hasTestDatabase)('LAUNCH GATE 14 — no new autonomous work (re
     });
   }
 
-  test('the refusal is NOT `task_not_startable` — the task is startable, the company is not', async () => {
+  test('the refusal is `company_not_active`, NOT `task_not_startable` — the task is startable, the company is not', async () => {
     // Reusing that member would be a false statement and would send an operator to the task's state machine
-    // instead of the company's lifecycle. The task really is `queued` here.
+    // instead of the company's lifecycle.
+    //
+    // THE POSITIVE ASSERTION CAME FIRST AFTER A MUTATION PROBE. An earlier version asserted only
+    // `.not.toBe('task_not_startable')`, and that PASSED with the gate neutralised — because a successful `'ok'`
+    // is also not `task_not_startable`. A negative-only assertion cannot fail in the direction it is named
+    // after, which is the defect class this whole ticket exists to remove.
     const taskId = await queuedTask();
     await setCompanyStatus('paused');
     const refused = await startRun(product, { ...base(), taskId, attempt: 1 });
+    expect(refused.status).toBe('company_not_active');
     expect(refused.status).not.toBe('task_not_startable');
+    // And the task really IS startable — so the refusal is about the company and nothing else.
     const task = await owner.kysely.selectFrom('tasks').select('state').where('id', '=', taskId).executeTakeFirst();
     expect(task?.state).toBe('queued');
   });
