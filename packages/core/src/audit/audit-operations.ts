@@ -73,6 +73,7 @@ import {
   usageCorrected,
   usageRollupReconciled,
   usageLimitReached,
+  artifactExported,
   type AuditEvent,
   type AuditEventName,
 } from '@acbp/contracts';
@@ -198,6 +199,11 @@ export const AUDITED_OPERATIONS = {
   // Usage caps (ACBP-P6-010; CDR-075). ONE operation for both thresholds, matching the single event name — a
   // `usage.limit_soft` / `usage.limit_hard` split would fragment the count and force every reader to know both.
   'usage.limit_reach': 'usage.limit_reached',
+  // Export of owned data (ACBP-P7-001; CDR-078 §3-G7; trust-critical #2). ONE operation covering complete and
+  // PARTIAL archives alike: canon's failure behaviour for export is "partial export enumerates missing", so a
+  // partial archive is the platform working, and a second `export.partial` operation would let a reader count
+  // partial exports as incidents. The event's `complete`/`omission_count` say which kind it was.
+  'export.generate': 'artifact.exported',
 } as const satisfies Record<string, AuditEventName>;
 
 export type AuditedOperation = keyof typeof AUDITED_OPERATIONS;
@@ -241,6 +247,10 @@ export type EmergencyStopAuditedOperation = 'emergency_stop.activate' | 'emergen
 // numbers `USAGE-AND-BILLING` §1 keeps separate, and collapsing their audit domains would be the first step to
 // collapsing the numbers.
 export type UsageAuditedOperation = 'usage.correct' | 'usage.reconcile' | 'usage.limit_reach';
+// Export (ACBP-P7-001; CDR-078). Its OWN domain rather than folded into ARTIFACT: `artifact.request-revision` is
+// one document changing INSIDE the platform, whereas this is everything the company owns leaving it. They share a
+// noun in EVENT-CATALOG and nothing else, and a reader auditing the export path must not have to filter revisions.
+export type ExportAuditedOperation = 'export.generate';
 export const MEMBERSHIP_AUDITED_OPERATION_IDS: readonly MembershipAuditedOperation[] = ['membership.invite', 'membership.revoke'];
 export const COMPANY_AUDITED_OPERATION_IDS: readonly CompanyAuditedOperation[] = ['company.create', 'company.update', 'company.pause', 'company.resume'];
 export const PROVISIONING_AUDITED_OPERATION_IDS: readonly ProvisioningAuditedOperation[] = ['provisioning.start', 'provisioning.step_start', 'provisioning.step_complete', 'provisioning.step_fail', 'provisioning.retry_request', 'provisioning.complete'];
@@ -263,10 +273,11 @@ export const APPROVAL_AUDITED_OPERATION_IDS: readonly ApprovalAuditedOperation[]
 export const POLICY_AUDITED_OPERATION_IDS: readonly PolicyAuditedOperation[] = ['policy.evaluate', 'policy.evaluate.denied', 'policy.evaluate.unavailable', 'policy.initialize'];
 export const EMERGENCY_STOP_AUDITED_OPERATION_IDS: readonly EmergencyStopAuditedOperation[] = ['emergency_stop.activate', 'emergency_stop.clear', 'emergency_stop.work.review'];
 export const USAGE_AUDITED_OPERATION_IDS: readonly UsageAuditedOperation[] = ['usage.correct', 'usage.reconcile', 'usage.limit_reach'];
+export const EXPORT_AUDITED_OPERATION_IDS: readonly ExportAuditedOperation[] = ['export.generate'];
 
 // Compile-time guard: the domain partition covers EXACTLY the full operation set (a new operation that is not
 // added to one of the domain subsets is a type error here — the mutual `extends` assignment fails).
-type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation | EmergencyStopAuditedOperation | UsageAuditedOperation;
+type PartitionDomains = MembershipAuditedOperation | CompanyAuditedOperation | ProvisioningAuditedOperation | AdminAuditedOperation | InterviewAuditedOperation | MemoryAuditedOperation | UnderstandingAuditedOperation | ContextAuditedOperation | TaskAuditedOperation | StrategyAuditedOperation | DecisionAuditedOperation | PlanningAuditedOperation | JobAuditedOperation | RunAuditedOperation | ToolAuditedOperation | WorkerAuditedOperation | BillingAuditedOperation | ArtifactAuditedOperation | PolicyAuditedOperation | ApprovalAuditedOperation | EmergencyStopAuditedOperation | UsageAuditedOperation | ExportAuditedOperation;
 type PartitionCoversAll = [PartitionDomains] extends [AuditedOperation]
   ? [AuditedOperation] extends [PartitionDomains]
     ? true
@@ -436,6 +447,11 @@ export function factoryFor(operation: AuditedOperation): (subjectId: string) => 
     case 'usage.limit_reach':
       return (subjectId) =>
         usageLimitReached({ companyId: subjectId, limitScope: 'company', limitPeriod: 'day', limitPeriodStart: '2026-08-01', threshold: 'hard', limitMicros: 0, spentMicros: 0, thresholdMicros: 0 });
+    // The real payload — the counts, and whether the archive was complete and faithful — is asserted against the
+    // STORED row in `export.integration.test.ts`. This factory only proves the operation maps to the event.
+    case 'export.generate':
+      return (subjectId) =>
+        artifactExported({ exportId: subjectId, collectionCount: 0, itemCount: 0, omissionCount: 0, redactionCount: 0, complete: true, faithful: true, manifestDigest: 'a'.repeat(64) });
     default: {
       const exhaustive: never = operation;
       throw new Error(`No audit factory registered for operation: ${String(exhaustive)}`);

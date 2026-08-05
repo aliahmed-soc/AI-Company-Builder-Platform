@@ -111,6 +111,10 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // room composes reads the member already has. Entering it grants nothing: the owner-only surfaces inside keep
   // their own actions and render `restricted` to a viewer.
   'decision_room:read': ['owner', 'viewer'],
+  // Export of owned data (ACBP-P7-001; CDR-078; API-CONTRACTS `:77`). OWNER ONLY, and deliberately narrower than
+  // the reads it composes: a viewer who may READ the understanding in-product is not thereby entitled to walk out
+  // with an archive of everything the company owns. "Can see" and "can take" are different powers here.
+  'export:create': ['owner'],
 };
 
 const ALL_ROLES: readonly AuthzRole[] = ['owner', 'viewer'];

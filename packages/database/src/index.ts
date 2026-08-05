@@ -57,6 +57,13 @@ export type {
   CompanyUsageTotals,
 } from './decision-room-repository.js';
 
+// The company-scoped export reader (ACBP-P7-001; CDR-078 §6.1; EXPORT-001). ONE generic whole-row read over a
+// CLOSED table allowlist: a mapper per entity can forget a column and nothing would ever say so, which is ADR-002's
+// failure; a generic read can only pick one up, and that lands in the secret guard. Ordering comes from the
+// declaration, never from the caller.
+export { ExportRepository } from './export-repository.js';
+export type { ExportExecutor, ExportRow } from './export-repository.js';
+
 // Company portfolio read repository (ACBP-P1-011; CDR-017). Account-scoped, membership-filtered keyset listing
 // of the actor's active-membership companies. No name (enriched separately under CompanyScope); reads only.
 export { PortfolioRepository } from './portfolio-repository.js';

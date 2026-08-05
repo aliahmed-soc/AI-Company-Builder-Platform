@@ -274,6 +274,15 @@ export const AUDIT_EVENTS = {
   // attempt to register it a slice ahead of its producer was correctly refused by `audit-operations.test.ts`'s
   // no-orphan-events guard, and `DEFERRED_REGISTERED_EVENTS` was again NOT used to route around it.
   'usage.limit_reached': { schemaVersion: 1, subjectType: 'company' },
+  // Export of owned data (ACBP-P7-001; CDR-078 §3-G7; EXPORT-001; trust-critical #2). EVENT-CATALOG `:279` has
+  // carried this name — "audit-grade (ownership check logged), permanent record" — since before anything could
+  // emit it. Registered in the same commit as `exportCompanyData`, which emits it: `audit-operations.test.ts`'s
+  // no-orphan-events guard refused exactly this registration ahead of its producer on ACBP-P6-010.
+  //
+  // SUBJECT IS THE ARCHIVE, not a job. EVENT-CATALOG names an `export_job_id`, but this ticket persists no job
+  // row (CDR-078 §6.7): a job exists to be polled and §4 ruled out the surface that would poll it. The archive
+  // itself is the durable thing, and this event is its record.
+  'artifact.exported': { schemaVersion: 1, subjectType: 'export' },
 } as const;
 
 export type AuditEventName = keyof typeof AUDIT_EVENTS;
@@ -1306,5 +1315,46 @@ export function usageLimitReached(input: {
     limit_micros: input.limitMicros,
     spent_micros: input.spentMicros,
     threshold_micros: input.thresholdMicros,
+  });
+}
+
+/**
+ * An archive of a company's owned data was produced (ACBP-P7-001; CDR-078 §3-G7; EXPORT-001; trust-critical #2).
+ *
+ * COUNTS AND DIGESTS ONLY — never content, never a row id, never a field name. This event is the permanent record
+ * of an export, and an export is the one path whose purpose is to move the founder's data out of the platform;
+ * putting any of it in the audit trail would defeat both the retention argument and the point of redacting it.
+ *
+ * `complete` and `faithful` are recorded SEPARATELY because they answer different questions and a partial archive
+ * must not be able to describe itself as an untouched one: `complete` means nothing was omitted, `faithful` means
+ * nothing was omitted AND nothing was redacted. A reader auditing "did this founder get everything, exactly as it
+ * was" needs both, and deriving one from the other after the fact is impossible once the archive has left.
+ *
+ * OUTCOME IS `success` EVEN FOR A PARTIAL ARCHIVE. Canon's failure behaviour for export is "partial export
+ * enumerates missing", so a partial export is the platform behaving correctly, not failing; `complete: false` and
+ * `omission_count` are what say it was partial. Recording it as a failure would make every truncated collection
+ * look like an outage.
+ */
+export function artifactExported(input: {
+  /** The archive's identifier — also its storage prefix. There is no export job row for it to name (§6.7). */
+  readonly exportId: string;
+  readonly collectionCount: number;
+  readonly itemCount: number;
+  readonly omissionCount: number;
+  readonly redactionCount: number;
+  readonly complete: boolean;
+  readonly faithful: boolean;
+  /** sha256 of the manifest bytes, so the record can be checked against the archive it claims to describe. */
+  readonly manifestDigest: string;
+}): AuditEvent {
+  return makeEvent('artifact.exported', input.exportId, 'success', {
+    collection_count: input.collectionCount,
+    item_count: input.itemCount,
+    omission_count: input.omissionCount,
+    redaction_count: input.redactionCount,
+    complete: input.complete,
+    faithful: input.faithful,
+    // EVENT-CATALOG `:279`'s own field name.
+    manifest_digest: input.manifestDigest,
   });
 }

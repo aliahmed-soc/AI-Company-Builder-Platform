@@ -25,8 +25,14 @@ import { containsSecret, redactSecrets, SECRET_PLACEHOLDER } from '../context/co
  * THERE IS DELIBERATELY NO `contains_secret` REASON. A secret is REDACTED IN PLACE and counted, never a cause for
  * dropping the document around it — naming an omission reason for it would invite exactly that, losing the
  * founder's actual work over one span.
+ *
+ * EVERY MEMBER HAS A PRODUCER, and that is a rule rather than a coincidence (CDR-078 §6.5): `unreadable` from
+ * {@link sanitizeExportValue}, `ownership_unverified` from the per-row ownership check, `truncated` from the
+ * collection read bound. `unsupported_format` shipped in the first slice and never acquired one — artifact BYTES
+ * are not copied by this ticket, so no stored format is ever rejected — and was removed rather than left as a
+ * case a reader would wrongly believe can occur.
  */
-export const EXPORT_OMISSION_REASONS = ['unreadable', 'unsupported_format', 'ownership_unverified'] as const;
+export const EXPORT_OMISSION_REASONS = ['unreadable', 'ownership_unverified', 'truncated'] as const;
 export type ExportOmissionReason = (typeof EXPORT_OMISSION_REASONS)[number];
 
 export function isExportOmissionReason(value: unknown): value is ExportOmissionReason {
@@ -53,6 +59,14 @@ export interface ExportManifestItem {
   readonly path: string;
   /** Digest of the bytes ACTUALLY written, so the archive can be checked against its own inventory. */
   readonly sha256: string;
+  /**
+   * How many records this item actually carries.
+   *
+   * The acceptance criterion is "archive matches in-product data", and this is what makes that CHECKABLE per item
+   * rather than only by reading every file: a founder (or a test) can compare it against the count in the product.
+   * Derived from what was emitted, like every other number here — never from an intended total (§3-G5).
+   */
+  readonly rowCount: number;
   readonly redactionCount: number;
 }
 
@@ -112,6 +126,82 @@ export function sanitizeExportText(text: string): SanitizedExportText {
   const before = countPlaceholders(text);
   const redacted = redactSecrets(text);
   return { status: 'included', text: redacted, redactionCount: countPlaceholders(redacted) - before };
+}
+
+/** The outcome of preparing one arbitrary value — a whole row, or anything nested inside one — for an archive. */
+export type SanitizedExportValue =
+  | { readonly status: 'included'; readonly value: unknown; readonly redactionCount: number }
+  | { readonly status: 'excluded'; readonly reason: ExportOmissionReason };
+
+/**
+ * How deep the walk will follow a structure before refusing.
+ *
+ * The walker's parameter is `unknown`, so a cycle or a pathological nesting must cost a REFUSAL, not the process.
+ * Nothing this schema stores comes close: the deepest real JSON payload is a handful of levels.
+ */
+const MAX_VALUE_DEPTH = 32;
+
+/**
+ * Prepare an arbitrary value — typically a whole database row — for an archive (CDR-078 §6.2).
+ *
+ * `sanitizeExportText` handles one text field. A ROW IS NOT A TEXT FIELD: JSON columns nest, and a secret pasted
+ * into `payload.notes[2]` is exactly as gone as one in a top-level column. So the walk is recursive over VALUES,
+ * applying the blocklist to every string leaf at any depth.
+ *
+ * A LEAF THAT CANNOT BE REPRESENTED EXCLUDES THE WHOLE VALUE (§6-G4), rather than being quietly dropped from an
+ * otherwise-included row. A row silently missing one field is a lie about that row; an enumerated omission is a
+ * complaint the founder can act on. ENFORCED BY: "EXCLUDES THE WHOLE VALUE when any leaf cannot be represented".
+ *
+ * A SECRET IN A KEY ALSO EXCLUDES, rather than redacting. Two secret-shaped keys would both become the
+ * placeholder and one would silently overwrite the other — data loss wearing redaction's clothes.
+ * ENFORCED BY: "EXCLUDES rather than redacting when a secret sits in a KEY".
+ */
+export function sanitizeExportValue(value: unknown): SanitizedExportValue {
+  let redactions = 0;
+  /** Returns the sanitized value, or `FAILED` — a private sentinel, so `undefined` stays a refusable input. */
+  const FAILED = Symbol('excluded');
+  const walk = (node: unknown, depth: number): unknown => {
+    if (depth > MAX_VALUE_DEPTH) return FAILED;
+    if (node === null) return null;
+    const type = typeof node;
+    if (type === 'string') {
+      const r = sanitizeExportText(node as string);
+      if (r.status !== 'included') return FAILED;
+      redactions += r.redactionCount;
+      return r.text;
+    }
+    if (type === 'boolean') return node;
+    if (type === 'number') return Number.isFinite(node) ? node : FAILED;
+    // `undefined`, functions, symbols and bigint have no faithful JSON form. Emitting `null` for them would say
+    // "this field is empty" about a field that is not.
+    if (type !== 'object') return FAILED;
+    if (node instanceof Date) return Number.isNaN(node.getTime()) ? FAILED : node.toISOString();
+    if (Array.isArray(node)) {
+      const out: unknown[] = [];
+      for (const item of node) {
+        const walked = walk(item, depth + 1);
+        if (walked === FAILED) return FAILED;
+        out.push(walked);
+      }
+      return out;
+    }
+    // PLAIN objects only. A Map, Set, Buffer or class instance serialises to `{}` or something lossy, which would
+    // put an empty object in the archive where the founder's data was.
+    const proto: unknown = Object.getPrototypeOf(node);
+    if (proto !== Object.prototype && proto !== null) return FAILED;
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+      if (containsSecret(key)) return FAILED;
+      const walked = walk(child, depth + 1);
+      if (walked === FAILED) return FAILED;
+      out[key] = walked;
+    }
+    return out;
+  };
+
+  const result = walk(value, 0);
+  if (result === FAILED) return { status: 'excluded', reason: 'unreadable' };
+  return { status: 'included', value: result, redactionCount: redactions };
 }
 
 /**

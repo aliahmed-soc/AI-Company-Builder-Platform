@@ -110,10 +110,103 @@ a one-line correction if they agree.
 - **No EXPORT-002** (transfer-aware formats, ADR-002's "direction") — a separate requirement id, not this one.
 - **No deletion or deactivation semantics** — that is ACBP-P7-002.
 
-## §5 Open owner decisions
+## §6 What is IN the archive, and the guard that keeps that answer honest
+
+The single largest way this ticket can fail acceptance is a collection nobody remembered to export. Nothing about
+a bespoke read per entity would ever catch it: the code would be correct about everything it mentioned and silent
+about everything it did not, and the archive would look complete to every test written against it.
+
+- **G6.1 — The classification is TOTAL over company-scoped tables.** Every table carrying a `company_id` is in
+  exactly one of two closed lists: `EXPORT_COLLECTIONS` (in the archive) or `EXPORT_EXCLUSIONS` (not, with a
+  reason from a closed vocabulary). Neither list may name a table twice, and no table may appear in both.
+- **G6.2 — A real-PostgreSQL guard asserts the classification against the LIVE schema**, not against a
+  hand-maintained list. A table added by a future migration fails the guard until someone rules on it. This is
+  the control that makes "archive matches in-product data" a property rather than a hope, and it is deliberately
+  anchored on `information_schema` — a different anchor from the `DatabaseSchema` interface the export reads
+  through, so a wrong entry in one cannot excuse itself in the other.
+- **G6.3 — Exclusions are ruled, not defaulted.** The vocabulary is `third_party_identity` (another person's
+  identity is not the founder's data to take), `separate_export_surface` (audit has its own reason-captured
+  export — API-CONTRACTS `:75`), `derived_projection` (rebuildable from what IS exported; CDR-073's rule that a
+  projection is never a source of truth), `platform_operational` (the platform's own machinery, not the founder's
+  work), and `billing_record` (the platform's books; BILL-\* owns them).
+
+### §6.1 The generic reader, and why it beats a mapper per entity
+
+Collections are read as whole rows through one company-scoped reader over a **closed table allowlist**, not
+through a hand-written DTO per entity. The trade is deliberate and runs in the safe direction:
+
+- a bespoke mapper that forgets a column **under-delivers silently** — the ADR-002 failure, invisible to tests;
+- a generic reader that picks up a new column **over-delivers into the secret guard**, which redacts, counts and
+  reports it.
+
+The allowlist is what keeps "generic" from meaning "arbitrary": the table name never originates from input, only
+from the closed set, and the reader re-checks membership itself rather than trusting its caller's type.
+
+### §6.2 Every value, not every field named in advance
+
+`sanitizeExportText` handles one text field. A row is not a text field: JSON columns nest, and a secret pasted
+into `payload.notes[2]` is exactly as gone as one in a top-level column. So the row walk is **recursive over
+values**, applying the blocklist to every string leaf at any depth.
+
+- **G6.4 — A value the walk cannot represent EXCLUDES ITS WHOLE ROW** (§3-G3.3 at value granularity), rather than
+  being dropped from an otherwise-included row. A row silently missing one field is a lie about that row; an
+  enumerated omission is a complaint the founder can act on.
+
+### §6.3 Ownership is re-verified per ROW, beneath RLS
+
+RLS already scopes the read. G3.1 still requires the archive to verify, because invariant 19 is a property of the
+archive, not of the query that filled it:
+
+- **G6.5 — The archive is stamped from `scope.tenant`, never from the request parameters.** They are equal only
+  by coincidence of the current call path, which is the same reasoning `enqueueJob` uses.
+- **G6.6 — A row whose `company_id` is not the scope's is OMITTED with `ownership_unverified`**, never included.
+  Unreachable while RLS holds — which is the point: this is the layer that still refuses if RLS ever does not,
+  and it is a pure function so it can be tested and mutated without needing RLS to be broken first.
+
+### §6.4 Truncation is an omission, never a silent cap
+
+Every other read in this codebase is bounded, and an unbounded export read is a real memory hazard. But a bound
+that silently drops rows converts the ownership guarantee into a lie of exactly the shape §0 warns about.
+
+- **G6.7 — The read asks for `cap + 1`.** If the extra row comes back, the collection ships its capped rows AND
+  is enumerated as `truncated`, so `complete` is `false` and the founder is told which collection was cut. The
+  bound is honest in both directions: nothing is lost silently, and nothing unbounded is loaded.
+
+### §6.5 The omission vocabulary shrank, because a reason nothing can produce is a lie
+
+The manifest slice shipped `unsupported_format`. **Nothing produces it** — artifact *bytes* are not copied by
+this ticket (there is no storage adapter to copy them from, §1), so no format is ever rejected. It is removed
+rather than left in place: a reader switching on the vocabulary would treat it as a case that can occur, and
+"catalogued, reaches nothing" is the exact failure CDR-074 §5.4 and CDR-075 §4.3 both had to disclose. The
+vocabulary is now `unreadable`, `ownership_unverified`, `truncated` — each with a producer named above.
+
+### §6.6 Ordering: objects first, audit last
+
+The audit event is written **after** the archive exists.
+
+- Audit-then-write would leave, on a storage failure, an audit record asserting an export that does not exist —
+  a trail that lies, which is worse than no trail.
+- Write-then-audit leaves, on an audit failure, objects in storage with no record. Those are **inert**: the key
+  carries a per-run identifier, nothing lists a prefix, and no surface can hand out a link to an archive with no
+  audit row. Re-running produces a fresh prefix (§3-G9), so the failure costs storage, not correctness.
+
+### §6.7 What this ticket deliberately does NOT persist
+
+**There is no `export_jobs` table**, though the BACKLOG data-objects cell names one and EVENT-CATALOG `:279`
+names an `export_job_id`. A job row exists to be *polled*, and §4 already ruled out the HTTP surface that would
+poll it — so the table would have exactly one writer, no reader, and no status anyone can observe: the "designed,
+catalogued, reaches nothing" shape again, this time built on purpose. The **audit event is the durable record**
+(EVENT-CATALOG already calls it audit-grade, permanent), and its subject is the archive. When the export API
+ticket arrives and something needs a status to poll, the table belongs to it.
+
+## §7 Open owner decisions
 
 1. **The two catalogue rows that still say Post-MVP** (§2) — correct them, or record that the phase plan
    supersedes them.
 2. **Archive retention.** Once an archive exists it is a copy of the founder's data sitting in the platform's
    storage; how long it may live is a privacy decision, not an engineering one, and NFR-016 owns retention
    documentation. Not defaulted here.
+3. **The exclusion rulings in §6.3 are engineering defaults on a privacy question.** `memberships` /
+   `company_memberships` are excluded because they carry *other people's* identities; `usage_events` /
+   `credit_transactions` / `usage_corrections` because they are the platform's books. A founder could reasonably
+   argue their own billing history is theirs. Flagged rather than treated as settled.
