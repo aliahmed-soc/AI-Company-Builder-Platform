@@ -601,20 +601,26 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // typically retries and each retry lands here again. Proven against a real database, not argued.
       let heldByStopId: string | undefined;
       let pausedTask = false;
-      // KEYED ON THE STOP EVALUATION, NOT ON WHICH REFUSAL WAS REPORTED (ACBP-P7-002; independent review).
+      // WHICH REFUSALS COUNT AS "THE STOP INTERRUPTED THIS" (ACBP-P7-002; independent review, then a CI failure
+      // that corrected the first fix).
       //
-      // This read `finalReason === 'emergency_stopped' && …` until P7-002 added a lifecycle gate that outranks the
-      // stop gate in `decideDispatch`. The consequence was invisible and real: for a company that was BOTH
-      // non-active AND covered by a live stop, `finalReason` became `company_not_active`, so this block stopped
-      // running — no `held_work` row, no `running`→`paused` — and P6-007's ADMIN-002 confirm-or-discard review
-      // silently lost that task. Clearing the stop then reported nothing to review, and the task resumed with no
-      // review at all. A merged trust-critical control disabled as a side effect of a new gate, with no test and
-      // nothing in the record; found by the independent review, not by a green CI.
+      // This read `finalReason === 'emergency_stopped'` until P7-002 added a lifecycle gate that outranks the stop
+      // gate in `decideDispatch`. The consequence was invisible and real: for a company BOTH non-active AND
+      // covered by a live stop, `finalReason` became `company_not_active`, so this block stopped running — no
+      // `held_work` row, no `running`→`paused` — and P6-007's ADMIN-002 confirm-or-discard review silently lost
+      // that task. A merged trust-critical control disabled as a side effect of a new gate.
       //
-      // The stop's CAPTURE and the refusal's REPORTED REASON are now independent. The reason still says
-      // `company_not_active`, because the lifecycle refusal is the broader and truer answer; the capture happens
-      // because a stop really did cover this call. Both facts are recorded, neither overwrites the other.
-      if (stopEvaluation.kind === 'stopped') {
+      // THE FIRST FIX WAS TOO BROAD and CI caught it: keying on `stopEvaluation.kind` alone made ANY denial
+      // pollute the queue, and `'a refusal for a DIFFERENT reason holds nothing — WITH a covering stop in force'`
+      // exists to prevent exactly that. Its own comment names this mutation. It was right and the fix was wrong.
+      //
+      // THE LINE IS BETWEEN A CALL THE STOP INTERRUPTED AND ONE THAT WAS NEVER GOING TO HAPPEN. `not_registered`,
+      // `no_allowlist` and `not_allowlisted` describe a request that was invalid on its own terms — the stop's
+      // coverage is incidental, and holding it would file a malformed request as work the operator must review.
+      // `company_not_active` is different in kind: the call was well-formed and BOTH controls independently
+      // refused it. The task really is being halted, so the stop's queue must know.
+      const stopInterrupted = finalReason === 'emergency_stopped' || finalReason === 'company_not_active';
+      if (stopInterrupted && stopEvaluation.kind === 'stopped') {
         // ── WHICH STOP CAUGHT THIS CALL — RE-ASKED, NOT NAME-MATCHED (independent review, Blocker) ───────────
         //
         // The first version matched the covering SCOPE NAMES back against `activeStops` and took the first hit.
