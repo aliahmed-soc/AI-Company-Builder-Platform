@@ -23,14 +23,17 @@ replay-zero-duplicates, failure-injection pass; restore drill within RTO/RPO"*.
 
 ### §0.1 The criterion "16-scenario matrix green" is not currently achievable
 
-Four rows have no implemented subject, and one of those cannot be built at all:
+**CORRECTED IN SLICE 1. This section originally listed FOUR rows as having no coverage. Two of those were
+wrong, and the errors ran in the expensive direction — toward building things that already exist.** The
+original text is kept below each correction, because a disposition table that quietly improves is exactly the
+artefact class this repository has learned not to trust.
 
-| Row | Failure | Why it cannot go green today |
+| Row | Failure | Verified position |
 |---|---|---|
-| **5** | Queue/job-store outage | No injected coverage found. `enqueue-job.integration.test.ts` covers idempotent enqueue, not store *unavailability*. |
-| **6** | Database outage | No injected coverage found. The row's own content — *"Platform read-only/unavailable; **no partial writes**"* — is an infrastructure property, not a code path. |
-| **10** | Revoked integration | **No subject exists.** There is no integrations entity anywhere: no table, no migration, no service, no contract, no integration value in `TOOL_DENIAL_REASONS`. This is the identical absence ACBP-P7-007 recorded for trust-critical #8, and the row's own `Failure` cell for row 8 says *"(future external)"*. |
-| **14** | Audit-event failure | No injected audit-write failure found. |
+| **5** | Queue/job-store outage | **ABSENT — confirmed.** All 27 tests in `enqueue-job.integration.test.ts` were read: tenancy stamping, three redundant refusal layers, authz, immutability, state vocabulary, idempotency. None simulates store *unavailability*. **And it is worse than absent**: searching `dequeue\|claimJob\|pickup\|pollJobs\|nextJob\|reserveJob` finds **no implementation at all**. The only hit is `migrations/0031_jobs.ts:61`, an index comment describing *"the runner's pickup path"* for a runner that does not exist. Row 5's detection is *"Enqueue/pickup errors"*, and **half of that has no code path to fail.** |
+| **6** | Database outage | **~~ABSENT~~ → PARTIAL.** The *"no partial writes / Transactions atomic"* half is genuinely covered by injection: `database.integration.test.ts:140` throws inside `withTransaction` and asserts the table is gone *and* the pool still healthy; `:92` rejects a migration mid-sequence and asserts the prior one rolled back and the next never ran. `client.test.ts:31` points the pool at a dead port for a real ECONNREFUSED — but asserts a returned health object, not a degraded product surface. **Uncovered: the "Platform read-only/unavailable" transition.** Nothing asserts a user-facing surface degrades. |
+| **10** | Revoked integration | **UNBUILDABLE — confirmed.** No integrations entity anywhere; `TOOL_DENIAL_REASONS` has 11 values (`not_registered`, `no_allowlist`, `not_allowlisted`, `emergency_stopped`, `stop_unavailable`, `policy_denied`, `policy_unavailable`, `approval_invalid`, `approval_required`, `untrusted_context`, `company_not_active`) and none is integration-related. `tools/trust-critical-index.mjs` already records the same absence as `unprovable`. |
+| **14** | Audit-event failure | **~~ABSENT~~ → STRONG. THIS WAS THE EXPENSIVE ERROR.** There are roughly **25** injected audit-write-failure tests spanning jobs, members, companies, memory, interviews, strategy, planning, understanding, tasks, context, admin, stops, tool dispatch, artifacts, policy, usage and the adversarial tenancy suite. The fault is a documented test seam (`planning/task-generation.ts:74`: *"TEST SEAM ONLY: override the in-tx audit writer to force a failure"*), substituted into real production entry points, asserting **database state**. One of them is at `enqueue-job.integration.test.ts:99` — *"audit-or-nothing: when the audit write fails, NO job row survives (ADR-015)"* — **in the very file this document cited as evidence for row 5.** Building "audit failure blocks the operation" would have rebuilt mature, deliberately designed work. Only the row's *"low-risk queued with alert"* branch is uncovered, plus its *"Audit writes idempotent"* note. |
 
 And four more are partly unserved **by canon's own admission**:
 
@@ -43,14 +46,28 @@ And four more are partly unserved **by canon's own admission**:
 
 ### §0.2 Three coverage claims that do not hold
 
-1. **`TEST-AND-VERIFICATION-STRATEGY.md:23` names the mocking policy for this layer as "fault-injecting fakes".
-   The shared fakes largely do not inject faults.** In `packages/test-support/src/adapters/fakes.ts`,
-   `FakeModelProvider` **always returns `finishStatus: 'completed'`** — its only non-success path is caller
-   abort. `FakeObjectStorage.put` has no failure mode at all. Only `FakeSecretProvider` and
-   `FakeIdentityProvider` carry an `unavailable` mode. The real gateway fault injection lives in **inline stubs
-   inside one test file** (`model-gateway.test.ts`, `describe('callModel — fault injection …')`), not in the
-   shared rig the strategy document describes as existing. **P7-008 has to build the thing that was documented
-   as already built.**
+1. **~~The shared fakes largely do not inject faults.~~ RETRACTED IN SLICE 1 — THIS FINDING WAS FALSE, AND IT IS
+   THE MOST INSTRUCTIVE THING IN THIS DOCUMENT.** The original claim was that `TEST-AND-VERIFICATION-STRATEGY.md:23`
+   promises *"fault-injecting fakes"* that do not exist, and that P7-008 would have to build them. **The rig
+   exists, in `@acbp/adapters`, and it is good:**
+   - `FakeModelProvider` (`adapters/src/model/fake-provider.ts:66`) injects five normalized failures
+     (`timeout`, `rate_limited`, `provider_unavailable`, `content_refused`, `internal`), supports
+     `{ kind: 'hang', ms }` to drive **real deadline enforcement** rather than a thrown error, and takes a
+     `script[]` consumed one-per-call so a test can drive whole retry / re-ask / fallback sequences.
+   - `InMemoryObjectStorage` (`adapters/src/storage/in-memory-storage.ts:39`) can **lie**: `failNextPut` throws,
+     `dropNextPut` returns plausible success metadata and stores nothing, `truncateNextPut` stores fewer bytes
+     than it reports. Its own header says so. A dependency that lies is a different test from one that fails,
+     and this is the only place in the repository that distinguishes them.
+
+   **How the claim went wrong is the finding worth keeping. There are TWO classes named `FakeModelProvider`.**
+   The one in `@acbp/test-support` (`fakes.ts:173`) always returns `finishStatus: 'completed'` — its only
+   non-success path is caller abort — and `FakeObjectStorage.put` there has no failure mode either. An
+   investigation looking for the fault-injection rig found the weaker same-named pair, concluded it did not
+   exist, and that conclusion was written into this CDR and its PR body before slice 1 read the imports.
+
+   **Two identically-named classes with opposite capability is a trap that already caught someone**, and the
+   next person to reach for a "fake model provider" to write a failure test will reach for the same wrong one.
+   §4 now proposes making that impossible rather than building what already exists.
 2. **NFR-019 is marked `Covered` in both traceability matrices while half its own acceptance criterion is
    unimplemented.** `REQUIREMENTS.csv:140` requires *"Simulated provider outage: tasks queue, status is honest,
    recovery drains the queue without duplicates"*, and `REQUIREMENT-TRACEABILITY.csv:140` names the approach
@@ -115,8 +132,8 @@ before any of it is relied on**, and the disposition column may move as a result
 | 2 | Provider outage | Fallback proven (`model-gateway.test.ts`, `silent-fallback-negative.test.ts`, both-providers-fail from P5-009) | **PARTIAL.** Fallback half injectable; queue / banner / drain **absent** (CDR-059:98, P6/observability) |
 | 3 | Invalid structured output | `model-gateway.test.ts` — bounded re-ask then accepted; still-invalid after cap → `invalid_output`; `structured-output-conformance.test.ts` | **INJECTABLE — strong** |
 | 4 | Worker crash | `coordinator.integration.test.ts` — silent worker past grace → `worker_lost`; live run never reclaimed; heartbeat cannot revive a reclaimed run; sweep is one-instant and company-scoped. `checkpoint.integration.test.ts` — kill and resume. `retry.integration.test.ts` — dead-letter | **INJECTABLE — strong.** The NFR-005 anchor |
-| 5 | Queue/job-store outage | none | **ABSENT.** No injection point; needs a job-store seam |
-| 6 | Database outage | none | **ABSENT.** Infrastructure property; §7 asks whether it is testable here at all |
+| 5 | Queue/job-store outage | none; and **no pickup path exists to fail** | **ABSENT — verified.** The only true absence in the matrix |
+| 6 | Database outage | `database.integration.test.ts:140` throw inside `withTransaction` → table gone, pool healthy; `:92` failing migration → prior rolled back, next never ran; `client.test.ts:31` real ECONNREFUSED → structured, credential-free health failure | **PARTIAL — corrected from ABSENT.** Atomicity genuinely injected; the read-only/unavailable *transition* is not |
 | 7 | Object-storage failure | `artifacts/persist.integration.test.ts` — a write that THROWS refuses and writes no row; a write **reporting success while storing nothing** refuses; a truncated write refuses; retry after refusal ends with exactly one artifact; no orphaned object on tenancy refusal | **INJECTABLE — strongest in the repo.** Real injection of a *lying* dependency, not just a throwing one |
 | 8 | Tool/API failure | `runtime.integration.test.ts` records a throwing step as `provider_error` — which is the defect | **UNSERVED.** Requires splitting tool failure from provider fault (CDR-059:103) |
 | 9 | Expired authorization | repository layer only; zero dispatcher cases | **PARTIAL.** Same gap as trust-critical #7 |
@@ -124,12 +141,19 @@ before any of it is relied on**, and the disposition column may move as a result
 | 11 | Duplicate delivery | `idempotency/replay.integration.test.ts` — re-delivered enqueue creates no second job **and** records the suppression; webhook re-delivery; same event id with a different payload is a security conflict; re-delivered metered call leaves one usage row; the suppression never carries the key | **INJECTABLE — strongest.** CDR-074 §0 already requires the duplicate be actually delivered |
 | 12 | Partial completion | `checkpoint.integration.test.ts` | **PARTIAL.** Resume proven; *"labeled partial"* surface not found |
 | 13 | Usage-recording failure | `model-gateway.test.ts` — a usage-write failure aborts the call and withholds the output | **INJECTABLE — good.** Real injection, fail-closed |
-| 14 | Audit-event failure | none injected | **ABSENT.** CDR-059:108 calls it "fail-closed already"; nothing proves it |
+| 14 | Audit-event failure | ~**25** injected audit-write failures across jobs, members, companies, memory, interviews, strategy, planning, understanding, tasks, context, admin, stops, dispatch, artifacts, policy, usage and the adversarial tenancy suite — e.g. `enqueue-job.integration.test.ts:99` *"audit-or-nothing: when the audit write fails, NO job row survives (ADR-015)"*. `usage-correction-service.integration.test.ts:404` even carries the anti-vacuity control | **STRONG — corrected from ABSENT.** Only the *"low-risk queued with alert"* branch and *"Audit writes idempotent"* are uncovered |
 | 15 | Emergency stop | CDR-072; `runtime.integration.test.ts`; `coordinator.integration.test.ts` bounded safe-stop | **PARTIAL.** Only 5 of 7 scopes enforceable; the ≤5s measurement excludes activation (`TEST-AND-VERIFICATION-STRATEGY.md:42`) |
 | 16 | Company pause | `gate-14.integration.test.ts` (P7-002); `readLifecycleDecision` at four call sites | **PARTIAL — and the row overstates the system.** New work refuses; in-flight halt is unbuilt (`WORKFLOW-STATE-MACHINES.md:35`) |
 
-Provisional totals: **6 injectable**, **5 partial**, **4 absent**, **1 unbuildable**. Not 16 green, and this
-document says so on its first page.
+**Totals after slice-1 verification: 7 strong, 7 partial, 1 absent, 1 unbuildable** — 7+7+1+1 = 16.
+
+The provisional table said *6 injectable, 5 partial, **4 absent**, 1 unbuildable*. Two of those four absences
+were wrong. **The correction runs almost entirely in one direction: the system is better covered than the
+investigation believed**, and every error would have cost build effort rather than shipped a false claim. That
+is the safer direction to be wrong in, and it is not an accident — it is what verifying before building is for.
+
+**The single genuine absence is row 5**, and it is absent twice over: no outage injection, and no pickup code
+path that could fail.
 
 ---
 
@@ -172,22 +196,29 @@ built one.
 
 ## §4 The shared fault-injection rig
 
-§0.2 item 1 established that the "fault-injecting fakes" the strategy document names largely do not inject
-faults. This ticket builds them, in `@acbp/test-support`, because a rig that lives in one test file's inline
-stubs cannot be reused by the fifteen other rows:
+**REWRITTEN IN SLICE 1. This section originally said "this ticket builds them". It does not — they exist
+(§0.2 item 1).** What is actually needed is much smaller, and one item is a hazard rather than a gap:
 
-- **`FakeModelProvider` gains failure behaviours** — it currently always reports `completed`. Needed: each
-  category in ADR-011's closed taxonomy (`timeout · rate_limited · provider_unavailable · invalid_output ·
-  content_refused · budget_exceeded · internal`), plus *hang* (for the timeout row, which must be a real deadline
-  and not a thrown error).
-- **`FakeObjectStorage` gains failure modes** — throw, and the more interesting one the artifact suite already
-  proves in an inline stub: **report success while storing nothing**. A dependency that lies is a different test
-  from a dependency that fails, and row 7 is the only place in the repo that currently distinguishes them.
-- **A usage-ledger failure seam** for row 13 and an audit-write failure seam for row 14.
+1. **Remove the naming trap, and this is the priority.** Two classes named `FakeModelProvider` with opposite
+   capability is how the false finding above happened, and it will happen again. Options, in preference order:
+   (a) delete `@acbp/test-support`'s `FakeModelProvider` and `FakeObjectStorage` and re-export the adapters ones;
+   (b) rename them to say what they are — `AlwaysSucceedsModelProvider`, `NonFailingObjectStorage`; (c) leave
+   them and add a header comment pointing at the real rig. **(a) is cleanest and (b) is safest**; both make the
+   mistake impossible to repeat. Whichever is chosen, the weaker fakes' users must be checked first — a suite
+   relying on "this never fails" is relying on something real.
+2. **A usage-ledger failure seam for row 13** — currently injected inline in `model-gateway.test.ts` via a
+   `recordUsage` that rejects. That is genuine injection and needs no rig, but a shared helper would let the
+   other metered paths assert the same fail-closed property.
+3. **Nothing is needed for row 14.** The `auditWriter?` test seam is already documented, deliberate, and used at
+   ~25 sites.
+4. **Row 5 needs a job-store seam that does not exist** — and §7 item 2 asks whether it should, because a fault
+   hook reachable in production is a liability. Note the sharper problem: **there is no pickup implementation at
+   all**, so half of row 5's detection has nothing to hook.
 
-**Every new failure mode ships with a control proving the fake still succeeds when not told to fail** — without
-it, a rig that silently broke would turn every negative into a vacuous pass, which is the exact defect class
-ACBP-P7-007 spent its length on.
+**Any new failure mode ships with a control proving the fake still succeeds when not told to fail.** The
+existing rig already models this — `usage-correction-service.integration.test.ts:404` pairs its audit-failure
+case with *"the identical call with a working audit writer DOES record one"*. Without such a control a silently
+broken rig turns every negative into a vacuous pass, which is the defect class ACBP-P7-007 spent its length on.
 
 ---
 
@@ -239,9 +270,14 @@ table cannot drift from the machine-checked one. Rendering it, rather than writi
    decision, not a test decision.
 4. **Does NFR-019 stay `Covered` in two traceability matrices** while its queue/banner/drain half is
    unimplemented? ACBP-P7-007 downgraded four such cells; this is the same call on a fifth.
-5. **Row 8 requires splitting tool failure from provider fault in the runtime** — a production behaviour change
-   (a new normalized category and a changed error path), not test-only work. In scope for a "failure-injection
-   pass", or its own ticket?
+5. **Row 8 requires splitting tool failure from provider fault — and it needs a MIGRATION, not just code.**
+   `runtime.ts:271` is a bare `catch {}` that finishes with `failureCategory: 'provider_error'` unconditionally.
+   `RUN_FAILURE_CATEGORIES` is a **closed five-value set** (`worker_lost`, `timeout`, `provider_error`,
+   `policy_blocked`, `internal_error`) with no `tool_error`, mirrored by CHECK constraints on **two** tables
+   (`0035_task_runs.ts:64`, `0040_worker_runs.ts:60`) and pinned by a test asserting the constant and the CHECK
+   are the same set. So the change is: contract constant + migration on two tables + the runtime/coordinator
+   guards. In scope for a "failure-injection pass", or its own ticket? (This item originally said "a production
+   behaviour change … not test-only work" and understated it by omitting the migration.)
 6. **Launch-gate sign-off.** `RELEASE-GATES.md:10` names the failure-injection pass at the Closed beta gate.
    This ticket produces evidence; declaring the gate passed is the owner's.
 
@@ -249,11 +285,14 @@ table cannot drift from the machine-checked one. Rendering it, rather than writi
 
 ## §8 Slices
 
-1. **CDR + branch + draft PR + per-row verification.** This document, and slice 1's real work: **re-check every
-   file:line in §2 against the code**, because the table is provisional and citations rot. Output is a §2 that
-   has been verified rather than inherited. *Verifiable:* each row's disposition cites a test body that was read.
-2. **The shared fault-injection rig** (§4) in `@acbp/test-support`, each failure mode with its success control.
-   *Verifiable:* a rig test proves each mode both fails when told to and succeeds when not.
+1. **CDR + branch + draft PR + per-row verification — DONE.** The verification was the point, and it paid:
+   **two of four claimed absences were false** (rows 6 and 14), the "build the fault-injection rig" premise was
+   **retracted entirely** (§0.2 item 1), and row 8's fix turned out to need a **migration** rather than only a
+   code change. Every correction moved toward *less* work, which is the direction verification is supposed to
+   move a plan.
+2. **Close the naming trap** (§4 item 1) and add the shared usage-failure helper. Much smaller than the original
+   slice. *Verifiable:* it is no longer possible to import a `FakeModelProvider` that cannot fail without
+   knowing you did.
 3. **The index + checker + regression suite** (§3), with `tools/lib/test-citation.mjs` extracted and the
    trust-critical checker migrated onto it. *Verifiable:* the P7-007 gate still passes on the shared helper, and
    the new checker has a negative self-test plus cases for every failure mode it claims to catch.
