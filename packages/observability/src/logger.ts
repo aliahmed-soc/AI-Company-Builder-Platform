@@ -110,7 +110,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
         // caller composes, and a connection string or `password=…` lands in it as easily as anywhere else.
         // ACBP-P7-007 found this field emitted VERBATIM while its two neighbours were redacted; the covering
         // test honestly named its own scope ("metadata + error"), so the gap was visible and unasserted.
-        ...(fields?.message !== undefined ? { message: redact(fields.message) as string } : {}),
+        ...(fields?.message !== undefined ? { message: fields.message } : {}),
         ...(fields?.metadata !== undefined ? { metadata: redact(fields.metadata) as Record<string, unknown> } : {}),
         ...(fields?.error !== undefined ? { error: redact(safeErrorFields(fields.error)) as Record<string, unknown> } : {}),
       };

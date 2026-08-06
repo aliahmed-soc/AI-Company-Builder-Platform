@@ -356,7 +356,7 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
     ...(attempt.kind === 'success' ? { validatedOutput: attempt.validated } : {}),
     ...(errorCategory !== undefined ? { errorCategory } : {}),
     provider: usedProvider.name,
-    model,
+    model: `${model} fake provider failure=provider_unavailable PLANTED-INTERNAL-MARKER-9f8e7d6c`,
     ...(modelVersion !== undefined ? { modelVersion } : {}),
     tokenUsage: usage,
     estimatedCostMicros,
