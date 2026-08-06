@@ -1647,14 +1647,28 @@ this paragraph.
 **Phase 6 is 12/12 and closed.** Only **ACBP-P6-002** remains owner-gated, and a Done ticket does not close it.
 
 **Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
-block above. **Nothing is currently in flight.**
+block above.
+
+**ACBP-P7-002 is merged but its backlog row is NOT `Done`, and that is deliberate.** It launched **Gate 14 for
+company pause** — which had never existed; `companies.status` was written and never read, so pausing a company
+was a label rather than a control from P1-010 until now. Four of five enforcement points ship and are
+mutation-proven. **Two acceptance clauses are unmet**, each an owner decision, not an engineering gap:
+
+- **§9.5 — the deactivate transitions.** Nothing performs `active/paused → deactivating`, so in production the
+  two new states are reachable only by a direct database write and `company.deactivated` is never emitted.
+  Building them changes merged `pauseCompany` behaviour and needs the durable-stop sweep.
+- **§9.7 — reactivation semantics.** Resume is tested; what resumes and what stays held is unwritten.
+- Also open: **§9.2** the account status vocabulary (the account half was deferred by the owner's ruling), and
+  **§9.3** worker-body enforcement — `startRun` closes run *creation*, but a body invoked with a stale `runId`
+  still reaches the network and the metered gateway before its first database statement.
 
 **Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
 blocked):
 
-- **ACBP-P7-002** account and company deactivation — the lifecycle half of what P7-001 began.
 - **ACBP-P7-007** security test pass, **ACBP-P7-008** failure-injection pass — both listed `ACBP-P6-012` as their
-  dependency, which is why they were unstartable until it merged.
+  dependency, which is why they were unstartable until it merged. **P7-002 hands both of them concrete
+  material**: Gate 14's four points to attack, and the §9.14 class (a new gate outranking an existing one and
+  silently inheriting its side effects) which this repository does not enforce anywhere.
 - **ACBP-P7-009** end-to-end MVP suite — unblocked by P7-001.
 - **ACBP-P7-006 stays owner-gated**: it needs real live infrastructure, and it is the only thing that can turn
   P6-011's suppression counter from "it fired" into "it would have".

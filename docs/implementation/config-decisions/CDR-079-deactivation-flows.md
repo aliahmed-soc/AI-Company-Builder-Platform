@@ -314,5 +314,17 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
    **nothing can reach `deactivating` in production yet**, so the two new states are reachable only by a direct
    database write. The GATE is live for `paused`, which is what the owner's ruling asked for first.
 6. **Real-PostgreSQL Gate-14 suite** — DONE, and **mutation-proven**: a disposable probe branch that neutralised
-   the gate without touching a test turned 8 of 17 cases red through production paths. Review, docs and
-   finalization follow.
+   the gate without touching a test turned 8 of 17 cases red through production paths.
+7. **Review, docs, finalization** — DONE. The independent review (37 agents, ten confirmed findings, two HIGH)
+   is recorded in **`docs/implementation/P7-002-REVIEW-COVERAGE.md`**, including the one finding that matters
+   most to future tickets: **this ticket silently disabled a merged trust-critical control**, because the new
+   gate outranks the stop gate and P6-007's held-work capture keyed on *which refusal was reported* — see §9.14.
+   The docs pass also corrected `EVENT-CATALOG.md:40` and `WORKFLOW-STATE-MACHINES.md §1`, the two architecture
+   documents among §1.1's four false artefacts; leaving them would preserve the exact mechanism that hid this
+   gap for six phases.
+
+**Status of the ticket as a whole: NOT DONE, and its backlog row says so in prose** (P6-002's precedent).
+Slice 5 is unbuilt and two acceptance clauses are unmet — *"deactivate-then-schedule negative green"* holds for
+`paused` only, and *"reactivation documented"* needs §9.7. Both are owner decisions. What IS true, and was not
+true before this branch: **a paused company can no longer start a run, enqueue a job, run a job step, or
+dispatch a tool call**, proved against real PostgreSQL by the absence of the row rather than by a return value.
