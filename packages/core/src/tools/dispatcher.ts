@@ -32,6 +32,9 @@ import {
   type ToolDenialReason,
 } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+// ACBP-P7-002: the lifecycle gate's read. NOT a `ToolGates` member and NOT injectable — see the instruction on
+// `ToolGates` about caller-supplied answers to safety questions, which have been deleted from here twice.
+import { readLifecycleDecision } from '../company/lifecycle-guard.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { evaluatePolicyInScope, toPolicyGateAnswer } from '../policy/policy-service.js';
 import { spendingLimitObservation } from '../limits/usage-caps.js';
@@ -446,10 +449,16 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
         stoppableCall,
       );
 
+      // ACBP-P7-002 / CDR-079 / launch **Gate 14**. Read here, beside the other gate facts, so the decision is
+      // made from one assembled set rather than by an early return that bypasses the recording below: a call
+      // refused for lifecycle reasons is still a call, and TOOL-002 wants 100% of them recorded.
+      const lifecycle = await readLifecycleDecision(scope);
+
       const decision = decideDispatch({
         toolId: params.toolId,
         registered: definition !== undefined,
         riskClass: definition?.risk_class,
+        lifecycle,
         allowlist: params.allowlist,
         untrustedContext: untrusted,
         // ── THE STOP GATE, read from the STORE inside this transaction (ACBP-P6-007; CDR-072 §1-G1/G3/G4) ──
@@ -592,7 +601,26 @@ export async function dispatchToolCall(client: DatabaseClient, params: DispatchT
       // typically retries and each retry lands here again. Proven against a real database, not argued.
       let heldByStopId: string | undefined;
       let pausedTask = false;
-      if (finalReason === 'emergency_stopped' && stopEvaluation.kind === 'stopped') {
+      // WHICH REFUSALS COUNT AS "THE STOP INTERRUPTED THIS" (ACBP-P7-002; independent review, then a CI failure
+      // that corrected the first fix).
+      //
+      // This read `finalReason === 'emergency_stopped'` until P7-002 added a lifecycle gate that outranks the stop
+      // gate in `decideDispatch`. The consequence was invisible and real: for a company BOTH non-active AND
+      // covered by a live stop, `finalReason` became `company_not_active`, so this block stopped running — no
+      // `held_work` row, no `running`→`paused` — and P6-007's ADMIN-002 confirm-or-discard review silently lost
+      // that task. A merged trust-critical control disabled as a side effect of a new gate.
+      //
+      // THE FIRST FIX WAS TOO BROAD and CI caught it: keying on `stopEvaluation.kind` alone made ANY denial
+      // pollute the queue, and `'a refusal for a DIFFERENT reason holds nothing — WITH a covering stop in force'`
+      // exists to prevent exactly that. Its own comment names this mutation. It was right and the fix was wrong.
+      //
+      // THE LINE IS BETWEEN A CALL THE STOP INTERRUPTED AND ONE THAT WAS NEVER GOING TO HAPPEN. `not_registered`,
+      // `no_allowlist` and `not_allowlisted` describe a request that was invalid on its own terms — the stop's
+      // coverage is incidental, and holding it would file a malformed request as work the operator must review.
+      // `company_not_active` is different in kind: the call was well-formed and BOTH controls independently
+      // refused it. The task really is being halted, so the stop's queue must know.
+      const stopInterrupted = finalReason === 'emergency_stopped' || finalReason === 'company_not_active';
+      if (stopInterrupted && stopEvaluation.kind === 'stopped') {
         // ── WHICH STOP CAUGHT THIS CALL — RE-ASKED, NOT NAME-MATCHED (independent review, Blocker) ───────────
         //
         // The first version matched the covering SCOPE NAMES back against `activeStops` and took the first hit.
@@ -743,8 +771,11 @@ function requestedEvent(
   const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
   // WHICH SCOPES HALTED IT (CDR-072 §1-G5), taken from the evaluation that actually decided this call rather than
   // re-derived — a second derivation is one that can disagree with the refusal it is supposed to explain. The
-  // factory records it only on an `emergency_stopped` refusal, so passing it unconditionally here is safe and
-  // keeps the "what halted this" answer next to the reason instead of behind a branch that could be missed.
+  // factory records it only on a refusal a stop can EXPLAIN — `emergency_stopped` OR `company_not_active`, the
+  // two-member `stopExplainsRefusal` set in `audit.ts` — and drops an empty value, so passing it unconditionally
+  // here is safe and keeps the "what halted this" answer next to the reason instead of behind a branch that
+  // could be missed. (This said "only on an `emergency_stopped` refusal" for five commits after ACBP-P7-002 grew
+  // that set to two. The behaviour stayed safe; the REASON GIVEN was false, which is the harder defect to see.)
   const stopScopes = stopEvaluation.kind === 'stopped' ? stopEvaluation.scopes.join(',') : '';
   return denialReason === null
     ? toolCallRequested(base)

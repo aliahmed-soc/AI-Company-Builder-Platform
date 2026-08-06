@@ -6,7 +6,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { closeDatabase, migrateToLatest, writeAuditEvent, CompanyProfileRepository, type DatabaseClient, type NewUser } from '@acbp/database';
-import { canPickUpAutonomousWork, isAuditEventName } from '@acbp/contracts';
+import { mayStartAutonomousWork, isAuditEventName } from '@acbp/contracts';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany, type AuditWriteFn } from './company-service.js';
 import { getCompany, renameCompany, pauseCompany, resumeCompany } from './company-lifecycle.js';
@@ -385,19 +385,28 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     expect((await seed.kysely.selectFrom('companies').select('status').where('id', '=', id).executeTakeFirstOrThrow()).status).toBe('active');
   });
 
-  test('pause blocks new autonomous-work pickup (invariant 16 groundwork)', async () => {
+  test('pause PERSISTS `paused`, and the gate refuses on that stored value — enforcement is NOT tested here', async () => {
+    // RENAMED BY ACBP-P7-002, AND THE OLD NAME IS THE POINT. This test was called "pause blocks new
+    // autonomous-work pickup (invariant 16 groundwork)" and called a pure predicate on a returned value. It
+    // exercised NO pickup path, and would have stayed green while every scheduler in the codebase ignored
+    // company status forever — which, for the whole of Phases 1-6, is exactly what they did (CDR-079 §1.1).
+    //
+    // What it can honestly prove is what it now claims: `pauseCompany` really persists `paused`, and the shared
+    // gate really refuses on that stored value. THE ENFORCEMENT — that a real run, dispatch or spend is refused
+    // — is proven by the Gate-14 suite in a later slice, against production paths, and nowhere else.
     const id = await createActiveCompany('Worker Co');
-    // Active → pickup allowed.
+    const active = { status: 'active' };
+
     const before = await getCompany(app, { userId: ownerId, accountId, companyId: id });
     expect(before.status).toBe('ok');
-    if (before.status === 'ok') expect(canPickUpAutonomousWork(before.company.status)).toBe(true);
-    // Pause → the same predicate now blocks new pickup.
+    if (before.status === 'ok') expect(mayStartAutonomousWork({ status: before.company.status }, active)).toEqual({ allowed: true });
+
     await pauseCompany(app, { userId: ownerId, accountId, companyId: id });
     const after = await getCompany(app, { userId: ownerId, accountId, companyId: id });
     expect(after.status).toBe('ok');
     if (after.status === 'ok') {
       expect(after.company.status).toBe('paused');
-      expect(canPickUpAutonomousWork(after.company.status)).toBe(false);
+      expect(mayStartAutonomousWork({ status: after.company.status }, active)).toEqual({ allowed: false, reason: 'company_not_active' });
     }
   });
 

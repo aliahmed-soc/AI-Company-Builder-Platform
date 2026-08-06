@@ -10,8 +10,10 @@
 // leaves a window in which the effect landed and the record did not — the exact state a resume must interpret, and
 // the one it cannot interpret correctly.
 import { JobRepository, type DatabaseClient, type JobCheckpointRow } from '@acbp/database';
-import { remainingSteps, planProgress, InvalidPlanError, type PlanProgress, type PlanFailure } from '@acbp/contracts';
+import { remainingSteps, planProgress, InvalidPlanError, type PlanProgress, type PlanFailure, type AutonomousWorkRefusal } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+// ACBP-P7-002: the lifecycle gate's read. Imported directly — not a port, no injectable answer.
+import { readLifecycleDecision } from '../company/lifecycle-guard.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import type { Logger } from '@acbp/observability';
 import type { Transaction } from 'kysely';
@@ -54,7 +56,15 @@ export type RunJobStepResult =
   // actually means.
   | { readonly status: 'already_completed'; readonly output: Record<string, unknown> | null }
   | { readonly status: 'forbidden' }
-  | { readonly status: 'job_not_found' };
+  | { readonly status: 'job_not_found' }
+  /**
+   * The COMPANY may not do autonomous work (ACBP-P7-002; CDR-079; launch **Gate 14**).
+   *
+   * NOT `already_completed`, which would be a lie about the database, and NOT `forbidden`, which is an answer
+   * about the ACTOR. The step did not run and no checkpoint exists, so a later resume — once the company is
+   * active again — finds exactly the state it left and continues from here.
+   */
+  | { readonly status: 'company_not_active'; readonly reason: AutonomousWorkRefusal };
 
 /**
  * Run one step of a job exactly once.
@@ -83,6 +93,21 @@ export async function runJobStep(client: DatabaseClient, params: RunJobStepParam
         // Not an error, and emphatically not a re-run. The step's effect is already in the database.
         options.logger?.info('job.step_already_completed', { metadata: { companyId: params.companyId, stepName: params.stepName } });
         return { status: 'already_completed', output: done.output };
+      }
+
+      // ACBP-P7-002 / CDR-079 / launch **Gate 14**: the company must still be permitted to do autonomous work.
+      //
+      // AFTER the already-completed short-circuit above, and that ordering is load-bearing. Reporting a step that
+      // ALREADY RAN as refused would corrupt resume arithmetic — a resumed job would re-run effects the database
+      // already holds, or conclude it can never finish. A completed step is a fact, not a request.
+      //
+      // BEFORE `params.step(...)`, because that closure is the work. A job that began while the company was
+      // active must not keep advancing through new steps after a pause: the step boundary is exactly where canon
+      // puts the safe stop ("complete current tool call, then halt"), and this is the step boundary.
+      const lifecycle = await readLifecycleDecision(scope);
+      if (!lifecycle.allowed) {
+        options.logger?.info('job.step_refused_lifecycle', { metadata: { accountId: scope.tenant.accountId, companyId: scope.tenant.companyId, jobId: params.jobId, stepName: params.stepName, reason: lifecycle.reason } });
+        return { status: 'company_not_active', reason: lifecycle.reason };
       }
 
       const output = await params.step({

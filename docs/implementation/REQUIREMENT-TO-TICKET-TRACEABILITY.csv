@@ -2,7 +2,7 @@ Requirement ID,Requirement title,MVP status,Ticket IDs,Phase,Milestone,Coverage 
 ACC-001,Account registration,MVP,ACBP-P1-001;ACBP-P1-003,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
 ACC-002,Authentication and session,MVP,ACBP-P1-001;ACBP-P1-002,P1,M1,Direct,ACBP-P1-014,Internal prototype,Covered,
 ACC-003,Profile settings,MVP,ACBP-P1-003,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
-ACC-004,Account deactivation,Post-MVP,ACBP-P7-002,P7,M7,Direct,ACBP-P7-009,Closed beta,Covered,In-MVP-scope per plan (task brief includes deactivation)
+ACC-004,Account deactivation,Post-MVP,ACBP-P7-002,P7,M7,Direct,ACBP-P7-009,Closed beta,Partially covered - halt only,"In-MVP-scope per plan (task brief includes deactivation). ACBP-P7-002: the ACCOUNT half is DEFERRED by owner ruling. The gate refuses a non-active account and names it, proved against real PostgreSQL, but NO transition writes that status, the account status vocabulary is unruled (CDR-079 s9.2) and there is no deactivation runbook."
 ACC-005,Account deletion,Post-MVP,Roadmap epic: Data deletion completion,—,—,Roadmap epic,—,General MVP,Deferred by approved scope,
 PORT-001,Company portfolio,MVP,ACBP-P1-011,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
 PORT-002,Multiple companies,MVP,ACBP-P1-010;ACBP-P1-011,P1,M1,Direct,ACBP-P1-014,Internal prototype,Covered,
@@ -13,7 +13,7 @@ COMP-002,Workspace provisioning,MVP,ACBP-P1-012,P1,M1,Direct,ACBP-P1-015,Interna
 COMP-003,Provisioning progress stream,MVP,ACBP-P1-012,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
 COMP-004,Company profile and brief,MVP,ACBP-P1-010,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
 COMP-005,Company settings,MVP,ACBP-P1-010,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
-COMP-006,Company pause,MVP,ACBP-P1-010;ACBP-P6-007;ACBP-P7-002,P1;P6;P7,M6,Direct,ACBP-P6-012,Closed beta,Covered,
+COMP-006,Company pause,MVP,ACBP-P1-010;ACBP-P6-007;ACBP-P7-002,P1;P6;P7,M6,Direct,ACBP-P6-012,Closed beta,Partially covered - new-work halt only,"ACBP-P7-002: the enforcement half landed but this row read Covered while it did not exist. From ACBP-P1-010 until ACBP-P7-002 nothing in production read companies.status before doing autonomous work - pause was a LABEL, NOT A CONTROL. New-work halt is covered now (real PostgreSQL, four call sites). IN-FLIGHT SAFE-STOP IS NOT: pause refuses new work and does not terminate a run already executing (CDR-079 s9.5, OWNER). Mirrors docs/architecture/REQUIREMENT-TRACEABILITY.csv."
 COMP-007,Company deletion safeguards,Post-MVP,Roadmap epic: Data deletion completion,—,—,Roadmap epic,—,General MVP,Deferred by approved scope,
 COMP-008,Company status indicator,MVP,ACBP-P1-010,P1,M1,Direct,ACBP-P1-015,Internal prototype,Covered,
 DISC-001,Adaptive interview engine,MVP,ACBP-P2-005,P2,M2,Direct,ACBP-P2-011;ACBP-P2-012,Internal prototype,Covered,

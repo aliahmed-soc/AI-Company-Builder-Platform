@@ -14,8 +14,10 @@
 // Layer 3 does not make 1 and 2 redundant, and the redundancy is deliberate: this layer is bypassed by anything that
 // reaches the repository directly, and the DB layers are the ones that still hold when it is.
 import { JobRepository, writeAuditEvent, type DatabaseClient, type AuditWriteContext, type JobRow } from '@acbp/database';
-import { validateJobRequest, validateJobTenancy, jobEnqueued, type JobKind, type JobRequestFailure } from '@acbp/contracts';
+import { validateJobRequest, validateJobTenancy, jobEnqueued, type JobKind, type JobRequestFailure, type AutonomousWorkRefusal } from '@acbp/contracts';
 import { runInCompanyScope } from '../company/company-context-resolver.js';
+// ACBP-P7-002: the lifecycle gate's read. Imported directly — not a port, no injectable answer.
+import { readLifecycleDecision } from '../company/lifecycle-guard.js';
 import { checkAuthorization } from '../authz/authz-service.js';
 import { recordSuppression, type Logger } from '@acbp/observability';
 
@@ -53,6 +55,14 @@ export type EnqueueJobResult =
   // deciding whether to notify someone, needs to know which happened.
   | { readonly status: 'ok'; readonly job: EnqueuedJob; readonly deduplicated: boolean }
   | { readonly status: 'forbidden' }
+  /**
+   * The COMPANY may not do autonomous work (ACBP-P7-002; CDR-079; launch **Gate 14**).
+   *
+   * DISTINCT FROM `forbidden`, which is an authorization answer about the ACTOR. This one says the actor was
+   * entitled and the company was not in a state to receive the work — two different fixes, and conflating them
+   * would send an owner to check their own permissions.
+   */
+  | { readonly status: 'company_not_active'; readonly reason: AutonomousWorkRefusal }
   // The typed refusal (CDR-049 §3-G3.3). `reason` is the CLOSED contract union — never a message string, so a caller
   // can switch exhaustively and an alarm can key on `missing_company` specifically.
   | { readonly status: 'refused'; readonly reason: JobRequestFailure }
@@ -119,6 +129,38 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
       const request = validated.value;
 
       const jobs = new JobRepository(scope.db);
+
+      // ACBP-P7-002 / CDR-079 / launch **Gate 14**: a job enqueued is autonomous work CREATED, even though a
+      // human triggers it — `authz.ts` says it plainly: *"a job runs later, on its own, after the authorizing
+      // session is gone."* A job never enqueued can never be picked up.
+      //
+      // BUT A REPLAY IS NOT NEW WORK, AND THIS IS THE SUBTLE PART (CDR-079 §6-G5). The dedupe below is
+      // INSERT-FIRST: you learn a request is a duplicate by attempting the insert. So gating naively before the
+      // insert would refuse a retry of an enqueue that ALREADY SUCCEEDED before the pause, and the caller could
+      // never learn their job exists — breaking NFR-006 replay safety with a control meant to stop new work.
+      // Gating after the insert would be worse: the job would already exist.
+      //
+      // So the refusal path asks the idempotency question FIRST. A key that already names a job answers with that
+      // job; only a genuinely NEW request is refused. Nothing is inserted for a company that may not act.
+      const lifecycle = await readLifecycleDecision(scope);
+      if (!lifecycle.allowed) {
+        const alreadyEnqueued = request.idempotencyKey === null ? undefined : await jobs.findByIdempotencyKey(request.idempotencyKey);
+        if (alreadyEnqueued !== undefined) {
+          // AUDITED AND COUNTED, exactly like the dedupe branch below — the independent review caught that this
+          // one did neither. The rationale there transfers verbatim and was already written down: an enqueue that
+          // collapsed into an existing job "is exactly the event a run trail would otherwise be missing, and the
+          // caller was told `ok`". Being ALSO lifecycle-blocked changes nothing about that: the caller still got
+          // `ok`, so the trail still owes the record. Two `status: 'ok'` paths that differ in what they record is
+          // how a run trail acquires a hole nobody can see.
+          await audit(scope, jobEnqueued({ jobId: alreadyEnqueued.id, kind: request.kind, deduplicated: true }), auditCtx(options));
+          recordSuppression(options.logger, { surface: 'job_enqueue', accountId: scope.tenant.accountId, companyId: scope.tenant.companyId });
+          options.logger?.info('job.enqueue_replayed_while_blocked', { metadata: { jobId: alreadyEnqueued.id, kind: request.kind, reason: lifecycle.reason } });
+          return { status: 'ok', job: toEnqueuedJob(alreadyEnqueued, request.kind), deduplicated: true };
+        }
+        options.logger?.info('job.enqueue_refused_lifecycle', { metadata: { accountId: scope.tenant.accountId, companyId: scope.tenant.companyId, kind: request.kind, reason: lifecycle.reason } });
+        return { status: 'company_not_active', reason: lifecycle.reason };
+      }
+
       // STAMPED FROM THE RESOLVED SCOPE, not from `request`. Both are equal here — `runInCompanyScope` verified
       // membership against exactly the ids the caller passed — but they are equal by coincidence of this call path,
       // and this is the one ticket whose entire purpose is that a job's tenancy is not a caller's claim. Reading the

@@ -1019,7 +1019,15 @@ export function toolCallRequested(input: {
   readonly injectionSignals?: string;
   /**
    * WHICH emergency-stop scopes covered this call (ACBP-P6-007; CDR-072 §1-G5). Comma-joined, from the CLOSED
-   * `STOP_SCOPES` vocabulary, and recorded ONLY on an `emergency_stopped` refusal.
+   * `STOP_SCOPES` vocabulary — enforced UPSTREAM by `evaluateStops`, which returns `unreadable` for any stored
+   * scope `isStopScope` does not recognise. This field itself is an unvalidated `string`, so the closedness is
+   * the upstream check's, not this type's.
+   *
+   * RECORDED ON A REFUSAL THE STOP INTERRUPTED — which as of ACBP-P7-002 is a TWO-MEMBER set, `emergency_stopped`
+   * OR `company_not_active`, not `emergency_stopped` alone. See the guard at `stopExplainsRefusal` below, which
+   * is the enforcement this sentence names. (This comment said "ONLY on an `emergency_stopped` refusal" from
+   * `970929d` until it was corrected — FIVE commits — which is the same drift the regression recorded in
+   * `CDR-079 §9.14` produced one level down: a comment that outlives the guarantee it describes.)
    *
    * Without it the refusal records that A stop was in force but not what it reached — and an account-wide halt and
    * a single stopped task would leave identical evidence. The operator's question after pressing stop is precisely
@@ -1053,15 +1061,22 @@ export function toolCallRequested(input: {
     ...(input.toolVersion === null ? {} : { tool_version: input.toolVersion }),
     ...(input.injectionSignals === undefined || input.injectionSignals === '' ? {} : { injection_signals: input.injectionSignals }),
   };
-  // `stop_scopes` rides the DENIED branch only, and only for the reason it explains. On a permitted call it would
-  // claim a halt that did not happen; on a different refusal it would attribute that refusal to a stop.
-  const stopScopes = input.denialReason === 'emergency_stopped' && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
-  // The hold/pause facts ride the same branch and the same condition — they can only have happened on an
-  // `emergency_stopped` refusal, so recording them anywhere else would assert a halt that did not occur.
-  const heldFacts =
-    input.denialReason === 'emergency_stopped' && input.heldByStopId !== undefined
-      ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true }
-      : {};
+  // `stop_scopes` rides the DENIED branch only, and only for a reason a stop can explain. On a permitted call it
+  // would claim a halt that did not happen; on an unrelated refusal it would attribute that refusal to a stop.
+  //
+  // THE SET OF SUCH REASONS GREW BY ONE (ACBP-P7-002). It was `emergency_stopped` alone, correctly, while the
+  // stop was the only gate that could produce these facts. P7-002's lifecycle gate outranks the stop gate, so a
+  // call that is BOTH stopped and lifecycle-refused reports `company_not_active` while a stop genuinely covered
+  // it — and the old condition silently dropped that stop from the permanent record.
+  //
+  // It is a two-member set, NOT "any denial": a first attempt at this fix dropped the reason check entirely and
+  // CI refused it, because `not_registered` with a covering stop must still hold nothing — that call was never
+  // going to happen, so the stop interrupted nothing. Kept in step with the dispatcher's `stopInterrupted`.
+  const stopExplainsRefusal = input.denialReason === 'emergency_stopped' || input.denialReason === 'company_not_active';
+  const stopScopes = stopExplainsRefusal && input.stopScopes !== undefined && input.stopScopes !== '' ? { stop_scopes: input.stopScopes } : {};
+  // The hold/pause facts ride the same condition: they can only have happened on a refusal a stop explains, so
+  // recording them anywhere else would assert a halt that did not occur.
+  const heldFacts = stopExplainsRefusal && input.heldByStopId !== undefined ? { held_by_stop_id: input.heldByStopId, paused_task: input.pausedTask === true } : {};
   return input.denialReason === undefined
     ? makeEvent('tool.call_requested', input.callId, 'success', base)
     : makeEvent('tool.call_requested', input.callId, 'denied', { ...base, denial_reason: input.denialReason, ...stopScopes, ...heldFacts });
