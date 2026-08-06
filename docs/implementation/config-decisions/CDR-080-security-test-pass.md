@@ -333,7 +333,27 @@ right end state. It was not done here, deliberately:
 
 Also worth stating plainly: the sweep is a **detector**, not a control. It catches a producer that wrote a
 secret, *after* the write, *in a test*. Nothing prevents one in production.
-5. **The strengthening pass** — #7, #19, #3, #18, #10, #14, #17's three real gaps.
+5. **The strengthening pass** — **#19 DONE**; #7, #3, #18, #10, #14 and #17's three gaps remain.
+   **#19's two vacuous assertions are fixed and now detect a leak.** `not.toContain('SECRET')` at `:103` and
+   `:189` were unconditionally true — the literal `SECRET` appears nowhere in that harness; the planted value is
+   `FAKE_INTERNAL_MARKER`, whose own comment says it is *"deliberately NOT shaped like a real key"*. Both now
+   target that marker, and a new **CONTROL** proves the fake still plants it — otherwise repointing them would
+   be an improvement nobody could verify, and they would drift back to proving nothing exactly as before.
+
+### §8.3 The mutation that proved nothing, caught before it was recorded
+
+The first mutation for #19 added the leaking field to **`errorResult`**, ran the suite, and **all 9 tests
+passed**. The obvious reading is "the assertions are still vacuous". The true reading is that **`errorResult`
+serves only the policy-precheck and early-internal paths and is never reached by a provider failure** — the
+suite's own path builds its result at the end of `callModel`. Mutating there turns exactly one test red, by
+name, and reverting restores green.
+
+**A mutation that does not reach the assertion proves nothing about the assertion**, and it fails in the
+direction that looks like a finding — which is worse than failing loudly. This is ACBP-P7-002's false-confirmation
+lesson (a probe that went red at *lint* and never reached the tests) arriving through a different door: there,
+the probe never ran the tests; here, it ran them and never touched their path. **Before recording a mutation
+result, confirm the edited code is on the path the named test executes.** That instruction is now in the index
+row itself, which spells out which function to edit and which not to.
 6. **Scanner hardening + its first regression suite.** `tools/check-secrets.mjs` has **zero tests** while
    `check-boundaries`, `check-reset-lists` and `check-approval-port` all have them; plus the extension holes,
    allowlist hygiene, a scripted full-history sweep (the 2026-07-31 figure is unreproducible prose), and a named

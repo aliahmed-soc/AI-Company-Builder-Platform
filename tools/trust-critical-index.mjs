@@ -347,10 +347,10 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/model/silent-fallback-negative.test.ts',
     testTitle: 'a MATERIAL decision does NOT silently fall over — generation fails on the primary',
     entryPoint: 'the model gateway',
-    mutation: "Re-label the `strategy.options` template family as `extraction` so the platform's most material decision becomes fallback-eligible.",
+    mutation: "Two, and they fail DIFFERENT cases. (a) For the leak assertions: add a field carrying the provider's internal error text to the result object built at the END of callModel — NOT to `errorResult`, which serves only the policy-precheck and early-internal paths and is never reached by a provider failure. (b) For the fallback claim itself: re-label the `strategy.options` template family as `extraction` so the platform's most material decision becomes fallback-eligible.",
     mutationRunId: '',
     doesNotProve:
-      'WHICH decisions are material. The task class is unpinned for several material template families, so the mutation above turns fallback on for strategy generation WITH THE WHOLE SUITE GREEN. This file also contains two assertions that cannot fail — not.toContain("SECRET") at :103 and :189, where the literal SECRET appears nowhere in the harness (the planted value is PLANTED-INTERNAL-MARKER-9f8e7d6c). And it is a unit suite over an in-memory events array, so no persisted usage row is checked.',
+      'WHICH decisions are material — mutation (b) above turns fallback on for strategy generation WITH THE WHOLE SUITE GREEN, because the task class is unpinned for several material template families. It is also a unit suite over an in-memory events array, so no PERSISTED usage row is checked (migration 0030 added usage_events.fallback_reason; a real-PG case would be stronger). FIXED BY ACBP-P7-007: this file carried two assertions that could not fail — not.toContain("SECRET") where the literal SECRET appears nowhere in the harness, the planted value being FAKE_INTERNAL_MARKER. Both now target that marker, with a CONTROL proving the fake still plants it, and mutation (a) confirms they detect a leak.',
   },
   {
     number: 20,
