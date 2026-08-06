@@ -185,16 +185,54 @@ repository already uses for approvals, stops, reset lists and conflict targets:
 mutation description | mutation CI run id | what it does NOT prove
 ```
 
-A checker parses the twenty items out of `TEST-AND-VERIFICATION-STRATEGY.md` and **fails the build** when:
+**BUILT in slice 2** as `tools/trust-critical-index.mjs` (the data) and `tools/check-trust-critical-index.mjs`
+(the checker), registered in `check:static` and `test:boundaries`, with 20 regression cases in
+`tools/tests/check-trust-critical-index.test.mjs`.
 
-- an item has no index row;
-- a cited file or `test(...)` title no longer exists (so renaming a test breaks the build rather than the claim);
-- a row's `mutation CI run id` is empty — i.e. the row is **unmeasured**;
-- the index and the canon list disagree on the count.
+The checker parses the twenty items out of `TEST-AND-VERIFICATION-STRATEGY.md` and **fails the build** when:
 
-It carries its own regression suite in `tools/tests/`, following `check-boundaries.test.mjs`, and registers in
-`test:boundaries`. **This artefact is the durable fix for the P7-002 failure mode**: it converts "an attribution
-with no test" from prose that nobody checks into a red build.
+- an item has no index row, or a row matches no item, or two rows share a number;
+- an index `statement` has drifted from the canon line it pins;
+- a cited file or `test(...)` title no longer exists — **renaming a test breaks the build rather than the claim**;
+- a row claims `measured` **without a hosted CI run id** (a SHA is rejected: the pattern requires ≥6 digits);
+- a row records a run id while still calling itself `unmeasured`;
+- a row names no mutation — a control nobody tried to break is unmeasured by definition;
+- `anchor` or `status` falls outside its closed vocabulary, or `doesNotProve` is blank;
+- a `not_covered`/`unprovable` row cites a file or claims a real anchor;
+- the count of `unmeasured` rows exceeds `MAX_UNMEASURED`.
+
+### §6.1 One deliberate departure from the plan above, and why
+
+This section originally said the build fails when **any** row's run id is empty. **It does not, and should not.**
+A blanket failure on day one — when every row is unmeasured — creates exactly one incentive: relabel rows
+`not_covered` until the build goes green. That would make the index lie in the direction this ticket exists to
+prevent.
+
+What is enforced instead is **you may not claim a measurement you do not have**, plus a **ratchet**:
+`MAX_UNMEASURED` starts at **18** and may only ever decrease. Lowering it is the work of recording a run id;
+raising it means a control that was measured stopped being measured, and the checker refuses. Honesty is cheap
+here and overclaiming is what costs, so the check is built to make the honest state easy and the false state
+impossible.
+
+The checker also carries a **negative self-test** (the house pattern from `check-conflict-targets.mjs`): it
+proves its own canon parser still recognises a numbered, wrapped list before reporting a clean tree. A checker
+that silently stops matching is the "guard written but never applied" failure one level up.
+
+**This artefact is the durable fix for the P7-002 failure mode**: it converts "an attribution with no test" from
+prose that nobody checks into a red build.
+
+### §6.2 What it found immediately
+
+Run against the index on first execution, the checker rejected a citation for item 14 — the title had drifted
+from the source, which also escapes an apostrophe. Two corrections came out of one red run: the index now cites
+the real title, and the checker unescapes quote escapes before matching, so the index can store human-readable
+titles rather than source-level escaping that would drift on the next reflow. **The tool caught its own author
+inside a minute of existing**, which is the only kind of evidence this ticket accepts.
+
+Its first clean run reports the honest position, in these words:
+
+> `20 canon items pinned to live tests; 0 MEASURED (red run recorded), 18 unmeasured (ratchet 18), 2 with no
+> test. 4 rest on a returned value or weaker.`
 
 Run the probe against the **canonical claim's wording**, not the test's title. The mutation for #7 is *"delete
 the `expires_at > now` conjunct AND the approval-usability pre-check, then dispatch an expired approval"*; for
@@ -224,9 +262,12 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
 
 ## §8 Slices
 
-1. **CDR + branch + draft PR** — this document. *Verifiable:* every disposition cites a file:line, and the
-   per-class counts match §0.
-2. **The machine-checked evidence index + its checker + regression suite** (§6).
+1. **CDR + branch + draft PR** — **DONE.** This document. *Verifiable:* every disposition cites a file:line, and
+   the per-class counts match §0.
+2. **The machine-checked evidence index + its checker + regression suite** — **DONE** (§6, §6.1, §6.2).
+   `tools/trust-critical-index.mjs`, `tools/check-trust-critical-index.mjs`,
+   `tools/tests/check-trust-critical-index.test.mjs` (20 cases), wired into `check:static` and
+   `test:boundaries`. *Verified:* the checker rejected one of its own author's citations on first run.
 3. **#15** — the browser-response negative across all `apps/web` route modules, with a source guard so a new
    route without coverage fails rather than goes unproven. Must distinguish the client-safe Clerk
    `publishableKey`, or the test fails on a correct build.
