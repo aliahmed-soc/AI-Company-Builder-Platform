@@ -16,6 +16,25 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
 }
 
+/**
+ * A throttled response: 429, the standard `Retry-After` header, and the generic envelope (ACBP-P7-013).
+ *
+ * Exported so every surface throttles IDENTICALLY. Four request modules each writing their own 429 is four
+ * chances for one of them to leak a limit value or forget the header, and the shape of a refusal is exactly the
+ * kind of detail that drifts between hand-written copies.
+ */
+export function rateLimitedResponse(retryAfterSeconds: number): Response {
+  return new Response(JSON.stringify(genericErrorBody(429)), {
+    status: 429,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      // Whole seconds, floored at 1 — RFC 9110 requires a non-negative integer, and `Retry-After: 0` invites an
+      // immediate retry certain to be refused again.
+      'retry-after': String(Math.max(1, Math.ceil(retryAfterSeconds))),
+    },
+  });
+}
+
 async function readJsonObject(request: HttpRequest): Promise<{ ok: true; obj: Record<string, unknown> } | { ok: false; status: number }> {
   if (!isJsonContentType(request.headers.get('content-type'))) return { ok: false, status: 415 };
   const body = await readLimitedRawBody(request, MAX_COMPANIES_BODY_BYTES);
@@ -184,6 +203,12 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(503, { error: 'unavailable' });
     case 'email_unverified':
       return jsonResponse(403, { error: 'email_unverified' });
+    case 'rate_limited':
+      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-081). 429 with `Retry-After`, and the body carries the
+      // SAME opaque envelope as every other refusal — no bucket balance, no limit value, no scope name. A
+      // response that told a caller which ceiling they hit and how much of it remains is a measurement tool for
+      // finding the cheapest way to stay just under it.
+      return rateLimitedResponse(result.retryAfterSeconds);
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));
   }

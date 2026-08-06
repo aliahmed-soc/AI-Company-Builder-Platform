@@ -7,6 +7,10 @@ function identityDeps(opts: { userId?: string | null; email?: string; verified?:
   const { userId = 'clerk_1', email = 'me@example.com', verified = true } = opts;
   return {
     getUserId: () => Promise.resolve(userId),
+    // ACBP-P7-013: both REQUIRED, never defaulted — a limiter that defaults to allowed is the
+    // P6-007 stop-port defect (CDR-072 section 1-G1). A test that wants to be admitted says so.
+    getSessionId: () => Promise.resolve('sess_test'),
+    checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const),
     getBackendUser: () =>
       Promise.resolve({ id: 'clerk_1', primaryEmailAddressId: 'e1', emailAddresses: [{ id: 'e1', emailAddress: email, verification: { status: verified ? 'verified' : 'unverified' } }], firstName: null, lastName: null }),
   };
@@ -14,6 +18,8 @@ function identityDeps(opts: { userId?: string | null; email?: string; verified?:
 
 function fakeRuntime(overrides: Partial<MemberRuntime> = {}): MemberRuntime {
   return {
+    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-081 section 2).
+    checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     inviteMember: () => Promise.resolve({ status: 'ok', membershipId: 'm1', token: 'tok', role: 'viewer' }),

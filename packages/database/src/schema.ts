@@ -1105,6 +1105,28 @@ export interface DatabaseSchema {
   held_work: HeldWorkTable;
   account_usage_rollups: AccountUsageRollupsTable;
   usage_corrections: UsageCorrectionsTable;
+  api_rate_limit_buckets: ApiRateLimitBucketsTable;
+}
+
+/**
+ * One API request-limit bucket (ACBP-P7-013; CDR-081; CDR-008 §8; migration 0055).
+ *
+ * GLOBAL AND UN-RLSED, on migration 0005's stated precedent for the identity tables, because a session bucket is
+ * consulted BEFORE any tenant context exists — that ordering is the point (CDR-081 §3.3).
+ *
+ * The row is a number and a timestamp. `scope_key_hash` is `sha256(kind + ':' + key)`, never the raw session or
+ * account id, so a global unscoped table holds nothing attributable to anyone.
+ */
+export interface ApiRateLimitBucketsTable {
+  scope_key_hash: ColumnType<string, string, never>;
+  /** `session` or `account`. Mirrored by a CHECK; carried for diagnostics only — the hash already separates keys. */
+  scope_kind: ColumnType<string, string, never>;
+  /**
+   * Milli-tokens remaining. `bigint` arrives from `pg` as a STRING, which is why the repository parses rather
+   * than trusting the driver's type — a silent `'119000' - 1000` would be a string concatenation, not arithmetic.
+   */
+  tokens_milli: ColumnType<string, string | number, string | number>;
+  updated_at: RequiredTimestamp;
 }
 
 /**

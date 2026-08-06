@@ -8,6 +8,7 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
+import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
 import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult } from '@acbp/core';
@@ -15,6 +16,8 @@ import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransit
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
+  /** CDR-008 §8's request ceiling refused this call (ACBP-P7-013; CDR-081; NFR-010). */
+  | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'unavailable' }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
@@ -43,6 +46,15 @@ export type CompaniesRequestResult =
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
+  /**
+   * Consume one request against CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-081).
+   *
+   * REQUIRED on this interface, never optional: the session ceiling alone does not bound a user holding many
+   * sessions, which is precisely why section 8 rules two layers rather than one (CDR-081 section 6.4). A fake
+   * runtime in a test must declare it, so no surface can be admitted by forgetting it.
+   */
+  checkRequestLimit(scopeKind: 'session' | 'account', scopeKey: string): Promise<RequestLimitOutcome>;
+
   resolveInternalUser(providerUserId: string): Promise<InternalUserReconciliation>;
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
   createCompany(params: { accountId: string; actingUserId: string; creationMode: unknown; name: unknown; description?: unknown }, options?: { logger?: Logger }): Promise<CreateCompanyResult>;
@@ -91,6 +103,7 @@ async function resolveActor(deps: CompaniesRequestDeps, runtime: CompanyRuntime)
   const identity = await resolveVerifiedIdentity(deps.identity);
   if (identity.status === 'unauthenticated') return { kind: 'result', result: { status: 'unauthenticated' } };
   if (identity.status === 'email_unverified') return { kind: 'result', result: { status: 'email_unverified' } };
+  if (identity.status === 'rate_limited') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: identity.retryAfterSeconds } };
   if (identity.status === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };
 
   const resolution = await runtime.resolveInternalUser(identity.identity.providerUserId);
@@ -111,6 +124,10 @@ async function resolveActorWithAccount(deps: CompaniesRequestDeps, runtime: Comp
   const actor = await resolveActor(deps, runtime);
   if (actor.kind === 'result') return actor;
   const provision = await runtime.ensurePersonalAccount(actor.userId, { logger: companiesLogger() });
+  // The ACCOUNT ceiling, checked at the earliest point the account id exists (CDR-008 section 8; CDR-081).
+  const limit = await runtime.checkRequestLimit('account', provision.accountId);
+  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };
+  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };
   return { userId: actor.userId, accountId: provision.accountId };
 }
 

@@ -6,6 +6,7 @@
 // fields it does not own. Field-level value validation is the domain's job (normalizeProfileUpdate).
 import { isJsonContentType, genericErrorBody } from '../webhooks/http.js';
 import { readLimitedRawBody, type RawBodyRequest } from '../webhooks/raw-body.js';
+import { rateLimitedResponse } from '../companies/companies-http.js';
 import type { ProfileUpdateInput } from '@acbp/core';
 import type { ProfileRequestResult } from './profile-request.js';
 
@@ -77,6 +78,10 @@ export function toProfileResponse(result: ProfileRequestResult): Response {
       return jsonResponse(200, { profile: result.profile });
     case 'validation_error':
       return jsonResponse(400, { error: result.error });
+    case 'rate_limited':
+      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-081). Shared helper so every surface throttles
+      // identically — same status, same opaque body, same Retry-After.
+      return rateLimitedResponse(result.retryAfterSeconds);
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));
     case 'email_unverified':

@@ -50,7 +50,7 @@ const ALL = [
   'strategy_recommendations',
   'strategy_options',
   'strategy_generations',
-  'usage_corrections',
+  'usage_corrections', 'api_rate_limit_buckets',
   'account_usage_rollups',
   'usage_events',
   'understanding_confirmation_events',

@@ -113,6 +113,11 @@ export { PolicyRepository } from './policy-repository.js';
 // Emergency-stop state and the held-work queue (ACBP-P6-007; CDR-072; migration 0050).
 export { StopRepository } from './stop-repository.js';
 export type { StopExecutor, EmergencyStopRow, NewEmergencyStopInput, NewHeldWorkInput } from './stop-repository.js';
+
+// API request-limit buckets (ACBP-P7-013; CDR-081; migration 0055). Takes a plain executor and needs NO tenant
+// scope — the table is global by design, because a session bucket is consulted before any account is known.
+export { consumeBucket, bucketKeyHash } from './rate-limit-repository.js';
+export type { RateLimitExecutor, RateLimitScopeKind, ConsumeBucketParams, ConsumeBucketResult } from './rate-limit-repository.js';
 export { ApprovalRepository } from './approval-repository.js';
 export type { NewApprovalRequestInput, NewApprovalDecisionInput } from './approval-repository.js';
 export type { PolicyExecutor, NewPolicyInput, NewPolicyEvaluationInput } from './policy-repository.js';

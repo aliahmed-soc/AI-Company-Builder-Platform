@@ -3,6 +3,7 @@
 // Keeps Next types out of the domain and never leaks internals. Bodies are size-capped and JSON-typed;
 // only the expected keys survive parsing. The raw invite token is returned ONLY in the invite response
 // (the owner conveys it out-of-band). Field-level validation is the domain's job (@acbp/core).
+import { rateLimitedResponse } from '../companies/companies-http.js';
 import { isJsonContentType, genericErrorBody } from '../webhooks/http.js';
 import { readLimitedRawBody, type RawBodyRequest } from '../webhooks/raw-body.js';
 import type { MembersRequestResult } from './members-request.js';
@@ -77,6 +78,10 @@ export function toMembersResponse(result: MembersRequestResult): Response {
       return jsonResponse(200, { membership: { membershipId: result.membershipId, accountId: result.accountId, role: result.role } });
     case 'revoked':
       return new Response(null, { status: 204 });
+    case 'rate_limited':
+      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-081). Shared helper so every surface throttles
+      // identically — same status, same opaque body, same Retry-After.
+      return rateLimitedResponse(result.retryAfterSeconds);
     case 'validation':
       return jsonResponse(400, { error: result.error });
     case 'conflict':
