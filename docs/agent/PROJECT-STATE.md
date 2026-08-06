@@ -67,6 +67,59 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P7-013 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
+  ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate`, **no migration**, no schema,
+  no new contract. A NEW ticket: ACBP-P7-007 found the gap and the owner ruled it a separate implementation
+  ticket rather than work to do inside a verification pass.
+  - **THE FIRST JOB WAS TO DISPROVE THE FINDING, NOT TO BUILD.** *"CSRF protection is absent"* could
+    honestly have been *"partially covered by the provider"*. Three provider mechanisms were checked and
+    none covers it (CDR-081 §0.2). The sharpest is the first: **`__session`'s `SameSite` attribute is
+    chosen by Clerk's Frontend API**, not by the SDK — `@clerk/backend` appends handshake `Set-Cookie`
+    values verbatim (`chunk-NVYUROUB.mjs:6697`, `:7063`), and the only `SameSite` it writes itself is on a
+    2-second handshake counter cookie. So the attribute that would carry the defence **is not observable,
+    assertable or pinnable from this repository**. That is deliberately NOT a claim that `__session` lacks
+    `SameSite` — it is a claim that the repository cannot know, and a control it cannot know about cannot
+    be its answer to NFR-010. `authorizedParties` is wired but structurally irrelevant: `azp` records the
+    origin the token was MINTED for, which in a forgery against this app is this app's own origin.
+  - **A CORRECTION TO THE FINDING AS WRITTEN:** it named `apps/web/src/middleware.ts`, which does not
+    exist. Next 16 renamed the boundary; this app's is `apps/web/src/proxy.ts`.
+  - **WHAT LANDED.** A fail-closed same-origin gate at the request-interception boundary: `Sec-Fetch-Site`
+    first and exclusively when present, `Origin` against `APP_PUBLIC_URL` as the fallback, and **deny when
+    neither is present** — absence of provenance is never permission. Ten rows, closed vocabulary, asserted
+    by REASON rather than by allow/deny so a row that stops denying cannot pass by coincidence.
+    `proxy.ts` gained its **first test file**, which is where the ordering claim lives (refused before any
+    session is established, so a forgery reaches no Clerk round trip and no handler).
+  - **A TOKEN WAS REJECTED ON THE RECORD** (CDR-081 §1). There is no rendered UI, so a synchronizer token
+    would ship with **no producer of a valid token anywhere in production** — the shape this repository has
+    been bitten by three times (P6-010's caps, P6-011's usage key, P7-002's zero-caller predicate).
+  - **ENFORCED IN ONE PLACE, WHICH IS THE STRENGTH AND THE WHOLE RISK.** A route module that does not exist
+    yet is covered the day it is written; and the gate can be switched off for all sixteen at once by four
+    edits that each look reasonable alone. `tools/check-csrf-origin-gate.mjs` fails the build on each, plus
+    two exemption rules. It reports **17 state-changing of 23 route modules**, so the CDR's count is
+    machine-re-derivable rather than prose.
+  - **THE CHECKER'S FIRST RUN AGAINST THE REAL TREE FAILED, ON ITS AUTHOR'S BUG.** The matcher's first
+    entry contains `[^?]` — a `]` **inside a string literal** — and a non-greedy bracket regex truncated the
+    array, so every entry went invisible and a perfectly correct matcher was reported as not covering
+    `/api`. **No synthetic fixture could have caught it**: every fixture had a simpler matcher than the real
+    file. Replaced with a depth-and-string-state scanner; the real-shaped matcher is now a self-test probe.
+  - **NO REAL-POSTGRESQL PROOF EXISTS AND NONE IS CLAIMED — and the reason is not the missing database.**
+    The planned composition test was **withdrawn as VACUOUS** (CDR-081 §6.3): it would call `proxy()`, get a
+    403, decline to call the route *on that basis*, and then assert no row exists — asserting only that the
+    harness did not call the route. Delete the entire gate and it still passes. What would be non-vacuous is
+    driving a running Next server so the FRAMEWORK composes proxy with handler; no harness in this
+    repository does that. So *"a forged request reaches no handler"* rests on statement ORDER in `proxy.ts`
+    (asserted through the real module, pinned statically) plus Next running the proxy first, which this
+    repository does not verify. Local PostgreSQL is unreachable as always, but that is **not** why the test
+    is absent.
+  - **CLOSES ONE OF THREE.** CDR-080 §4 named CSRF, HTTP rate limiting and security headers/CSP. **Rate
+    limiting and security headers/CSP remain ABSENT** and are still owed their own tickets; the pen review
+    is untouched and stays at the General MVP gate. The NFR-010 traceability cells say exactly that.
+  - **⚠️ THE TWO NFR-010 TRACEABILITY CELLS ARE ALSO REWRITTEN BY THE UNMERGED `p7-007-security-test-pass`
+    BRANCH** (CDR-080 §5), whose wording names CSRF as ABSENT — true when written, stale the moment this
+    merges. Whichever lands second must **merge, not overwrite**. Flagged because a conflict resolved by
+    taking one side wholesale is how a corrected record silently reverts, which P7-002 hit three times.
+  - **Ticket Done / PR ready / merge are OWNER GATES and none has been taken.**
+
 - **ACBP-P7-002 deactivation flows — PARTIALLY LANDED, TICKET NOT DONE** (CDR-079; ACC-004, COMP-006 final;
   ADR-006; **launch Gate 14**; migration `0054`). Branch `p7-002-deactivation-flows`, PR **#74**. Ledger:
   `P7-002-REVIEW-COVERAGE.md`.
