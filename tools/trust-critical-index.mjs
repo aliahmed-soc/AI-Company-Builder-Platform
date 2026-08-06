@@ -98,7 +98,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     testTitle:
       '[ORACLE-FOREIGN-ID][ORACLE-UNKNOWN-ID][ORACLE-MALFORMED-ID] foreign and unknown ids are byte-identical; malformed ids never succeed or leak',
     entryPoint: 'HTTP route handlers → core → PostgreSQL',
-    mutation: 'Remove the application tenant predicate from the company read and rely on RLS alone.',
+    mutation: 'In `companies-request.ts`, answer a FOREIGN company id with a different status or body from an UNKNOWN one, so the two responses stop being byte-identical. (Removing the tenant predicate from `getCompany` would NOT do it: RLS still returns no row, so foreign and unknown stay indistinguishable and the mutation is equivalent.)',
     mutationRunId: '',
     doesNotProve:
       'Byte-identity of the RESPONSE. Timing and error-shape side channels are out of scope, and no test measures response latency.',
@@ -173,7 +173,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/tools/policy-enforcement.integration.test.ts',
     testTitle: 'the UNCHANGED action still runs — the suite is not simply refusing everything',
     entryPoint: 'dispatchToolCall',
-    mutation: 'Stop including a bound element in the payload hash so an edit to it no longer invalidates.',
+    mutation: 'Drop one bound element from the digest computed by `computePayloadBinding`, so editing that element no longer invalidates the approval.',
     mutationRunId: '',
     doesNotProve:
       'Nothing outstanding — this is the anti-vacuity CONTROL for the gate-4 set. The per-element cases are indexed in CDR-070 §2 and are the substantive proof.',
@@ -233,7 +233,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'gate 8 — the PRODUCTION activateStop use case halts a call under 5s, activation included',
     entryPoint: 'activateStop → dispatchToolCall',
-    mutation: 'Drop the `company` scope from the dispatcher stop evaluation, so an active company stop no longer denies the call.',
+    mutation: 'Drop the `company` case from `evaluateStops`, so an active company stop no longer covers the dispatched call.',
     mutationRunId: '',
     doesNotProve:
       '"ALL SCOPES". The cited test drives ONE scope, `company`, because what it adds is the ACTIVATION half of the interval, which is scope-independent. Completeness across scopes is proven beside it — by `COVERS + gate 8 — a %s stop halts its call, MEASURED under 5s` and by the guard `every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven` — and neither is what this row cites. "All scopes" is in any case FIVE enforceable scopes, not seven: `capability` and `integration` are inert (CDR-072). And ≤5s is a BOUND asserted once on CI hardware, not a worst-case measurement.',
@@ -248,7 +248,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/idempotency/replay.integration.test.ts',
     testTitle: 'a re-delivered enqueue creates no second job, and the suppression is recorded',
     entryPoint: 'enqueueJob',
-    mutation: 'Remove the idempotency read-back so a re-delivered key inserts a second row.',
+    mutation: 'Make `enqueueJob` skip its `findByIdempotencyKey` read-back, so a re-delivered key inserts a second row.',
     mutationRunId: '',
     doesNotProve:
       'That producers SUPPLY a key. `idempotencyKey` is caller-supplied and optional at every call site, and no production producer derives one — two keyless enqueues are correctly two jobs.',
@@ -263,7 +263,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/database/src/integration/usage-events.integration.test.ts',
     testTitle: 'A RE-DELIVERED USAGE ROW IS SUPPRESSED, not written and not thrown (trust-critical #12)',
     entryPoint: 'the usage-event insert path under the restricted role',
-    mutation: 'Drop the usage-event uniqueness constraint so a re-delivery inserts twice.',
+    mutation: 'Drop the `usage_events_company_idempotency_uq` unique index added by migration 0052, so a re-delivery inserts twice.',
     mutationRunId: '',
     doesNotProve: 'Same producer-contract gap as #11: suppression depends on a key the caller chooses to supply.',
   },
@@ -292,7 +292,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/usage/usage-rollup-service.integration.test.ts',
     testTitle: "THE TOTAL DOES NOT DEPEND ON THE CALLER'S COMPANY MEMBERSHIPS (CDR-073 §1-G3)",
     entryPoint: 'rebuildAccountUsageRollup',
-    mutation: 'Filter the rollup by the calling user\'s memberships so the total varies by caller.',
+    mutation: 'Filter the aggregate inside `rebuildAccountUsageRollup` by the memberships of the calling user, so the total varies by caller.',
     mutationRunId: '',
     doesNotProve:
       'The PERSISTED row. This case compares returned figures; the persisted account_usage_rollups row is asserted in the reconciliation suite and the slice-F journey, not here.',
@@ -353,7 +353,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/artifacts/complete.integration.test.ts',
     testTitle: 'a run that has NOT succeeded refuses — a running attempt cannot complete its task',
     entryPoint: 'completeTask',
-    mutation: 'Weaken the run-state guard from `=== succeeded` so a non-succeeded run can complete its task.',
+    mutation: 'Weaken the run-state guard inside `completeTask` from an equality on `succeeded`, so a non-succeeded run can complete its task.',
     mutationRunId: '',
     doesNotProve:
       'THE CLAIM AS WORDED. The seeded run state is `running`, not `failed` — searching this file for "failed" returns nothing. A `failed` run is covered by CONSTRUCTION (the guard is a single !== succeeded), never by execution. Nor does any test join model failure to a completion attempt.',
@@ -386,7 +386,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     testTitle:
       '[AUTHZ-FORGED-CLERK-ROLE] a REAL member with a forged owner role cannot perform an owner-only mutation (the sharp #20 case)',
     entryPoint: 'HTTP route handlers → core → PostgreSQL',
-    mutation: 'Read the role from the provider claim instead of from the internal membership row.',
+    mutation: 'Make `runInAccountScope` take the role from the provider-supplied claim instead of the internal membership row it reads today.',
     mutationRunId: '',
     doesNotProve:
       'Nothing outstanding for the forged-claim path. Note P1-014-REVIEW-COVERAGE.md:26 records that this negative once could NOT detect its own regression, because the forged claims named placeholder ids; the sharp case above is the fix.',

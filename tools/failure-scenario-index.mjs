@@ -95,7 +95,10 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/model/model-gateway.test.ts',
     testTitle: 'fallback fires for an ELIGIBLE task class on a retryable exhaustion',
     entryPoint: 'callModel',
-    mutation: 'Make every task class fallback-eligible so the ineligible sibling case also falls over.',
+    // CORRECTED in slice 6: the previous text ("make every task class fallback-eligible") would have reddened the
+    // INELIGIBLE sibling case, not this row's test, which stays green when MORE classes are eligible. A mutation
+    // aimed at a neighbouring test is the ACBP-P7-007 row-19 defect exactly.
+    mutation: 'Make `isFallbackEligible` return false for every task class, so an eligible class exhausting a retryable error returns the primary error instead of the fallback output.',
     mutationRunId: '',
     doesNotProve:
       'THE OTHER HALF OF THE ROW, which does not exist. The matrix requires "tasks queue", an "Honest banner: provider degraded", and "Operator: drain queue on recovery". There is no queue-on-outage, no provider-health banner and no drain path in the repository. CDR-059:98 already records this and assigns it to P6/observability. NFR-019 is nonetheless marked `Covered` in BOTH traceability matrices — CDR-084 §7 item 4 asks whether that stands.',
@@ -111,7 +114,10 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/model/model-gateway.test.ts',
     testTitle: 're-ask is bounded: still-invalid after the cap → invalid_output',
     entryPoint: 'callModel',
-    mutation: 'Remove the re-ask cap so the gateway re-asks forever instead of failing.',
+    // Raising the cap rather than removing it: removing it makes the fixture loop forever and the only signal is a
+    // suite timeout, which is a red that says nothing about the bound. +1 reddens the callCount and the accumulated
+    // token assertions directly.
+    mutation: 'Raise `MAX_REASK_ATTEMPTS` in @acbp/contracts from 1 to 2, so `runProvider` re-asks twice and the bound is no longer where canon puts it.',
     mutationRunId: '',
     doesNotProve:
       'The row\'s "plain-language reason (TASK-006)" reaching a user, or "credit released". A sibling case proves the bounded re-ask SUCCEEDS when the second attempt is valid, which is the control that stops this passing on a gateway that never re-asks at all.',
@@ -127,7 +133,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/runs/coordinator.integration.test.ts',
     testTitle: 'TIMEOUT WORKS — a run whose worker went silent past the grace is failed as worker_lost',
     entryPoint: 'the run coordinator sweep',
-    mutation: 'Widen the heartbeat grace to infinity so a silent worker is never reclaimed.',
+    mutation: 'Make `isRunLost` always return false (equivalently, set `DEFAULT_HEARTBEAT_GRACE_MS` to a value no test can outlive), so `reclaimLostRuns` never reclaims a silent worker.',
     mutationRunId: '',
     doesNotProve:
       'The resume-from-checkpoint alternative in the same row — that is proven separately by the kill-and-resume case in `checkpoint.integration.test.ts` — nor the "Dead-letter → Decision Room blocked queue" recovery. Siblings pin that a LIVE run is never reclaimed and that a heartbeat cannot revive an already-reclaimed one.',
@@ -176,7 +182,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/artifacts/persist.integration.test.ts',
     testTitle: 'a storage write that REPORTS SUCCESS while storing nothing refuses, and writes no row',
     entryPoint: 'persistArtifact',
-    mutation: 'Trust the storage adapter\'s reported metadata instead of verifying the object landed.',
+    mutation: 'Delete the `verifyPersistedObject` call in `persistArtifact` and trust `storage.head`, so a write that reports success while storing nothing is accepted.',
     mutationRunId: '',
     doesNotProve:
       'The row\'s "Credit released" or its `task.failed` audit. Sibling cases cover a THROWING write and a TRUNCATED one, and that a retry after refusal ends with exactly one artifact.',
@@ -193,7 +199,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/workers/runtime.integration.test.ts',
     testTitle: 'a THROWING step is recorded as a provider_error, not rolled back into nothing',
     entryPoint: 'the worker runtime step executor',
-    mutation: 'Roll the whole run back on a throwing step so no failed row survives.',
+    mutation: 'Wrap the body of `runWorkerStep` so a throwing step rolls its own transaction back instead of reaching `finishAs` with `provider_error`, leaving no failed row.',
     mutationRunId: '',
     doesNotProve:
       'THE ROW\'S ACTUAL CLAIM. The row wants a tool call `failed` with a NORMALIZED CATEGORY distinguishing a tool fault from a provider fault, and requires idempotency keys for external classes. `runtime.ts` has a bare `catch {}` that finishes with `failureCategory: "provider_error"` unconditionally, so the two are indistinguishable. Fixing it needs a MIGRATION, not just code: `RUN_FAILURE_CATEGORIES` is a closed five-value set with no `tool_error`, mirrored by CHECK constraints on `task_runs` and `worker_runs` and pinned by a test asserting the constant and the CHECK are the same set. CDR-084 §7 item 5.',
@@ -242,7 +248,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/idempotency/replay.integration.test.ts',
     testTitle: 'a re-delivered enqueue creates no second job, and the suppression is recorded',
     entryPoint: 'enqueueJob',
-    mutation: 'Drop the idempotency-key lookup so the second delivery inserts a second job.',
+    mutation: 'Make `enqueueJob` skip its `findByIdempotencyKey` read-back, so a re-delivered key inserts a second job row.',
     mutationRunId: '',
     doesNotProve:
       'The row\'s "duplicate-suppression incident counter" as an operational metric. Two anchors per case — real row counts read through the OWNER client plus a suppression log incident — because CDR-074 §0 requires that a suite checking only "one row exists" would pass against a build with every guard removed. Negative controls pin that two KEYLESS deliveries are two jobs, so the mechanism never suppresses by accident.',
@@ -259,7 +265,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/jobs/checkpoint.integration.test.ts',
     testTitle: 'KILL AND RESUME — a crashed plan resumes without re-running the step that already completed',
     entryPoint: 'the job step executor',
-    mutation: 'Ignore existing checkpoints on resume so completed steps re-run.',
+    mutation: 'Make `runJobStep` ignore its `listCheckpoints` read, so a step that already completed runs a second time on resume.',
     mutationRunId: '',
     doesNotProve:
       'The row\'s "fail with partials LABELED partial" branch, or the "Discard-partials option" compensation. No user-facing partial-labelling surface was found. The checkpoint/transaction case (a step that writes then throws leaving nothing) is row 6\'s evidence, not this row\'s.',
@@ -275,7 +281,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/model/model-gateway.test.ts',
     testTitle: 'a usage-write failure aborts the call and withholds the output',
     entryPoint: 'callModel',
-    mutation: 'Swallow the usage-write rejection and return the output anyway.',
+    mutation: 'Catch the `recordUsage` rejection inside `callModel` and return the output anyway, so the call is answered un-metered.',
     mutationRunId: '',
     doesNotProve:
       'That the ledger is reconcilable afterwards, or the row\'s "Compensating entries". Withholding is asserted on the returned result, not on a persisted row — the fail-closed decision is in-process, so there is no durable artefact to read back.',
@@ -291,7 +297,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/jobs/enqueue-job.integration.test.ts',
     testTitle: 'audit-or-nothing: when the audit write fails, NO job row survives (ADR-015)',
     entryPoint: 'enqueueJob',
-    mutation: 'Catch the audit-write rejection inside the transaction so the job row commits without its audit.',
+    mutation: 'Catch the `writeAuditEvent` rejection inside the transaction in `enqueueJob`, so the job row commits without its audit event.',
     mutationRunId: '',
     doesNotProve:
       'The row\'s "low-risk queued with alert" branch — every test asserts a hard rollback and nothing exercises a degraded queue-and-alert path — nor its "Audit writes idempotent" note. The high-risk fail-closed clause is covered at roughly 25 entry points across seventeen subsystems.',
@@ -308,7 +314,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'a REAL account-wide stop refuses the call',
     entryPoint: 'the worker runtime step boundary',
-    mutation: 'Skip the stop check at the step boundary so a stopped run continues.',
+    mutation: 'Drop the `account_wide` case from `evaluateStops`, so an active account-wide stop no longer covers the dispatched call.',
     mutationRunId: '',
     doesNotProve:
       'Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — so "execution halts" is proven for five of seven, not seven. The "in-flight call finishes/aborts safely" clause shares row 16\'s problem below. The launch-gate-8 ≤5s window now IS measured across the production `activateStop` use case (slice 5), but for the `company` scope only; the per-scope matrix beside it still times a raw INSERT and therefore still measures transaction visibility rather than activation.',
@@ -324,8 +330,11 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     injection: 'a company moved to `paused`, then a real attempt to start a run',
     file: 'packages/core/src/company/gate-14.integration.test.ts',
     testTitle: 'a paused company CANNOT enqueue a job, and NO jobs row is created',
-    entryPoint: 'startRun',
-    mutation: 'Remove readLifecycleDecision from startRun so a paused company still starts runs.',
+    // CORRECTED in slice 6: this row said `startRun` while its cited test drives `enqueueJob`. Both are real
+    // functions used in the SAME file, so the mutation-names-real-code rule passes it — that is the limit the
+    // rule states about itself, found by the same audit that built it. A human read the test body; no tool did.
+    entryPoint: 'enqueueJob',
+    mutation: 'Delete the `readLifecycleDecision` gate from `enqueueJob` (enqueue-job.ts), so a paused company enqueues the job and a row is created.',
     mutationRunId: '',
     doesNotProve:
       'THE ROW AS WRITTEN, AND THE CANON CONTRADICTS ITSELF HERE. The matrix says "Safe-stop: current tool call completes, then halt". `WORKFLOW-STATE-MACHINES.md:35` says the opposite of today\'s system: *"\'in-flight safe-stop\' is NOT enforced by pausing. Pause refuses new work; it does not terminate a run already executing. The durable-stop sweep that would is unbuilt."* What is proven is the refusal of NEW work. **One of the two canon documents is wrong**, and CDR-084 §7 item 3 makes it an owner decision rather than a test decision.',

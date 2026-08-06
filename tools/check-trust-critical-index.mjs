@@ -33,7 +33,7 @@ import { pathToFileURL } from 'node:url';
 // ACBP-P7-008 moved these to a shared library so this checker and `check-failure-scenario-index.mjs` cannot
 // drift apart. Each function's comment records the defect that shaped it — a copied guard is a guard that
 // diverges, and both indexes make the same three claims about citing a test and not losing evidence.
-import { liveTestCallFor, norm, isRunId, checkCeiling } from './lib/test-citation.mjs';
+import { liveTestCallFor, norm, isRunId, checkCeiling, buildSymbolIndex, checkMutationNamesRealCode } from './lib/test-citation.mjs';
 
 // A scan root may be passed so the regression suite can run this against an isolated temp workspace instead of
 // the real tree — the same shape as check-boundaries.mjs.
@@ -80,6 +80,15 @@ export function parseCanon(markdown) {
 const canonSrc = readFileSync(CANON, 'utf8');
 const canon = parseCanon(canonSrc);
 const problems = [];
+
+// The corpus every `mutation` is checked against. An empty walk would answer "no such symbol" to every correct
+// row, so zero files is a BROKEN CHECK and must not read as a clean one.
+const symbols = buildSymbolIndex({ cwd: ROOT, roots: ['packages', 'apps'] });
+if (symbols.files === 0) {
+  console.error('✖ trust-critical check CANNOT SEE ITS TARGET: the source walk found ZERO files under packages/ and apps/.');
+  console.error('  Every mutation would report as naming nothing real. Fix the walk rather than the rows.');
+  process.exit(2);
+}
 
 if (canon.length === 0) {
   problems.push(`Could not parse any items under "${CANON_HEADING}" in ${CANON}. The heading or list shape changed.`);
@@ -146,6 +155,23 @@ for (const row of TRUST_CRITICAL_INDEX) {
     }
     if (row.anchor === 'none') problems.push(`${at}: status "${row.status}" cannot carry anchor "none".`);
     if (!norm(row.mutation)) problems.push(`${at}: no mutation is described. A control nobody tried to break is unmeasured by definition.`);
+    else {
+      // A mutation has to be an EDIT someone can apply, not a description of one. Auditing this column before
+      // running the ACBP-P7-008 probe, a third of the rows named nothing at all — and a mutation nobody can
+      // apply without re-deriving the author's intent is where a probe quietly reddens a different test.
+      const mut = checkMutationNamesRealCode({ mutation: row.mutation, symbols });
+      if (mut.kind === 'no-symbol') {
+        problems.push(
+          `${at}: the mutation names NO code — it is a wish, not an edit.\n      "${norm(row.mutation)}"\n` +
+            '      Name the function, file or column to change, so the probe applies the same edit the row claims.',
+        );
+      } else if (mut.kind === 'unknown') {
+        problems.push(
+          `${at}: the mutation names ${mut.candidates.map((c) => `"${c}"`).join(', ')}, none of which exists in non-test source.\n` +
+            '      Either it was renamed and the row went stale, or it was never there.',
+        );
+      }
+    }
   } else {
     if (row.file || row.testTitle) problems.push(`${at}: status "${row.status}" must not cite a file or test — it claims there is none.`);
     if (row.anchor !== 'none') problems.push(`${at}: status "${row.status}" must carry anchor "none".`);

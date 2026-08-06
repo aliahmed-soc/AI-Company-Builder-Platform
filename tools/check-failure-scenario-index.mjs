@@ -30,7 +30,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { liveTestCallFor, norm, isRunId, checkCeiling } from './lib/test-citation.mjs';
+import { liveTestCallFor, norm, isRunId, checkCeiling, buildSymbolIndex, checkMutationNamesRealCode } from './lib/test-citation.mjs';
 
 const ROOT = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
 const MATRIX = join(ROOT, 'docs', 'architecture', 'FAILURE-AND-RECOVERY.md');
@@ -71,6 +71,15 @@ async function main() {
 
   const matrix = parseMatrix(readFileSync(MATRIX, 'utf8'));
   const problems = [];
+
+  // The corpus every `mutation` is checked against. A walk that finds nothing would answer "no such symbol" to
+  // every correct row, so an empty index is a BROKEN CHECK, not a clean one.
+  const symbols = buildSymbolIndex({ cwd: ROOT, roots: ['packages', 'apps'] });
+  if (symbols.files === 0) {
+    console.error('✖ failure-scenario check CANNOT SEE ITS TARGET: the source walk found ZERO files under packages/ and apps/.');
+    console.error('  Every mutation would report as naming nothing real. Fix the walk rather than the rows.');
+    process.exit(2);
+  }
 
   if (matrix.length === 0) {
     problems.push(`Could not parse any rows from ${MATRIX}. The table shape changed.`);
@@ -134,6 +143,20 @@ async function main() {
         problems.push(`${at}: no CONSEQUENCE is named. Asserting only that something failed proves the least interesting cell of the row.`);
       }
       if (!norm(row.mutation)) problems.push(`${at}: no mutation is described. A control nobody tried to break is unmeasured by definition.`);
+      else {
+        const mut = checkMutationNamesRealCode({ mutation: row.mutation, symbols });
+        if (mut.kind === 'no-symbol') {
+          problems.push(
+            `${at}: the mutation names NO code — it is a wish, not an edit.\n      "${norm(row.mutation)}"\n` +
+              '      Name the function, file or column to change, so the probe applies the same edit the row claims.',
+          );
+        } else if (mut.kind === 'unknown') {
+          problems.push(
+            `${at}: the mutation names ${mut.candidates.map((c) => `"${c}"`).join(', ')}, none of which exists in non-test source.\n` +
+              '      Either it was renamed and the row went stale, or it was never there.',
+          );
+        }
+      }
     } else {
       if (row.file || row.testTitle) problems.push(`${at}: status "${row.status}" must not cite a file or test — it claims there is none.`);
       if (row.anchor !== 'none') problems.push(`${at}: status "${row.status}" must carry anchor "none".`);

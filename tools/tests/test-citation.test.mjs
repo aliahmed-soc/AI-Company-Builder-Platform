@@ -13,7 +13,18 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { liveTestCallFor, unescapeQuotes, norm, isRunId, readCeilingBaseline, checkCeiling } from '../lib/test-citation.mjs';
+import { mkdirSync } from 'node:fs';
+import {
+  liveTestCallFor,
+  unescapeQuotes,
+  norm,
+  isRunId,
+  readCeilingBaseline,
+  checkCeiling,
+  namedSymbols,
+  buildSymbolIndex,
+  checkMutationNamesRealCode,
+} from '../lib/test-citation.mjs';
 
 // ── liveTestCallFor ───────────────────────────────────────────────────────────────────────────────────────────
 // DEFECT 1: the original check was `src.includes(title)`. Running the real checker against these three fixtures
@@ -179,4 +190,132 @@ test('a repository with no git history yields an unreadable baseline rather than
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+// ── namedSymbols / buildSymbolIndex / checkMutationNamesRealCode ──────────────────────────────────────────────
+// DEFECT 4, and the one that produced this code. ACBP-P7-008 slice 6 is the mutation probe: for each row the
+// `mutation` column is meant to be the EXACT EDIT someone applies to make the cited test go red. Auditing the
+// column before running it, a third of the rows turned out to describe a WISH rather than an edit — "widen the
+// heartbeat grace to infinity", "skip the stop check at the step boundary", "remove the idempotency read-back".
+// None of those name a function, a file or a column, so no one can apply them without first re-deriving the
+// author's intent, and re-derivation is where a probe quietly measures something else. Two rows named a symbol
+// in the WRONG file, which is the same failure ACBP-P7-007 hit when a row was marked `measured` on a run in
+// which a different test went red.
+//
+// So: a mutation must name at least one thing that EXISTS in non-test source. What the rule cannot do is stated
+// where it is implemented and repeated here, because a green gate is otherwise easy to over-read — it cannot
+// tell a RIGHT symbol from a WRONG-but-real one.
+
+test('a camelCase identifier is a named symbol', () => {
+  expect(namedSymbols('Delete the tenancy refusal in enqueueJob.')).toEqual(['enqueueJob']);
+});
+
+test('snake_case and SCREAMING_SNAKE are named symbols — a column name is a real target', () => {
+  expect(namedSymbols('Drop the expires_at conjunct.')).toEqual(['expires_at']);
+  expect(namedSymbols('Raise MAX_UNPROVEN by one.')).toEqual(['MAX_UNPROVEN']);
+});
+
+test('a source filename is a named symbol — naming the file is naming the edit site', () => {
+  expect(namedSymbols('Revert logger.ts to emit the message verbatim.')).toEqual(['logger.ts']);
+});
+
+test('THE POINT: prose naming nothing yields NO symbols', () => {
+  expect(namedSymbols('Widen the heartbeat grace to infinity so a silent worker is never reclaimed.')).toEqual([]);
+  expect(namedSymbols('Skip the stop check at the step boundary so a stopped run continues.')).toEqual([]);
+});
+
+test('plain English words and short acronyms are NOT symbols — otherwise every sentence passes', () => {
+  expect(namedSymbols('Remove the application tenant predicate from the company read and rely on RLS alone.')).toEqual([]);
+});
+
+test('a possessive and a line suffix do not corrupt the token', () => {
+  expect(namedSymbols("verifyAndConsume's conditional UPDATE (dispatcher.ts:388)")).toEqual(['verifyAndConsume', 'dispatcher.ts']);
+});
+
+test('backticks are stripped, and a symbol is reported once however often it appears', () => {
+  expect(namedSymbols('Drop `evaluateStops` — yes, evaluateStops.')).toEqual(['evaluateStops']);
+});
+
+test('a dotted chain that is not a source file is not a symbol unless a segment is', () => {
+  expect(namedSymbols('emit fields.message verbatim')).toEqual([]);
+  expect(namedSymbols('emit fields.errorCategory verbatim')).toEqual(['errorCategory']);
+});
+
+function inTempSource(run) {
+  const root = mkdtempSync(join(tmpdir(), 'acbp-symbols-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(join(root, 'src', 'service.ts'), 'export function enqueueJob() { return expires_at; }\n');
+    writeFileSync(join(root, 'src', 'service.test.ts'), 'export function onlyInATest() {}\n');
+    return run({ root });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('the index finds identifiers and filenames in non-test source', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    expect(idx.has('enqueueJob')).toBe(true);
+    expect(idx.has('expires_at')).toBe(true);
+    expect(idx.has('service.ts')).toBe(true);
+    expect(idx.files).toBe(1);
+  });
+});
+
+test('THE POINT: a symbol that exists ONLY in a test file is not production code', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    expect(idx.has('onlyInATest')).toBe(false);
+    expect(idx.has('service.test.ts')).toBe(false);
+  });
+});
+
+test('a walk that finds NO files reports zero rather than an index that answers false to everything', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['does-not-exist'] });
+    expect(idx.files).toBe(0);
+  });
+});
+
+test('a mutation naming a real symbol is ok, and says which', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    const r = checkMutationNamesRealCode({ mutation: 'Delete the refusal in enqueueJob.', symbols: idx });
+    expect(r.kind).toBe('ok');
+    expect(r.named).toEqual(['enqueueJob']);
+  });
+});
+
+test('a mutation naming NOTHING is refused as a wish, not an edit', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    expect(checkMutationNamesRealCode({ mutation: 'Widen the grace to infinity.', symbols: idx }).kind).toBe('no-symbol');
+  });
+});
+
+test('a mutation naming only symbols that do NOT exist is refused, and the candidates are printed', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    const r = checkMutationNamesRealCode({ mutation: 'Delete the refusal in enqueueeJob.', symbols: idx });
+    expect(r.kind).toBe('unknown');
+    expect(r.candidates).toEqual(['enqueueeJob']);
+  });
+});
+
+test('ONE real symbol is enough — a mutation may mention other things in passing', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    expect(checkMutationNamesRealCode({ mutation: 'In enqueueJob, bypass someHelperThatIsGone.', symbols: idx }).kind).toBe('ok');
+  });
+});
+
+test('THE LIMIT, PINNED: a real symbol in the WRONG place still passes — the rule cannot see intent', () => {
+  inTempSource(({ root }) => {
+    const idx = buildSymbolIndex({ cwd: root, roots: ['src'] });
+    // `enqueueJob` exists, so a mutation aimed at entirely the wrong control is accepted. This case exists so the
+    // limit is recorded as behaviour rather than only as a sentence in a comment that could go stale.
+    expect(checkMutationNamesRealCode({ mutation: 'Change enqueueJob so the SUN rises in the west.', symbols: idx }).kind).toBe('ok');
+  });
 });

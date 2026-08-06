@@ -65,7 +65,9 @@ const row = (over = {}) => ({
   file: PROVING_FILE,
   testTitle: PROVING_TITLE,
   entryPoint: 'doThing',
-  mutation: 'Delete the guard.',
+  // Names `doThing`, which the fixture below writes into non-test source. A mutation that names nothing real is
+  // now refused, so the DEFAULT row has to be a well-formed one or every case here would fail for that reason.
+  mutation: 'Delete the guard inside `doThing`.',
   mutationRunId: '',
   doesNotProve: 'Nothing beyond the single path.',
   notes: 'probe',
@@ -104,6 +106,10 @@ function run(opts = {}) {
     if (!opts.omitProvingFile) {
       write(PROVING_FILE, opts.provingFileText ?? `import { test } from 'vitest';\ntest('${PROVING_TITLE}', () => {});\n`);
     }
+    // NON-TEST source, so the mutation-names-real-code rule has a corpus. Without this the walk finds only the
+    // proving file — which is a test file and therefore excluded — and the checker correctly refuses to run at
+    // all, which would make every case below fail for a reason unrelated to what it is testing.
+    if (!opts.omitSource) write('packages/core/src/thing.ts', 'export function doThing() { return 1; }\n');
     write(
       'tools/failure-scenario-index.mjs',
       [
@@ -203,4 +209,40 @@ test('a matrix whose table shape changed is reported, not silently ignored', () 
 test('THE REPOSITORY ITSELF passes — the case that proves the real index is in step', () => {
   const r = spawnSync(process.execPath, [CHECKER, REPO_ROOT], { encoding: 'utf8' });
   expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+});
+
+// ── the mutation must be an EDIT, not a wish (ACBP-P7-008 slice 6) ────────────────────────────────────────────
+// Auditing this column before running the probe, TEN of the fourteen evidence-bearing rows named no code at all
+// — "widen the heartbeat grace to infinity", "skip the stop check at the step boundary". Nobody can apply one of
+// those without re-deriving the author's intent, and re-derivation is where a probe quietly reddens a different
+// test than the row it is filed under.
+
+rejects(
+  'a mutation that names no code at all',
+  { rows: [row({ mutation: 'Widen the grace to infinity so nothing is ever reclaimed.' }), secondRow()] },
+  'names NO code',
+);
+
+rejects(
+  'a mutation naming a symbol that exists only in the TEST file',
+  { rows: [row({ mutation: 'Delete the assertion in `theProbeHelper`.' }), secondRow()] },
+  'none of which exists in non-test source',
+);
+
+rejects(
+  'a mutation naming a symbol that was renamed away',
+  { rows: [row({ mutation: 'Delete the guard inside `doThingRenamed`.' }), secondRow()] },
+  'none of which exists in non-test source',
+);
+
+accepts('a mutation naming a source FILE rather than a function', {
+  rows: [row({ mutation: 'Change the early return in `thing.ts`.' }), secondRow()],
+});
+
+// A guard that cannot see its corpus must say so, not pass. Exit 2 is "check is broken", distinct from exit 1
+// "the index is wrong" — the distinction ACBP-P7-007 added after a scanner reported clean over zero files.
+test('rejects: the source walk finding NO files is exit 2, not a clean run', () => {
+  const { code, out } = run({ omitSource: true });
+  expect(code, out).toBe(2);
+  expect(out).toMatch(/CANNOT SEE ITS TARGET/);
 });
