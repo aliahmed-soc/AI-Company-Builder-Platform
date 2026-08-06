@@ -49,8 +49,9 @@ const ACTIVE = 'active';
  * May autonomous work START for this company, under this account?
  *
  * AN ALLOWLIST, WRITTEN POSITIVELY: allowed if and only if both statuses are exactly `'active'`. This is canon's
- * own phrasing — `WORKFLOW-STATE-MACHINES.md:54` and `diagrams/06` both state the precondition as *"stop-state
- * clear; company active"* — and it is not a style preference. It buys three properties a denylist cannot:
+ * own phrasing — `WORKFLOW-STATE-MACHINES.md:72` states the precondition as *"stop-state clear; company
+ * active"*, and `diagrams/06:10` writes the same thing with a `+` — and it is not a style preference. It buys
+ * three properties a denylist cannot:
  *
  *   * FAIL-CLOSED ON UNRECOGNISED VALUES FALLS OUT BY CONSTRUCTION. `'deleted'`, a status from a future
  *     migration, a case variant, stray whitespace, a non-string, `null` — every one refuses, and there is no

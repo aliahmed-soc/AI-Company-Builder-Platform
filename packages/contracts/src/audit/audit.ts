@@ -1019,7 +1019,13 @@ export function toolCallRequested(input: {
   readonly injectionSignals?: string;
   /**
    * WHICH emergency-stop scopes covered this call (ACBP-P6-007; CDR-072 §1-G5). Comma-joined, from the CLOSED
-   * `STOP_SCOPES` vocabulary, and recorded ONLY on an `emergency_stopped` refusal.
+   * `STOP_SCOPES` vocabulary.
+   *
+   * RECORDED ON A REFUSAL THE STOP INTERRUPTED — which as of ACBP-P7-002 is a TWO-MEMBER set, `emergency_stopped`
+   * OR `company_not_active`, not `emergency_stopped` alone. See the guard at `stopExplainsRefusal` below, which
+   * is the enforcement this sentence names. (This comment said "ONLY on an `emergency_stopped` refusal" for one
+   * commit after the set grew, which is the drift class this file's own §9.14 lesson is about: a comment that
+   * outlives the guarantee it describes.)
    *
    * Without it the refusal records that A stop was in force but not what it reached — and an account-wide halt and
    * a single stopped task would leave identical evidence. The operator's question after pressing stop is precisely

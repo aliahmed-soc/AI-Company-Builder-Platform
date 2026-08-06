@@ -4,8 +4,15 @@ Ticket: **ACBP-P7-002** deactivation flows (ACC-004, COMP-006 final; ADR-006; **
 `SECURITY-VERIFICATION-PLAN:23` threat row *"zombie autonomous work"*; `RELEASE-GATES.md:10`). Branch
 `p7-002-deactivation-flows`, PR **#74**, CDR-079, migration **0054**.
 
-**THE TICKET IS NOT DONE.** What merged is the enforcement half on the owner's ruling *"land company-pause
-enforcement first, defer the account half"*. What remains is recorded in §5 and in CDR-079 §9.
+**THE TICKET IS NOT DONE, AND IT IS NOT MERGED.** PR #74 is an open draft on `p7-002-deactivation-flows`;
+merging to `main` is an owner gate that has not been taken. What has *landed on this branch* is the enforcement
+half, on the owner's ruling *"land company-pause enforcement first, defer the account half"*. What remains is
+recorded in §5 and in CDR-079 §9.
+
+> **This sentence originally read "What merged is…".** A verification pass over this document caught it. Writing
+> "merged" about a ticket whose merge is an owner gate is the most consequential error in the whole docs pass:
+> it records a gate as taken. It is left visible here rather than silently corrected, on the same principle as
+> §0 — the correction is the evidence.
 
 ---
 
@@ -18,14 +25,19 @@ constraint and let the existing gate refuse them.
 
 > **Pausing a company was a label, not a control** — and had been since ACBP-P1-010.
 
-Four artefacts made that gap look closed, which is why it survived six phases:
+**Five** artefacts made that gap look closed, which is why it survived six phases. CDR-079 §1.1 names four; the
+fifth was found last, during the documentation pass, and is the worst of them:
 
 | Artefact | What it says | What is true |
 |---|---|---|
 | `canPickUpAutonomousWork`'s docstring | *"the single truth a scheduler/worker consults before opening a run"* | **Zero production callers** |
 | A green integration test | `'pause blocks new autonomous-work pickup (invariant 16 groundwork)'` | Calls the pure predicate on a returned value; exercises no pickup path |
-| `EVENT-CATALOG.md:40` | `company.paused` consumer: *"Workflow coord. (halt/resume pickup, invariant 16)"* | No such consumer exists |
-| `stop-service.ts:513` | *"nothing stops a task being created, planned, queued and started while the stop stands"* | Already true, already written down, about the machinery deactivation was to reuse |
+| `EVENT-CATALOG.md:40` | `company.paused` consumer: *"Workflow coord. (halt/resume pickup, invariant 16)"* | No such consumer exists — and the row predates P1-010, unchanged since the Phase-0 initial commit |
+| `stop-service.ts:513` (from P6-007 on) | *"nothing stops a task being created, planned, queued and started while the stop stands"* | Not a false claim — the opposite: a **recorded admission**, already written down, about the machinery deactivation was to reuse |
+| **`REQUIREMENT-TRACEABILITY.csv`, COMP-006** | `Coverage status` = **`Covered (MVP)`**, verified by *"Pause-then-schedule negative tests"* | **Neither test existed.** This is the most consequential of the five: a traceability matrix is what a reader consults to ask *"is this requirement covered"* — the exact question it answered wrongly |
+
+A docstring, a test name, a catalog row, a comment and a coverage cell agreeing with each other is not five
+pieces of evidence. It is one unverified belief with five copies.
 
 A nine-agent design investigation (four read-only lenses → synthesis → three refutation lenses → completeness
 critic) then **killed the first enforcement plan**: its five points did not cover the three shipped worker
@@ -34,10 +46,14 @@ spend caps**, because `createModelGateway` throws when both are supplied.
 
 ---
 
-## §1 The independent review — 37 agents, ten confirmed findings, two HIGH
+## §1 The independent review — six lenses, ten confirmed findings; the five that changed the branch
 
 Six adversarial lenses over the branch diff, each finding then handed to a refuter instructed to default to
-REFUTED, then a completeness critic. **Both HIGH findings were in the ticket's own claims, not in its code.**
+REFUTED, then a completeness critic. Ten findings survived refutation; the **five recorded below are the ones
+that changed code or documents**, and the two HIGH are among them. The other five were confirmed-but-minor and
+are not itemised — said here so the count and the contents of this section visibly agree.
+
+**Both HIGH findings were in the ticket's own claims, not in its code.**
 
 ### HIGH-1 — the comment lied, in the fix for comments that lie
 
@@ -57,18 +73,19 @@ CDR-079 still read *"the enforcement plan the investigation KILLED"* and *"Enfor
 the branch shipped four of those five points, each carrying a *"launch Gate 14"* banner. The only place the
 ruling was argued was a code comment.
 
-**Identical to the PROJECT-STATE forward pointer corrected on ACBP-P7-001 two days earlier.** Twice in one week
-the record went stale first. New §4.3 records what was actually built, why four points and not five, and that
-§4.1's objection is **not** dissolved.
+**Identical to the PROJECT-STATE forward pointer corrected on ACBP-P7-001 the day before** (`cf67c7f`,
+2026-08-05). Twice in two days the record went stale first — because CI verifies code on every push and prose is
+verified by nobody. New §4.3 records what was actually built, why four points and not five, and that §4.1's
+objection is **not** dissolved.
 
 ### MEDIUM — and the one that would have cost somebody
 
 **This ticket silently disabled a merged trust-critical control.** The lifecycle gate outranks the stop gate in
 `decideDispatch`, and P6-007's held-work capture was keyed on *which refusal was reported*
 (`finalReason === 'emergency_stopped'`). For a company **both** non-active **and** covered by a live stop — a
-state the shipped fixture itself produces — the capture stopped running: no `held_work` row, no
-`running`→`paused`, and ADMIN-002's confirm-or-discard review lost that task. Clear the stop before resuming the
-company and it resumes with no review at all.
+combination **no fixture in this repository produces**, which is exactly why nothing caught it — the capture
+stopped running: no `held_work` row, no `running`→`paused`, and ADMIN-002's confirm-or-discard review lost that
+task. Clear the stop before resuming the company and it resumes with no review at all.
 
 No test detected it. The contract-level precedence test lists *"allowlist, policy and approval"* and
 conspicuously omits `stop`. The audit event carried the identical bug: `stop_scopes` and `held_by_stop_id` were
@@ -110,16 +127,29 @@ A policy is now seeded and a **dispatch control** asserts an active company reac
 | `readLifecycleDecision` (both locks, both levels, scope-sourced ids, absent row) | 5 | 5 |
 | `decideDispatch` lifecycle placement | 4 | 4 |
 
-The fourteenth contracts mutation was **expected to survive and did**: it reinstates a `?? []` fallback that
-earlier mutation testing had shown to be *unmeasurable*, because `Record<CompanyStatus, …>` makes the missing key
-a compile error. It was removed for that reason — a guard nothing can reach reads as a control and is not one,
-which is ACBP-P7-001's duplicated-allowlist finding arriving through a different door.
+22 of the 23 were caught. The twenty-third was **expected to survive and did**: it adds a `?? []` fallback to the
+transition lookup that nothing can distinguish from its absence, because `Record<CompanyStatus, …>` makes the
+missing key a compile error. No such fallback was ever committed — `company.ts:94-99` records the decision not to
+write one. A guard nothing can reach reads as a control and is not one, which is ACBP-P7-001's
+duplicated-allowlist finding arriving through a different door.
 
-### §2.1 The probe that proved the Gate-14 suite measures anything
+### §2.1 The probe that proved the Gate-14 suite measures anything — and what it does not prove
 
 A **disposable probe branch** neutralised the lifecycle gate **without touching a single test**. Result:
-**8 of 17 Gate-14 cases went red** through production paths against real PostgreSQL — `startRun` in all three
-blocking states, the attempt-budget case, the account level, `enqueueJob`, `runJobStep`, `dispatchToolCall`.
+**8 of the suite's then-17 cases went red** through production paths against real PostgreSQL — `startRun` in all
+three blocking states, the attempt-budget case, the account level, `enqueueJob`, `runJobStep`,
+`dispatchToolCall`.
+
+**Read that number with two caveats, both of which are this ticket's fault:**
+
+- **The probe branch was disposable and was NOT preserved, and no CI run is cited.** ACBP-P6-006 did this
+  properly: a labelled probe commit (`fe85082`) that still resolves, plus the run id. Nobody can re-derive this
+  ticket's figure — which makes "mutation-proven" rest on prose, the precise weakness §0 is about. The next
+  probe should be a preserved commit.
+- **The suite is 18 cases now, not 17.** `970929d` later seeded a policy and added the dispatch control case, and
+  the probe was not re-run. The enumeration above is also probably short by one: `'RESUMING restores the ability
+  to work'` asserts the same refusal and cannot have stayed green under a neutralised gate, which would make it
+  9. Recorded as measured rather than adjusted after the fact.
 
 Two things came out of it worth more than the green run:
 
@@ -133,19 +163,22 @@ Two things came out of it worth more than the green run:
 
 ## §3 What is proven, and where
 
+The state column is exact on purpose: **only `startRun` is exercised in all three blocking states.** The gate is
+state-agnostic by construction, so the others would pass — but this table is the evidence inventory, and an
+untested combination does not belong in it.
+
 | Property | Proven by | Anchor |
 |---|---|---|
-| A paused / deactivating / deactivated company cannot start a run | real-PG, production `startRun` | **no `task_runs` row** |
-| …cannot enqueue a job | real-PG, production `enqueueJob` | **no `jobs` row** |
-| …cannot run a new job step | real-PG, production `runJobStep` | **no checkpoint, and the step closure never invoked** |
-| …cannot dispatch a tool call | real-PG, production `dispatchToolCall` | the recorded `tool_calls` row with `denial_reason = 'company_not_active'` |
-| The refusal is still RECORDED | same | TOOL-002's 100%-recorded property |
+| A **paused / deactivating / deactivated** company cannot start a run | real-PG, production `startRun` | **no `task_runs` row** |
+| A **paused** company cannot enqueue a job | real-PG, production `enqueueJob` | **no `jobs` row** |
+| A **paused** company cannot run a new job step | real-PG, production `runJobStep` | **no checkpoint, and the step closure never invoked** |
+| A **paused** and a **deactivated** company cannot dispatch a tool call | real-PG, production `dispatchToolCall` | the recorded `tool_calls` row with `denial_reason = 'company_not_active'` — **presence, not absence**, because TOOL-002 requires the refusal itself to be recorded |
 | A replay of a pre-pause enqueue still answers | real-PG | `deduplicated: true`, one job row (NFR-006) |
 | An already-completed step still answers | real-PG | `already_completed` — resume arithmetic intact |
 | A non-active ACCOUNT blocks, naming the account | real-PG | company row still `active` |
 | Resuming restores the ability to work | real-PG, production `resumeCompany` | the gate is not a one-way door |
 | **Export still works on a deactivated company** | real-PG | ADR-002's ownership guarantee |
-| The suite measures the gate | the probe branch | 8/17 red with the gate neutralised |
+| The suite measures the gate | a probe branch that was **not preserved** — see §2.1 | 8 of the then-17 cases red with the gate neutralised |
 
 ---
 
@@ -157,14 +190,30 @@ Two things came out of it worth more than the green run:
   gate is live for `paused`, which is what the ruling asked for first.
 - **§7** — there is no scheduler (TASK-003 is deferred), session revocation is Clerk-side and owner-gated, work
   *creation* paths are ungated, live HTTP routes are unruled, and `RELEASE-GATES.md:10` wants a **drill**.
-- **§6-G3** — the `FOR SHARE` ordering guarantee is asserted structurally, not by a real-PG race. A race that
-  happens not to interleave is a green test proving nothing; a structural assertion fails every run the lock is
-  missing. Stated so nobody mistakes it for a concurrency proof.
+- **`lifecycle-guard.test.ts:6`** — the `FOR SHARE` ordering guarantee is asserted **structurally**, not by a
+  real-PG race. A race that happens not to interleave is a green test proving nothing; a structural assertion
+  fails every run the lock is missing. Stated so nobody mistakes it for a concurrency proof. Note that CDR-079
+  §6-G3 does **not** carry this caveat and its claim that *"the transition's is `FOR UPDATE`"* is false —
+  `CompanyRepository.findById` is an unlocked `SELECT`. The ordering rests on the gate's `FOR SHARE` conflicting
+  with the row lock the transition's `UPDATE` takes.
 
 ## §5 What must happen before this ticket is Done
 
-1. The deactivate transitions (§9.5 — behavioural change to a merged `pauseCompany`).
-2. The durable-stop sweep, without which a halt does not terminate runs.
-3. The account vocabulary (§9.2) and the account transitions.
-4. Worker-body enforcement (§9.3).
-5. Reactivation semantics (§9.7) and the two Post-MVP cells (§9.1).
+CDR-079 §9 is a fourteen-item numbered list; the citations below were checked against it item by item, because a
+pointer to the wrong open question is worse than none — the reader finds a real section, reads a real decision,
+and never learns theirs is unrecorded.
+
+1. **The deactivate transitions** (**§10 slice 5** — not §9.5, which asks the prior question). Nothing performs
+   `active/paused → deactivating`.
+2. **The durable-stop sweep** (**§9.5**, *"Does pause now raise a real halt?"*) — without it a halt refuses new
+   work but does not terminate runs already executing. Item 1 depends on this one.
+3. **The account vocabulary** (**§9.2**) and the account transitions.
+4. **Worker-body enforcement** (**§9.3**) — and note this is *not* "the fifth point of the killed plan". The
+   fifth point was `runWorkerStep`, which waits on item 2; the three worker bodies pass through none of the five
+   points, which is why §4.1 killed the plan.
+5. **Reactivation semantics** (**§9.7**) — what reactivating a *deactivated* company means — and separately
+   **§9.8**, whether `paused → active` enforces ADMIN-002's held-work review. Two different decisions; §9.8 was
+   cited nowhere until now.
+6. **The event names** (**§9.10**): `company.deactivated` is catalogued but unregistered, and canon names no
+   event at all for `deactivating → deactivated`.
+7. The two **Post-MVP** cells (**§9.1**).

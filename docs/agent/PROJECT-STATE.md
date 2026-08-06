@@ -73,33 +73,53 @@ ticket without a DONE line above it is genuinely in flight._
   - **THE FINDING THAT RESHAPED THE TICKET.** Gate 14 says "deactivation blocks new autonomous work", so the
     obvious work is two new states. **There was no gate to add them to.** Nothing in production read a company's
     lifecycle status before doing autonomous work: **pausing a company was a LABEL, NOT A CONTROL**, and had been
-    since ACBP-P1-010. Four artefacts made the gap look closed — `canPickUpAutonomousWork`'s docstring (zero
+    since ACBP-P1-010. **FIVE** artefacts made the gap look closed — `canPickUpAutonomousWork`'s docstring (zero
     production callers), a green test that called that predicate on a returned value, `EVENT-CATALOG:40`'s
-    claimed consumer, and `stop-service.ts:513`'s own admission about the machinery deactivation was to reuse.
+    claimed consumer (unchanged since the Phase-0 initial commit — it predates P1-010), `stop-service.ts:513`'s
+    own admission about the machinery deactivation was to reuse, and — found last, during the docs pass —
+    **`REQUIREMENT-TRACEABILITY.csv`'s COMP-006 row reading `Covered (MVP)`**, verified by two test suites that
+    did not exist. That fifth one is the worst: a traceability matrix is what a reader consults to ask *"is this
+    requirement covered"*, which is the exact question it answered wrongly.
   - **WHAT LANDED**, on the owner's ruling *"company-pause enforcement first, defer the account half"*: the
-    widened lifecycle vocabulary and two-phase transition table; `mayStartAutonomousWork` — a fail-closed
-    ALLOWLIST over `unknown` rows, so an unrecognised status refuses by construction; `readLifecycleDecision`,
-    which locks both rows `FOR SHARE`; **four enforcement points** (`startRun` before `claimAttempt`;
-    `dispatchToolCall` beside the other facts so the refusal is still RECORDED; `enqueueJob` after the
-    idempotency question so a replay still answers; `runJobStep` after the already-completed short-circuit);
-    migration `0054`; and a real-PostgreSQL Gate-14 suite.
-  - **THE SUITE IS MUTATION-PROVEN, NOT MERELY GREEN.** A disposable probe branch neutralised the gate without
-    touching a test: **8 of 17 cases went red** through production paths. The first probe attempt went red at
-    LINT and never reached the tests — a false confirmation, caught. It also exposed a negative-only assertion in
-    the new suite that passed with the gate off.
+    widened lifecycle vocabulary and two-phase transition table; `mayStartAutonomousWork` — a pure, fail-closed
+    ALLOWLIST over `unknown` rows, so an unrecognised status refuses by construction; **`readLifecycleDecision`,
+    which is the function that actually READS** (both rows, `FOR SHARE`, inside the caller's transaction) and
+    hands them to the predicate; **four enforcement points** (`startRun` before `claimAttempt`;
+    `dispatchToolCall` beside the other facts so the refusal is still RECORDED; `enqueueJob` before the insert,
+    with the refusal withheld until the idempotency read-back finds no existing job, so a replay still answers;
+    `runJobStep` after the already-completed short-circuit); migration `0054`; and a real-PostgreSQL Gate-14
+    suite. Credit the reads to `readLifecycleDecision`, not to the predicate — miscrediting a pure function with
+    I/O it does not perform is exactly the `canPickUpAutonomousWork` defect above.
+  - **THE SUITE IS MUTATION-PROVEN, NOT MERELY GREEN — with a caveat this ticket owns.** A disposable probe
+    branch neutralised the gate without touching a test: **8 of the then-17 cases went red** through production
+    paths. The first probe attempt went red at LINT and never reached the tests — a false confirmation, caught.
+    It also exposed a negative-only assertion in the new suite that passed with the gate off. **But the probe was
+    not preserved and no CI run is cited**, unlike ACBP-P6-006's labelled probe commit `fe85082`, so nobody can
+    re-derive the figure; and the suite is 18 cases now. Preserve the next probe.
   - **THE REVIEW FOUND THIS TICKET DISABLING A MERGED CONTROL.** The lifecycle gate outranks the stop gate, and
     P6-007's held-work capture was keyed on *which refusal was reported* — so a company both non-active and under
-    a live stop lost its ADMIN-002 confirm-or-discard review entirely. Fixed; **and the first fix was too broad,
-    which CI refused** via a test whose own comment names that exact mutation. General rule now in CDR-079 §9.14:
-    *a new gate that outranks an existing one inherits every side effect the old one carried.* Nothing enforces it.
+    a live stop lost its ADMIN-002 confirm-or-discard review entirely. No fixture in the repository produces that
+    combination, which is why nothing caught it. Fixed; **and the first fix was too broad, which CI refused** via
+    a test whose own comment names that exact mutation. What shipped is a two-member set
+    (`emergency_stopped || company_not_active`) AND `stopEvaluation.kind === 'stopped'` — not the kind-only key.
+    General rule now in CDR-079 §9.14: *a new gate that outranks an existing one inherits **responsibility for**
+    every side effect the old one carried.* (Those two words are the sentence: it is a duty on the author, not a
+    description of what happens automatically — what happened automatically was the bug.) Nothing enforces it.
   - **BOTH HIGH REVIEW FINDINGS WERE IN THE TICKET'S OWN CLAIMS.** A comment asserted the gate closed the worker
     bodies "since every body takes a `runId`" — a `runId` is provenance metadata, not a check, and `runResearch`
     fetches and spends *before its first database statement*. And CDR-079 still said enforcement was "blocked"
     while the branch shipped it — **the record went stale before the code did, for the second time this week**.
+  - **AND A THIRD PASS, OVER THE DOCUMENTATION ITSELF, FOUND MORE OF THE SAME.** Six adversarial lenses plus a
+    completeness critic over every prose claim written for this ticket returned **36 confirmed defects, 7 HIGH**
+    — including this file recording the ticket as **merged** when merging is an owner gate that has not been
+    taken, the CDR still documenting the fix **CI rejected**, and a corrected catalog note certifying a
+    *different* phantom consumer as real. **Every HIGH was in prose; none was in code.** The pattern is now
+    established beyond doubt: on this branch the code was reviewed, tested, mutation-probed and CI-verified,
+    while the sentences describing it were checked by nobody until they were checked on purpose.
   - **WHY IT IS NOT DONE**, and this is deliberate: the deactivate transitions are not built, so **nothing can
     reach `deactivating` in production**; the durable-stop sweep is not built, so a halt does not terminate runs;
-    the account half is deferred; the worker bodies are still ungated. Each is an owner decision (§9.2/§9.3/§9.5),
-    not an engineering gap I may close alone.
+    the account half is deferred; the worker bodies are still ungated. Each is an owner decision
+    (§9.2 / §9.3 / §9.5 / §9.7 / §9.8 / §9.10, and §10 slice 5), not an engineering gap I may close alone.
 
 - **DONE — ACBP-P7-001 export of documents and owned data.** Squash `cf67c7f`, PR **#73**, exact-head CI
   `31026433291` on `2c5a4c0` and exact-main CI `31027343426` on `cf67c7f` — both **256 files / 3631 tests, zero
@@ -1649,15 +1669,26 @@ this paragraph.
 **Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
 block above.
 
-**ACBP-P7-002 is merged but its backlog row is NOT `Done`, and that is deliberate.** It launched **Gate 14 for
-company pause** — which had never existed; `companies.status` was written and never read, so pausing a company
-was a label rather than a control from P1-010 until now. Four of five enforcement points ship and are
-mutation-proven. **Two acceptance clauses are unmet**, each an owner decision, not an engineering gap:
+**ACBP-P7-002 is NOT merged — PR #74 is an open draft on `p7-002-deactivation-flows`, and merging is an owner
+gate that has not been taken — and its backlog row is NOT `Done`. Both are deliberate.** (This paragraph
+originally opened *"ACBP-P7-002 is merged"*. A verification pass caught it. Recording a gate as taken when it
+was not is the most consequential error in that docs pass, and it is corrected in place rather than quietly.)
 
-- **§9.5 — the deactivate transitions.** Nothing performs `active/paused → deactivating`, so in production the
-  two new states are reachable only by a direct database write and `company.deactivated` is never emitted.
-  Building them changes merged `pauseCompany` behaviour and needs the durable-stop sweep.
-- **§9.7 — reactivation semantics.** Resume is tested; what resumes and what stays held is unwritten.
+What the branch launched is **Gate 14 for company pause** — which had never existed; **nothing in production read
+`companies.status` before doing autonomous work**, so pausing a company was a label rather than a control from
+P1-010 until now. (The qualifier is load-bearing: `startInterviewSession` did read and refuse on it, but that is
+a human-initiated discovery start, not autonomous work. Dropping the qualifier makes the sentence false.) Four of
+five enforcement points ship and are mutation-proven. **Two acceptance clauses are unmet**, each an owner
+decision, not an engineering gap:
+
+- **The deactivate transitions (§10 slice 5, gated behind §9.5).** Nothing performs `active/paused →
+  deactivating`, so in production the two new states are reachable only by a direct database write and
+  `company.deactivated` is never emitted (its own open item is **§9.10**). Building them changes merged
+  `pauseCompany` behaviour and needs the durable-stop sweep, which is what **§9.5** actually asks: *"Does pause
+  now raise a real halt?"*
+- **§9.7 — reactivation semantics**: what reactivating a *deactivated* company means. Separately **§9.8**:
+  whether `paused → active` enforces ADMIN-002's held-work review. `paused → active` is tested; neither policy
+  is written.
 - Also open: **§9.2** the account status vocabulary (the account half was deferred by the owner's ruling), and
   **§9.3** worker-body enforcement — `startRun` closes run *creation*, but a body invoked with a stale `runId`
   still reaches the network and the metered gateway before its first database statement.

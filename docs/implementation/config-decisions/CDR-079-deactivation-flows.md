@@ -15,35 +15,44 @@ Depends on **ACBP-P6-007** (emergency stop, Done).
 
 ## §0 The thing this ticket is for, and why it is not "add two states"
 
+> **§0 and §1 DESCRIBE `origin/main` — the tree as it was BEFORE this branch.** They are written in the present
+> tense of the moment they were investigated and are deliberately not rewritten, because they are the finding.
+> **§4.3 and §10 record what shipped.** If you want to know what is true now, read those.
+
 Gate 14 says **deactivation blocks new autonomous work**. The obvious reading is that `companies.status` gains
 `deactivating` and `deactivated`, the CHECK constraint widens, and the gate that already refuses work for a
 `paused` company starts refusing these too.
 
-**There is no such gate.**
+**There is no such gate** (was none — §4.3 built one).
 
-> **Pausing a company today is a label, not a control.**
+> **Pausing a company was a label, not a control.**
 
 `pauseCompany` writes `companies.status`, writes an audit event, projects an activity row, and returns. It never
-touches `jobs`, `tasks`, `task_runs`, `worker_runs`, `tool_calls` or `emergency_stops`. Nothing downstream asks.
+touches `jobs`, `tasks`, `task_runs`, `worker_runs`, `tool_calls` or `emergency_stops`. Nothing downstream asked.
 
 So the centre of gravity is the **gate**, not the states. Adding `deactivated` to a vocabulary nothing enforces
 would satisfy the acceptance criterion's wording and leave Gate 14's threat exactly where it is.
 
 ## §1 The evidence
 
-| Where enforcement was expected | What is actually there |
-|---|---|
-| `canPickUpAutonomousWork(status)` — `contracts/company/company.ts:70` | Exists, correct, **zero production callers** |
-| Run pickup — `runs/coordinator.ts` + `task-run-repository.claimAttempt` | authz, attempt validity, task exists, `canStartRunForTask(task.state)`, attempt-not-claimed. **No company status** |
-| Tool dispatcher — `tools/dispatcher.ts` | Many precondition gates (membership, authz, run state, idempotency, registry, spend, policy, approval, emergency stop). **Company lifecycle is not among them**; `DispatchRequestFacts` has no field for it |
-| Worker runtime — `workers/runtime.ts` | Checks the **worker's** state, never the company's |
-| `elevateToCompanyScope` — `database/transaction.ts:128` | `select('id')` — existence only |
-| RLS / CHECK / partial indexes | Account and company **identity**. No policy references `companies.status` |
-| Account level | **Nothing anywhere refuses on `accounts.status`.** No `AccountStatus` contract exists; `AccountRepository.findById` has **zero callers** |
+**This table records `origin/main`.** Four of its seven rows are false at HEAD, because this branch changed
+them — that is the point of the ticket. Where it changed, the row says so.
 
-The complete set of production readers of `companies.status` is now closed: `interview-session.ts:79`,
-`provisioning-service.ts:298-299,354-369`, `company-lifecycle.ts:85-94,207-210`, `admin-service.ts:82`. Only the
-first refuses anything, and it covers a human-initiated discovery start.
+| Where enforcement was expected | What was there on `origin/main` |
+|---|---|
+| `canPickUpAutonomousWork(status)` — `contracts/company/company.ts:70` | Exists, correct, **zero production callers**. → **DELETED by this branch**; tombstone at `company.ts:103` |
+| Run pickup — `runs/coordinator.ts` + `task-run-repository.claimAttempt` | authz, attempt validity, task exists, `canStartRunForTask(task.state)`, attempt-not-claimed. **No company status**. → **now reads it at `coordinator.ts:155`** |
+| Tool dispatcher — `tools/dispatcher.ts` | Many precondition gates (membership, authz, run state, idempotency, registry, spend, policy, approval, emergency stop). **Company lifecycle is not among them**; `DispatchRequestFacts` has no field for it. → **now a REQUIRED field, `dispatch.ts:131`** |
+| Worker runtime — `workers/runtime.ts` | Checks the **worker's** state, never the company's. → **still true; §9.3** |
+| `elevateToCompanyScope` — `database/transaction.ts:128` | `select('id')` — existence only. → **still true** |
+| RLS / CHECK / partial indexes | Account and company **identity**. No policy references `companies.status`. → **still true**; the gate is application-level |
+| Account level | **Nothing anywhere refuses on `accounts.status`.** → **now `lifecycle-guard.ts:43-44` reads it `FOR SHARE` and refuses `account_not_active`.** Still true: no `AccountStatus` contract exists, and `AccountRepository.findById` has **zero callers** |
+
+The production readers of `companies.status` on `origin/main` were: `interview-session.ts:79`,
+`provisioning-service.ts:164,191,298-299,354-369`, `company-lifecycle.ts:85-94,207-210`, `admin-service.ts:82`.
+Only the first refuses anything, and it covers a human-initiated discovery start — which is why the true form of
+this ticket's headline claim carries a qualifier: nothing read the status **before doing autonomous work**. This
+branch adds the fifth reader and the only enforcing one: `lifecycle-guard.ts:45`.
 
 ### §1.1 Four artefacts that made the gap look closed
 
@@ -81,7 +90,8 @@ whose control is absent.
   typed `string` for this reason.
 - **G3.2 — WRITTEN AS AN ALLOWLIST, POSITIVELY.** Allowed **iff** company status is `'active'` **and** account
   status is `'active'`. Not a denylist, not `!== 'active'` over a union with a `default:` arm. This is canon's own
-  phrasing (`WORKFLOW-STATE-MACHINES.md:54` and `diagrams/06`: *"stop-state clear; company active"*), and it buys
+  phrasing (`WORKFLOW-STATE-MACHINES.md:72`: *"stop-state clear; company active"*; `diagrams/06:10` writes it
+  *"stop-state clear + company active"*), and it buys
   three things: fail-closed on unrecognised values **falls out by construction** with no branch to forget; a
   future state is refused before anyone remembers to add it; and `deleted` needs no vocabulary entry (§3.6).
 - **G3.3 — LOGICAL AND, EVALUATED INDEPENDENTLY, NEVER A CASCADE.** Account deactivation performs **no cascade
@@ -208,14 +218,28 @@ The investigation's hardest finding after §4.1: the design assumed setting a st
 - **G6.3 — The gate's read must LOCK.** `withTenantTransaction` runs READ COMMITTED and neither side takes a row
   lock, so a run can start strictly *after* the deactivation commits — the two transactions touch disjoint rows
   and neither blocks. Same-transaction reads bound how **stale** the read is, not the **ordering**. The gate's
-  read is `FOR SHARE` and the transition's is `FOR UPDATE`.
+  read is therefore `FOR SHARE` (`lifecycle-guard.ts:43,45`).
+
+  **AS SHIPPED, the transition does NOT take an explicit lock** — `CompanyRepository.findById`
+  (`company-repositories.ts:35`) is a plain `SELECT`, and no `forUpdate()` exists on any pause/resume path. The
+  ordering rests on the gate's `FOR SHARE` conflicting with the row lock the transition's `UPDATE` takes
+  implicitly. **This is asserted STRUCTURALLY, not by a real-PostgreSQL race** — see `lifecycle-guard.test.ts:6`,
+  *"structurally, where its removal is detectable every run"*. A race that happens not to interleave is a green
+  test proving nothing; a structural assertion fails every run the lock clause is missing. Stated here so that
+  nobody reads this section as a concurrency proof. (An earlier draft of this bullet asserted the transition's
+  read *"is `FOR UPDATE`"*. It is not, and never was.)
 - **G6.4 — FAIL-CLOSED MUST NOT MEAN A TERMINAL WRITE.** Where a refusal is expressed as finishing a run
   `stopped`, an `*_unreadable` answer must map to a **non-terminal** outcome instead. Every precedent for the
   fail-closed rule is a *retryable* refusal; a transient read failure must not permanently kill a healthy run of
   a healthy company.
-- **G6.5 — Ordering at `enqueueJob`**: the gate fires **after** the insert-first/read-back idempotency path, not
-  before it. Gating first makes a retry of a pre-deactivation success return a lifecycle refusal instead of
-  `deduplicated: true`, so the caller can never learn their job exists — breaking NFR-006 replay safety.
+- **G6.5 — Ordering at `enqueueJob`**: the gate is READ **before** the insert (`enqueue-job.ts:145`), but its
+  **refusal branch asks the idempotency question first** (`findByIdempotencyKey` at `:147`) and only then
+  refuses, with nothing inserted. A retry of a pre-deactivation success therefore still returns
+  `deduplicated: true` — refusing without asking would leave the caller unable to learn their job exists,
+  breaking NFR-006 replay safety, and gating after the insert would be worse still, since the job would already
+  exist. (Read the placement literally: an earlier draft said the gate *"fires after the insert-first/read-back
+  path"*, which describes an ordering the code does not have and a test at `gate-14.integration.test.ts:145`
+  would fail.)
 
 ## §7 What this ticket CANNOT deliver, stated up front
 
@@ -255,8 +279,11 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
 1. **The two Post-MVP cells** — `MASTER-PRD:157` (ACC-004) and `:399` (J-20) versus a launch gate.
 2. **The account vocabulary, now on better evidence.** `accounts.status` is `active | suspended | closed`, and
    **`suspended` and `closed` have no semantic definition anywhere in the repo** — every occurrence is the CHECK
-   constraint plus two passing comments. There is no account state machine, no account transition table, and **no
-   account-scoped audit event beyond `account.created`**. And the investigation found the argument had been run
+   constraint plus two passing comments. There is no account state machine and no account transition table. The
+   registered account-scoped audit events are `membership.invited` and `membership.revoked` (CDR-015:36-37);
+   **there is no account LIFECYCLE event at all.** `account.created` is NOT one — it is a `logger.info` at
+   `accounts/provisioning.ts:44`, deliberately absent from `AUDIT_EVENTS`, and `audit.test.ts:196` requires it to
+   be *rejected* as an `AuditEventName`. And the investigation found the argument had been run
    on the wrong entity: **`DATA-ARCHITECTURE:10` gives the USER lifecycle as `active→deactivated→deleted`** — the
    only canon lifecycle containing the literal word "deactivated" is the User, not the Account.
    **The gate does not depend on this**: an allowlist on `'active'` is correct whichever value means deactivated.
@@ -292,39 +319,66 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
     The lifecycle gate outranks the stop gate in `decideDispatch`, and P6-007's held-work capture was keyed on
     *which refusal was reported* (`finalReason === 'emergency_stopped'`). So for a company that was both
     non-active AND covered by a live stop, the capture silently stopped running: no `held_work` row, no
-    `running`→`paused`, and ADMIN-002's confirm-or-discard review lost that task. **A merged trust-critical
-    control disabled as a side effect of a new gate, with no test and nothing in the record.** Fixed by keying
-    the capture on `stopEvaluation.kind === 'stopped'` — what actually happened — rather than on which of two
-    true refusals won the race to be reported; the audit event's `stop_scopes`/`held_by_stop_id` guards were
-    corrected the same way. **The general rule: a new gate that outranks an existing one inherits responsibility
-    for every side effect the old one carried.** Nothing in this repo enforces that rule; it is a review finding,
+    `running`→`paused`, and ADMIN-002's confirm-or-discard review lost that task. No fixture in this repository
+    produces that combination, which is exactly why nothing caught it. **A merged trust-critical control disabled
+    as a side effect of a new gate, with no test and nothing in the record.**
+
+    **FIXED IN TWO STEPS, AND THE SECOND IS THE ONE TO COPY. This paragraph previously described the first, which
+    CI REJECTED — a decision record documenting the rejected version of its own fix is the §9.14 failure mode
+    reaching one level up, so read the correction as part of the finding.** The first attempt keyed the capture
+    on `stopEvaluation.kind === 'stopped'` alone. `'a refusal for a DIFFERENT reason holds nothing — WITH a
+    covering stop in force'` failed at once: a `not_registered` call that a stop merely happens to cover was
+    never going to run, so it must not enter the review queue. What shipped is a **two-member set** —
+    `dispatcher.ts:622` computes `stopInterrupted = finalReason === 'emergency_stopped' || finalReason ===
+    'company_not_active'` and captures only when that **and** `stopEvaluation.kind === 'stopped'` hold;
+    `audit.ts:1067-1071` guards `stop_scopes`/`held_by_stop_id` on the identical condition. The distinction is
+    between a call the stop **interrupted** and one that was never going to happen. **The general rule: a new
+    gate that outranks an existing one inherits responsibility for every side effect the old one carried** — a
+    duty on the author, not something the code does by itself; what it did by itself was the bug. Nothing in this
+    repo enforces that rule; it is a review finding,
     and a future gate inserted above another will need the same check made by hand.
 
 ## §10 Slices
 
 1. **CDR + branch + draft PR** — done, then rewritten against the investigation.
-2. **Contracts** — the widened vocabulary, the two-phase transition table, and the gate as a pure total
-   function. **Unblocked by every open question above**, because the allowlist form is correct whichever value
-   the account vocabulary settles on.
+2. **Contracts** — DONE: the widened vocabulary (`company.ts:14-16`), the two-phase transition table, and the
+   gate as a pure total function (`lifecycle-gate.ts`). It was **unblocked by every open question above**,
+   because the allowlist form is correct whichever value the account vocabulary settles on.
 3. **Migration** — DONE (`0054`): `companies_status_valid` widened, and `tool_calls_denial_reason_valid` widened
    for the new denial reason (without which the dispatcher's denial INSERT raises 23514 and aborts the
    transaction, losing the refusal's own evidence). The account half waits on §9.2.
 4. **Enforcement** — DONE for the four new-work points (§4.3). The worker bodies remain §9.3.
-5. **The transitions + the durable-stop sweep** — NOT DONE, blocked on §9.5. Consequence, stated plainly:
-   **nothing can reach `deactivating` in production yet**, so the two new states are reachable only by a direct
-   database write. The GATE is live for `paused`, which is what the owner's ruling asked for first.
+5. **The transitions + the durable-stop sweep** — NOT DONE. The sweep is §9.5 (*"does pause raise a real
+   halt?"*) and the transitions depend on it. Consequence, stated plainly: **nothing can reach `deactivating` in
+   production yet**, so the two new states are reachable only by a direct database write and
+   `company.deactivated` is never emitted (§9.10). The GATE is live for `paused`, which is what the owner's
+   ruling asked for first.
 6. **Real-PostgreSQL Gate-14 suite** — DONE, and **mutation-proven**: a disposable probe branch that neutralised
-   the gate without touching a test turned 8 of 17 cases red through production paths.
-7. **Review, docs, finalization** — DONE. The independent review (37 agents, ten confirmed findings, two HIGH)
-   is recorded in **`docs/implementation/P7-002-REVIEW-COVERAGE.md`**, including the one finding that matters
-   most to future tickets: **this ticket silently disabled a merged trust-critical control**, because the new
-   gate outranks the stop gate and P6-007's held-work capture keyed on *which refusal was reported* — see §9.14.
-   The docs pass also corrected `EVENT-CATALOG.md:40` and `WORKFLOW-STATE-MACHINES.md §1`, the two architecture
-   documents among §1.1's four false artefacts; leaving them would preserve the exact mechanism that hid this
-   gap for six phases.
+   the gate without touching a test turned 8 of the suite's then-17 cases red through production paths. **Two
+   caveats this ticket owns**: the probe was not preserved and no CI run is cited (ACBP-P6-006's labelled probe
+   commit `fe85082` is the standard to copy), and the suite is 18 cases since the dispatch control landed.
+7. **Review, docs, finalization** — DONE, and it took **three** passes, not one.
+   - The code review (six lenses → per-finding refutation → completeness critic) is recorded in
+     **`docs/implementation/P7-002-REVIEW-COVERAGE.md`**, including the finding that matters most to future
+     tickets: **this ticket silently disabled a merged trust-critical control** — see §9.14.
+   - A **third pass over the documentation itself** then found **36 confirmed defects, 7 HIGH, every one in
+     prose** — including this CDR still documenting the fix CI rejected (§9.14), §0/§1 asserting in the present
+     tense a state of affairs this branch had already changed, and PROJECT-STATE plus the backlog row recording
+     the ticket as **merged** when merging is an untaken owner gate. That pass is why §0 now carries a temporal
+     header and §1's rows carry arrows.
+   - The docs pass corrected **three** architecture documents: `EVENT-CATALOG.md:40`,
+     `WORKFLOW-STATE-MACHINES.md §1`, and `REQUIREMENT-TRACEABILITY.csv`'s COMP-006 row — **which turned out to
+     be a fifth false artefact**, certifying `Covered (MVP)` against two test suites that did not exist. §1.1
+     names four; the count is five. Leaving any of them would preserve the exact mechanism that hid this gap for
+     six phases.
 
-**Status of the ticket as a whole: NOT DONE, and its backlog row says so in prose** (P6-002's precedent).
-Slice 5 is unbuilt and two acceptance clauses are unmet — *"deactivate-then-schedule negative green"* holds for
-`paused` only, and *"reactivation documented"* needs §9.7. Both are owner decisions. What IS true, and was not
-true before this branch: **a paused company can no longer start a run, enqueue a job, run a job step, or
-dispatch a tool call**, proved against real PostgreSQL by the absence of the row rather than by a return value.
+**Status of the ticket as a whole: NOT MERGED and NOT DONE.** PR #74 is an open draft; merging is an owner gate.
+The backlog row says so in prose rather than `Done` (P6-002's precedent). Slice 5 is unbuilt and two acceptance
+clauses are unmet — *"deactivate-then-schedule negative green"* holds for `paused` only, and *"reactivation
+documented"* needs §9.7 (and §9.8 for the held-work half). Both are owner decisions.
+
+What IS true, and was not true before this branch: **a paused company can no longer start a run, enqueue a job,
+run a job step, or dispatch a tool call** — proved against real PostgreSQL by the database rather than by a
+return value: the *absence* of the `task_runs`, `jobs` and checkpoint rows, and for the dispatcher the
+*presence* of a `tool_calls` row whose `denial_reason` is `company_not_active`, because TOOL-002 requires the
+refusal itself to be recorded.
