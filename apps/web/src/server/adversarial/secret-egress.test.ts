@@ -29,8 +29,12 @@
 // and thrown-error) are exactly the ones that do not need one.
 import { describe, test, expect, beforeAll, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, relative, sep } from 'node:path';
+// ACBP-P7-015 extracted the route walk, the method list and the dynamic-segment table into route-inventory.ts
+// so this suite and the security-header sweep share ONE definition of 'every route in this app'. Behaviour here
+// is unchanged: the same files, the same methods (including this ticket's HEAD/OPTIONS fix, which moved with
+// them), the same params.
+import { ALL_PARAMS, APP_ROOT, HTTP_METHODS, discoverRouteFiles } from './route-inventory.js';
 // The SAME composition entry `apps/web/src/server/webhooks/clerk-runtime.ts` uses, so asserting on it proves the
 // sentinels reached the configuration the routes actually read — not merely that `process.env` was written.
 import { loadClerkConfig } from '@acbp/config';
@@ -64,9 +68,6 @@ const canaryFor = (id: (typeof SENTINELS)[number]['id']): string => {
 /** The Clerk PUBLISHABLE key is client-safe by design — it ships to the browser. It must NOT be a sentinel. */
 const PUBLISHABLE_KEY = 'pk_test_egress_suite_publishable_is_public';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const appRoot = join(here, '..', '..', 'app');
-
 // ── The unauthenticated session seam ─────────────────────────────────────────────────────────────────────────
 // The ONLY seam is the provider SDK at its edge, matching the P1-014 adversarial suite. No session → every route
 // fails closed before reaching a database.
@@ -74,34 +75,6 @@ vi.mock('@clerk/nextjs/server', () => ({
   auth: () => Promise.resolve({ userId: null }),
   clerkClient: () => Promise.reject(new Error('clerkClient must not be reached on the unauthenticated path')),
 }));
-
-/** Every `route.ts` under `app/`, repo-relative and POSIX-separated, sorted. */
-function discoverRouteFiles(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name === 'route.ts') out.push(relative(appRoot, full).split(sep).join('/'));
-    }
-  };
-  walk(appRoot);
-  return out.sort();
-}
-
-// HEAD and OPTIONS are Next.js route exports too. They were missing, so a route exporting only those would be
-// discovered, skipped by the `typeof handler !== 'function'` guard, and contribute nothing — while the suite
-// stayed green on the other routes. Cheap to include; the cost of omitting it is a silent hole.
-const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] as const;
-
-/** A params object carrying every dynamic segment any route in the tree uses. */
-const ALL_PARAMS = {
-  companyId: '00000000-0000-4000-8000-00000000c0de',
-  accountId: '00000000-0000-4000-8000-00000000acc7',
-  membershipId: '00000000-0000-4000-8000-0000000000b5',
-  memoryItemId: '00000000-0000-4000-8000-00000000e11e',
-  questionId: '00000000-0000-4000-8000-000000000901',
-};
 
 /** Collect body + every header value, so a secret cannot hide in a header. */
 async function surfaceOf(res: Response): Promise<string> {
@@ -252,10 +225,10 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
         if (entry.isDirectory()) walk(full);
-        else if (entry.name === 'route.ts') onDisk.push(relative(appRoot, full).split(sep).join('/'));
+        else if (entry.name === 'route.ts') onDisk.push(relative(APP_ROOT, full).split(sep).join('/'));
       }
     };
-    walk(appRoot);
+    walk(APP_ROOT);
     expect(discovered.sort()).toEqual(onDisk.sort());
     expect(discovered.length, 'the route tree emptied — the sweep would then prove nothing').toBeGreaterThanOrEqual(20);
   });
@@ -274,10 +247,10 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
         }
         if (entry.name !== 'route.ts') continue;
         const code = readFileSync(full, 'utf8').replace(/\r\n?/g, '\n');
-        if (/\.reveal\s*\(/.test(code)) offenders.push(relative(appRoot, full).split(sep).join('/'));
+        if (/\.reveal\s*\(/.test(code)) offenders.push(relative(APP_ROOT, full).split(sep).join('/'));
       }
     };
-    walk(appRoot);
+    walk(APP_ROOT);
     expect(offenders, 'a route module unwraps a Secret; the raw value is one interpolation from the response').toEqual([]);
   });
 });
