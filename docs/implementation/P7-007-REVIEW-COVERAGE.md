@@ -5,10 +5,16 @@ Ticket: **ACBP-P7-007** security test pass (NFR-010, NFR-018, NFR-021; ADR-007/0
 `p7-007-security-test-pass`, PR **#76**, decision record **CDR-080**. Launch gate 12 feeds from here; **declaring
 the gate passed is the owner's**, not this ticket's.
 
-> **THE TICKET IS NOT DONE AND IS NOT MERGED**, and neither is an oversight. Its acceptance criterion —
-> *"all suites green"* — cannot be met on its literal wording: **#8 can never go green** (nothing to revoke) and
-> **#15's canonical claim is unbuildable** (no provider key exists in the runtime). What it delivers instead is
-> stated in §2 and bounded in §5.
+> **MERGED as squash `1bb4751` (PR #76). THE TICKET IS STILL NOT `Done`, and that is not an oversight.** Its
+> acceptance criterion — *"all suites green"* — cannot be met on its literal wording: **#8 can never go green**
+> (nothing to revoke) and **#15's canonical claim is unbuildable** (no provider key exists in the runtime). What
+> it delivers instead is stated in §2 and bounded in §5.
+>
+> This line read *"THE TICKET IS NOT DONE AND IS NOT MERGED"* until the merge made half of it false. **That is
+> the exact defect ACBP-P7-002 produced and this ledger recorded as a lesson — a status WORD goes stale, a SHA
+> does not — and it was written here anyway, by the author who wrote the lesson.** Corrected in place rather
+> than quietly, because a merged ticket whose own review ledger opens by denying the merge is worth more as a
+> demonstration than as a clean page. The rule stands: *name the commit, not the state.*
 
 ---
 

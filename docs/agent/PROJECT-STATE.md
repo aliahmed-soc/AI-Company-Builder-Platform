@@ -67,7 +67,21 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P7-007 security test pass — LANDED, TICKET NOT DONE** (CDR-080; NFR-010, NFR-018, NFR-021; ADR-007/009/014;
+- **MERGED — ACBP-P7-007 security test pass.** Squash **`1bb4751`**, PR **#76**, merged 2026-08-06 18:19 UTC on
+  the owner's instruction. Exact-head CI **`31123686961`** on `381601a`: **265 files, 3782 passed, ZERO skips**;
+  the merged tree hash `c236ea1` is byte-identical to that verified head, checked because a squash discards
+  ancestry. **Exact-MAIN CI never ran**: GitHub created no workflow run anywhere in this repository between
+  17:45 UTC and at least 19:11 UTC, the merge fell inside that window, and `ci.yml` has no `workflow_dispatch`
+  trigger to force one. That step of the completion standard is **unmet, not waived** — tree-identity is an
+  argument, not the run.
+  **Its backlog row is deliberately NOT `Done`**: the acceptance criterion cannot be met on its literal wording,
+  and **18 of 20 index rows are unproven**. Branch `p7-007-security-test-pass` still exists at `381601a`
+  (deletion not authorized, and it is the only remaining copy of that history until exact-main runs).
+  **One thing IS now proven that could not be before the merge**: `tools/trust-critical-index.mjs` exists on
+  `main`, so the ratchet's no-rise rule resolves (`Ceiling 18 ≤ baseline 18 (origin/main)`) and raising
+  `MAX_UNPROVEN` to 19 exits **1**. That closes the review finding that the word "ratchet" named no enforcer.
+
+- **ACBP-P7-007 security test pass — working block** (CDR-080; NFR-010, NFR-018, NFR-021; ADR-007/009/014;
   `SECURITY-VERIFICATION-PLAN.md`; **launch Gate 12** feeds from here). Branch `p7-007-security-test-pass`,
   PR **#76**. No migration. Ledger: `P7-007-REVIEW-COVERAGE.md`.
   - **THE FINDING: the list this ticket is judged against was itself unreliable.** The acceptance criterion is
@@ -1751,7 +1765,8 @@ this paragraph.
 **Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
 block above.
 
-**ACBP-P7-007 has LANDED and its backlog row is NOT `Done`** — same reason, stated in its own block at the top:
+**ACBP-P7-007 is MERGED (squash `1bb4751`, PR #76) and its backlog row is NOT `Done`** — same reason, stated in
+its own block at the top:
 its acceptance criterion *"all suites green"* **cannot be met on its literal wording**, because #8 asserts a
 control over an entity that does not exist and #15's canonical wording names a credential the runtime does not
 have. What it leaves behind is a **machine-checked trust-critical index**: 20 rows, each pinned to a real test
@@ -1790,7 +1805,7 @@ decision, not an engineering gap:
 **Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
 blocked):
 
-- **ACBP-P7-007** security test pass — **LANDED, NOT `Done`** (PR #76; see its block at the top). It leaves
+- **ACBP-P7-007** security test pass — **MERGED as `1bb4751`, NOT `Done`** (PR #76; see its block at the top). It leaves
   behind the thing the next security ticket should use: a machine-checked trust-critical index where **an
   attribution with no test is a red build**, and a ruling that a negative is green only with a **recorded mutation
   run id**. **18 of 20 rows are unproven and the gate prints that number**; closing them is the standing work.
