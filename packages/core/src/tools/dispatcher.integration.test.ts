@@ -17,6 +17,9 @@ import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { initializeCompanyPolicy } from '../policy/index.js';
 import { computePayloadBinding } from '../approvals/binding.js';
+// ACBP-P7-008: aliased so the raw-INSERT test helper of the same name stays visibly distinct from the real use
+// case. Two things called activateStop in one file is the trap ACBP-P7-008 slice 2 spent its length removing.
+import { activateStop as activateStopUseCase } from '../stops/stop-service.js';
 import { dispatchToolCall, reportToolCallOutcome, digestToolArguments } from './index.js';
 import { TaskRepository } from '@acbp/database';
 
@@ -352,6 +355,47 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
     // Logged unconditionally so the measurement is in the CI record as evidence, not only when it fails.
     console.info(`[ACBP-P6-007] gate 8 / ${scope}: first refusal ${elapsedMs.toFixed(1)}ms after the stop committed (bound 5000ms)`);
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
+  // ── LAUNCH GATE 8, MEASURED THROUGH THE PRODUCTION ACTIVATION PATH (ACBP-P7-008) ───────────────────────────
+  //
+  // WHAT WAS WRONG WITH THE MEASUREMENT ABOVE, and it is a real gap rather than a nicety. `activateStop` in this
+  // file is a raw `INSERT INTO emergency_stops`. The matrix above therefore measures TRANSACTION VISIBILITY — the
+  // interval between a committed row and the first refusal — and that is a genuine property worth pinning. But
+  // launch gate 8 asks how long after AN OWNER PRESSES STOP the platform stops, and the owner does not run an
+  // INSERT. The production use case also resolves company scope, checks `stop:activate` authorization, writes an
+  // audit event, and captures held work in the same transaction. None of that was inside the measured window.
+  //
+  // ACBP-P7-007 recorded this as trust-critical #10's defect: *"the helper NAMED `activateStop` is a raw INSERT,
+  // not the production use case, so the measured ≤5s window excludes activation entirely."* A test helper whose
+  // NAME asserts a control it does not exercise is the artefact class this repository keeps finding.
+  //
+  // One scope is enough here, deliberately: the per-scope matrix above already proves enforcement for all five,
+  // and what THIS adds is the missing half of the interval, which is scope-independent.
+  test('gate 8 — the PRODUCTION activateStop use case halts a call under 5s, activation included', async () => {
+    // Control first: this call is not stop-refused before the stop exists, so the refusal below is caused by it.
+    expect(await dispatch({ toolId: 'web_research' })).not.toMatchObject({ reason: 'emergency_stopped' });
+
+    const startedAt = performance.now();
+    const activated = await activateStopUseCase(product, {
+      userId: w.aOwner,
+      accountId: w.accountA,
+      companyId: w.companyA1,
+      scope: 'company',
+      targetId: w.companyA1,
+      reason: 'gate 8 measurement',
+    });
+    const stopped = await dispatch({ toolId: 'web_research' });
+    const elapsedMs = performance.now() - startedAt;
+
+    // The use case must genuinely have succeeded — a `forbidden` or `refused` result would leave no stop at all,
+    // and then the assertion below would be measuring nothing while looking green.
+    expect(activated).toMatchObject({ status: 'ok', scope: 'company' });
+    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    console.info(
+      `[ACBP-P7-008] gate 8 / production activateStop: first refusal ${elapsedMs.toFixed(1)}ms after the owner acted (bound 5000ms)`,
+    );
     expect(elapsedMs).toBeLessThan(5_000);
   });
 

@@ -231,12 +231,12 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     status: 'unmeasured',
     anchor: 'return_value_only',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
-    testTitle: 'every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven',
-    entryPoint: 'dispatchToolCall',
-    mutation: 'Remove one scope from the stop evaluation and dispatch a call it should have covered.',
+    testTitle: 'gate 8 — the PRODUCTION activateStop use case halts a call under 5s, activation included',
+    entryPoint: 'activateStop → dispatchToolCall',
+    mutation: 'Drop the `company` scope from the dispatcher stop evaluation, so an active company stop no longer denies the call.',
     mutationRunId: '',
     doesNotProve:
-      'THE ≤5s BOUND AS AN OPERATOR SEES IT. The timing helper NAMED `activateStop` is a raw owner-client INSERT into emergency_stops, not the production use case, so the measured interval EXCLUDES the activation path. "All scopes" is also five enforceable scopes, not seven.',
+      '"ALL SCOPES". The cited test drives ONE scope, `company`, because what it adds is the ACTIVATION half of the interval, which is scope-independent. Completeness across scopes is proven beside it — by `COVERS + gate 8 — a %s stop halts its call, MEASURED under 5s` and by the guard `every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven` — and neither is what this row cites. "All scopes" is in any case FIVE enforceable scopes, not seven: `capability` and `integration` are inert (CDR-072). And ≤5s is a BOUND asserted once on CI hardware, not a worst-case measurement.',
   },
   {
     number: 11,

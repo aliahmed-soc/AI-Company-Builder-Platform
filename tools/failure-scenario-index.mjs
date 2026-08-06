@@ -311,8 +311,9 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     mutation: 'Skip the stop check at the step boundary so a stopped run continues.',
     mutationRunId: '',
     doesNotProve:
-      'Two things the row asserts. Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — and the ≤5s activation window measured for launch gate 8 uses a raw INSERT helper, so it EXCLUDES the production activation path entirely (`TEST-AND-VERIFICATION-STRATEGY.md:42`). The "in-flight call finishes/aborts safely" clause shares row 16\'s problem below.',
-    notes: 'Verified slice 1.',
+      'Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — so "execution halts" is proven for five of seven, not seven. The "in-flight call finishes/aborts safely" clause shares row 16\'s problem below. The launch-gate-8 ≤5s window now IS measured across the production `activateStop` use case (slice 5), but for the `company` scope only; the per-scope matrix beside it still times a raw INSERT and therefore still measures transaction visibility rather than activation.',
+    notes:
+      'Verified slice 1. Slice 5 closed the half this field previously recorded as excluded — the ≤5s measurement no longer skips the production activation path.',
   },
   {
     number: 16,
