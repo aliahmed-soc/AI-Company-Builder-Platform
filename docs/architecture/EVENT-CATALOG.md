@@ -37,8 +37,8 @@ Retention default: activity-projected events with company data; audit-relevant e
 | account.created | Identity | Usage ledger, notification | account_id, plan_state | audited | permanent |
 | company.created | Account&Company | Workflow coord. (provisioning), activity | company_id, creation_mode | audited | with company |
 | company.updated | Account&Company | activity | changed_fields (names only) | audited | with company |
-| company.paused / company.resumed | Account&Company | Workflow coord. (halt/resume pickup, invariant 16), activity | reason?, held_work_count (resume) | audited | with company |
-| company.deactivated | Account&Company | Workflow coord., export | — | audited | permanent record |
+| company.paused / company.resumed | Account&Company | activity. **NOT a workflow-coordinator consumer** — see Notes | reason?, held_work_count (resume) | audited | with company |
+| company.deactivated | Account&Company | export. **NOT EMITTED** — see Notes | — | audited | permanent record |
 | provisioning.started | Account&Company (P1-012) | audit only — never activity | step_count | audited (company-scoped) | with company |
 | provisioning.step_started / step_completed / step_failed | Account&Company (P1-012) | audit only — never activity | step, attempt (+ result_code / failure_code — closed sets) | audited; step_failed outcome=blocked; system actor | with company |
 | provisioning.retry_requested | Account&Company (P1-012) | audit only — never activity | step, next_attempt | audited; USER actor; causation for the retry run | with company |
@@ -292,6 +292,24 @@ Retention default: activity-projected events with company data; audit-relevant e
 
 ## Notes
 
+- **`company.paused`'s workflow-coordinator consumer NEVER EXISTED, and the halt it names is NOT event-driven
+  (ACBP-P7-002 / CDR-079).** This row read *"Workflow coord. (halt/resume pickup, invariant 16)"* from P1-010
+  until P7-002. **No such consumer was ever written**, and while that row stood, *nothing in production read a
+  company's lifecycle status before doing autonomous work* — pausing a company was a label, not a control. The
+  row is corrected rather than quietly deleted because it is one of **four artefacts that independently asserted
+  the control existed** (with the predicate's docstring, a green test named after enforcement it did not
+  exercise, and `stop-service.ts`'s own admission) — which is why the gap survived six phases. A catalog row is
+  a design intent, and an intent that is indistinguishable from a shipped guarantee is how this happens.
+  **Enforcement as shipped is a status READ, not a subscription**: `mayStartAutonomousWork` reads
+  `companies.status` (and the account's) inside the caller's transaction at four points — `startRun`,
+  `dispatchToolCall`, `enqueueJob`, `runJobStep`. Emitting the event is neither necessary nor sufficient for the
+  halt; if this ever becomes event-driven, the read must stay, because an unconsumed event is the failure this
+  note records.
+- **`company.deactivated` is NOT EMITTED (ACBP-P7-002 / CDR-079 §9.5).** The `deactivating`/`deactivated` states
+  exist in the CHECK constraint (migration 0054) and the gate above refuses them, but **no code performs the
+  transition that would emit this event** — in production those states are reachable only by a direct database
+  write. The export consumer named in the row is real and independent: export deliberately keeps working on a
+  deactivated company (ADR-002 ownership), and there is a real-PostgreSQL test asserting exactly that.
 - **`interview.started` activity fan-out is DEFERRED (ACBP-P2-001 / CDR-022 §4).** As implemented in P2-001 the
   event is **audit-only**: it is registered in `AUDIT_EVENTS` and emitted in the session-start transaction, but
   it is NOT projected into the `activity_events` feed. Projecting it would extend P1-009's deliberately closed

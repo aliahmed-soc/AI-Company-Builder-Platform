@@ -67,6 +67,40 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P7-002 deactivation flows — PARTIALLY LANDED, TICKET NOT DONE** (CDR-079; ACC-004, COMP-006 final;
+  ADR-006; **launch Gate 14**; migration `0054`). Branch `p7-002-deactivation-flows`, PR **#74**. Ledger:
+  `P7-002-REVIEW-COVERAGE.md`.
+  - **THE FINDING THAT RESHAPED THE TICKET.** Gate 14 says "deactivation blocks new autonomous work", so the
+    obvious work is two new states. **There was no gate to add them to.** Nothing in production read a company's
+    lifecycle status before doing autonomous work: **pausing a company was a LABEL, NOT A CONTROL**, and had been
+    since ACBP-P1-010. Four artefacts made the gap look closed — `canPickUpAutonomousWork`'s docstring (zero
+    production callers), a green test that called that predicate on a returned value, `EVENT-CATALOG:40`'s
+    claimed consumer, and `stop-service.ts:513`'s own admission about the machinery deactivation was to reuse.
+  - **WHAT LANDED**, on the owner's ruling *"company-pause enforcement first, defer the account half"*: the
+    widened lifecycle vocabulary and two-phase transition table; `mayStartAutonomousWork` — a fail-closed
+    ALLOWLIST over `unknown` rows, so an unrecognised status refuses by construction; `readLifecycleDecision`,
+    which locks both rows `FOR SHARE`; **four enforcement points** (`startRun` before `claimAttempt`;
+    `dispatchToolCall` beside the other facts so the refusal is still RECORDED; `enqueueJob` after the
+    idempotency question so a replay still answers; `runJobStep` after the already-completed short-circuit);
+    migration `0054`; and a real-PostgreSQL Gate-14 suite.
+  - **THE SUITE IS MUTATION-PROVEN, NOT MERELY GREEN.** A disposable probe branch neutralised the gate without
+    touching a test: **8 of 17 cases went red** through production paths. The first probe attempt went red at
+    LINT and never reached the tests — a false confirmation, caught. It also exposed a negative-only assertion in
+    the new suite that passed with the gate off.
+  - **THE REVIEW FOUND THIS TICKET DISABLING A MERGED CONTROL.** The lifecycle gate outranks the stop gate, and
+    P6-007's held-work capture was keyed on *which refusal was reported* — so a company both non-active and under
+    a live stop lost its ADMIN-002 confirm-or-discard review entirely. Fixed; **and the first fix was too broad,
+    which CI refused** via a test whose own comment names that exact mutation. General rule now in CDR-079 §9.14:
+    *a new gate that outranks an existing one inherits every side effect the old one carried.* Nothing enforces it.
+  - **BOTH HIGH REVIEW FINDINGS WERE IN THE TICKET'S OWN CLAIMS.** A comment asserted the gate closed the worker
+    bodies "since every body takes a `runId`" — a `runId` is provenance metadata, not a check, and `runResearch`
+    fetches and spends *before its first database statement*. And CDR-079 still said enforcement was "blocked"
+    while the branch shipped it — **the record went stale before the code did, for the second time this week**.
+  - **WHY IT IS NOT DONE**, and this is deliberate: the deactivate transitions are not built, so **nothing can
+    reach `deactivating` in production**; the durable-stop sweep is not built, so a halt does not terminate runs;
+    the account half is deferred; the worker bodies are still ungated. Each is an owner decision (§9.2/§9.3/§9.5),
+    not an engineering gap I may close alone.
+
 - **DONE — ACBP-P7-001 export of documents and owned data.** Squash `cf67c7f`, PR **#73**, exact-head CI
   `31026433291` on `2c5a4c0` and exact-main CI `31027343426` on `cf67c7f` — both **256 files / 3631 tests, zero
   skips**, with the export real-PostgreSQL suite running **12/12**. Branch deleted after its tree hash was

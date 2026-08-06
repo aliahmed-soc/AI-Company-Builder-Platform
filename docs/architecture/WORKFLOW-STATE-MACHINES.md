@@ -18,6 +18,24 @@ Conventions per transition: **Actor** (who may trigger), **Pre** (preconditions)
 | deactivating→deactivated ⏹ | system | teardown checks done | data retained per retention | audited | — | teardown resumable |
 | any→deleted ⏹ | owner | COMP-007: typed confirm + export offer | staged purge per retention | audited (redacted trace retained) | — | purge resumable |
 
+**Implementation status of the Effects column (ACBP-P7-002, CDR-079).** This table describes intent; what is
+actually enforced diverges, and the divergence is load-bearing.
+
+- **`active→paused` — "no new job pickup (invariant 16)" is ENFORCED as of ACBP-P7-002, and was not before.**
+  From ACBP-P1-010 until then, `pauseCompany` wrote the status and nothing read it: **pausing a company was a
+  label, not a control.** Enforcement is `mayStartAutonomousWork`, called at four points — `startRun` (before
+  the attempt is claimed), `dispatchToolCall` (so the refusal is still recorded), `enqueueJob` (after the
+  idempotency read-back) and `runJobStep` (after the already-completed short-circuit). **It is a status READ,
+  not an event subscription**; `EVENT-CATALOG.md` previously named a consumer that never existed.
+- **"in-flight safe-stop" is NOT enforced by pausing.** Pause refuses *new* work; it does not terminate a run
+  already executing. The durable-stop sweep that would is unbuilt (CDR-079 §9.5), and the three worker bodies
+  are still reachable with a stale `runId` (§9.3). Both are open owner decisions.
+- **`active/paused→deactivating` HAS NO IMPLEMENTATION.** The two states exist in the CHECK constraint
+  (migration 0054) and the gate refuses them, but **no code performs this transition**, so in production they
+  are reachable only by a direct database write and `company.deactivated` is never emitted. §9.5, OWNER.
+- **`paused→active`'s "held-work review completed (ADMIN-002)" is not a precondition in code** — resume does not
+  verify the review happened. See CDR-072 §1-G6 and CDR-079 §9.7 (reactivation semantics), both open.
+
 ## 2. Interview lifecycle
 
 `not_started → in_progress ⇄ waiting_for_user → ready_for_review → confirmed ⏹(version) → superseded ⏹`
