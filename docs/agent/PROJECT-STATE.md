@@ -67,6 +67,28 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **IN FLIGHT — ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
+  Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
+  Rendered evidence: `docs/implementation/P7-008-SCENARIO-EVIDENCE.md` (generated; `check:scenario-evidence`
+  fails the build if it drifts from the index).
+  - **Built:** `tools/failure-scenario-index.mjs` (16 rows) + `check-failure-scenario-index.mjs`;
+    `tools/lib/test-citation.mjs` extracted and shared with the P7-007 checker; the fake-provider naming trap
+    closed (`FakeModelProvider` → `AlwaysSucceedsModelProvider`); `check:duplicate-exports`; two new dispatcher
+    integration tests (an **expired** approval is denied `approval_invalid` and the denial is RECORDED, with a
+    control; launch **gate 8** measured through the **production** `activateStop` use case rather than a raw
+    INSERT helper, which was trust-critical #10's recorded defect); the `mutation` column of BOTH indexes made
+    machine-checkable and **eighteen of thirty-three rows rewritten** from wishes into applicable edits.
+  - **NFR-020 removed from the backlog row** per CDR-084 §5 and the owner ruling — the repository already said
+    three times that it was deferred scope governed by an ADR this ticket does not cite. Verified by re-parsing
+    the CSV and diffing all 101 rows: exactly one cell changed.
+  - **THE OPEN ITEM IS THE PROBE, AND IT IS BLOCKED.** "16-scenario matrix green" means a recorded mutation
+    reddened the cited test in a hosted run. **GitHub Actions entered a major outage at 15:22 UTC on 2026-08-06**
+    (webhooks throttled to ~15%) and **has created no workflow run for this branch at all** — not for `f90566b`,
+    not for `9c34123`, not since. So **0 of 16 rows are measured**, and the slice-4 and slice-5 tests are
+    written, typechecked and cited but **UNVERIFIED**: they are `describe.skipIf(!hasTestDatabase)` and skip
+    locally (51 collected, 51 skipped). Nothing claims they pass.
+  - **Owner decisions still open** (CDR-084 §7): rows 5, 6, 8, 10 and 16, the NFR-019 coverage cell, and the
+    Closed-beta launch-gate sign-off.
 - **MERGED — ACBP-P7-007 security test pass.** Squash **`1bb4751`**, PR **#76**, merged 2026-08-06 18:19 UTC on
   the owner's instruction. Exact-head CI **`31123686961`** on `381601a`: **265 files, 3782 passed, ZERO skips**;
   the merged tree hash `c236ea1` is byte-identical to that verified head, checked because a squash discards

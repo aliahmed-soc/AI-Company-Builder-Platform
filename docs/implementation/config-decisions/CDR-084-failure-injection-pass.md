@@ -332,3 +332,60 @@ table cannot drift from the machine-checked one. Rendering it, rather than writi
 - **A partial local run is not a preview of CI**, and a red build that executed no steps is not evidence in
   either direction.
 - **Name the commit, not the state.** A status word goes stale at merge; a SHA does not.
+
+---
+
+## §10 What slice 6 found before it could run — the `mutation` column was mostly wishes
+
+Slice 6 is the probe. Before applying anything, the `mutation` column of BOTH evidence indexes was read as what
+it claims to be — *the exact edit someone applies to make the cited test go red*. **Eighteen of the
+thirty-three rows carrying a mutation could not be applied by anyone who had not written them.**
+
+> "Widen the heartbeat grace to infinity." · "Skip the stop check at the step boundary."
+> "Remove the idempotency read-back." · "Drop the usage-event uniqueness constraint."
+
+None names a function, a file or a column. Running one requires first re-deriving the author's intent, and
+re-derivation is precisely where a probe reddens a *different* test than the row it is filed under — the defect
+ACBP-P7-007 shipped on row 19 and two human reviews had to catch.
+
+**The column is now machine-checked.** `checkMutationNamesRealCode` requires every mutation to name at least one
+camelCase / snake_case / SCREAMING_SNAKE symbol, or a source filename, that **exists in non-test source**. Both
+checkers use it, and both exit 2 rather than 0 if the source walk finds zero files — an empty corpus would report
+every correct row as naming nothing, and a guard that cannot see its target must say so.
+
+Plain English words and bare acronyms are deliberately not symbols. If `company` or `RLS` counted, every
+sentence in the column would pass and the rule would enforce nothing.
+
+### Three corrections worth naming
+
+| Row | What was wrong |
+|---|---|
+| Scenario 2 | *"Make every task class fallback-eligible"* would have reddened the **ineligible sibling** test and left this row's own test green. A mutation aimed at a neighbour is the row-19 defect exactly. |
+| Scenario 3 | *"Remove the re-ask cap"* makes the fixture loop forever, so the only signal is a suite timeout — a red that says nothing about the bound. Raising `MAX_REASK_ATTEMPTS` by one reddens the assertion instead. |
+| Trust-critical 1 | *"Remove the tenant predicate from the company read"* is an **equivalent mutation**: RLS still returns no row, so foreign and unknown ids stay byte-identical and the cited test never notices. A green probe would have been read as proof. |
+
+### The limit of the new rule, stated because it has already bitten
+
+It cannot tell a RIGHT symbol from a WRONG-but-real one. **Scenario row 16 named `startRun` while its cited test
+drives `enqueueJob`** — both real functions used in the same file, so the rule passes it. A human reading the
+test body caught it; no tool did. Corrected by hand, and pinned as a test case so the limit cannot quietly stop
+being true. This sits beside CDR-080 §7.10 (a run id is shape-checked, never resolved) and §7.11 (nothing
+cross-checks a mutation against its test title).
+
+A first version of the rule also **rejected honest rows**: the tokeniser did not admit hyphens, so
+`enqueue-job.ts` became `job.ts` and a row naming a real file read as stale. That direction is the worse one — a
+rule that fails good rows teaches people the tool is wrong — and it was found reviewing the diff before the
+documentation describing it was written.
+
+### §5's action is done
+
+The backlog row's `Requirement IDs` is now `NFR-005;NFR-019`. The edit was made against an anchored prefix
+asserted to occur exactly once, then verified by re-parsing the CSV and diffing every cell of all 101 rows:
+**exactly one cell changed**, in the ACBP-P7-008 row, in `Requirement IDs`.
+
+### What is still owed
+
+The probe itself. GitHub Actions entered a major outage at 15:22 UTC on 2026-08-06 with webhooks throttled to
+~15%, and **no run has ever been created for this branch** — not for `f90566b`, not for `9c34123`, not since.
+The slice-4 and slice-5 tests are therefore written, typechecked and cited but **unverified**: they are
+`describe.skipIf(!hasTestDatabase)` and skip locally, 51 collected and 51 skipped. Nothing here claims they pass.
