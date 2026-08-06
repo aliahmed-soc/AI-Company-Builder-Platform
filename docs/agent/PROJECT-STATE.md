@@ -67,6 +67,88 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P7-007 security test pass — LANDED, TICKET NOT DONE** (CDR-080; NFR-010, NFR-018, NFR-021; ADR-007/009/014;
+  `SECURITY-VERIFICATION-PLAN.md`; **launch Gate 12** feeds from here). Branch `p7-007-security-test-pass`,
+  PR **#76**. No migration. Ledger: `P7-007-REVIEW-COVERAGE.md`.
+  - **THE FINDING: the list this ticket is judged against was itself unreliable.** The acceptance criterion is
+    *"all suites green"*, and **all twenty trust-critical negatives already had something green beside their
+    names.** Reading the test **bodies** behind all twenty, as of `main` at `2c4f0f5`: **11** genuinely assert
+    database state or a recorded row through the production entry point; **4** rest on a returned value or
+    weaker; **3** never execute the claim as worded; **2** are not covered at all — 11+4+3+2 = 20. **Seven of the
+    twenty attribution lines were wrong**, plus a misgrouped `#9` in a second canon file and **four coverage
+    cells across the two traceability matrices** naming tests, rigs and reviews that do not exist.
+    (This paragraph said `12` and totalled twenty-one until the second review pass. A classification of exactly
+    twenty things that does not add to twenty is the cheapest possible self-check, and it went unrun in five
+    documents at once.)
+  - **THE ACCEPTANCE CRITERION CANNOT BE MET ON ITS LITERAL WORDING, and that is a finding, not a delay.**
+    **#8 can never go green** — it asserts a revoked-integration denial and **no integrations entity exists
+    anywhere**: no table, no migration, no service, no contract, no integration value in `TOOL_DENIAL_REASONS`.
+    CDR-067, the decision record of the ticket credited with the rig, never mentions integrations. **#15's
+    canonical wording is unbuildable** — it names a provider API key that does not exist in the runtime.
+  - **THE RULING THAT SHAPES THE TICKET: a negative is GREEN only when its index row carries a recorded mutation
+    with a hosted CI RUN ID** — the exact edit that weakens the control, and the run in which the named test
+    actually went red. Not a probe SHA: P6-006's probe commit `fe85082` is reachable from **no ref today**, and
+    P7-002 recorded none at all. Enforced by `tools/trust-critical-index.mjs` + `check-trust-critical-index.mjs`
+    (new static gate): 20 rows, each pinned to a file, a **verbatim** test title, an entry point, a closed-vocabulary
+    anchor class, who really built it, and **what it does not prove**. An attribution with no test is now a red
+    build.
+  - **THE PROBE RAN: run `31113087854`.** Three deliberately type-safe, lint-clean mutations; typecheck and lint
+    clean, the gate reached the suites, **3747 passed / 5 failed of 3752**. The probe branch was then deleted **on
+    purpose**, to demonstrate that the run id still resolves and the SHA does not — `gh run view 31113087854`
+    answers today; `c17b2df` is on no ref.
+  - **IT BOUGHT TWO ROWS, NOT THREE, AND I RECORDED THREE.** #15 (route egress + its `.reveal()` source guard)
+    and #16 (logger `message`) are honestly measured. **#19 was not**: the row names the test *"a MATERIAL
+    decision does NOT silently fall over"*, which asserts only outcome/fallbackUsed/callCount/validatedOutput —
+    **the recorded mutation cannot touch any of them, and that test was green in the run.** What went red was a
+    different test in the same file, through its *leak* assertion, making it evidence about egress rather than
+    about silent fallback. Two independent reviews caught it; one pulled the run log. The checker could not,
+    because **nothing cross-checks a row's `mutation` against its `testTitle`** — now stated in the tool's own
+    header and printed in its success line (`run id recorded — shape-checked, not resolved`). #19 is back to
+    `unmeasured`. **Ceiling 20 → 18: two rows are MEASURED, eighteen are not, and the index says so in that
+    word.** The fifth red test was also collateral — appending the marker to `model` broke an unrelated
+    success-path assertion — recorded rather than trimmed, because a non-surgical mutation makes a red run harder
+    to read. A partial local run showed four; the fifth existed only in the full suite.
+  - **ONE REAL PRODUCTION BUG, FOUND BY WRITING THE MISSING TEST.** `logger.ts` redacted `metadata` and `error`
+    but emitted `message` **verbatim** — so any caller interpolating a secret into a log message published it.
+    Red-then-green fix. The audit half of #16 is *not* closed: `boundedMetadata` rejects objects, arrays, Errors
+    and null, then accepts **any string ≤1024 units with no secret detection**. That is now executable
+    (`metadata-secrets.test.ts` pins today's behaviour and is written to fail when enforcement lands) plus a
+    reusable real-PG sweep in `@acbp/test-support`. Enforcement is an owner decision — audit-or-nothing means a
+    rejection fails the **product operation**.
+  - **FIVE TIMES A TOOL THIS TICKET BUILT CAUGHT ITS OWN AUTHOR** (ledger §3): the index checker rejected my own
+    citation one minute after it existed; the ratchet failed the build **for adding coverage**; a mutation that
+    proved nothing was caught before being recorded (it never reached the assertion — *and that failure mode looks
+    exactly like a finding*); the secret scanner was **invisible to itself** through a literal NUL byte, and
+    seeing itself produced nine findings immediately; the index checker blocked a canon edit that rewrote a
+    *statement* instead of its attribution.
+  - **A SECOND ROUND OF REVIEW FOUND EIGHT MORE, AND EVERY ONE HAD PASSED.** Three adversarial lenses over the
+    whole diff (guards, prose, security) returned: the #19 misattribution above; a `testTitle` check that was a
+    bare substring match, so `test.skip`, an emptied body and a title surviving only in a **comment** all printed
+    *"pinned to live tests"*; a "ratchet" that was an **editable integer naming no enforcer**; a route sweep that
+    counted handlers *found* rather than handlers that *answered*, so an all-throw regression would go green
+    having swept zero bodies; an audit sweep **vacuous against FORCE ROW LEVEL SECURITY** (zero rows, no error,
+    reports clean) that also promised a `sweptTables` field which did not exist; two allowlist entries resting on
+    a **demonstrably false** justification; a logger comment naming *"a connection string"* as an example the
+    redactor did not handle; and **`check-secrets.mjs` still containing a literal NUL byte — inside the comment
+    describing the NUL fix — so the scanner was still invisible to itself while three documents said it had been
+    fixed.** Also two malformed CSV rows: an unquoted comma shifted every column after `Coverage status` in
+    **both** traceability matrices, the exact defect class this repository has now hit twice. All fixed;
+    `test:boundaries` 100 → **118**, and a new `check:csv-shape` gate makes the CSV class a red build.
+  - **WHY IT IS NOT DONE**, deliberately: 18 rows are unproven (the remaining strengthening work is real-PG and
+    local PostgreSQL is unreachable, so they are **left unmeasured rather than written unverified**); #8's
+    disposition and `boundedMetadata` enforcement are owner decisions; staging does not exist in any form; the pen
+    test is an external engagement; and **declaring launch gate 12 passed is the owner's, not this ticket's**.
+  - **The three ASVS gaps — no CSRF, no HTTP rate limiting, no security headers/CSP anywhere in `apps/web` — were
+    true as of `main` at `2c4f0f5`, and are now IN FLIGHT.** Three tickets spawned from this one are being worked
+    on local branches `p7-013-csrf-origin-gate`, `p7-013-http-rate-limiting` and
+    `p7-013-security-headers-and-csp`. **None is pushed**, so nothing about them is verified here and this ticket
+    claims nothing about their state. The SHA is load-bearing: that line is a finding with a date, not a
+    description of current state — which is the failure mode this whole ticket exists to catch.
+
+- **MERGED — ACBP-P7-002 deactivation flows.** Squash `4125f0f`, PR **#74**, branch deleted. **Its backlog row is
+  deliberately NOT `Done`**: it landed the company-pause half only, and the account half, the deactivate
+  transitions and the durable-stop sweep remain owner decisions. The working block below is the detail.
+
 - **ACBP-P7-002 deactivation flows — PARTIALLY LANDED, TICKET NOT DONE** (CDR-079; ACC-004, COMP-006 final;
   ADR-006; **launch Gate 14**; migration `0054`). Branch `p7-002-deactivation-flows`, PR **#74**. Ledger:
   `P7-002-REVIEW-COVERAGE.md`.
@@ -1669,6 +1751,18 @@ this paragraph.
 **Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
 block above.
 
+**ACBP-P7-007 has LANDED and its backlog row is NOT `Done`** — same reason, stated in its own block at the top:
+its acceptance criterion *"all suites green"* **cannot be met on its literal wording**, because #8 asserts a
+control over an entity that does not exist and #15's canonical wording names a credential the runtime does not
+have. What it leaves behind is a **machine-checked trust-critical index**: 20 rows, each pinned to a real test
+title and an anchor class, where **an attribution with no test fails the build**, and where a row is only green
+with a **hosted CI mutation run id** (`31113087854` bought **two** of them — a third was recorded and withdrawn
+when review showed the run reddened a different test). **18 of 20 are unproven, and the gate prints exactly
+that**, in the vocabulary the index defines: `2 MEASURED …, 16 unmeasured, 2 with no test; 18 unproven (ceiling
+18)`. `unmeasured` and `unproven` are distinct states — quoting the wrong one is how this paragraph was wrong
+before. Do not read the twenty green checkmarks in `TEST-AND-VERIFICATION-STRATEGY.md` as coverage without
+reading the index beside them.
+
 **ACBP-P7-002 is MERGED (squash `4125f0f`, PR #74, branch deleted) but its backlog row is NOT `Done`, and that
 is deliberate.** (This paragraph
 originally opened *"ACBP-P7-002 is merged"*. A verification pass caught it. Recording a gate as taken when it
@@ -1696,10 +1790,16 @@ decision, not an engineering gap:
 **Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
 blocked):
 
-- **ACBP-P7-007** security test pass, **ACBP-P7-008** failure-injection pass — both listed `ACBP-P6-012` as their
-  dependency, which is why they were unstartable until it merged. **P7-002 hands both of them concrete
-  material**: Gate 14's four points to attack, and the §9.14 class (a new gate outranking an existing one and
-  silently inheriting its side effects) which this repository does not enforce anywhere.
+- **ACBP-P7-007** security test pass — **LANDED, NOT `Done`** (PR #76; see its block at the top). It leaves
+  behind the thing the next security ticket should use: a machine-checked trust-critical index where **an
+  attribution with no test is a red build**, and a ruling that a negative is green only with a **recorded mutation
+  run id**. **18 of 20 rows are unproven and the gate prints that number**; closing them is the standing work.
+  It also leaves `check:csv-shape`, because a shifted CSV row has now silently answered a coverage question
+  wrongly twice in this repository.
+- **ACBP-P7-008** failure-injection pass — listed `ACBP-P6-012` as its dependency, which is why it was unstartable
+  until that merged. **P7-002 hands it concrete material**: Gate 14's four points to attack, and the §9.14 class
+  (a new gate outranking an existing one and silently inheriting its side effects) which this repository does not
+  enforce anywhere. **P7-007 hands it the index**: adding a row is now the cheapest part of proving a negative.
 - **ACBP-P7-009** end-to-end MVP suite — unblocked by P7-001.
 - **ACBP-P7-006 stays owner-gated**: it needs real live infrastructure, and it is the only thing that can turn
   P6-011's suppression counter from "it fired" into "it would have".

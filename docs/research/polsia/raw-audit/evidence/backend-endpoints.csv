@@ -10,7 +10,7 @@ operations,GET,/api/v2/engineering-v2/live?companyId=<companyId>,live/activity p
 operations,GET,/api/v2/companies/<companyId>/terminal/logs?limit=50,terminal/activity,redacted bounded logs,observed route
 operations,GET,/api/v2/companies/<companyId>/mood,Mood card,company operating status,observed route
 operations,GET,/api/v2/faces,Mood UI,avatar/face assets,observed route
-tasks,GET,/api/v2/companies/<companyId>/tasks?status=todo,in_progress,queued,Tasks module,filtered task queue,observed route
+tasks,GET,"/api/v2/companies/<companyId>/tasks?status=todo,in_progress,queued",Tasks module,filtered task queue,observed route
 tasks,GET,/api/v2/companies/<companyId>/tasks,Tasks module,task history/lifecycle,observed route
 tasks,GET,/api/v2/companies/<companyId>/tasks/recurring,Recurring tab,scheduled task definitions,observed route
 billing,GET,/api/subscription,Upgrade/Payments,subscription state,observed route

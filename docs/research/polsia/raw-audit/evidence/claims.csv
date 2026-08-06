@@ -28,6 +28,6 @@ claim_number,classification,evidence_type,confidence,summary
 27,Not found,UI,40,No memory editor
 28,Not found,UI,40,Failed/Repeat visible; auto-retry unknown
 29,Verified directly in app,UI,99,Versions rollback copy
-30,Contradicted,UI+FAQ,99,Current price is $25/month, not $49
+30,Contradicted,UI+FAQ,99,"Current price is $25/month, not $49"
 31,Verified through current first-party documentation,FAQ,85,FAQ states 20% generated revenue
 32,Partially verified,FAQ,85,Ads FAQ states 20% platform fee; no spend executed
