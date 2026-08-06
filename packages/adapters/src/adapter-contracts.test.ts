@@ -5,7 +5,7 @@
 import { describe, test, expect } from 'vitest';
 import { isPlatformError, isSecretResolved, toModelId, toObjectKey, toSecretRef } from '@acbp/contracts';
 import type { AbortSignalLike, AdapterCallOptions, CorrelationContext, ModelProviderRequest } from '@acbp/contracts';
-import { FakeIdentityProvider, FakeModelProvider, FakeObjectStorage, FakeSecretProvider } from '@acbp/test-support';
+import { FakeIdentityProvider, AlwaysSucceedsModelProvider, NonFailingObjectStorage, FakeSecretProvider } from '@acbp/test-support';
 
 const SENTINEL = 'zz-secret-01';
 const correlation: CorrelationContext = { correlationId: '11111111-1111-4111-8111-111111111111' };
@@ -73,7 +73,7 @@ describe('identity provider contract', () => {
 
 describe('object storage contract', () => {
   test('round-trips objects by opaque key; unknown key fails closed', async () => {
-    const storage = new FakeObjectStorage();
+    const storage = new NonFailingObjectStorage();
     const key = toObjectKey('company/co_1/doc.txt');
     const meta = await storage.put({ key, body: new Uint8Array([1, 2, 3]), contentType: 'text/plain' });
     expect(meta).toEqual({ contentType: 'text/plain', sizeBytes: 3 });
@@ -86,7 +86,7 @@ describe('object storage contract', () => {
   });
 
   test('metadata is provider-neutral: no public-access flag, no credentials, no vendor url', async () => {
-    const storage = new FakeObjectStorage();
+    const storage = new NonFailingObjectStorage();
     const meta = await storage.put({ key: toObjectKey('k'), body: new Uint8Array([9]), contentType: 'application/octet-stream' });
     const keys = Object.keys(meta);
     for (const forbidden of ['acl', 'public', 'isPublic', 'url', 'signedUrl', 'credential', 'token', 'bucket', 'region']) {
@@ -100,7 +100,7 @@ describe('model provider contract', () => {
   const req = (): ModelProviderRequest => ({ modelId: toModelId('primary'), messages: [{ role: 'user', content: 'hello world' }] });
 
   test('deterministic output + provider-neutral usage for identical inputs', async () => {
-    const provider = new FakeModelProvider();
+    const provider = new AlwaysSucceedsModelProvider();
     const a = await provider.generate(req(), withCorrelation);
     const b = await provider.generate(req());
     expect(a).toEqual(b); // deterministic
@@ -109,7 +109,7 @@ describe('model provider contract', () => {
   });
 
   test('finish status is a platform-owned state; no raw provider response or fallback field is exposed', async () => {
-    const response = await new FakeModelProvider().generate(req());
+    const response = await new AlwaysSucceedsModelProvider().generate(req());
     expect(['completed', 'length', 'content_filtered', 'refused', 'error']).toContain(response.finishStatus);
     const keys = Object.keys(response);
     for (const forbidden of ['raw', 'rawResponse', 'httpResponse', 'providerResponse', 'sdkResponse', 'fallbackUsed', 'apiKey']) {
@@ -120,18 +120,18 @@ describe('model provider contract', () => {
 
   test('cancellation is representable and normalized to a PlatformError', async () => {
     const abortedSignal: AbortSignalLike = { aborted: true, addEventListener() {}, removeEventListener() {} };
-    await expect(new FakeModelProvider().generate(req(), { signal: abortedSignal })).rejects.toSatisfy(isPlatformError);
+    await expect(new AlwaysSucceedsModelProvider().generate(req(), { signal: abortedSignal })).rejects.toSatisfy(isPlatformError);
   });
 
   test('does not mutate the request input', async () => {
     const input = req();
     const snapshot = JSON.stringify(input);
-    await new FakeModelProvider().generate(input);
+    await new AlwaysSucceedsModelProvider().generate(input);
     expect(JSON.stringify(input)).toBe(snapshot);
   });
 
   test('lifecycle (init/shutdown) is explicit', async () => {
-    const provider = new FakeModelProvider();
+    const provider = new AlwaysSucceedsModelProvider();
     expect(provider.isStarted).toBe(false);
     await provider.init();
     expect(provider.isStarted).toBe(true);

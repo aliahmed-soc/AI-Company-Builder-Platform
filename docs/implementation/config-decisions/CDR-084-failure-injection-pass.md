@@ -199,13 +199,22 @@ built one.
 **REWRITTEN IN SLICE 1. This section originally said "this ticket builds them". It does not — they exist
 (§0.2 item 1).** What is actually needed is much smaller, and one item is a hazard rather than a gap:
 
-1. **Remove the naming trap, and this is the priority.** Two classes named `FakeModelProvider` with opposite
-   capability is how the false finding above happened, and it will happen again. Options, in preference order:
-   (a) delete `@acbp/test-support`'s `FakeModelProvider` and `FakeObjectStorage` and re-export the adapters ones;
-   (b) rename them to say what they are — `AlwaysSucceedsModelProvider`, `NonFailingObjectStorage`; (c) leave
-   them and add a header comment pointing at the real rig. **(a) is cleanest and (b) is safest**; both make the
-   mistake impossible to repeat. Whichever is chosen, the weaker fakes' users must be checked first — a suite
-   relying on "this never fails" is relying on something real.
+1. **Remove the naming trap — DONE IN SLICE 2, by rename (option b).** Option (a), deleting test-support's pair
+   and re-exporting the adapters ones, was ruled out on evidence: the sole consumer is
+   `adapters/src/adapter-contracts.test.ts` (ACBP-P0-019), which exercises **lifecycle** conformance
+   (`init`/`shutdown`/`isStarted`) — and the adapters `FakeModelProvider` does not implement `AdapterLifecycle`.
+   The two fakes do genuinely different jobs; only the name was wrong.
+
+   `FakeModelProvider` → **`AlwaysSucceedsModelProvider`**, `FakeObjectStorage` → **`NonFailingObjectStorage`**,
+   both in `@acbp/test-support`, with a header naming the limitation and pointing at the real rig. One consumer
+   updated. ~20 core suites were untouched because they already imported the adapters one.
+
+   **And the trap cannot come back**: `tools/check-duplicate-exports.mjs` (new, in `check:static`) fails the
+   build if any exported class name is defined in **two packages**. A survey found exactly one such duplicate
+   across 52 exported classes — this one — so the general rule ships without exceptions. It has a negative
+   self-test, refuses to pass when it can see no classes at all, and carries 13 regression cases including the
+   shapes that must *not* be flagged: same name twice inside one package, a class in a `.test.ts`, a barrel
+   re-export, and a non-exported class.
 2. **A usage-ledger failure seam for row 13** — currently injected inline in `model-gateway.test.ts` via a
    `recordUsage` that rejects. That is genuine injection and needs no rig, but a shared helper would let the
    other metered paths assert the same fail-closed property.
