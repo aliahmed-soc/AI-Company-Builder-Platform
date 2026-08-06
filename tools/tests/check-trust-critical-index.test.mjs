@@ -75,7 +75,7 @@ function write(root, relPath, content) {
 }
 
 /**
- * @param {{ rows?: object[], maxUnmeasured?: number, canonText?: string, omitProvingFile?: boolean }} opts
+ * @param {{ rows?: object[], maxUnproven?: number, canonText?: string, omitProvingFile?: boolean }} opts
  */
 function run(opts = {}) {
   const rows = opts.rows ?? [row(), secondRow()];
@@ -91,7 +91,7 @@ function run(opts = {}) {
       [
         `export const ANCHOR_CLASSES = Object.freeze(['database_state','recorded_row','return_value_only','pure_helper_only','none']);`,
         `export const STATUSES = Object.freeze(['measured','unmeasured','not_covered','unprovable']);`,
-        `export const MAX_UNMEASURED = ${opts.maxUnmeasured ?? 1};`,
+        `export const MAX_UNPROVEN = ${opts.maxUnproven ?? 2};`,
         `export const TRUST_CRITICAL_INDEX = Object.freeze(${JSON.stringify(rows)});`,
       ].join('\n'),
     );
@@ -143,7 +143,7 @@ rejects(
   { rows: [row({ status: 'measured', mutationRunId: 'fe85082' }), secondRow()] },
   'without a hosted CI run id',
 );
-accepts('measured WITH a run id', { rows: [row({ status: 'measured', mutationRunId: '31074920228' }), secondRow()], maxUnmeasured: 0 });
+accepts('measured WITH a run id', { rows: [row({ status: 'measured', mutationRunId: '31074920228' }), secondRow()], maxUnproven: 1 });
 rejects(
   'records a run id while still calling itself unmeasured',
   { rows: [row({ mutationRunId: '31074920228' }), secondRow()] },
@@ -156,7 +156,18 @@ rejects(
 );
 
 // ---- The ratchet -------------------------------------------------------------------------------------------
-rejects('more unmeasured rows than the ratchet allows', { maxUnmeasured: 0 }, 'RATCHET');
+rejects('more unproven rows than the ratchet allows', { maxUnproven: 0 }, 'RATCHET');
+
+// THE RATCHET MUST NOT PUNISH NEW COVERAGE. A first version of this counted unmeasured alone, so the moment a
+// negative gained its first test (item 15, slice 3) the row moved not_covered -> unmeasured, the count ROSE, and
+// the build failed FOR ADDING A TEST. Counting every not-yet-measured row makes the total flat across that move.
+accepts('giving an uncovered negative its first test does NOT trip the ratchet', {
+  rows: [
+    row(),
+    secondRow({ status: 'unmeasured', anchor: 'database_state', file: PROVING_FILE, testTitle: PROVING_TITLE, mutation: 'Delete the other guard.' }),
+  ],
+  maxUnproven: 2,
+});
 
 // ---- Vocabulary and honesty columns ------------------------------------------------------------------------
 rejects('an anchor outside the closed vocabulary', { rows: [row({ anchor: 'looks_fine' }), secondRow()] }, 'is not one of');

@@ -15,7 +15,7 @@
 //   • a cited file no longer exists, or the cited `test(...)` title is no longer in it (RENAMING A TEST BREAKS
 //     THE BUILD rather than quietly breaking the claim);
 //   • a row claims `measured` without a hosted CI run id — you may not claim a measurement you do not have;
-//   • the number of `unmeasured` rows exceeds MAX_UNMEASURED, which may only ever ratchet DOWN.
+//   • the number of rows NOT yet MEASURED exceeds MAX_UNPROVEN, which may only ever ratchet DOWN.
 //
 // It deliberately does NOT fail merely because rows are unmeasured. Blanket-failing would push an author to
 // relabel a row `not_covered` to get green, which is the opposite of what this file is for. Honesty is cheap
@@ -30,7 +30,7 @@ const ROOT = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
 const CANON = join(ROOT, 'docs', 'implementation', 'TEST-AND-VERIFICATION-STRATEGY.md');
 const CANON_HEADING = '## Trust-critical negative tests';
 
-const { TRUST_CRITICAL_INDEX, ANCHOR_CLASSES, STATUSES, MAX_UNMEASURED } = await import(
+const { TRUST_CRITICAL_INDEX, ANCHOR_CLASSES, STATUSES, MAX_UNPROVEN } = await import(
   pathToFileURL(join(ROOT, 'tools', 'trust-critical-index.mjs')).href
 );
 
@@ -98,6 +98,7 @@ for (const n of indexNumbers) {
 // ── 3. Per-row integrity ─────────────────────────────────────────────────────────────────────────────────────
 const canonByNumber = new Map(canon.map((c) => [c.number, c]));
 let unmeasured = 0;
+let unproven = 0;
 
 for (const row of TRUST_CRITICAL_INDEX) {
   const at = `item ${row.number}`;
@@ -144,11 +145,12 @@ for (const row of TRUST_CRITICAL_INDEX) {
   }
 
   if (row.status === 'unmeasured') unmeasured++;
+  if (row.status !== 'measured') unproven++;
 }
 
-if (unmeasured > MAX_UNMEASURED) {
+if (unproven > MAX_UNPROVEN) {
   problems.push(
-    `${unmeasured} rows are unmeasured but MAX_UNMEASURED is ${MAX_UNMEASURED}. That number is a RATCHET: it may only ever go down. A control that was measured and is no longer measured is a regression in the evidence, not a bookkeeping detail.`,
+    `${unproven} rows are not MEASURED but MAX_UNPROVEN is ${MAX_UNPROVEN}. That number is a RATCHET: it may only ever go down. A control that was measured and is no longer measured is a regression in the evidence, not a bookkeeping detail. (It counts every not-yet-measured row, so ADDING a test to an uncovered negative leaves it unchanged — only recording a red CI run lowers it.)`,
   );
 }
 
@@ -195,6 +197,6 @@ const weak = TRUST_CRITICAL_INDEX.filter((r) => r.anchor === 'return_value_only'
 const none = TRUST_CRITICAL_INDEX.filter((r) => r.status === 'not_covered' || r.status === 'unprovable').length;
 console.log(
   `✔ trust-critical index: ${TRUST_CRITICAL_INDEX.length} canon items pinned to live tests; ` +
-    `${measured} MEASURED (red run recorded), ${unmeasured} unmeasured (ratchet ${MAX_UNMEASURED}), ${none} with no test. ` +
+    `${measured} MEASURED (red run recorded), ${unmeasured} unmeasured, ${none} with no test; ${unproven} unproven (ratchet ${MAX_UNPROVEN}). ` +
     `${weak} rest on a returned value or weaker. Self-test passed.`,
 );

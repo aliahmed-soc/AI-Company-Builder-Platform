@@ -268,9 +268,32 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
    `tools/trust-critical-index.mjs`, `tools/check-trust-critical-index.mjs`,
    `tools/tests/check-trust-critical-index.test.mjs` (20 cases), wired into `check:static` and
    `test:boundaries`. *Verified:* the checker rejected one of its own author's citations on first run.
-3. **#15** — the browser-response negative across all `apps/web` route modules, with a source guard so a new
-   route without coverage fails rather than goes unproven. Must distinguish the client-safe Clerk
-   `publishableKey`, or the test fails on a correct build.
+3. **#15** — **DONE.** `apps/web/src/server/adversarial/secret-egress.test.ts`: all five `Secret` fields loaded
+   with distinct sentinels, **every exported HTTP method of all 23 route modules driven**, body *and* headers
+   swept, plus two source guards (the sweep discovers every route; no route calls `.reveal()`). Three controls:
+   the detector finds a planted secret, a clean response yields nothing, and the client-safe `publishableKey` is
+   explicitly not a secret. **No database required** — `resolveVerifiedIdentity` returns `unauthenticated`
+   before any query, so it runs everywhere rather than only where PostgreSQL is reachable.
+   *Verified by mutation:* adding `debug: loadClerkConfig().secretKey.reveal()` to `auth-check`'s 401 body turns
+   **two** tests red, reporting `GET auth-check/route.ts → 401 carrying: clerkSecretKey` — the method, the
+   route, the status and **which** secret, without printing its value. Run id pending slice 7.
+
+### §8.1 Two things building slice 3 found, recorded because both were my own defects
+
+**The ratchet was measuring the wrong thing, and slice 3 tripped it.** `MAX_UNMEASURED` counted `unmeasured`
+rows alone. The moment #15 gained its first test the row moved `not_covered → unmeasured`, the count ROSE from
+18 to 19, and **the build failed for adding coverage** — the exact opposite of the intended incentive. Replaced
+with `MAX_UNPROVEN`, counting every row not yet `measured`: adding a test leaves it flat, recording a red run
+lowers it, losing a measurement raises it. A regression case now pins the corrected behaviour.
+
+**The secret scanner caught this suite twice, and both times the file changed rather than the scanner.** First
+`generic-credential-assignment`, because the sentinels sat under credential-shaped keys (`clerkSecretKey: '…'`)
+— restructured to `{id, canary}` pairs. Then `clerk-secret-key`, because the canary carried key-shaped entropy
+— given a deliberately low-entropy suffix, matching the existing `sk_test_adversarial_synthetic` precedent. The
+`sk_`/`pk_` prefixes had to stay, since `@acbp/config` validates them and a prefix-free sentinel would fail
+config load, leaving the suite green **without ever having driven a route**. Neither finding was allowlisted:
+`tools/secret-allowlist.txt` silences a rule for a whole file forever, and the investigation already flagged
+that all seven existing entries do exactly that.
 4. **#16** — the audit-payload sweep (and the logger `message` hole, if confirmed), published as a reusable
    `@acbp/test-support` helper so it becomes a suite-wide property rather than three hand-written assertions.
 5. **The strengthening pass** — #7, #19, #3, #18, #10, #14, #17's three real gaps.

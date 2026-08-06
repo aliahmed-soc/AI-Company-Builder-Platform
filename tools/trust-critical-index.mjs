@@ -38,11 +38,16 @@ export const STATUSES = Object.freeze([
 ]);
 
 /**
- * RATCHET. The number of rows still `unmeasured`. It may only ever go DOWN — lowering it is the work of
- * recording a mutation run id. Raising it means a previously measured control stopped being measured, and the
- * checker refuses. Started at 18 (all but the two that have no test at all).
+ * RATCHET. The number of rows NOT in the `measured` state — unmeasured + not_covered + unprovable. It may only
+ * ever go DOWN. Lowering it is the work of recording a mutation run id.
+ *
+ * IT COUNTS UNPROVEN, NOT UNMEASURED, and the difference is load-bearing. A first version counted `unmeasured`
+ * alone; the first time a negative gained a test (#15, slice 3) that row moved `not_covered → unmeasured` and
+ * the count ROSE, so the ratchet failed the build FOR ADDING COVERAGE. Counting everything not yet measured
+ * fixes it: adding a test leaves the total unchanged, recording a red run lowers it, and losing a measurement
+ * raises it — which is the only direction that should ever fail.
  */
-export const MAX_UNMEASURED = 18;
+export const MAX_UNPROVEN = 20;
 
 /**
  * One row per canonical negative.
@@ -275,16 +280,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     number: 15,
     statement: 'Provider keys never appear in browser responses.',
     attributedTo: 'P0-019, P7-007',
-    builtBy: 'ACBP-P0-019 built a serialization test and a source scan — NOT a response test',
-    status: 'not_covered',
-    anchor: 'none',
-    file: '',
-    testTitle: '',
-    entryPoint: '',
-    mutation: '',
+    builtBy: 'ACBP-P7-007 slice 3 — P0-019 built a serialization test and a source scan, NOT a response test',
+    status: 'unmeasured',
+    anchor: 'recorded_row',
+    file: 'apps/web/src/server/adversarial/secret-egress.test.ts',
+    testTitle: 'every exported HTTP method of every route module answers WITHOUT emitting a secret',
+    entryPoint: 'every route.ts handler under apps/web/src/app',
+    mutation:
+      'Make a route emit a configured secret — e.g. add `debug: loadClerkConfig().secretKey.reveal()` to auth-check/route.ts\'s 401 body.',
     mutationRunId: '',
     doesNotProve:
-      'Nothing asserts this. BEWARE TWO NEAR-MISSES: clerk-webhook-handler.test.ts and fail-closed-proxy.test.ts both carry real whsec_/sk_test_ literals in real Response bodies with not.toMatch assertions, so a reviewer working by grep would call this covered. Neither drives a route module and neither uses a configured credential. The literal claim is also unbuildable today — no provider key exists in the runtime (the Infisical adapter is `export {}`, the only model adapter is the fake). ACBP-P7-007 slice 3 builds the honest narrower form.',
+      'THE CANONICAL WORDING. "Provider keys" do not exist in the runtime yet (the Infisical adapter is `export {}`, the only model adapter is the fake, there is no credential_ref table), so what is proven is the narrower property that carries the claim once they do: no `Secret`-wrapped configuration value reaches a response body or header. Coverage is the DENIAL and THROW paths — an authenticated 200 body is not swept, because that needs a database. BEWARE TWO NEAR-MISSES that read as coverage to a grep: clerk-webhook-handler.test.ts and fail-closed-proxy.test.ts carry real whsec_/sk_test_ literals in real Response bodies; neither drives a route module.',
   },
   {
     number: 16,
