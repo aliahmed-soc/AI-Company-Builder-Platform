@@ -22,7 +22,7 @@
     "check:usage-kind-predicate": "node tools/check-usage-kind-predicate.mjs",
     "check:migration-drain-loops": "node tools/check-migration-drain-loops.mjs",
     "check:csrf-origin-gate": "node tools/check-csrf-origin-gate.mjs",
-    "probe:csrf-origin-gate": "node tools/probes/p7-013-csrf-origin-gate.probe.mjs",
+    "probe:csrf-origin-gate": "node tools/probes/p7-014-csrf-origin-gate.probe.mjs",
     "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs tools/tests/check-csrf-origin-gate.test.mjs",
     "test:config": "vitest run packages/config",
     "test:observability": "vitest run packages/observability",

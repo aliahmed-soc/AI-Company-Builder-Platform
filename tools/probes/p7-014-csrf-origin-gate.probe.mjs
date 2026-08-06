@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ACBP-P7-013 — mutation probe for the CSRF origin gate (CDR-081 §6.1). `pnpm run probe:csrf-origin-gate`.
+// ACBP-P7-014 — mutation probe for the CSRF origin gate (CDR-081 §6.1). `pnpm run probe:csrf-origin-gate`.
 //
 // Each entry neutralises ONE control WITHOUT touching a test, runs the suite that is supposed to notice,
 // and reverts. A SURVIVOR means the control is unmeasured — a green suite that would stay green with the
@@ -137,7 +137,7 @@ for (const m of MUTATIONS) {
   }
 }
 
-console.log('\n=== ACBP-P7-013 mutation probe ===\n');
+console.log('\n=== ACBP-P7-014 mutation probe ===\n');
 for (const r of results) {
   console.log(
     `${r.verdict === 'KILLED' ? '✔ KILLED  ' : '✖ ' + r.verdict} ${r.id}\n            ${r.what ?? r.detail}\n` +

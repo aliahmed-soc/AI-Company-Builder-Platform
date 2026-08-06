@@ -1,4 +1,4 @@
-// ACBP-P7-013 / CDR-081 — the same-origin gate: CSRF protection for apps/web (NFR-010's ASVS baseline).
+// ACBP-P7-014 / CDR-081 — the same-origin gate: CSRF protection for apps/web (NFR-010's ASVS baseline).
 //
 // WHAT THIS DEFENDS. The 16 state-changing route modules under src/app/api authenticate through
 // `resolveVerifiedIdentity` -> `auth()`, which reads Clerk's `__session` cookie. A cookie is an AMBIENT
@@ -98,9 +98,14 @@ export function allowedOriginsFromEnv(env: Record<string, string | undefined>): 
  * equality, so `'https://app.example.test/'` with a trailing slash would never match a real Origin header.
  * The only production caller is `allowedOriginsFromEnv`, which normalizes. Exact equality is the point —
  * a prefix or substring comparison is defeated by `https://app.example.test.evil.test`, which is mutation
- * M5 in `tools/probes/p7-013-csrf-origin-gate.probe.mjs`.
+ * M5 in `tools/probes/p7-014-csrf-origin-gate.probe.mjs`.
  */
 export function decideSameOrigin(request: OriginGateRequest, allowedOrigins: readonly string[]): OriginVerdict {
+  // Uppercasing WIDENS the safe set (HTTP methods are case-sensitive, so `get` is not `GET`), and that is
+  // deliberate rather than sloppy. It can only ever admit lowercase spellings of GET/HEAD/OPTIONS — an
+  // unsafe verb in any casing still misses the allowlist and falls through to the provenance rows — and
+  // Next dispatches `get` to nothing, so a request that gains `safe_method` this way reaches a 405 instead
+  // of a handler. Normalizing costs nothing and avoids a gate whose verdict depends on header casing.
   if (SAFE_METHODS.has(request.method.trim().toUpperCase())) {
     return { kind: 'allow', reason: 'safe_method' };
   }

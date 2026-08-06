@@ -67,10 +67,22 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **ACBP-P7-013 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
-  ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate`, **no migration**, no schema,
-  no new contract. A NEW ticket: ACBP-P7-007 found the gap and the owner ruled it a separate implementation
+- **ACBP-P7-014 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
+  ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate` — **the branch name keeps the
+  old number and the ticket is ACBP-P7-014**; see the collision note below. **No migration**, no schema, no
+  new contract. A NEW ticket: ACBP-P7-007 found the gap and the owner ruled it a separate implementation
   ticket rather than work to do inside a verification pass.
+  - **⚠️ TICKET-ID COLLISION, RESOLVED BY YIELDING — OWNER MAY WANT TO REVISIT.** A concurrent session
+    independently took **ACBP-P7-013** for **HTTP rate limiting** (branch `p7-013-http-rate-limiting`,
+    commit `b20b036`, branched from the same `2c4f0f5`). Both sessions picked "the next free number" from
+    the same backlog within minutes of each other, and both add a `BACKLOG.csv` row — so a **duplicate
+    ticket id would have merged**. This ticket renumbered itself to **ACBP-P7-014** rather than wait,
+    because yielding is the only move that removes the failure mode WITHOUT requiring the other session to
+    act, and one session cannot edit another's branch. The branch name and PR #78 title still say
+    `p7-013`; renaming a pushed branch means closing and reopening the PR, which is the owner's call.
+    **This is not a claim that the other session's number is correct** — CDR-080 §4 lists CSRF first, and
+    this branch was pushed eight minutes earlier. It is a claim that a duplicate id is worse than a
+    number nobody argued about.
   - **THE FIRST JOB WAS TO DISPROVE THE FINDING, NOT TO BUILD.** *"CSRF protection is absent"* could
     honestly have been *"partially covered by the provider"*. Three provider mechanisms were checked and
     none covers it (CDR-081 §0.2). The sharpest is the first: **`__session`'s `SameSite` attribute is
@@ -85,8 +97,9 @@ ticket without a DONE line above it is genuinely in flight._
     exist. Next 16 renamed the boundary; this app's is `apps/web/src/proxy.ts`.
   - **WHAT LANDED.** A fail-closed same-origin gate at the request-interception boundary: `Sec-Fetch-Site`
     first and exclusively when present, `Origin` against `APP_PUBLIC_URL` as the fallback, and **deny when
-    neither is present** — absence of provenance is never permission. Ten rows, closed vocabulary, asserted
-    by REASON rather than by allow/deny so a row that stops denying cannot pass by coincidence.
+    neither is present** — absence of provenance is never permission. **Nine rows in the pure function**
+    plus the proxy's pre-existing webhook early return, closed vocabulary, asserted by REASON rather than by
+    allow/deny so a row that stops denying cannot pass by coincidence.
     `proxy.ts` gained its **first test file**, which is where the ordering claim lives (refused before any
     session is established, so a forgery reaches no Clerk round trip and no handler).
   - **A TOKEN WAS REJECTED ON THE RECORD** (CDR-081 §1). There is no rendered UI, so a synchronizer token
@@ -102,6 +115,21 @@ ticket without a DONE line above it is genuinely in flight._
     array, so every entry went invisible and a perfectly correct matcher was reported as not covering
     `/api`. **No synthetic fixture could have caught it**: every fixture had a simpler matcher than the real
     file. Replaced with a depth-and-string-state scanner; the real-shaped matcher is now a self-test probe.
+  - **AND THEN AN INDEPENDENT REVIEW DEFEATED THAT CHECKER FOUR WAYS.** Its exemption rule matched
+    `return undefined`, so `return;`, `return NextResponse.next();`, `return new Response(...)` and
+    `if (request.url.startsWith('https://internal…')) return undefined;` **each added a working second CSRF
+    exemption with the checker exiting 0** — the last because the comment stripper removed line comments
+    BEFORE string literals and truncated the line at the `//` inside the URL, a bug in a *shared* helper
+    that could have blinded any detector. Rule changed to **no early return before the gate**, which cannot
+    be evaded by changing what is returned. This is the same class AND the same count as
+    `check-approval-port.mjs`'s four evasions — whose header was **read and cited in this checker's own
+    header** while the same mistake was being made underneath it. Knowing the lesson did not prevent it.
+  - **THE REVIEW RETURNED NO BLOCKER, 2 HIGH, 5 MEDIUM, 6 LOW — and every finding except the guard's was in
+    PROSE.** It could construct no attacker path to a handler, no URL that satisfies `isClerkWebhookPath`
+    while routing elsewhere, and no vacuous assertion; the gate itself came through unchanged. The second
+    HIGH was this file's sibling claim in CDR-081 §0.3 that *three* routes had a media-type check when
+    **nine** do, with the admin POST — which requires an exact `{ reason }` body — filed among the bodyless
+    ones. Third consecutive ticket where the defects are in the sentences, not the code.
   - **NO REAL-POSTGRESQL PROOF EXISTS AND NONE IS CLAIMED — and the reason is not the missing database.**
     The planned composition test was **withdrawn as VACUOUS** (CDR-081 §6.3): it would call `proxy()`, get a
     403, decline to call the route *on that basis*, and then assert no row exists — asserting only that the

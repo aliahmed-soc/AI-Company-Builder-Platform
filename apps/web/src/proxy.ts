@@ -12,7 +12,7 @@
 // a handler opts in. Enforcement for protected surfaces is therefore performed explicitly and
 // server-side in the route (fail-closed), not inferred from any browser-supplied header or claim.
 //
-// ACBP-P7-013 — this file is also the CSRF ENFORCEMENT POINT (CDR-081 §2). The gate is here rather than in
+// ACBP-P7-014 — this file is also the CSRF ENFORCEMENT POINT (CDR-081 §2). The gate is here rather than in
 // each route because a per-route control is a control someone forgets on route 17; enforcing at the single
 // boundary every request already crosses means a route module that does not exist yet is covered the day it
 // is written. Ordering inside `proxy` is load-bearing and is asserted by proxy.test.ts + the static guard

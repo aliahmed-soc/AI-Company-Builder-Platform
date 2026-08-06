@@ -1,4 +1,4 @@
-# CDR-081 — CSRF protection for `apps/web` (ACBP-P7-013)
+# CDR-081 — CSRF protection for `apps/web` (ACBP-P7-014)
 
 Governing: **NFR-010** (security baseline — the ASVS-aligned control set), `SECURITY-ARCHITECTURE.md` §1
 (Authentication boundary / Session management / Authorization); ADR-022 (Clerk), ADR-023 (Next.js delivery
@@ -42,10 +42,11 @@ a content-type check to catch.
 Three provider-side mechanisms were checked, because each is plausibly a CSRF defence and none is:
 
 1. **`SameSite` on the session cookie.** `__session` is named in `@clerk/backend@3.11.7`
-   (`dist/chunk-NVYUROUB.mjs:299`), but the SDK never chooses its attributes: at `:6697` and `:7063` it
-   appends handshake `Set-Cookie` values **verbatim** from the handshake payload, which Clerk's Frontend
-   API mints server-side. The only `SameSite` the SDK itself writes is on a 2-second handshake *counter*
-   cookie (`:6786`).
+   (`dist/chunk-NVYUROUB.mjs:299`), but the SDK never chooses its attributes: at `:6697` (the handshake
+   path) and `:7063` (`attemptRefresh`) it appends provider-minted `Set-Cookie` values **verbatim**, and
+   Clerk's Frontend API is what mints them server-side. The only `SameSite` the SDK itself writes is on a
+   2-second handshake *counter* cookie (`:6786`). *(An earlier draft labelled `:7063` a handshake site as
+   well; the append behaviour is identical, the path is the refresh flow.)*
    **So the attribute that would carry the defence is chosen by the provider, outside this repository, and
    is not observable, assertable or pinnable from here.** Whatever its current value, this codebase cannot
    test it, cannot detect it changing, and does not own the instance setting that selects it. A control
@@ -58,10 +59,12 @@ Three provider-side mechanisms were checked, because each is plausibly a CSRF de
    configurational: `azp` records the origin the token was **minted for**. In a forgery against this app the
    victim's token was minted on this app's own origin, so `azp` matches and the check passes. It stops a
    *different* frontend reusing a token; it does nothing about a *different page* causing a request to ours.
-3. **Whether `authorizedParties` is even on this path.** It is not. `proxy.ts:21` calls `clerkMiddleware()`
-   with **no options**, and the route path is `auth()`, not `ClerkIdentityProvider`. So the web session
-   surface applies no authorized-party check at all. Recorded as a finding (§7.1); it is **not** a CSRF gap
-   and fixing it would not close this one.
+3. **Whether `authorizedParties` is even on this path.** It is not. `proxy.ts` calls `clerkMiddleware()`
+   with **no options** — the `sessionProxy` binding — and the route path is `auth()`, not
+   `ClerkIdentityProvider`. So the web session surface applies no authorized-party check at all. Recorded as
+   a finding (§7.1); it is **not** a CSRF gap and fixing it would not close this one.
+   *(Cited by symbol rather than line: this file's line numbers moved inside this very ticket, so a line
+   citation would have been stale in the commit that introduced it.)*
 
 ### §0.3 Same-origin posture, and what the codebase does today
 
@@ -71,13 +74,23 @@ control: the CSRF-reachable methods are exactly the ones that need no preflight 
 POST (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`, or no body at all) is a
 simple request, is sent, and its side effect lands even though the attacker never reads the reply.
 
-Three bodied routes go through `readJsonObject`, which returns 415 unless the media type is
-`application/json` (`companies-http.ts:20`) — a side effect of bounded body parsing, not a CSRF control,
-and it protects none of the bodyless routes. `pause`, `resume`, `interview/suspend`, `interview/resume`,
-`provisioning/resume`, the member `DELETE` and the admin `POST` read no body at all.
+**Nine** of the seventeen state-changing methods go through a body parser that returns 415 unless the media
+type is `application/json` — five in `companies-http.ts:20`, two in `members-http.ts:20`, plus
+`accounts/profile-http.ts:27` and `admin/admin-http.ts:30`. That is a side effect of bounded body parsing,
+not a CSRF control, and it protects none of the rest. **Eight are reachable by a simple request**:
+`pause`, `resume`, `interview` (start), `interview/suspend`, `interview/resume`, `provisioning/resume`,
+`DELETE` a membership, and `DELETE` a memory item — each reads no body at all.
 
-Searched and absent: no `Origin`, `Sec-Fetch-*`, CSRF token, or same-origin check exists anywhere in
-`apps/web/src` (grep returns zero). `next.config.ts` sets no `headers()`.
+*(An earlier draft of this section said "three bodied routes" and put the admin `POST` among the bodyless
+ones. Both were wrong — an independent review counted them. `POST /api/admin/.../read` requires an exact
+`{ reason }` body and rejects a non-JSON media type at `admin-http.ts:30`, exactly as its own route header
+says. The ruling is unaffected, but a reader sizing the pre-existing exposure from that sentence would have
+been off by a factor of three and would have looked for the admin route on the wrong side of the line.)*
+
+Searched and absent **before this ticket**: no `Origin`, `Sec-Fetch-*`, CSRF token, or same-origin check
+existed anywhere in `apps/web/src`; `next.config.ts` sets no `headers()`. Stated in the past tense on
+purpose — the first half stops being true the moment this ticket merges, and a present-tense claim in a
+decision record is a claim that goes stale by its own success.
 
 ### §0.4 One correction to the finding as written
 
@@ -94,11 +107,20 @@ middleware was right; the path had moved.
 **A synchronizer or double-submit token is the wrong control for this codebase today, and would be worse
 than the gap it closes.**
 
-A token has to be issued to a document and echoed by the client. **This repository has no rendered UI** —
-`apps/web/src/app` contains route handlers plus Clerk's `sign-in`/`sign-up` catch-alls, and no page posts
-to any of the 16. PROJECT-STATE records the API-first posture at ACBP-P6-008 in those words. So a token
-would ship with an issuing endpoint, a cookie, a verification path, and **no producer of a valid token
-anywhere in production** — a control that only tests can satisfy.
+A token has to be issued to a document and echoed by the client. **No page in this application posts to any
+of the seventeen state-changing methods**, and that — not "there is no UI" — is the load-bearing fact.
+
+`apps/web/src/app` *does* render: `layout.tsx` mounts `ClerkProvider` with `SignInButton`, `SignUpButton`
+and `UserButton`; `page.tsx` is a server component; and there are Clerk's `sign-in`/`sign-up` catch-alls.
+What none of them contains is a `<form>`, a Server Action (`grep "use server"` across `apps/web/src` and
+`packages` returns zero) or a `fetch` to any of those methods. So a token would ship with an issuing
+endpoint, a cookie, a verification path, and **no producer of a valid token anywhere in production** — a
+control that only tests can satisfy.
+
+*(This section said "this repository has no rendered UI" until an independent review pointed at
+`layout.tsx`. That is the repository's own shorthand — PROJECT-STATE uses it at ACBP-P6-008 — and it is
+fine as shorthand and wrong as a premise. It matters because §3 leaned on it to defer a different NFR-010
+item; that row is corrected too.)*
 
 This repository has a name for that shape and a history with it: ACBP-P6-010's ceiling that no production
 caller passes, ACBP-P6-011's usage key that nothing supplies, ACBP-P7-002's predicate with zero production
@@ -222,7 +244,7 @@ statement leaves nothing in the database to assert on. §6.3 records what was pl
 | Not delivered | Why |
 |---|---|
 | **HTTP rate limiting** (NFR-010) | The second of CDR-080 §4's three. Different control, different failure mode, needs a store and a limit value nobody has ruled. Its own ticket. |
-| **Security headers / CSP** (NFR-010) | The third. Needs a rendered UI to have a policy about. Its own ticket. |
+| **Security headers / CSP** (NFR-010) | The third. A different control with its own failure modes, whose policy has to be authored against the actual rendered surface — `layout.tsx` mounting Clerk's components today, plus whatever the first real product UI adds. Its own ticket. **Not** deferred because no UI exists: one does (§1), and an earlier draft of this row said otherwise. |
 | Pen review | External engagement at the General MVP gate (`RELEASE-GATES.md:11`). Untouched by this ticket, and the NFR-010 traceability cells keep saying so. |
 | A CSRF **token** | §1. Rejected on the record, not overlooked — and reversible if a UI ever wants defence in depth. |
 | Any change to `authorizedParties` | §0.2.3 is a real finding and a different control. Widening this ticket to it would be scope this CDR did not rule on. |
@@ -241,16 +263,22 @@ isolation. The guard fails the build when:
 
 1. `proxy.ts` no longer calls the gate, or calls it **after** `clerkMiddleware()` (denial after a session is
    established still refuses the request, but it is no longer the order this document asserts);
-2. the proxy `matcher` stops covering `/api`, which would leave every route module uncovered while every
-   test that drives the gate directly stayed green — the most dangerous of the four, because it is a config
-   edit far from any security-looking file;
-3. the exempt-path set is anything other than the single declared Clerk webhook path — a second exemption
-   must be an edit to this guard, which is a visible decision rather than a quiet one;
+2. the proxy `matcher` stops covering **all** of `/api` — the most dangerous of the four, because it is a
+   config edit far from any security-looking file that changes nothing a suite calling the gate directly can
+   observe. "Covers `/api`" is checked against a closed list of whole-tree forms: a narrowed
+   `'/api/companies/:path*'` **fails**, because it reads as coverage while leaving `/api/account/*` and
+   `/api/admin/*` — five of the sixteen — unproxied. An **object-form** entry (`{ source, missing }`, which
+   lets any request carrying a named header skip the proxy) makes the checker exit 2 rather than mine the
+   `source` string and call the tree covered;
+3. **anything returns from the proxy handler before the gate runs**, other than the single declared Clerk
+   webhook bypass — a second exemption must be an edit to this guard, which is a visible decision rather
+   than a quiet one;
 4. a `route.ts` exports a state-changing method from a path the matcher does not cover.
 
-Detection of exported methods matches `export async function POST`, `export function POST` and
-`export const POST =` — the webhook uses the second form and a future route may use the third, and a guard
-that only knows one shape is a guard that reports clean.
+Detection of exported methods matches **four** shapes — `export async function POST`, `export function
+POST`, `export const POST =`, and a renamed re-export (`export { h as POST }`). The repository already uses
+the first two (the companies routes and the webhook respectively) and nothing stops the next route reaching
+for either of the others; a guard that knows one shape is a guard that reports clean.
 
 It carries the house **negative self-test**: every detector must still fire on synthetic inputs before a
 clean tree is reported, or the checker exits 2. CDR-080 §8.4's lesson is the reason — a checker that stops
@@ -273,6 +301,28 @@ every fixture had a simpler matcher than the real file — the bug lived exactly
 and the thing tested. The real-shaped matcher is now a self-test probe, so the gap is closed rather than
 noted.
 
+### §4.2 The independent review defeated this guard FOUR ways, and the rule had to change
+
+The exemption check originally matched `return undefined`. A review built fixture trees and ran the real
+checker: `return;`, `return NextResponse.next();`, `return new Response(null, {status:200});`, and
+`if (request.url.startsWith('https://internal.example')) return undefined;` **each added a fully working
+second CSRF exemption with the checker exiting 0.**
+
+The last one is the instructive one. `stripCommentsAndStrings` removed line comments *before* string
+literals, so `line.slice(0, line.indexOf('//'))` truncated at the `//` inside the URL and everything after
+it vanished. That bug was in a **shared helper**, so it could have blinded any detector — not only the one
+that happened to be probed.
+
+**The rule is now "no early return before the gate except the declared webhook bypass",** which cannot be
+evaded by changing *what* is returned, because the defect was never about the value: it is about control
+leaving the handler before the gate runs. The stripper is a single-pass scanner, it is probed directly in
+the self-test, and all four evasions are regression cases.
+
+This is the same class **and the same count** as the four evasions `check-approval-port.mjs` records against
+its own first version. That file's lesson had been read and quoted in this one's header while the same
+mistake was being made underneath it — which is the argument for adversarial review rather than for reading
+more carefully.
+
 ---
 
 ## §5 Slices
@@ -292,19 +342,24 @@ noted.
 ### §6.1 The mutation probe — committed, not described
 
 Every control was written red-first, and every one is **measured** by
-`tools/probes/p7-013-csrf-origin-gate.probe.mjs` (`pnpm run probe:csrf-origin-gate`). **7 mutations, 0
+`tools/probes/p7-014-csrf-origin-gate.probe.mjs` (`pnpm run probe:csrf-origin-gate`). **7 mutations, 0
 survivors.** Each neutralises one control without touching a test, and the probe prints the NAMES of the
 tests that went red so a reader can check they are the ones the mutation should have broken:
 
-| | Mutation | Result |
+| | Mutation | Killed by |
 |---|---|---|
-| M1 | `no_provenance` → allow (row 10) | **killed** — 10 failed / 44 passed |
-| M2 | `same-site` → allow (row 4) | **killed** — 3 failed / 51 passed |
-| M3 | unrecognised `Sec-Fetch-Site` → allow (row 7) | **killed** — 1 failed / 41 passed |
-| M4 | empty allowed set → allow everything (§1.2) | **killed** — 1 failed / 41 passed |
-| M5 | Origin compared by `startsWith` | **killed** — 2 failed / 40 passed |
-| M6 | the proxy ignores the deny verdict (§2) | **killed** — 6 failed / 6 passed, **and the static guard exits 1** |
-| M7 | the webhook bypass removed (§2 step 1) | **killed** — 1 failed / 11 passed, **and the static guard exits 1** |
+| M1 | `no_provenance` → allow (row 10) | the bodyless-forgery and header-stripped cases, in both suites |
+| M2 | `same-site` → allow (row 4) | the sibling-subdomain cases, in both suites |
+| M3 | unrecognised `Sec-Fetch-Site` → allow (row 7) | the closed-vocabulary case |
+| M4 | empty allowed set → allow everything (§1.2) | the missing-`APP_PUBLIC_URL` case |
+| M5 | Origin compared by `startsWith` | the prefix (`…test.evil.test`) and non-default-port cases |
+| M6 | the proxy ignores the deny verdict (§2) | the proxy suite **and the static guard (exit 1)** |
+| M7 | the webhook bypass removed (§2 step 1) | the webhook-passthrough case **and the static guard (exit 1)** |
+
+**No pass/fail counts are recorded here on purpose.** An earlier version tabulated them and they were
+**stale within the same working tree** — two tests were added to `same-origin.test.ts` during review and
+every figure was wrong by two. The probe prints current counts and the names of the red tests on every run,
+so a number frozen into this document can only ever contradict it. Write the claim that cannot go stale.
 
 **It is committed rather than run-and-reported, and that is the point.** ACBP-P6-006's probe was a branch
 whose commit is reachable from no ref today; ACBP-P7-002's was not preserved at all, so CDR-079 carries a
@@ -361,11 +416,19 @@ anything even with a database behind it.)*
 the CSRF clause**: rate limiting, security headers/CSP and the pen review stay named as unmet in the gap
 cell. NFR-010 does not become `Covered`; it becomes partially covered with a shorter gap.
 
-**These two cells are also rewritten by the unmerged `p7-007-security-test-pass` branch** (CDR-080 §5),
-which downgrades them from `Covered (MVP)` and names CSRF as ABSENT. Whichever lands second must **merge**
-rather than overwrite, and if ACBP-P7-007 lands first its "CSRF ... ABSENT" wording is stale the moment this
-ticket merges. Recorded here because a conflict resolved by taking one side wholesale is how a corrected
-record silently reverts — the failure ACBP-P7-002 hit three times.
+**THESE TWO CELLS ARE A THREE-WAY COLLISION, and every party is writing about the same requirement:**
+
+| Branch | What it writes into the NFR-010 cells |
+|---|---|
+| `p7-007-security-test-pass` (unmerged) | downgrades from `Covered (MVP)`, names CSRF, rate limiting and headers/CSP as **ABSENT** (CDR-080 §5) |
+| **this branch** | CSRF **closed**; rate limiting, headers/CSP and the pen review still unmet |
+| `p7-013-http-rate-limiting` (unmerged, a concurrent session) | rate limiting **closed** |
+
+Whichever lands second, third or fourth must **merge** rather than overwrite. The failure mode is concrete:
+if ACBP-P7-007 lands after this ticket and its wording is taken wholesale, the record goes back to saying
+CSRF is absent when it is built — a corrected record silently reverting, which is the failure ACBP-P7-002
+hit three times. The safe resolution is to keep the **union of what is closed** and the **intersection of
+what is unmet**; no single branch's version of these cells is correct on its own after the first merge.
 
 ---
 

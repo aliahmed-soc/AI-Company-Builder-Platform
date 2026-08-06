@@ -1,4 +1,4 @@
-// ACBP-P7-013 / CDR-081 §4 — tests for the CSRF origin-gate check.
+// ACBP-P7-014 / CDR-081 §4 — tests for the CSRF origin-gate check.
 //
 // The gate is enforced in ONE place, which is its strength (a route that does not exist yet is covered) and
 // also its whole risk: it can be switched off for all 16 state-changing routes at once, silently, by an edit
@@ -131,6 +131,33 @@ describe('the four ways the gate gets switched off for every route at once', () 
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/matcher/i);
   });
+
+  test('FAILS on a NARROWED /api matcher that covers only some routes', () => {
+    // `/api/companies/:path*` starts with /api and reads as coverage to a loose check, while leaving
+    // /api/account/* and /api/admin/* — five of the sixteen — with no proxy at all.
+    const r = run(
+      makeTree({ proxy: proxySource({ matcher: `'/api/companies/:path*',` }), routes: { 'api/companies': POST_ROUTE } }),
+    );
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/matcher/i);
+  });
+
+  test('accepts the equivalent whole-/api forms, in either alternation order', () => {
+    for (const m of [`'/(api|trpc)(.*)',`, `'/(trpc|api)(.*)',`, `'/api/:path*',`, `'/api/(.*)',`]) {
+      const r = run(makeTree({ proxy: proxySource({ matcher: m }), routes: { 'api/companies': POST_ROUTE } }));
+      expect(r.code, `${m} should be accepted`).toBe(0);
+    }
+  });
+
+  test('EXIT 2 on an OBJECT-form matcher entry, which this checker cannot reason about', () => {
+    // Next accepts `{ source, missing: [...] }`, which turns any request carrying a given header into a
+    // proxy-free request. Extracting the `source` string and calling it covered would be a lie; refusing to
+    // answer is the honest result.
+    const matcher = `{ source: '/(api|trpc)(.*)', missing: [{ type: 'header', key: 'x-acbp-skip' }] },`;
+    const r = run(makeTree({ proxy: proxySource({ matcher }), routes: { 'api/companies': POST_ROUTE } }));
+    expect(r.code).toBe(2);
+    expect(r.out).toMatch(/CANNOT SEE/i);
+  });
 });
 
 describe('coverage of routes and exemptions', () => {
@@ -152,6 +179,36 @@ describe('coverage of routes and exemptions', () => {
     const r = run(makeTree({ proxy: proxySource({ bypass }), routes: { 'api/companies': POST_ROUTE } }));
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/bypass|exempt/i);
+  });
+
+  // THE FOUR EVASIONS AN INDEPENDENT REVIEW MEASURED AGAINST THIS CHECKER, each a fully functional second
+  // exemption that the original `return undefined` pattern declared absent. They are the same class the
+  // check-approval-port.mjs header describes being defeated four ways — found here before shipping rather
+  // than after. The rule is now "NO early return before the gate except the declared webhook bypass",
+  // which does not care what is returned.
+  const EVASIONS = {
+    'a bare `return;`': `  if (new URL(request.url).pathname.startsWith('/api/internal')) return;\n`,
+    '`return NextResponse.next()`': `  if (new URL(request.url).pathname.startsWith('/api/internal')) return NextResponse.next();\n`,
+    'a fabricated Response': `  if (request.headers.get('x-acbp-internal') === 'yes') return new Response(null, { status: 200 });\n`,
+    // THE NASTIEST: the `//` inside a URL string literal. Stripping line comments BEFORE string literals
+    // truncated the line at that `//`, so the `return` after it became invisible to the checker.
+    'a URL literal containing //': `  if (request.url.startsWith('https://internal.acbp.local')) return undefined;\n`,
+  };
+  for (const [name, extra] of Object.entries(EVASIONS)) {
+    test(`FAILS on a second exemption written as ${name}`, () => {
+      const bypass = `  if (isClerkWebhookPath(new URL(request.url).pathname)) return undefined;\n${extra}`;
+      const r = run(makeTree({ proxy: proxySource({ bypass }), routes: { 'api/companies': POST_ROUTE } }));
+      expect(r.code, `${name} was not detected`).toBe(1);
+      expect(r.out).toMatch(/bypass|exempt|return/i);
+    });
+  }
+
+  test('a `//` inside a string literal does not blind the other detectors either', () => {
+    // The strip-order bug was in a shared helper, so it could have erased any line. A compliant proxy that
+    // merely CONTAINS a URL literal must still read as compliant.
+    const bypass = `  if (isClerkWebhookPath(new URL(request.url).pathname)) return undefined;\n  const canonical = 'https://app.example.test';\n  void canonical;\n`;
+    const r = run(makeTree({ proxy: proxySource({ bypass }), routes: { 'api/companies': POST_ROUTE } }));
+    expect(r.code).toBe(0);
   });
 
   test('FAILS when the webhook bypass is removed entirely', () => {

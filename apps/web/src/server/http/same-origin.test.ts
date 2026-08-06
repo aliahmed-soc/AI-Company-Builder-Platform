@@ -1,4 +1,4 @@
-// ACBP-P7-013 / CDR-081 §1.1 — the same-origin gate's decision table.
+// ACBP-P7-014 / CDR-081 §1.1 — the same-origin gate's decision table.
 //
 // Threat: CSRF against the 16 cookie-authenticated state-changing route modules in apps/web. The
 // `__session` cookie is an ambient credential — the browser attaches it to a cross-site request without
