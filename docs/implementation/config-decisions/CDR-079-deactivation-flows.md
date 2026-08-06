@@ -396,7 +396,7 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
      names four; the count is five. Leaving any of them would preserve the exact mechanism that hid this gap for
      six phases.
 
-**Status of the ticket as a whole: NOT MERGED and NOT DONE.** PR #74 is an open draft; merging is an owner gate.
+**Status of the ticket as a whole: MERGED, NOT DONE.** Squash `4125f0f` (PR #74); exact-head and exact-main CI green with zero skips; branch deleted after tree-hash verification.
 The backlog row says so in prose rather than `Done` (P6-002's precedent). Slice 5 is unbuilt and two acceptance
 clauses are unmet — *"deactivate-then-schedule negative green"* holds for `paused` only, and *"reactivation
 documented"* needs §9.7 (and §9.8 for the held-work half). Both are owner decisions.

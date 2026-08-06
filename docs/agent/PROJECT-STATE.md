@@ -1669,8 +1669,8 @@ this paragraph.
 **Phase 7 is open. ACBP-P7-001 is MERGED** (`cf67c7f`, PR #73, branch deleted) — see its DONE line and working
 block above.
 
-**ACBP-P7-002 is NOT merged — PR #74 is an open draft on `p7-002-deactivation-flows`, and merging is an owner
-gate that has not been taken — and its backlog row is NOT `Done`. Both are deliberate.** (This paragraph
+**ACBP-P7-002 is MERGED (squash `4125f0f`, PR #74, branch deleted) but its backlog row is NOT `Done`, and that
+is deliberate.** (This paragraph
 originally opened *"ACBP-P7-002 is merged"*. A verification pass caught it. Recording a gate as taken when it
 was not is the most consequential error in that docs pass, and it is corrected in place rather than quietly.)
 

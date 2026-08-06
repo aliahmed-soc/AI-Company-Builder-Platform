@@ -4,15 +4,22 @@ Ticket: **ACBP-P7-002** deactivation flows (ACC-004, COMP-006 final; ADR-006; **
 `SECURITY-VERIFICATION-PLAN:23` threat row *"zombie autonomous work"*; `RELEASE-GATES.md:10`). Branch
 `p7-002-deactivation-flows`, PR **#74**, CDR-079, migration **0054**.
 
-**THE TICKET IS NOT DONE, AND IT IS NOT MERGED.** PR #74 is an open draft on `p7-002-deactivation-flows`;
-merging to `main` is an owner gate that has not been taken. What has *landed on this branch* is the enforcement
-half, on the owner's ruling *"land company-pause enforcement first, defer the account half"*. What remains is
-recorded in §5 and in CDR-079 §9.
+**THE TICKET IS MERGED BUT NOT DONE.** Squash `4125f0f` (PR #74), exact-head and exact-main CI both green
+with zero skips, branch deleted after the merged tree hash was verified identical. What landed is the
+enforcement half, on the owner's ruling *"land company-pause enforcement first, defer the account half"*. What
+remains is recorded in §5 and in CDR-079 §9, and the backlog row carries it in prose rather than `Done`.
 
-> **This sentence originally read "What merged is…".** A verification pass over this document caught it. Writing
-> "merged" about a ticket whose merge is an owner gate is the most consequential error in the whole docs pass:
-> it records a gate as taken. It is left visible here rather than silently corrected, on the same principle as
-> §0 — the correction is the evidence.
+> **This sentence read "What merged is…" BEFORE the merge, and a verification pass caught it.** Writing "merged"
+> about a ticket whose merge is an owner gate records a gate as taken, and was the most consequential error in
+> the whole docs pass. It is kept visible rather than silently repaired, on the same principle as §0 — the
+> correction is the evidence.
+>
+> **Then it was rewritten to "NOT MERGED", and the merge made THAT false forty minutes later.** Three surfaces
+> carried it. This is the same drift class one more time, and it is the one nobody can design away: a document
+> that records a gate's *state* goes stale the moment the gate moves. The durable form is the one now in place —
+> name the squash SHA and what was verified, which stays true — rather than a status word, which does not. The
+> only claim in these documents that has never needed correcting is *"NOT DONE"*, because it is a statement about
+> unbuilt work rather than about a moment.
 
 ---
 
