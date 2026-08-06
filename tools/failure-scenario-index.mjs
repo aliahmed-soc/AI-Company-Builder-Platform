@@ -132,7 +132,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     injection: 'a worker that stops heartbeating past the grace window, then the real reaper sweep',
     file: 'packages/core/src/runs/coordinator.integration.test.ts',
     testTitle: 'TIMEOUT WORKS — a run whose worker went silent past the grace is failed as worker_lost',
-    entryPoint: 'the run coordinator sweep',
+    entryPoint: 'reclaimLostRuns',
     mutation: 'Make `isRunLost` always return false (equivalently, set `DEFAULT_HEARTBEAT_GRACE_MS` to a value no test can outlive), so `reclaimLostRuns` never reclaims a silent worker.',
     mutationRunId: '',
     doesNotProve:
@@ -198,7 +198,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     injection: 'a worker step that throws, driven through the real runtime',
     file: 'packages/core/src/workers/runtime.integration.test.ts',
     testTitle: 'a THROWING step is recorded as a provider_error, not rolled back into nothing',
-    entryPoint: 'the worker runtime step executor',
+    entryPoint: 'runWorkerStep',
     mutation: 'Wrap the body of `runWorkerStep` so a throwing step rolls its own transaction back instead of reaching `finishAs` with `provider_error`, leaving no failed row.',
     mutationRunId: '',
     doesNotProve:
@@ -264,7 +264,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     injection: 'a run killed mid-sequence, then resumed against the real checkpoint rows',
     file: 'packages/core/src/jobs/checkpoint.integration.test.ts',
     testTitle: 'KILL AND RESUME — a crashed plan resumes without re-running the step that already completed',
-    entryPoint: 'the job step executor',
+    entryPoint: 'runJobStep',
     mutation: 'Make `runJobStep` ignore its `listCheckpoints` read, so a step that already completed runs a second time on resume.',
     mutationRunId: '',
     doesNotProve:
@@ -313,7 +313,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     injection: 'a live stop activated between calls, then a real dispatch attempt',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'a REAL account-wide stop refuses the call',
-    entryPoint: 'the worker runtime step boundary',
+    entryPoint: 'dispatchToolCall',
     mutation: 'Drop the `account_wide` case from `evaluateStops`, so an active account-wide stop no longer covers the dispatched call.',
     mutationRunId: '',
     doesNotProve:

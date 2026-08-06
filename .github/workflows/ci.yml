@@ -17,9 +17,12 @@ on:
   # goes through the REST API instead of the webhook path, so it is a genuinely different route to the same
   # checks.
   #
-  # IT DOES NOT HELP THE BRANCH THAT ADDED IT. GitHub only offers `workflow_dispatch` for workflows present on
-  # the DEFAULT branch, so this becomes usable once it reaches `main` — stated here so nobody reads it as a fix
-  # for the outage it was written during.
+  # IT WORKED ON THE BRANCH THAT ADDED IT, WHICH I DID NOT EXPECT. The commit that introduced this said the
+  # opposite — that GitHub only offers `workflow_dispatch` for workflows on the DEFAULT branch, so it could not
+  # help until merged. Tested instead of assumed: `gh workflow run ci.yml --ref p7-008-failure-injection-pass`
+  # was accepted and created run **31128906516** on `2314ef7`, the first run this branch ever had, during the
+  # outage. The claim is corrected here rather than left standing, because a false sentence in a comment is the
+  # artefact class this repository keeps paying for.
   #
   # No new capability: the job is checks-only, holds `contents: read`, and uses no repository secrets, so running
   # it by hand can change nothing. It only makes the same verification reachable when webhooks are not.
