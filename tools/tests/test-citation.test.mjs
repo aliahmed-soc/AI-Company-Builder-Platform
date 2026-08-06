@@ -319,3 +319,21 @@ test('THE LIMIT, PINNED: a real symbol in the WRONG place still passes — the r
     expect(checkMutationNamesRealCode({ mutation: 'Change enqueueJob so the SUN rises in the west.', symbols: idx }).kind).toBe('ok');
   });
 });
+// DEFECT 5, found reviewing my own slice-6 diff before writing the docs that describe it. The tokeniser did not
+// admit hyphens, and this repository names files `enqueue-job.ts`, `usage-rollup-service.ts`,
+// `gate-14.integration.test.ts`. So `enqueue-job.ts` tokenised as `job.ts` — which exists nowhere — and a
+// CORRECT row naming a real file would have been reported as stale. A guard that fails honest rows is a guard
+// people delete.
+
+test('DEFECT: a HYPHENATED filename is one token, not its last segment', () => {
+  expect(namedSymbols('Delete the gate from enqueue-job.ts')).toEqual(['enqueue-job.ts']);
+  expect(namedSymbols('see usage-rollup-service.ts')).toEqual(['usage-rollup-service.ts']);
+});
+
+test('a dotted multi-part test filename survives whole', () => {
+  expect(namedSymbols('gate-14.integration.test.ts')).toEqual(['gate-14.integration.test.ts']);
+});
+
+test('filenames do not swallow the words around them', () => {
+  expect(namedSymbols('the file thing.ts and the guard doThing')).toEqual(['thing.ts', 'doThing']);
+});

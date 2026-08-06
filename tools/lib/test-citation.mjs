@@ -161,10 +161,19 @@ const SYMBOL_SHAPES = [
 ];
 
 /** A filename is a naming of the edit SITE, which is as good as naming the symbol. */
-const SOURCE_FILE = /^[A-Za-z0-9_.-]+\.(?:ts|tsx|mts|cts|mjs|cjs|js|jsx|sql|yml|yaml|json)$/;
+const SOURCE_EXTS = 'ts|tsx|mts|cts|mjs|cjs|js|jsx|sql|yml|yaml|json';
+const SOURCE_FILE = new RegExp(`^[A-Za-z0-9_.-]+\\.(?:${SOURCE_EXTS})$`);
 
-/** Dotted chains are kept whole so `logger.ts` survives tokenising; `:388` and `'s` fall off at the boundary. */
-const TOKEN = /[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*/g;
+/**
+ * Filenames FIRST in the alternation, so a name wins over its own tail at the same position.
+ *
+ * DEFECT THIS FIXES. The first version had one identifier pattern and no hyphens, and this repository names
+ * files `enqueue-job.ts`, `usage-rollup-service.ts`, `gate-14.integration.test.ts`. `enqueue-job.ts` tokenised
+ * as `job.ts` — which exists nowhere — so a row naming a REAL file would have been reported stale. A guard that
+ * fails honest rows is a guard people delete. Whitespace still bounds the match, so a filename cannot swallow
+ * the words beside it; `:388` and a possessive `'s` fall off the same way.
+ */
+const TOKEN = new RegExp(`[A-Za-z0-9_.-]+\\.(?:${SOURCE_EXTS})\\b|[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*`, 'g');
 
 const looksLikeSymbol = (t) => SYMBOL_SHAPES.some((re) => re.test(t));
 
