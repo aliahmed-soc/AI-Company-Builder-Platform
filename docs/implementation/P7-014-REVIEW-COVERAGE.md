@@ -137,13 +137,30 @@ CSRF one; `p7-013-http-rate-limiting` closes the rate-limiting one. Whichever la
 must **merge**, keeping the union of what is closed and the intersection of what is unmet. Taking one side
 wholesale is how a corrected record silently reverts — the failure ACBP-P7-002 hit three times.
 
-## §6 Hosted CI
+## §6 Hosted CI — GREEN with ZERO SKIPS on the exact head
 
-Run [`31117906801`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31117906801) on
-commit `1357508` reports **cancelled** — and it is **VOID, not a regression**, diagnosed before anything was
-touched: `steps = 0` with **no runner ever assigned**, after ~11 minutes queued. That is the
-job-never-started signature PROJECT-STATE already documents for `30590300693` and `30632014201`; there is
-nothing in it to respond to, and no code was changed because of it. Three concurrent sessions were pushing
-branches at the time, so runner starvation is the likely cause rather than anything in this change.
+**Run [`31119574444`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31119574444)
+on `5c6f2b523b6b60206133727271a77e9428bf670e`** — job `verify`, conclusion **success**:
 
-A run on the final SHA is what this ticket's completion standard needs, and it is not yet in hand.
+| | |
+|---|---|
+| Suite | **262 test files passed (262) / 3765 tests passed (3765)** |
+| Skips | **zero** — not one `N skipped` line anywhere in the job log |
+| DB preflight | passed, so the `skipIf(!hasTestDatabase)` suites genuinely executed |
+| `test:boundaries` | 4 files / 79 tests, including this ticket's 28 guard regression cases |
+
+The zero-skip claim is the load-bearing half. Locally this suite runs **148 passed / 114 skipped** and
+**2162 / 1603 skipped**; in CI it is 262/262 and 3765/3765, and 2162 + 1603 = 3765 exactly — so every suite
+that silently skips on this machine ran against real PostgreSQL there. Without that arithmetic, "all green
+locally" and "all green in CI" would look like the same sentence.
+
+**The earlier run [`31117906801`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31117906801)
+on `1357508` reported `cancelled`, and it was VOID rather than a regression** — diagnosed before anything
+was touched: `steps = 0` with **no runner ever assigned** after ~11 minutes queued, the job-never-started
+signature PROJECT-STATE records for `30590300693` and `30632014201`. No code was changed in response.
+Three concurrent sessions were pushing at the time, so runner starvation is the likely cause. The green run
+above, on the same code plus the review fixes, is what retroactively confirms that reading.
+
+**This section's own commit moves the head**, so the tree containing these words is one commit past the SHA
+named here — the same unavoidable regress `ACBP-P6-008`'s block records. The run covering the final tree is
+reported on PR #78 rather than frozen into a file that would immediately be stale again.

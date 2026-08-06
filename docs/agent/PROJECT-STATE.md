@@ -146,6 +146,13 @@ ticket without a DONE line above it is genuinely in flight._
     BRANCH** (CDR-080 §5), whose wording names CSRF as ABSENT — true when written, stale the moment this
     merges. Whichever lands second must **merge, not overwrite**. Flagged because a conflict resolved by
     taking one side wholesale is how a corrected record silently reverts, which P7-002 hit three times.
+  - **HOSTED CI IS GREEN WITH ZERO SKIPS ON THE EXACT HEAD.** Run
+    [`31119574444`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31119574444) on
+    `5c6f2b5`: **262 files / 3765 tests, all passed, not one `N skipped` line in the job log**, DB preflight
+    passed. Locally this suite is 148/114-skipped and 2162/1603-skipped, and **2162 + 1603 = 3765** — so
+    every suite that silently skips on this machine ran against real PostgreSQL there. The earlier run
+    `31117906801` on `1357508` said `cancelled` and was **VOID, not a regression** (`steps=0`, no runner
+    ever assigned); the green run on the same code plus the review fixes is what confirms that reading.
   - **Ticket Done / PR ready / merge are OWNER GATES and none has been taken.**
 
 - **ACBP-P7-002 deactivation flows — PARTIALLY LANDED, TICKET NOT DONE** (CDR-079; ACC-004, COMP-006 final;
