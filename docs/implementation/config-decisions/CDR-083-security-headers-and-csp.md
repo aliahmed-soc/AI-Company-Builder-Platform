@@ -8,9 +8,18 @@
 > this branch was being written, and each is unaware of the others.
 >
 > This branch therefore stepped aside to **ACBP-P7-015** and **CDR-083**, leaving `P7-013`/`P7-014` and
-> `CDR-081`/`CDR-082` for the other two. **That is an assumption about how their two-way collision gets
-> resolved, not an agreement** — nobody has adjudicated it. **Renumbering is the owner's call**, and whoever
-> merges second must do it regardless.
+> `CDR-081`/`CDR-082` for the other two.
+>
+> **THE TICKET-ID HALF IS NOW RESOLVED, verified against the branches rather than assumed.** The CSRF branch
+> independently renumbered itself to **ACBP-P7-014** (`git show origin/p7-013-csrf-origin-gate:…/BACKLOG.csv`
+> → `ACBP-P7-014`; its branch name keeps the old number), the rate-limiting branch kept **ACBP-P7-013**, and
+> this one is **ACBP-P7-015**. Three ids, no overlap. The step-aside was a guess when it was made and it
+> happens to have landed correctly.
+>
+> **THE CDR-NUMBER HALF IS NOT RESOLVED.** Both siblings still carry a `CDR-081-*.md` — different filenames,
+> the same number — so one of them must still move. **`CDR-082` is deliberately left free for whichever one
+> does**, which is why this document is `CDR-083` and not `CDR-082` despite the gap. That reassignment is the
+> owner's call, not this ticket's.
 >
 > **There is also a real content conflict, not just a numbering one:** PR #78 rewrites `apps/web/src/proxy.ts`
 > to add a CSRF gate, and this branch rewrites the same function to apply headers. The two changes compose
@@ -435,10 +444,11 @@ below are §7.1 to §7.7**, and are cited by those numbers elsewhere in this doc
    be chosen before a domain exists, and `preload` is effectively irreversible.
 6. **A second layer in `next.config.ts`** (§2.2) once ACBP-P7-006 gives CI something to make an HTTP
    request against — it would cover static assets and the webhook route, which the proxy does not.
-7. **The other two CDR-080 §4 findings are IN FLIGHT on other branches, not unfiled** — PR **#78**
-   (`p7-013-csrf-origin-gate`) and PR **#79** (`p7-013-http-rate-limiting`), both opened while this branch was
-   being written. This ticket covers only the third finding. Three things follow, all owner decisions:
-   *(a)* the numbering collision in the header note above; *(b)* PR #78 and this PR both rewrite
+7. **The other two CDR-080 §4 findings are IN FLIGHT on other branches, not unfiled** — **ACBP-P7-014** on PR
+   **#78** (`p7-013-csrf-origin-gate`, CSRF) and **ACBP-P7-013** on PR **#79** (`p7-013-http-rate-limiting`),
+   both opened while this branch was being written. This ticket covers only the third finding. Three things
+   follow, all owner decisions: *(a)* the **CDR-number** collision in the header note — both siblings still
+   carry a `CDR-081`, and `CDR-082` is left free for whichever moves; *(b)* PR #78 and this PR both rewrite
    `apps/web/src/proxy.ts`, so one of them merges into a conflict; *(c)* §6.4's `no-referrer` / `Origin: null`
    interaction with #78's `Origin` fallback — it degrades that fallback closed rather than breaking it, but
    neither branch cites the other and the reconciliation should be deliberate.
