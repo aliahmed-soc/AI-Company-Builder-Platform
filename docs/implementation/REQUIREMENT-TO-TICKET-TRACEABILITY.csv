@@ -118,7 +118,7 @@ ADMIN-003,Roles and membership,MVP,ACBP-P1-004,P1,M1,Direct,ACBP-P1-014,Internal
 ADMIN-004,Notifications,Post-MVP,Roadmap epic: Commercial launch,—,—,Roadmap epic,—,—,Deferred by approved scope,
 INTEG-001,Connection manager,Post-MVP,Roadmap epic: External channels,—,—,Roadmap epic,—,—,Deferred by approved scope,
 INTEG-002,Credential vault references,MVP,ACBP-P0-019;ACBP-P0-015,P0,M0,Shared foundation,ACBP-P7-007,Closed beta,Covered through shared foundation,
-INTEG-003,Revocation enforcement,Post-MVP,ACBP-P6-002 (rig);Roadmap epic: External channels,P6,M6,Rig in MVP,ACBP-P6-012,—,Deferred by approved scope,Rig lands with dispatcher integration
+INTEG-003,Revocation enforcement,Post-MVP,ACBP-P6-002 (rig);Roadmap epic: External channels,P6,M6,Rig in MVP,ACBP-P6-012,—,NOT covered - no integrations entity exists,"ACBP-P7-007: the rig did NOT land with the dispatcher integration. There is no integrations entity anywhere - no table, no migration, no service, no contract - and CDR-067, the decision record of the ticket credited with it, never mentions integrations. Trust-critical #8 cannot go green until integrations exist; CDR-080 s7 item 1."
 NFR-001,Tenant isolation,MVP,ACBP-P1-005;ACBP-P1-006;ACBP-P1-014,P1,M1,Direct,ACBP-P1-014;ACBP-P7-007,Every gate,Covered,
 NFR-002,Server-authoritative authorization,MVP,ACBP-P1-007,P1,M1,Direct,ACBP-P1-014,Every gate,Covered,
 NFR-003,Availability,Post-MVP,ACBP-P7-003;ACBP-P0-004,P7,M7,Measurement foundation,ACBP-P7-010,Closed beta,Covered through verification ticket,Targets measured over beta
@@ -128,7 +128,7 @@ NFR-006,Idempotency,MVP,ACBP-P5-003;ACBP-P6-011,P5;P6,M6,Direct,ACBP-P6-011,Clos
 NFR-007,Retry discipline,MVP,ACBP-P5-013;ACBP-P5-010,P5,M5,Direct,ACBP-P7-008,Closed beta,Covered,
 NFR-008,Auditability,MVP,ACBP-P1-008,P1,M1,Direct,ACBP-P7-007,Closed beta,Covered,
 NFR-009,Observability,MVP,ACBP-P0-017;ACBP-P7-003,P0;P7,M7,Direct,ACBP-P7-003,Closed beta,Covered,
-NFR-010,Security baseline,MVP,ACBP-P0-013;ACBP-P0-020;ACBP-P7-007,P0;P7,M7,Direct,ACBP-P7-007,Closed beta,Covered,Pen review at General MVP gate
+NFR-010,Security baseline,MVP,ACBP-P0-013;ACBP-P0-020;ACBP-P7-007,P0;P7,M7,Direct,ACBP-P7-007,Closed beta,Partially covered - scan gates only,"Pen review at General MVP gate. ACBP-P7-007: scan gates green; the PEN REVIEW HAS NOT HAPPENED (external vendor needed). NFR-010s ASVS baseline items CSRF, HTTP rate limiting and security headers/CSP are ABSENT from apps/web - recorded as findings with proposed tickets, CDR-080 s4."
 NFR-011,Privacy,Post-MVP,ACBP-P7-011;ACBP-P0-010,P7,M7,Partial (disclosure+retention),ACBP-P7-010,Closed beta,Covered through verification ticket,Full privacy pack at General MVP
 NFR-012,Accessibility,Post-MVP,Roadmap epic: Beta polish,—,—,Roadmap epic,—,General MVP,Deferred by approved scope,Semantic-markup standard applies from M1
 NFR-013,Maintainability,MVP,ACBP-P0-012;ACBP-P0-013;ACBP-P0-020,P0,M0,Direct,ACBP-P0-020,Every gate,Covered,
@@ -136,7 +136,7 @@ NFR-014,Portability,Post-MVP,ACBP-P5-011;ACBP-P7-001,P5;P7,M7,Direct (open forma
 NFR-015,Cost control,MVP,ACBP-P6-010;ACBP-P5-005,P5;P6,M6,Direct,ACBP-P6-012,Closed beta,Covered,
 NFR-016,Data retention,Post-MVP,ACBP-P0-010;ACBP-P7-002,P0;P7,M7,Direct (schedule+enforcement start),ACBP-P7-010,Closed beta,Covered through verification ticket,Automation completes post-MVP
 NFR-017,Backup and recovery,Post-MVP,ACBP-P7-006,P7,M7,Direct,ACBP-P7-006,Closed beta,Covered,
-NFR-018,Secret handling,MVP,ACBP-P0-017;ACBP-P0-019;ACBP-P0-015,P0,M0,Direct,ACBP-P7-007,Closed beta,Covered,
+NFR-018,Secret handling,MVP,ACBP-P0-017;ACBP-P0-019;ACBP-P0-015,P0,M0,Direct,ACBP-P7-007,Closed beta,Partially covered - source scan only,"ACBP-P7-007: the source scan is green with 28 regression tests, a stale-allowlist check and a named CI step - but it cannot prove runtime properties. The audit-payload half of trust-critical #16 is enforced by nothing, and the promised log-pipeline scanner has no pipeline. Mirrors docs/architecture/REQUIREMENT-TRACEABILITY.csv."
 NFR-019,Model-provider resilience,MVP,ACBP-P2-003;ACBP-P5-009,P2;P5,M5,Direct,ACBP-P7-008,Closed beta,Covered,
 NFR-020,Integration failure handling,Post-MVP,Roadmap epic: External channels,—,—,Roadmap epic,—,—,Deferred by approved scope,
-NFR-021,Prompt-injection defense,MVP,ACBP-P2-007;ACBP-P5-003;ACBP-P5-006,P2;P5,M5,Direct,ACBP-P7-007,Closed beta,Covered,
+NFR-021,Prompt-injection defense,MVP,ACBP-P2-007;ACBP-P5-003;ACBP-P5-006,P2;P5,M5,Direct,ACBP-P7-007,Closed beta,Partially covered - boundary only, no quarantine,"ACBP-P7-007: the injection corpus drives the production dispatcher against real PostgreSQL, but the QUARANTINE this requirement names does not exist anywhere, and three boundary gaps remain (params.args uninspected, the 64,000-character slice, untrusted-plus-approval). Mirrors docs/architecture/REQUIREMENT-TRACEABILITY.csv."
