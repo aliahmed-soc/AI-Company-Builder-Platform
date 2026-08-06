@@ -87,6 +87,21 @@ describe('logging', () => {
     expect(JSON.stringify(records)).not.toContain(SENTINEL);
   });
 
+  // ACBP-P7-007 (trust-critical #16). The case above honestly names its own scope — "metadata + error" — and
+  // that scope was the whole of the redaction: `message` was emitted VERBATIM while `metadata` and `error` both
+  // went through `redact()`. Nothing asserted the third field, so nothing noticed the asymmetry.
+  test('sentinel secret never appears in an emitted MESSAGE either (trust-critical #16)', () => {
+    const { logger, records } = createTestLogger();
+    logger.error('failed', { message: `connect failed: password=${SENTINEL}` });
+    expect(JSON.stringify(records)).not.toContain(SENTINEL);
+  });
+
+  test('a message with nothing sensitive survives intact — redaction is not blanket erasure', () => {
+    const { logger, records } = createTestLogger();
+    logger.info('ok', { message: 'connected to the primary replica' });
+    expect(JSON.stringify(records)).toContain('connected to the primary replica');
+  });
+
   test('malformed / unusual metadata does not throw and still emits', () => {
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;

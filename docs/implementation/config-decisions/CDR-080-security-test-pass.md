@@ -257,6 +257,13 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
 6. **Staging** (and any credential or deploy it needs) for the *"isolation re-proven on staging"* clause.
 7. **The pen-test engagement**, and what *"high+ issues closed"* is measured against.
 8. **Launch-gate 12 sign-off.** This ticket produces evidence; declaring the gate passed is the owner's.
+9. **Should `boundedMetadata` REJECT secret-shaped values?** (§8.2.) It accepts them today, so trust-critical
+   #16's audit half rests on convention. Enforcing it changes merged behaviour on **every audited write**, and
+   because audit-or-nothing binds the audit to the operation, a rejection fails the **product operation** — and
+   the high-entropy pattern matches a base64 SHA-256 that audit metadata legitimately carries. Options: reject
+   (fail-closed, risks breaking real writes), redact-and-proceed (keeps the write, silently alters a permanent
+   record), or leave detection to the test sweep. `metadata-secrets.test.ts` will go red the moment anyone
+   implements the first two, so the decision cannot be taken by accident.
 
 ---
 
@@ -294,8 +301,38 @@ lowers it, losing a measurement raises it. A regression case now pins the correc
 config load, leaving the suite green **without ever having driven a route**. Neither finding was allowlisted:
 `tools/secret-allowlist.txt` silences a rule for a whole file forever, and the investigation already flagged
 that all seven existing entries do exactly that.
-4. **#16** — the audit-payload sweep (and the logger `message` hole, if confirmed), published as a reusable
-   `@acbp/test-support` helper so it becomes a suite-wide property rather than three hand-written assertions.
+4. **#16** — **DONE, in three parts, and one of them was a real hole.**
+   - **The logger `message` hole is CONFIRMED and CLOSED.** `logger.ts:109` emitted `fields.message` **verbatim**
+     while `metadata` and `error` both went through `redact()`. The covering test honestly named its own scope
+     — *"metadata + error"* — so the third field was visible and unasserted. Fixed red-then-green: the new case
+     `'sentinel secret never appears in an emitted MESSAGE either'` fails before the one-line change and passes
+     after, with a companion case proving redaction is not blanket erasure.
+   - **The audit gap is now EXECUTABLE rather than prose** —
+     `packages/contracts/src/audit/metadata-secrets.test.ts` pins both what `boundedMetadata` enforces (types,
+     key shape, lengths, totals, and that its error names the KEY never the value) and what it does not: it
+     **accepts every secret shape tested**, with an anti-vacuity control proving `containsSecret` recognises
+     each one. Written to **fail the day enforcement lands**, so whoever adds it must come here deliberately.
+   - **A reusable real-PG detector** — `assertNoSecretsInAuditPayloads` / `sweepAuditPayloadsForSecrets` in
+     `@acbp/test-support`, sweeping `audit_events` **and** `activity_events`, with 7 regression cases including
+     one pinning that **the failure never prints the secret it found** (a security test that leaks its finding
+     has moved the leak, not closed it). Any real-PG suite can call it in `afterAll`, which is what makes #16 a
+     suite-wide property rather than three hand-written assertions.
+
+### §8.2 Why enforcement was NOT added to `boundedMetadata` — this is §7's new item 9
+
+Making `boundedMetadata` reject secret-shaped values would turn a convention into a control, and that is the
+right end state. It was not done here, deliberately:
+
+- It is a **behavioural change to a merged contract on every audited write**, and **audit-or-nothing (ADR-015)**
+  means a rejection does not fail the audit — it fails **the product operation**.
+- `SECRET_PATTERNS`' high-entropy catch-all (`[A-Za-z0-9_-]{40,}` with mixed case and digits) **matches a
+  base64 SHA-256**, which audit metadata legitimately carries. A naive rejection would break real writes.
+- A test-pass ticket is the wrong place to take that trade-off silently. **§7 item 9** records it as the
+  owner's, and the characterisation test guarantees the decision cannot be forgotten: it goes red the moment
+  anyone implements it.
+
+Also worth stating plainly: the sweep is a **detector**, not a control. It catches a producer that wrote a
+secret, *after* the write, *in a test*. Nothing prevents one in production.
 5. **The strengthening pass** — #7, #19, #3, #18, #10, #14, #17's three real gaps.
 6. **Scanner hardening + its first regression suite.** `tools/check-secrets.mjs` has **zero tests** while
    `check-boundaries`, `check-reset-lists` and `check-approval-port` all have them; plus the extension holes,
