@@ -557,3 +557,30 @@ Two further mutations were run outside the suites, because what they break is no
 negatives, a mutation without a hosted run id is not a measurement. These suites need no database and no network,
 so a hosted run will execute them with nothing skipped — but until that run exists on this branch's exact SHA,
 the honest word for the figures above is **local**, and they are labelled that way rather than rounded up.
+
+### §10.2 The hosted run this ticket still owes, and three VOID attempts at it
+
+Run [`31120315913`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31120315913) on
+`9bc802d` reports `conclusion=failure` — **and it is void, not a regression.** The job-level facts, read from
+the API rather than from the summary line:
+
+```
+job=verify  conclusion=cancelled  steps=0
+annotation: "The job was not acquired by Runner of type hosted even after multiple attempts"
+```
+
+**Zero steps executed.** That is the signature `PROJECT-STATE.md` already documents for GitHub runner/startup
+failures, where nothing in the workflow ran and there is therefore nothing in the result to respond to. Two
+`gh run rerun --failed` attempts reproduced it identically. No code was changed in response, as that document's
+outage instructions require.
+
+**Verified against an independent anchor rather than assumed**, because "CI is flaky" is exactly the excuse a
+real failure hides behind: run `31120570911` on the concurrent `p7-013-http-rate-limiting` branch has the
+**same** `steps=0 / cancelled` shape, while that branch's earlier run `31119231280` reports `steps=14` and a
+genuine `failure`. The void shape is therefore visible across branches and distinguishable from a real red —
+and sibling runs `31120503219` and `31119574444` went green in the same window, so this is not an account-wide
+block of the kind PROJECT-STATE records for 2026-07-28.
+
+**Nothing here is measured until a run with `steps > 0` goes green on this branch's exact SHA.** §10.1's
+figures stay labelled local, the trust-critical standard is unmet, and this is stated in the CDR rather than
+left for a reader to infer from a red badge.
