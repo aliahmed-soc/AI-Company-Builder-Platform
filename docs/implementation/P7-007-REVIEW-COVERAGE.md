@@ -258,6 +258,22 @@ written down as a success.
   point, anchor class, who really built it, the mutation, its run id, and **what it does not prove**.
 - **Hosted CI on the exact head, zero skips** is the only evidence for the real-PG suites; local PostgreSQL is
   unreachable here and `tools/ci/preflight.mjs` is what turns a silent skip into a red build.
+- **Exact-head run [`31119309291`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31119309291)
+  on `b958922`: success, `3782 passed (3782)` across **265 files**, ZERO skips** — against the 1603 skipped
+  locally, which is the whole gap this run exists to close. Every step green, including the new named secret
+  scan (**734 files, 0 findings, 7 allowlist entries all in use**) and `check:csv-shape` (**23 tracked CSVs, every
+  data row matching its header**).
+  **It took five attempts, and the first four are not evidence of anything.** All four died in `Set up job` with
+  `Failed to resolve action download info: Service Unavailable` — the runner never resolved the pinned actions,
+  so it never checked out the code and never ran a test. A sibling branch went green at 16:22 and again at
+  16:37:51, the same minute one of my attempts hung, which is what identifies it as an intermittent service
+  fault rather than the branch. Recorded because **a red build that executed no steps says nothing in either
+  direction**, and reading one as a verdict is the same error as reading a green checkmark as coverage.
+- **The ratchet baseline is UNREADABLE on this run, and the tool says so in its own output**: `tools/trust-critical-index.mjs`
+  does not exist on `main` yet, so there is nothing to compare against and the no-rise rule **did not run**. The
+  `Fetch main` step succeeded — the ref is there, the file is not. This self-resolves on merge and is stated
+  rather than hidden, which is the behaviour the check was built for: a guard that cannot see its target reports
+  that instead of passing quietly.
 
 ---
 
