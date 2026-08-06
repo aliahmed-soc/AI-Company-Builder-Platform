@@ -19,21 +19,38 @@ An eight-agent investigation mapped each of the twenty canonical negatives to th
 reading test bodies, not names — and classified the assertion anchor. Summary, and every number here is a
 finding rather than a target:
 
+All figures below describe **`main` at `2c4f0f5`** — the state before this ticket changed anything.
+
 | Class | Count | Items |
 |---|---|---|
-| Database state / recorded row, through the production entry point | **12** | 1, 2, 5, 6, 9, 11, 12, 13, 17, 20, and 4 within its stated scope |
+| Database state / recorded row, through the production entry point | **11** | 1, 2, 5, 6, 9, 11, 12, 13, 17, 20, and 4 within its stated scope |
 | **Return-value-only or weaker** | **4** | 7, 10, 14, 19 |
 | **Partial** — the claim as worded is not executed | **3** | 3, 16, 18 |
 | **Not covered at all** | **2** | 8, 15 |
 
+11 + 4 + 3 + 2 = **20**. (The first row read `12` while listing eleven items, so the table totalled twenty-one —
+and that error propagated to four other documents before a review pass simply added the column up. **A
+classification of exactly twenty things that does not sum to twenty is the cheapest self-check there is.**)
+
+**The "Partial" row is orthogonal to the `anchor` column in the shipped index**, and conflating the two will
+mislead: items 3, 16 and 18 carry *strong* anchors — they do read database state — while the claim **as the
+canon words it** goes unexecuted. A reader comparing this table to the index will find 15 rows anchored on
+database state where this says 11. Both are true, of different questions: *what does the test assert against?*
+versus *does it assert the sentence?*
+
 **Seven of the twenty attribution lines are wrong or incomplete** (#3, #4, #8, #9, #11, #18, #19), plus a wrong
 grouping in a second canon document. The list this ticket is judged against is itself unreliable, which is the
-first thing the ticket has to fix.
+first thing the ticket has to fix. **Two more surfaced later**, once the index forced every row to name what
+really built it: **#15** (P0-019 built a serialization test and a source scan, not a response test) and **#17**
+(the P5-006 credit is unearned). Those two are recorded in the index's `builtBy` column; #17's canon line is
+deliberately left standing and is the one remaining known-false attribution — see §5.
 
 ### §0.1 The five findings that shaped this CDR
 
-1. **#8 can never go green, and its canon line asserts a rig that was never built.** `TEST-AND-VERIFICATION-
-   STRATEGY.md:40` reads *"rig in P6-002; full when integrations exist"*. There is **no integrations entity
+1. **#8 can never go green, and its canon line asserted a rig that was never built.** `TEST-AND-VERIFICATION-
+   STRATEGY.md:40` read, **on `main` at `2c4f0f5`**, *"rig in P6-002; full when integrations exist"* — past tense
+   because this ticket's own §5 corrections edited that line, so a present-tense citation of it would describe a
+   file that no longer says what is quoted. There is **no integrations entity
    anywhere** — no table, no migration, no service, no contract; `grep integrations packages/database` returns
    nothing. P6-002's own decision record (CDR-067) never mentions integrations. `REQUIREMENT-TRACEABILITY.csv`
    compounds it: INTEG-003 reads `Covered (Post-MVP; rig in MVP)` verified by *"Revoke-then-use tests"* that do
@@ -158,7 +175,8 @@ lines are the ones **this ticket is judged against**.
 | 40 | #8 | `(rig in P6-002; …)` → **not built; no integrations entity exists** |
 | 41 | #9 | `(P6-007)` → **`(P7-002)`**, citing `gate-14.integration.test.ts` |
 | 42 | #10 | *"all scopes"* → **five enforceable scopes**; record that the timed helper is a raw INSERT |
-| 43/44 | #11/#12 | under-credit **P5-001b** and **P5-003b** |
+| 43 | #11 | under-credits **P5-001b** (checkpoints) and **P5-003b** (per-tool idempotency) |
+| 49 | #17 | `(P5-003/006, P7-007)` → the **P5-006 credit is unearned** (the suite is P5-003c), and P6-002/CDR-067 §2-G9, which restored the boundary after it went DEAD, is uncredited |
 | 50 | #18 | `(P5-010/013)` → **`(P5-011/P6-008)`** — P5-010 self-files as *"groundwork"* and its own review coverage says the criterion is *"honestly HALF met"* |
 | 51 | #19 | suite is P5-009; **mechanism is P2-003** |
 
@@ -186,20 +204,34 @@ mutation description | mutation CI run id | what it does NOT prove
 ```
 
 **BUILT in slice 2** as `tools/trust-critical-index.mjs` (the data) and `tools/check-trust-critical-index.mjs`
-(the checker), registered in `check:static` and `test:boundaries`, with 20 regression cases in
+(the checker), registered in `check:static` and `test:boundaries`, with **27** regression cases in
 `tools/tests/check-trust-critical-index.test.mjs`.
 
 The checker parses the twenty items out of `TEST-AND-VERIFICATION-STRATEGY.md` and **fails the build** when:
 
 - an item has no index row, or a row matches no item, or two rows share a number;
 - an index `statement` has drifted from the canon line it pins;
-- a cited file or `test(...)` title no longer exists — **renaming a test breaks the build rather than the claim**;
-- a row claims `measured` **without a hosted CI run id** (a SHA is rejected: the pattern requires ≥6 digits);
+- a cited file is gone, or the cited title is no longer attached to a **live** `test(...)`/`it(...)` call —
+  renaming, deleting, **skipping** or commenting out the test all break the build rather than the claim;
+- a row claims `measured` **without a hosted CI run id** (a SHA is rejected because the value must be *entirely*
+  digits — `/^\d{6,}$/` — not merely because of its length; a seven-digit all-numeric string would pass);
 - a row records a run id while still calling itself `unmeasured`;
 - a row names no mutation — a control nobody tried to break is unmeasured by definition;
 - `anchor` or `status` falls outside its closed vocabulary, or `doesNotProve` is blank;
 - a `not_covered`/`unprovable` row cites a file or claims a real anchor;
-- the count of `unmeasured` rows exceeds `MAX_UNMEASURED`.
+- the count of rows **not yet `measured`** exceeds `MAX_UNPROVEN`;
+- `MAX_UNPROVEN` itself is **higher than it is on `origin/main`** — the comparison that makes "ratchet" true.
+
+**WHAT IT CANNOT DO**, recorded here because a green line from this tool is otherwise easy to over-read:
+
+- **A `mutationRunId` is shape-checked, never resolved.** The checker does not contact GitHub, so it cannot
+  confirm the run exists, that it failed, or that it failed anything in particular. A hand-typed six-digit number
+  passes. What the field buys is a claim that stays checkable by a human long after the probe branch is deleted.
+- **Nothing cross-checks a row's `mutation` against its `testTitle`.** This is not theoretical: ACBP-P7-007
+  marked row 19 `measured` on run `31113087854`, in which a **different** test in the same file went red, and
+  this checker passed it. Two human review passes caught it (§8.5).
+
+Both are open items — §7.10 and §7.11.
 
 ### §6.1 One deliberate departure from the plan above, and why
 
@@ -209,10 +241,20 @@ A blanket failure on day one — when every row is unmeasured — creates exactl
 prevent.
 
 What is enforced instead is **you may not claim a measurement you do not have**, plus a **ratchet**:
-`MAX_UNMEASURED` starts at **18** and may only ever decrease. Lowering it is the work of recording a run id;
+`MAX_UNPROVEN` started at **20** and may only ever decrease. Lowering it is the work of recording a run id;
 raising it means a control that was measured stopped being measured, and the checker refuses. Honesty is cheap
 here and overclaiming is what costs, so the check is built to make the honest state easy and the false state
 impossible.
+
+**Two corrections to the paragraph above, both from review, both worth keeping visible.** (1) It named
+`MAX_UNMEASURED` and the figure **18** — the wrong constant and the wrong starting value. The constant counts
+every not-yet-measured row (§8.1 records why) and it started at 20; it stands at **18** now, which is what made
+the stale sentence read plausibly. (2) *"may only ever decrease"* named **no enforcer**: it was a plain integer
+in a file the author edits, and nothing stopped raising it in the same commit that broke a measurement. Per this
+repository's own rule that a comment claiming a guarantee must be able to name its enforcer, that sentence was
+false when written. It is true now — `check-trust-critical-index.mjs` reads the value from `origin/main` and
+fails when it rises, CI fetches that baseline explicitly, and where no baseline is readable the tool **says so
+in its output** rather than passing quietly.
 
 The checker also carries a **negative self-test** (the house pattern from `check-conflict-targets.mjs`): it
 proves its own canon parser still recognises a numbered, wrapped list before reporting a clean tree. A checker
@@ -229,10 +271,19 @@ the real title, and the checker unescapes quote escapes before matching, so the 
 titles rather than source-level escaping that would drift on the next reflow. **The tool caught its own author
 inside a minute of existing**, which is the only kind of evidence this ticket accepts.
 
-Its first clean run reports the honest position, in these words:
+Its first clean run reported the honest position, in these words **at that time**:
 
 > `20 canon items pinned to live tests; 0 MEASURED (red run recorded), 18 unmeasured (ratchet 18), 2 with no
 > test. 4 rest on a returned value or weaker.`
+
+Quoted output goes stale the moment the tool it quotes is improved, so this one is dated rather than corrected:
+the wording changed twice afterwards (once for the `MAX_UNMEASURED` → `MAX_UNPROVEN` rename, once when the
+success line stopped claiming a broader self-test than it runs). **Run the tool for the current position — that
+is the whole point of having built it.** As of the final slice it prints:
+
+> `20 canon items pinned to live tests; 2 MEASURED (run id recorded — shape-checked, not resolved), 16
+> unmeasured, 2 with no test; 18 unproven (ceiling 18). 3 rest on a returned value or weaker. Canon-parser
+> self-test passed.`
 
 Run the probe against the **canonical claim's wording**, not the test's title. The mutation for #7 is *"delete
 the `expires_at > now` conjunct AND the approval-usability pre-check, then dispatch an expired approval"*; for
@@ -265,6 +316,22 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
    record), or leave detection to the test sweep. `metadata-secrets.test.ts` will go red the moment anyone
    implements the first two, so the decision cannot be taken by accident.
 
+10. **Should the index checker RESOLVE a `mutationRunId` rather than only shape-check it?** Today
+    `/^\d{6,}$/` is the whole test: the tool never contacts GitHub, so a hand-typed number passes and a green
+    gate says nothing about whether the run exists or failed. Resolving it would make the ruling self-enforcing,
+    but it puts a **network call inside `check:static`** — which then fails offline, fails on a fork without
+    `GITHUB_TOKEN`, and couples a static gate to GitHub's availability. Options: leave it shape-only and rely on
+    the printed disclaimer; resolve it only when a token is present and say so when not; or record the run's
+    permalink and check the shape of that instead. **This is the gap that let §8.5 happen.**
+
+11. **Should a row's `mutation` be machine-checked against its `testTitle`?** Nothing connects them today, which
+    is precisely how row 19 was marked `measured` on a run where a different test went red (§8.5). A real check
+    means either parsing the failed run's test names and matching them (network, see above) or requiring the
+    author to paste the failing test's name from the run and comparing strings — the second is cheap and would
+    have caught it, but it is still self-asserted data. **Recorded here rather than in a comment, because
+    ACBP-P7-007 shipped a comment in `check-trust-critical-index.mjs` claiming both gaps were tracked in this
+    section when they were not.**
+
 ---
 
 ## §8 Slices
@@ -273,7 +340,7 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
    the per-class counts match §0.
 2. **The machine-checked evidence index + its checker + regression suite** — **DONE** (§6, §6.1, §6.2).
    `tools/trust-critical-index.mjs`, `tools/check-trust-critical-index.mjs`,
-   `tools/tests/check-trust-critical-index.test.mjs` (20 cases), wired into `check:static` and
+   `tools/tests/check-trust-critical-index.test.mjs` (27 cases), wired into `check:static` and
    `test:boundaries`. *Verified:* the checker rejected one of its own author's citations on first run.
 3. **#15** — **DONE.** `apps/web/src/server/adversarial/secret-egress.test.ts`: all five `Secret` fields loaded
    with distinct sentinels, **every exported HTTP method of all 23 route modules driven**, body *and* headers
@@ -283,11 +350,14 @@ without `readLifecycleDecision`"*. All three survive today (§0.2).
    before any query, so it runs everywhere rather than only where PostgreSQL is reachable.
    *Verified by mutation:* adding `debug: loadClerkConfig().secretKey.reveal()` to `auth-check`'s 401 body turns
    **two** tests red, reporting `GET auth-check/route.ts → 401 carrying: clerkSecretKey` — the method, the
-   route, the status and **which** secret, without printing its value. Run id pending slice 7.
+   route, the status and **which** secret, without printing its value. **Run id `31113087854`** — CI on probe
+   commit `c17b2df` (branch `p7-007-mutation-probe`, PR #77, both deleted on purpose), conclusion `failure`,
+   typecheck and lint clean, **3747 passed / 5 failed of 3752**. `gh run view 31113087854` still resolves; the
+   SHA does not. That asymmetry is the entire argument of §2 and it is now demonstrated rather than asserted.
 
 ### §8.1 Two things building slice 3 found, recorded because both were my own defects
 
-**The ratchet was measuring the wrong thing, and slice 3 tripped it.** `MAX_UNMEASURED` counted `unmeasured`
+**The ratchet was measuring the wrong thing, and slice 3 tripped it.** `MAX_UNPROVEN` (then named `MAX_UNMEASURED`) counted `unmeasured`
 rows alone. The moment #15 gained its first test the row moved `not_covered → unmeasured`, the count ROSE from
 18 to 19, and **the build failed for adding coverage** — the exact opposite of the intended incentive. Replaced
 with `MAX_UNPROVEN`, counting every row not yet `measured`: adding a test leaves it flat, recording a red run
@@ -360,7 +430,7 @@ row itself, which spells out which function to edit and which not to.
      existed, including `tools/local/db.ps1` and `tools/local/provision.sh`, shell and PowerShell being exactly
      where a connection string gets pasted. Now everything is scanned except known-binary/build types, with a
      size cap and a NUL-byte guard: the default is **covered**, and an exclusion is a visible edit. Files
-     scanned went from the old allowlist's subset to **732**.
+     scanned went from the old allowlist's subset to **734** (it was reported as 732, then 733: the scanner could not see its OWN file until the literal NUL in its comment was removed in slice 7 - see 8.4).
    - **Stale allowlist entries are now a finding.** All seven pre-existing entries silence a rule for a whole
      file forever; an entry that suppresses nothing is a permanent silence nobody revisits, which is how a real
      credential eventually hides behind a reviewed decision. The clean line now reports *"N allowlist entries,
@@ -380,7 +450,7 @@ row itself, which spells out which function to edit and which not to.
 
 While hardening it I wrote the binary-content guard with a **literal NUL byte**. That byte made
 `check-secrets.mjs` fail its own NUL check — so **the scanner skipped its own file**, and its self-test probes
-went unseen. Replacing the literal with the escape ` ` restored self-coverage and immediately produced
+went unseen. Replacing the literal with the escape `\\u0000` restored self-coverage and immediately produced
 **nine findings: the tool had been invisible to itself.**
 
 The tempting fix is `tools/check-secrets.mjs|<rule>` in the allowlist. That is the wrong fix — it would blind

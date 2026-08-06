@@ -46,7 +46,7 @@ Status: Proposed for owner review. Layers defined now; implemented incrementally
 14. Account usage equals the deterministic sum of eligible company usage. *(P6-009)*
 15. Provider keys never appear in browser responses. *(P0-019, P7-007)*
 16. Secret values never appear in logs or audit payloads. *(P0-017, P7-007)*
-17. Raw untrusted content cannot directly trigger a tool call (injection corpus). *(P5-003/006, P7-007)*
+17. Raw untrusted content cannot directly trigger a tool call (injection corpus). *(**P5-003c** built the suite; the **P5-006 credit is unearned** — ACBP-P7-007. ACBP-P6-002/CDR-067 §2-G9 restored this boundary after it went DEAD and is uncredited. Three gaps remain: `params.args` is never inspected, anything past `detectInjection`'s 64,000-character slice is unseen, and untrusted context PLUS a standing approval is AUTHORIZED by design and untested.)*
 18. Failed model output cannot create a completed task. *(**P5-011 and P6-008**, not P5-010/013 — P5-010 self-files as "groundwork" and its own review coverage calls the criterion "honestly HALF met". Corrected by ACBP-P7-007. The seeded run state is `running`, not `failed`, so the claim AS WORDED is covered by construction rather than by execution.)*
 19. Silent fallback does not occur for a material decision. *(P5-009 built the suite; the mechanism is P2-003 — ACBP-P7-007. Two assertions in that suite could not fail and were fixed by ACBP-P7-007; which decisions are MATERIAL is still unpinned for several template families.)*
 20. A user cannot obtain elevated authority by altering a Clerk organization or role value in the client. *(P1-007, P1-014)*

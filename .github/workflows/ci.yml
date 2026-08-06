@@ -52,6 +52,13 @@ jobs:
       # action's official repository and replace both the SHA and the comment (see docs/CI.md).
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # ACBP-P7-007. `check:trust-critical-index` enforces that MAX_UNPROVEN never RISES by reading its value
+      # from origin/main — the thing that makes the word "ratchet" true rather than decorative. The default
+      # checkout is depth-1 and has no origin/main ref, so without this the check reports its baseline as
+      # unreadable and the no-rise rule silently does not run in the one place it matters. Depth 1 on a single
+      # branch keeps it cheap; the checker still says so out loud if the ref is missing rather than passing quietly.
+      - name: Fetch main (baseline for the trust-critical ratchet)
+        run: git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main || echo "no main ref — the ratchet baseline will report itself unreadable"
       - name: Enable Corepack (activates the pnpm version pinned in package.json "packageManager")
         run: corepack enable
       - name: Set up Node

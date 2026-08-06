@@ -57,7 +57,17 @@ const MAX_SCAN_BYTES = 2_000_000;
 // Build output (gitignored, never committed) is out of scope. `.next` is the Next.js build directory
 // (ACBP-P1-001); it inlines public config (e.g. NEXT_PUBLIC_* placeholders) into client bundles.
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next']);
-const ENV_SCAN_SKIP = new Set(['node_modules', '.git', '.next']);
+// The repo-wide `.env` walk skips these DIRECTORY NAMES at any depth.
+//
+// `.claude` is here because of ACBP-P7-007's second review pass. The agent tooling creates git worktrees under
+// `.claude/worktrees/`, each a full checkout of ANOTHER branch nested inside this one, and this walk visited all
+// of them: 4,672 files, of which 3,604 were under `.claude/`. A `.env` committed on a sibling branch would have
+// been reported as a finding against THIS branch, naming a path that is not in this branch's tree — a false
+// positive nobody could act on. (The content scan never had this problem: it iterates an explicit root list.)
+//
+// This also corrects a claim: the ledger said ESLint was the only tool in the gate that walks from the
+// repository root. It was not. This walk does too, in the very file the same slice hardened.
+const ENV_SCAN_SKIP = new Set(['node_modules', '.git', '.next', '.claude']);
 
 const PATTERNS = [
   { id: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
@@ -208,7 +218,7 @@ for (const entry of stale) {
   // keeps every byte of the probe visible to a reader while matching no pattern at rest.
   //
   // This was found the hard way: an earlier revision embedded a literal NUL in the binary-content guard, which
-  // made the scanner SKIP ITS OWN FILE and hid these probes by accident. Replacing the NUL with ` `
+  // made the scanner SKIP ITS OWN FILE and hid these probes by accident. Replacing the NUL with `\\u0000`
   // restored self-coverage and immediately produced nine findings — the tool had been invisible to itself.
   const A = (n) => 'A'.repeat(n);
   const probes = {
@@ -231,6 +241,18 @@ for (const entry of stale) {
 }
 
 // ---- Report ----
+// A SCAN THAT READ NOTHING IS NOT A CLEAN SCAN. Without this the tool printed
+// "✔ secret scan passed (0 findings; 0 files scanned …)" and exited 0 against a tree whose roots had moved or
+// been renamed — a citable, meaningless green. That matters more here than in a normal checker: `check:secrets`
+// is its own named CI step precisely so its output can be pasted into a launch-gate-12 review, so a vacuous
+// pass is a vacuous piece of evidence. The self-test proves the RULES still match; it says nothing about
+// whether discovery found any files to apply them to, which is the failure this catches.
+if (scannedCount === 0) {
+  console.error('✖ secret scan read ZERO files — discovery is broken, not the tree.');
+  console.error(`  Roots searched under ${ROOT}: apps/, packages/, tools/, .github/, root config.`);
+  console.error('  A scan that read nothing cannot be evidence of anything. Fix the walk before trusting a pass.');
+  process.exit(2);
+}
 if (JSON_MODE) {
   // Machine-readable evidence for the ACBP-P7-007 bundle. Values stay redacted here too.
   console.log(JSON.stringify({ root: relative(process.cwd(), ROOT) || '.', filesScanned: scannedCount, allowlistEntries: ALLOW.size, allowlistUsed: ALLOW_USED.size, findings }, null, 2));

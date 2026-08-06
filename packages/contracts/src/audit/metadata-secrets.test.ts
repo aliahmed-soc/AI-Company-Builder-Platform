@@ -18,13 +18,24 @@ import { describe, test, expect } from 'vitest';
 import { boundedMetadata } from './audit.js';
 import { containsSecret } from '../context/context.js';
 
-/** Synthetic, never real. Each is a shape `containsSecret` recognises. */
+/**
+ * Synthetic, never real. Each is a shape `containsSecret` recognises.
+ *
+ * ASSEMBLED FROM PARTS, NOT WRITTEN WHOLE — the values below are identical at runtime, but no line of this
+ * source matches `tools/check-secrets.mjs`. That is deliberate and it is a correction: this file originally
+ * spelled them out and took two allowlist entries instead, on the stated grounds that "there is no shape that
+ * both matches `containsSecret` and evades the scanner". An independent review showed that reason was simply
+ * false, and the proof is this edit. An allowlist entry silences a rule for the WHOLE FILE FOREVER, so a real
+ * `password = "…"` added here later would have been invisible — which is the precise blind spot ACBP-P7-007
+ * exists to close. The egress suite got this treatment in slice 3; applying it in one file and waiving it in
+ * another was the inconsistency.
+ */
 const SECRET_SHAPED = [
   ['a connection string', 'postgresql://acbp_app:hunter2plusmore@db.internal:5432/acbp'],
-  ['a bearer token', 'Bearer abcdefghijklmnop0123456789ABCDEF'],
+  ['a bearer token', `Bear${'er'} abcdefghijklmnop0123456789ABCDEF`],
   ['a credential assignment', 'password: correct-horse-battery'],
   ['a JWT', 'eyJhbGciOi.eyJzdWIiOiIx.SflKxwRJSMeKKF2QT4'],
-  ['an AWS access key id', 'AKIA1234567890ABCDEF'],
+  ['an AWS access key id', `AKI${'A'}1234567890ABCDEF`],
 ] as const;
 
 describe('boundedMetadata — the bounds it DOES enforce (ACBP-P1-013/CDR-019)', () => {

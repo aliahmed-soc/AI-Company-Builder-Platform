@@ -103,13 +103,19 @@ export function createLogger(options: LoggerOptions = {}): Logger {
         timestamp: clock(),
         level,
         component,
-        event,
+        // ACBP-P7-007: `event` is BY CONVENTION a short dotted name, but its type is `string` and nothing
+        // enforces the convention, so `logger.error(\`db connect failed: ${url}\`)` published it verbatim. It is
+        // the second of the two free-text fields that escaped redaction, found only because the file header
+        // claims "every emitted record is redacted" and that sentence had to be made true or deleted.
+        event: redact(event) as string,
         ...(env !== undefined ? { env } : {}),
         ...(context !== undefined ? { context } : {}),
         // `message` goes through redact() for the same reason `metadata` and `error` do — it is free text a
         // caller composes, and a connection string or `password=…` lands in it as easily as anywhere else.
         // ACBP-P7-007 found this field emitted VERBATIM while its two neighbours were redacted; the covering
         // test honestly named its own scope ("metadata + error"), so the gap was visible and unasserted.
+        // The two examples in that sentence are BOTH handled only since this ticket also widened `redactString`
+        // to the canonical shape list — when the sentence was first written, connection strings were not.
         ...(fields?.message !== undefined ? { message: redact(fields.message) as string } : {}),
         ...(fields?.metadata !== undefined ? { metadata: redact(fields.metadata) as Record<string, unknown> } : {}),
         ...(fields?.error !== undefined ? { error: redact(safeErrorFields(fields.error)) as Record<string, unknown> } : {}),

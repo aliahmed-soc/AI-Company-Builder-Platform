@@ -12,10 +12,17 @@
 // It fails the build when:
 //   • the canon list and the index disagree about which twenty items exist;
 //   • an index statement has drifted from the canon line it pins;
-//   • a cited file no longer exists, or the cited `test(...)` title is no longer in it (RENAMING A TEST BREAKS
-//     THE BUILD rather than quietly breaking the claim);
+//   • a cited file no longer exists, or the cited title is no longer attached to a LIVE `test(...)`/`it(...)`
+//     call in it — renaming, deleting, SKIPPING or commenting out the test all break the build rather than
+//     quietly breaking the claim;
 //   • a row claims `measured` without a hosted CI run id — you may not claim a measurement you do not have;
-//   • the number of rows NOT yet MEASURED exceeds MAX_UNPROVEN, which may only ever ratchet DOWN.
+//   • the number of rows NOT yet MEASURED exceeds MAX_UNPROVEN;
+//   • MAX_UNPROVEN itself is higher than it is on origin/main, which is what makes the word "ratchet" true.
+//
+// WHAT IT CANNOT DO, stated because a green line from this tool is otherwise easy to over-read: it never
+// contacts GitHub, so a `mutationRunId` is checked for SHAPE and not existence, and NOTHING here cross-checks a
+// row's `mutation` against its `testTitle`. ACBP-P7-007 marked row 19 `measured` on a run in which a DIFFERENT
+// test went red, and this checker passed it; two human review passes caught it. Both gaps are CDR-080 §7 items.
 //
 // It deliberately does NOT fail merely because rows are unmeasured. Blanket-failing would push an author to
 // relabel a row `not_covered` to get green, which is the opposite of what this file is for. Honesty is cheap
@@ -23,6 +30,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 // A scan root may be passed so the regression suite can run this against an isolated temp workspace instead of
 // the real tree — the same shape as check-boundaries.mjs.
@@ -73,6 +81,57 @@ const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
 // store source-level escaping, which is unreadable and would drift the moment someone reflowed the quotes.
 const unescapeQuotes = (src) => src.replace(/\\(['"`])/g, '$1');
 
+/**
+ * Classify how `title` appears in RAW (still-escaped) source `src`:
+ *   'live'       attached to a test(…)/it(…) call that will actually run
+ *   'skipped'    attached to a test/it call marked .skip/.todo/.fails
+ *   'not-a-test' present in the file, but not as the first argument of any test/it call
+ *   'absent'     not present at all
+ *
+ * `src.includes(title)` alone accepted all three of the non-'live' cases. That is not hypothetical: running this
+ * checker against fixtures for `test.skip('<title>')`, a `//`-commented title with the test deleted, and a test
+ * with an emptied body all printed "pinned to live tests" and exited 0.
+ *
+ * It takes RAW source on purpose. Scanning pre-unescaped text was the first version and it was wrong: item 14's
+ * title contains an apostrophe, written `\'` inside a single-quoted literal, so unescaping first made the
+ * literal appear to end mid-title and the row reported as unattached. Read each literal honouring backslash
+ * escapes, then unescape only what was extracted.
+ */
+function liveTestCallFor(src, title) {
+  if (!unescapeQuotes(src).includes(title)) return 'absent';
+  // Every `test(`/`it(` call whose first argument is a string literal, with its modifier chain.
+  const CALL = /\b(?:test|it)((?:\s*\.\s*(?:skip|only|todo|fails|concurrent|sequential|each))*)\s*\(\s*(['"`])/g;
+  let found = 'not-a-test';
+  for (let m = CALL.exec(src); m !== null; m = CALL.exec(src)) {
+    const modifiers = m[1] ?? '';
+    const quote = m[2];
+    let i = m.index + m[0].length;
+    let literal = '';
+    let closed = false;
+    for (; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === '\\') {
+        literal += src[i + 1] ?? '';
+        i++;
+        continue;
+      }
+      if (ch === quote) {
+        closed = true;
+        break;
+      }
+      if (ch === '\n' && quote !== '`') break; // unterminated single-line literal — not a title we can read
+      literal += ch;
+    }
+    if (!closed || literal !== title) continue;
+    if (/\.\s*(?:skip|todo|fails)\b/.test(modifiers)) {
+      found = 'skipped';
+      continue; // a live duplicate elsewhere still counts, so keep looking
+    }
+    return 'live';
+  }
+  return found;
+}
+
 const canonSrc = readFileSync(CANON, 'utf8');
 const canon = parseCanon(canonSrc);
 const problems = [];
@@ -120,10 +179,23 @@ for (const row of TRUST_CRITICAL_INDEX) {
     else if (!existsSync(join(ROOT, row.file))) problems.push(`${at}: cited file does not exist — ${row.file}`);
     else if (!row.testTitle) problems.push(`${at}: status "${row.status}" but no test title is named.`);
     else {
-      const src = unescapeQuotes(readFileSync(join(ROOT, row.file), 'utf8'));
-      if (!src.includes(row.testTitle)) {
+      const src = readFileSync(join(ROOT, row.file), 'utf8');
+      // The title must be attached to a LIVE test, not merely present in the file. A bare `includes` passed on a
+      // title that survived only in a comment, on `test.skip(...)`, and on a test whose body had been emptied —
+      // all three confirmed by running this checker against fixtures. Neutering a test is cheaper than renaming
+      // it, so it is the move a future author reaches for first; the substring check invited exactly that.
+      const call = liveTestCallFor(src, row.testTitle);
+      if (call === 'absent') {
         problems.push(
           `${at}: the cited test title is NOT in ${row.file}.\n      "${row.testTitle}"\n      A renamed or deleted test must break the build, not the claim.`,
+        );
+      } else if (call === 'not-a-test') {
+        problems.push(
+          `${at}: the cited title appears in ${row.file} but is NOT attached to a test(...) or it(...) call.\n      "${row.testTitle}"\n      A title surviving only in a comment proves nothing.`,
+        );
+      } else if (call === 'skipped') {
+        problems.push(
+          `${at}: the cited test in ${row.file} is SKIPPED (.skip/.todo/.fails).\n      "${row.testTitle}"\n      A skipped test is not evidence; the row is at best not_covered.`,
         );
       }
     }
@@ -150,8 +222,40 @@ for (const row of TRUST_CRITICAL_INDEX) {
 
 if (unproven > MAX_UNPROVEN) {
   problems.push(
-    `${unproven} rows are not MEASURED but MAX_UNPROVEN is ${MAX_UNPROVEN}. That number is a RATCHET: it may only ever go down. A control that was measured and is no longer measured is a regression in the evidence, not a bookkeeping detail. (It counts every not-yet-measured row, so ADDING a test to an uncovered negative leaves it unchanged — only recording a red CI run lowers it.)`,
+    `${unproven} rows are not MEASURED but MAX_UNPROVEN is ${MAX_UNPROVEN}. A control that was measured and is no longer measured is a regression in the evidence, not a bookkeeping detail. (It counts every not-yet-measured row, so ADDING a test to an uncovered negative leaves it unchanged — only recording a red CI run lowers it.)`,
   );
+}
+
+// ── 3b. The ceiling may not RISE ─────────────────────────────────────────────────────────────────────────────
+// Without this, MAX_UNPROVEN was an editable integer and the word "ratchet" in its docstring named no enforcer —
+// an author could break a measurement and raise the number in the same commit. Compare against the merge-base
+// with origin/main. Where there is no baseline to read, say so rather than passing quietly: a check that cannot
+// see its target must report that, which is the same rule check-approval-port and check-stop-port already follow.
+let ceilingNote = '';
+{
+  const readBaseline = () => {
+    for (const ref of ['origin/main', 'main']) {
+      const show = spawnSync('git', ['show', `${ref}:tools/trust-critical-index.mjs`], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+      if (show.status !== 0 || !show.stdout) continue;
+      const m = /export\s+const\s+MAX_UNPROVEN\s*=\s*(\d+)/.exec(show.stdout);
+      if (m) return { ref, value: Number(m[1]) };
+    }
+    return null;
+  };
+  const baseline = readBaseline();
+  if (baseline === null) {
+    ceilingNote = ' Ceiling baseline UNREADABLE (no git history for tools/trust-critical-index.mjs on origin/main or main) — the no-rise rule was NOT enforced on this run.';
+  } else if (MAX_UNPROVEN > baseline.value) {
+    problems.push(
+      `MAX_UNPROVEN rose from ${baseline.value} (${baseline.ref}) to ${MAX_UNPROVEN}. It is a ratchet: raising it converts lost evidence into a passing build, which is the one direction that must always fail. Restore the measurement, or record in CDR-080 why a measurement was withdrawn and have the owner accept the new ceiling.`,
+    );
+  } else {
+    ceilingNote = ` Ceiling ${MAX_UNPROVEN} ≤ baseline ${baseline.value} (${baseline.ref}).`;
+  }
 }
 
 // ── 4. Report ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -195,8 +299,12 @@ if (problems.length > 0) {
 const measured = TRUST_CRITICAL_INDEX.filter((r) => r.status === 'measured').length;
 const weak = TRUST_CRITICAL_INDEX.filter((r) => r.anchor === 'return_value_only' || r.anchor === 'pure_helper_only').length;
 const none = TRUST_CRITICAL_INDEX.filter((r) => r.status === 'not_covered' || r.status === 'unprovable').length;
+// "Self-test passed" used to close this line, which overstated what ran: the self-test exercises the canon
+// PARSER and nothing else, so deleting every per-row check would leave it printing the same reassuring words.
+// Name what was actually verified instead.
 console.log(
   `✔ trust-critical index: ${TRUST_CRITICAL_INDEX.length} canon items pinned to live tests; ` +
-    `${measured} MEASURED (red run recorded), ${unmeasured} unmeasured, ${none} with no test; ${unproven} unproven (ratchet ${MAX_UNPROVEN}). ` +
-    `${weak} rest on a returned value or weaker. Self-test passed.`,
+    `${measured} MEASURED (run id recorded — shape-checked, not resolved), ${unmeasured} unmeasured, ${none} with no test; ` +
+    `${unproven} unproven (ceiling ${MAX_UNPROVEN}).${ceilingNote} ` +
+    `${weak} rest on a returned value or weaker. Canon-parser self-test passed.`,
 );

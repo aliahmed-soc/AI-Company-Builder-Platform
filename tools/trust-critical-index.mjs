@@ -18,8 +18,22 @@
 // because the branch was squash-merged and deleted, and only the run id (`30646208952`, CDR-071:184) survived.
 // `P7-002-REVIEW-COVERAGE.md` §2.1 told the next ticket to record the run id. This is that ticket.
 //
-// A row without a run id is NOT green. It is UNMEASURED, in that word, and `MAX_UNMEASURED` below is a ratchet
-// that may only ever decrease.
+// A row without a run id is NOT green. It is UNMEASURED, in that word, and `MAX_UNPROVEN` below is a ceiling on
+// how many rows may be in that state.
+//
+// TWO LIMITS OF THIS FILE, STATED HERE BECAUSE A READER WILL OTHERWISE ASSUME OTHERWISE.
+//
+//   1. `mutationRunId` IS SELF-ASSERTED. The checker verifies its SHAPE, not its existence: it never contacts
+//      GitHub, so it cannot confirm the run happened, that it failed, or that it failed the test named in the
+//      same row. A six-digit number typed by hand passes. What the field buys is that the claim is DURABLE and
+//      CHECKABLE BY A HUMAN — `gh run view <id>` resolves long after the probe branch is deleted, which is
+//      exactly what a probe SHA does not do. It is an audit trail, not an oracle.
+//   2. NOTHING MACHINE-CHECKS THE MUTATION AGAINST THE TEST TITLE. ACBP-P7-007 marked row 19 `measured` on run
+//      31113087854, in which a DIFFERENT test in the same file went red; two independent reviews caught it and
+//      this checker could not. Until that cross-check exists, a `measured` row means "the author says this run
+//      reddened this test" — go read the run.
+//
+// Both are recorded as open items in CDR-080 §7 rather than papered over.
 
 /** Closed vocabulary. Prose cannot round a weak anchor up to "green" if the column is a fixed set. */
 export const ANCHOR_CLASSES = Object.freeze([
@@ -38,16 +52,23 @@ export const STATUSES = Object.freeze([
 ]);
 
 /**
- * RATCHET. The number of rows NOT in the `measured` state — unmeasured + not_covered + unprovable. It may only
- * ever go DOWN. Lowering it is the work of recording a mutation run id.
+ * CEILING on the number of rows NOT in the `measured` state — unmeasured + not_covered + unprovable.
  *
  * IT COUNTS UNPROVEN, NOT UNMEASURED, and the difference is load-bearing. A first version counted `unmeasured`
  * alone; the first time a negative gained a test (#15, slice 3) that row moved `not_covered → unmeasured` and
- * the count ROSE, so the ratchet failed the build FOR ADDING COVERAGE. Counting everything not yet measured
- * fixes it: adding a test leaves the total unchanged, recording a red run lowers it, and losing a measurement
- * raises it — which is the only direction that should ever fail.
+ * the count ROSE, so it failed the build FOR ADDING COVERAGE. Counting everything not yet measured fixes it:
+ * adding a test leaves the total unchanged, recording a red run lowers it, and losing a measurement raises it.
+ *
+ * IT IS CALLED A CEILING AND NOT A RATCHET, DELIBERATELY. An earlier version of this comment said "it may only
+ * ever go DOWN", and NOTHING ENFORCED THAT — the number is an editable integer in a file any author can edit in
+ * the same commit that breaks a measurement, and the checker only ever compares the live count against whatever
+ * this line says. An independent review named it: per this repository's own rule, a comment claiming a guarantee
+ * must be able to name its enforcer, and this one could not. `tools/check-trust-critical-index.mjs` now compares
+ * this value against the merge-base of `origin/main` and FAILS when it rises, so the word is earned on any tree
+ * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
+ * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 20;
+export const MAX_UNPROVEN = 18;
 
 /**
  * One row per canonical negative.
@@ -162,15 +183,15 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Expired approval cannot execute.',
     attributedTo: 'P6-004',
     builtBy: 'ACBP-P6-004 (repository layer only)',
-    status: 'unmeasured',
-    anchor: 'return_value_only',
-    file: 'packages/database/src/integration/approvals.integration.test.ts',
-    testTitle: 'a WORKER cannot be recorded as having decided an approval — the database refuses it',
+    status: 'not_covered',
+    anchor: 'none',
+    file: '',
+    testTitle: '',
     entryPoint: '',
     mutation: 'Delete the `expires_at > now()` conjunct AND the approval-usability pre-check, then dispatch with an expired approval.',
     mutationRunId: '',
     doesNotProve:
-      'THE CLAIM ITSELF. "Cannot EXECUTE" is never asserted at `dispatchToolCall`: searching both dispatcher suites for "expired" returns ZERO cases, while every sibling approval state (revoked, spent, mismatched-payload, version-moved, pending, deferred, scheduled) has one. This row cites the nearest real evidence and is honestly mislabelled until ACBP-P7-007 slice 5 adds the dispatcher case.',
+      'THE CLAIM ITSELF, AND THIS ROW NO LONGER CITES A TEST — which is the correction. "Cannot EXECUTE" is never asserted at `dispatchToolCall`: searching both dispatcher suites for "expired" returns ZERO cases, while every sibling approval state (revoked, spent, mismatched-payload, version-moved, pending, deferred, scheduled) has one. Until ACBP-P7-007 this row pointed at `approvals.integration.test.ts`s decider_type case — BYTE-IDENTICAL to the citation on row 5, about who may decide an approval, not about expiry — and the mutation recorded above could not have made it red under any circumstance. An independent review caught it. `unmeasured` means "a test exists and passes"; no test asserts this claim, so the honest status is `not_covered` and the citation is empty rather than borrowed. The dispatcher case was scoped for this ticket and NOT built: it needs real PostgreSQL, which is unreachable here.',
   },
   {
     number: 8,
@@ -281,14 +302,14 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Provider keys never appear in browser responses.',
     attributedTo: 'P0-019, P7-007',
     builtBy: 'ACBP-P7-007 slice 3 — P0-019 built a serialization test and a source scan, NOT a response test',
-    status: 'unmeasured',
+    status: 'measured',
     anchor: 'recorded_row',
     file: 'apps/web/src/server/adversarial/secret-egress.test.ts',
     testTitle: 'every exported HTTP method of every route module answers WITHOUT emitting a secret',
     entryPoint: 'every route.ts handler under apps/web/src/app',
     mutation:
-      'Make a route emit a configured secret — e.g. add `debug: loadClerkConfig().secretKey.reveal()` to auth-check/route.ts\'s 401 body.',
-    mutationRunId: '',
+      'Make a route emit a configured secret — e.g. add `debug: loadClerkConfig().secretKey.reveal()` to auth-check/route.ts\'s 401 body. Turns TWO tests red: the sweep and the `.reveal()` source guard.',
+    mutationRunId: '31113087854',
     doesNotProve:
       'THE CANONICAL WORDING. "Provider keys" do not exist in the runtime yet (the Infisical adapter is `export {}`, the only model adapter is the fake, there is no credential_ref table), so what is proven is the narrower property that carries the claim once they do: no `Secret`-wrapped configuration value reaches a response body or header. Coverage is the DENIAL and THROW paths — an authenticated 200 body is not swept, because that needs a database. BEWARE TWO NEAR-MISSES that read as coverage to a grep: clerk-webhook-handler.test.ts and fail-closed-proxy.test.ts carry real whsec_/sk_test_ literals in real Response bodies; neither drives a route module.',
   },
@@ -297,15 +318,15 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Secret values never appear in logs or audit payloads.',
     attributedTo: 'P0-017, P7-007',
     builtBy: 'ACBP-P0-017 (logs half, and it had a hole ACBP-P7-007 closed); the AUDIT half is enforced by nobody',
-    status: 'unmeasured',
+    status: 'measured',
     anchor: 'recorded_row',
     file: 'packages/observability/src/logger.test.ts',
     testTitle: 'sentinel secret never appears in an emitted MESSAGE either (trust-critical #16)',
     entryPoint: 'logger',
     mutation: 'Revert logger.ts to emit `fields.message` verbatim instead of through redact().',
-    mutationRunId: '',
+    mutationRunId: '31113087854',
     doesNotProve:
-      'THE AUDIT HALF, which nothing ENFORCES. `boundedMetadata` rejects objects, arrays, Errors and null and then accepts ANY string up to 1024 units with no secret detection — safety rests on typed factories happening to carry scalars, a convention rather than a control, and `audit_events` is append-only so a secret written there is unrecoverable. ACBP-P7-007 slice 4 made that gap EXECUTABLE (`packages/contracts/src/audit/metadata-secrets.test.ts` asserts boundedMetadata accepts secret-shaped values, and is written to fail the day enforcement lands) and published a reusable real-PG detector (`assertNoSecretsInAuditPayloads` in @acbp/test-support) — but a detector run in tests is not a control in production. Whether `boundedMetadata` should REJECT is CDR-080 §7, an owner decision, because audit-or-nothing means a rejection fails the product operation and the high-entropy pattern matches a base64 SHA-256 that audit metadata legitimately carries. The prior evidence for the logs half was scoped "metadata + error" — honestly named, and `message` was in fact emitted unredacted until this slice.',
+      'THE AUDIT HALF, which nothing ENFORCES. `boundedMetadata` rejects objects, arrays, Errors and null and then accepts ANY string up to 1024 units with no secret detection — safety rests on typed factories happening to carry scalars, a convention rather than a control, and `audit_events` is append-only so a secret written there is unrecoverable. ACBP-P7-007 slice 4 made that gap EXECUTABLE (`packages/contracts/src/audit/metadata-secrets.test.ts` asserts boundedMetadata accepts secret-shaped values, and is written to fail the day enforcement lands) and published a reusable real-PG detector (`assertNoSecretsInAuditPayloads` in @acbp/test-support) — but a detector run in tests is not a control in production. Whether `boundedMetadata` should REJECT is CDR-080 §7, an owner decision, because audit-or-nothing means a rejection fails the product operation and the high-entropy pattern matches a base64 SHA-256 that audit metadata legitimately carries. The prior evidence for the logs half was scoped "metadata + error" — honestly named, and `message` was in fact emitted unredacted until this slice. SECOND REVIEW PASS, and it narrows what run 31113087854 bought: that run proves `message` is PIPED THROUGH the redactor, not that the redactor recognises much. The case it reddened plants `password=…`, which the original P0-017 pattern set already handled, while a CONNECTION STRING, a JWT, an AWS key id, a Slack token and the `Basic` scheme were all still emitted verbatim — the connection string being the example the fix\'s own comment had offered. So the logs half was TWO holes, and only one was closed by the measured mutation. `redactString` now composes `redactSecrets` (the contracts SECRET_PATTERNS, a strict superset, and the same detector `containsSecret` uses so the sweep and the redactor finally agree), `event` is redacted too (it is `string`-typed and the dotted-name convention is not a control), and there is one case per shape plus two non-erasure controls — but NONE of those additions is mutation-measured. The run id below covers the piping, nothing more.',
   },
   {
     number: 17,
@@ -347,7 +368,8 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/core/src/model/silent-fallback-negative.test.ts',
     testTitle: 'a MATERIAL decision does NOT silently fall over — generation fails on the primary',
     entryPoint: 'the model gateway',
-    mutation: "Two, and they fail DIFFERENT cases. (a) For the leak assertions: add a field carrying the provider's internal error text to the result object built at the END of callModel — NOT to `errorResult`, which serves only the policy-precheck and early-internal paths and is never reached by a provider failure. (b) For the fallback claim itself: re-label the `strategy.options` template family as `extraction` so the platform's most material decision becomes fallback-eligible.",
+    mutation:
+      "Two, and they fail DIFFERENT cases. (a) For the LEAK assertions: add a field carrying the provider's internal error text to the result object built at the END of callModel — NOT to `errorResult`, which serves only the policy-precheck and early-internal paths and is never reached by a provider failure. (b) For the FALLBACK claim itself — the one this row is about: re-label the `strategy.options` template family as `extraction` so the platform's most material decision becomes fallback-eligible. NEITHER IS RECORDED, AND THAT IS A CORRECTION. (a) was run in CI 31113087854 and this row was briefly marked `measured` on it, which was WRONG TWICE OVER: the run reddened `a material decision that fails, fails HONESTLY` — a DIFFERENT test in this file — and it reddened it through that test's LEAK assertion, so it is evidence about #16-style egress, not about silent fallback. The test named above asserts only outcome/fallbackUsed/callCount/validatedOutput and mutation (a) cannot touch any of them. Two independent reviews caught this; the checker could not, because it never cross-checks `mutation` against `testTitle`. (b) is the mutation that would actually prove this row, and it has never been run.",
     mutationRunId: '',
     doesNotProve:
       'WHICH decisions are material — mutation (b) above turns fallback on for strategy generation WITH THE WHOLE SUITE GREEN, because the task class is unpinned for several material template families. It is also a unit suite over an in-memory events array, so no PERSISTED usage row is checked (migration 0030 added usage_events.fallback_reason; a real-PG case would be stronger). FIXED BY ACBP-P7-007: this file carried two assertions that could not fail — not.toContain("SECRET") where the literal SECRET appears nowhere in the harness, the planted value being FAKE_INTERNAL_MARKER. Both now target that marker, with a CONTROL proving the fake still plants it, and mutation (a) confirms they detect a leak.',

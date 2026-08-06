@@ -152,3 +152,21 @@ test('--json on a clean tree exits 0 and reports zero findings', () => {
   expect(code).toBe(0);
   expect(JSON.parse(stdout).findings).toEqual([]);
 });
+
+// ---- A SCAN THAT READ NOTHING IS NOT A CLEAN SCAN. ---------------------------------------------------------
+// ACBP-P7-007, SECOND REVIEW PASS. Against a root with none of the scan roots present, the scanner printed
+// "✔ secret scan passed (0 findings; 0 files scanned …)" and exited 0. That green line is not harmless: this
+// tool now runs as its own CI step named "launch gate 12 evidence" precisely so its output can be cited, so a
+// discovery regression produced a citable, meaningless pass. The self-test proves the RULES still match and says
+// nothing about whether discovery found anything to match them against.
+test('reading ZERO files is an ERROR, not a clean scan — the green line is cited as gate evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'acbp-secrets-empty-'));
+  try {
+    const r = spawnSync(process.execPath, [SCANNER, root], { encoding: 'utf8' });
+    expect(r.status, `expected a hard failure on an empty root\n${r.stdout}\n${r.stderr}`).toBe(2);
+    expect(`${r.stdout}\n${r.stderr}`).toMatch(/read ZERO files/);
+    expect(r.stdout, 'it must not also print a success line').not.toMatch(/secret scan passed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

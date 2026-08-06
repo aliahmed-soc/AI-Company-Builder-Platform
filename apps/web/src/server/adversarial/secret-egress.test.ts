@@ -18,8 +18,11 @@
 //     NO `Secret`-WRAPPED CONFIGURATION VALUE APPEARS IN ANY RESPONSE BODY OR HEADER.
 //
 // The five `Secret` fields in `@acbp/config` (INFISICAL_CLIENT_SECRET, DATABASE_URL, CLERK_SECRET_KEY,
-// CLERK_JWT_KEY, CLERK_WEBHOOK_SIGNING_SECRET) are loaded with high-entropy SENTINELS here, and every route
-// module's every exported HTTP method is driven and swept.
+// CLERK_JWT_KEY, CLERK_WEBHOOK_SIGNING_SECRET) are loaded with DISTINCT, DELIBERATELY LOW-ENTROPY sentinels
+// here, and every route module's every exported HTTP method is driven and swept. (This sentence said
+// "high-entropy" until ACBP-P7-007's second review pass — the exact opposite of the reasoning recorded at the
+// SENTINELS declaration below, which chose low entropy on purpose so the secret scanner would not flag this
+// file and force an allowlist entry. Uniqueness is the property the sweep needs; entropy is not.)
 //
 // NO DATABASE IS REQUIRED. `resolveVerifiedIdentity` returns `unauthenticated` before any query runs, so this
 // suite executes everywhere rather than only where PostgreSQL is reachable — the leak paths it covers (denial
@@ -28,6 +31,9 @@ import { describe, test, expect, beforeAll, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// The SAME composition entry `apps/web/src/server/webhooks/clerk-runtime.ts` uses, so asserting on it proves the
+// sentinels reached the configuration the routes actually read — not merely that `process.env` was written.
+import { loadClerkConfig } from '@acbp/config';
 
 // ── Sentinels ────────────────────────────────────────────────────────────────────────────────────────────────
 // Synthetic, never real, and shaped so that an accidental substring match is implausible. Each is distinct so a
@@ -83,7 +89,10 @@ function discoverRouteFiles(): string[] {
   return out.sort();
 }
 
-const HTTP_METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'] as const;
+// HEAD and OPTIONS are Next.js route exports too. They were missing, so a route exporting only those would be
+// discovered, skipped by the `typeof handler !== 'function'` guard, and contribute nothing — while the suite
+// stayed green on the other routes. Cheap to include; the cost of omitting it is a silent hole.
+const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'] as const;
 
 /** A params object carrying every dynamic segment any route in the tree uses. */
 const ALL_PARAMS = {
@@ -163,6 +172,10 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
 
     const leaks: string[] = [];
     const exercised: string[] = [];
+    // Handlers that actually RETURNED a Response, tracked separately from those merely invoked. See the
+    // assertions at the end of this test for why the difference is the whole guard.
+    const answered: string[] = [];
+    const threw: string[] = [];
 
     for (const file of files) {
       const mod = (await import(/* @vite-ignore */ `../../app/${file.replace(/\.ts$/, '.js')}`)) as Record<
@@ -192,15 +205,40 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
           // is narrower: whatever escapes must not carry a secret. Check the thrown value's own text.
           const found = sentinelsIn(String(error instanceof Error ? error.stack ?? error.message : error));
           if (found.length > 0) leaks.push(`${method} ${file} THREW carrying: ${found.join(', ')}`);
+          threw.push(`${method} ${file}`);
           continue;
         }
 
+        answered.push(`${method} ${file}`);
         const found = sentinelsIn(await surfaceOf(res));
         if (found.length > 0) leaks.push(`${method} ${file} → ${res.status} carrying: ${found.join(', ')}`);
       }
     }
 
     expect(exercised.length, 'no handlers were invoked — the export probe is broken').toBeGreaterThan(0);
+
+    // ACBP-P7-007, SECOND REVIEW PASS — THE ANTI-VACUITY ASSERTIONS.
+    //
+    // `exercised` counts handlers FOUND, and it is incremented before the call. A review pointed out the
+    // consequence: if every route threw — one new required env var this file's setup does not provide, a config
+    // schema change, `resolveVerifiedIdentity` starting to throw on a null userId instead of returning
+    // `unauthenticated` — then `exercised.length` is still 23, `leaks` is still empty, and this test goes GREEN
+    // WHILE SWEEPING ZERO RESPONSE BODIES, permanently and silently. Row 15 would keep its `measured` status on
+    // a suite that had stopped executing its own subject. Counting what actually answered is the difference.
+    expect(answered.length, `no handler RETURNED a response — every one threw, so no body was swept:\n${threw.join('\n')}`).toBeGreaterThan(0);
+    // A handful of throws is tolerable (the claim here is narrow: whatever escapes carries no secret), but a
+    // majority means the harness, not the routes, is what changed.
+    expect(threw.length, `most handlers threw rather than answering — this suite is measuring the harness:\n${threw.join('\n')}`).toBeLessThan(
+      exercised.length / 2,
+    );
+
+    // The sentinels must have reached the CONFIG the routes read, or every "no secret found" is trivially true
+    // because the value under test was never loaded. The lazily-built singleton makes this a real risk rather
+    // than a theoretical one, and the previous version of this file only noted it in a comment.
+    expect(loadClerkConfig().secretKey.reveal(), 'the sentinel never reached the loaded config').toBe(
+      canaryFor('clerkSecretKey'),
+    );
+
     expect(leaks, 'a configured secret reached an HTTP surface').toEqual([]);
   });
 

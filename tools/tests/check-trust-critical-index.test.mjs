@@ -75,7 +75,8 @@ function write(root, relPath, content) {
 }
 
 /**
- * @param {{ rows?: object[], maxUnproven?: number, canonText?: string, omitProvingFile?: boolean }} opts
+ * @param {{ rows?: object[], maxUnproven?: number, canonText?: string, omitProvingFile?: boolean,
+ *           provingFileText?: string }} opts
  */
 function run(opts = {}) {
   const rows = opts.rows ?? [row(), secondRow()];
@@ -83,7 +84,11 @@ function run(opts = {}) {
   try {
     write(root, CANON_PATH, opts.canonText ?? canon());
     if (!opts.omitProvingFile) {
-      write(root, PROVING_FILE, `import { test } from 'vitest';\ntest('${PROVING_TITLE}', () => {});\n`);
+      write(
+        root,
+        PROVING_FILE,
+        opts.provingFileText ?? `import { test } from 'vitest';\ntest('${PROVING_TITLE}', () => {});\n`,
+      );
     }
     write(
       root,
@@ -155,8 +160,42 @@ rejects(
   'no mutation is described',
 );
 
+// ---- A CITED TITLE MUST BE ATTACHED TO A LIVE TEST ---------------------------------------------------------
+// ACBP-P7-007, SECOND REVIEW PASS. The check was `src.includes(row.testTitle)`, and an independent review ran
+// the real checker against these three fixtures: all printed "pinned to live tests" and exited 0. Renaming a
+// test broke the build; NEUTERING one did not — and neutering is the cheaper move for anyone chasing green.
+rejects(
+  'the cited test is SKIPPED',
+  { provingFileText: `import { test } from 'vitest';\ntest.skip('${PROVING_TITLE}', () => {});\n` },
+  'is SKIPPED',
+);
+rejects(
+  'the cited test is marked .todo',
+  { provingFileText: `import { test } from 'vitest';\ntest.todo('${PROVING_TITLE}');\n` },
+  'is SKIPPED',
+);
+rejects(
+  'the title survives only in a comment, the test deleted',
+  { provingFileText: `import { test } from 'vitest';\n// ${PROVING_TITLE}\ntest('something else entirely', () => {});\n` },
+  'NOT attached to a test',
+);
+accepts('the cited test written with it() rather than test()', {
+  provingFileText: `import { it } from 'vitest';\nit('${PROVING_TITLE}', () => {});\n`,
+});
+accepts('a skipped duplicate alongside a live one still counts', {
+  provingFileText:
+    `import { test } from 'vitest';\ntest.skip('${PROVING_TITLE}', () => {});\ntest('${PROVING_TITLE}', () => {});\n`,
+});
+// A title containing an escaped apostrophe must still resolve. This is not hypothetical: canon item 14's title
+// contains one, and the FIRST version of the attachment check unescaped the source before scanning, so the
+// literal appeared to end mid-title and the real index failed on its own row.
+accepts("a title containing an escaped apostrophe", {
+  rows: [row({ testTitle: "the CALLER'S own row is refused" }), secondRow()],
+  provingFileText: `import { test } from 'vitest';\ntest('the CALLER\\'S own row is refused', () => {});\n`,
+});
+
 // ---- The ratchet -------------------------------------------------------------------------------------------
-rejects('more unproven rows than the ratchet allows', { maxUnproven: 0 }, 'RATCHET');
+rejects('more unproven rows than the ratchet allows', { maxUnproven: 0 }, 'not MEASURED but MAX_UNPROVEN');
 
 // THE RATCHET MUST NOT PUNISH NEW COVERAGE. A first version of this counted unmeasured alone, so the moment a
 // negative gained its first test (item 15, slice 3) the row moved not_covered -> unmeasured, the count ROSE, and
