@@ -102,7 +102,13 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
    * injectable port is gone (CDR-068 §0.1). Inserted as the OWNER, because the product role has no business
    * writing approvals outside the service.
    */
-  async function seedDecision(toolId: string, path: 'approve' | 'reject' = 'approve'): Promise<void> {
+  async function seedDecision(
+    toolId: string,
+    path: 'approve' | 'reject' = 'approve',
+    // ACBP-P7-008: an explicit expiry, so an EXPIRED-but-approved approval can be seeded. Default unchanged.
+    // A relative interval rather than a fixed timestamp, because the dispatcher compares against its own `now`.
+    expiresIn = "interval '30 days'",
+  ): Promise<void> {
     const policy = await owner.kysely
       .selectFrom('policies')
       .select(['id', 'version'])
@@ -117,7 +123,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
            values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
                    'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
                    'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
-                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
+                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + ${sql.raw(expiresIn)})
            returning id`.execute(owner.kysely)
     ).rows[0]!;
     await sql`insert into approval_decisions
@@ -560,6 +566,45 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // …while an INFORMATIONAL call, which the same policy plainly allows, needs no approval at all. THIS is the
     // loosening, asserted end to end: policy decides, and it did not ask.
     expect((await dispatch({ toolId: 'web_research' })).status).toBe('authorized');
+  });
+
+  // ── EXPIRED APPROVAL (ACBP-P7-008; FAILURE-AND-RECOVERY row 9; trust-critical #7) ──────────────────────────
+  //
+  // THE GAP THIS CLOSES. Canon row 9 says an expired approval "cannot execute", and trust-critical #7 says the
+  // same. Until now BOTH were proven only at the repository layer: searching either dispatcher suite for
+  // "expired" returned ZERO cases, while every sibling approval state — revoked, spent, mismatched-payload,
+  // version-moved, pending, deferred, scheduled — had one. The enforcement existed the whole time
+  // (`approvalUsability` reads `expires_at`, and `verifyAndConsume` re-checks it atomically); nothing drove it
+  // from the chokepoint.
+  //
+  // ORDER MATTERS, for the reason the sibling test above records: the EXPIRED case is asserted first, against a
+  // store where the only standing approval is the expired one. Seeding a live approval first would leave a
+  // usable row behind and the refusal would prove nothing.
+  test('an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED', async () => {
+    // A real human `approve`, genuinely decided, whose window has closed. This is the shape that matters:
+    // not a missing approval, not a rejected one — a YES that is no longer valid.
+    await seedDecision('send_email', 'approve', "interval '-1 minute'");
+
+    const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
+
+    // `approval_invalid`, NOT `approval_required`: an approval DID stand against this call, and saying "you need
+    // an approval" would misdescribe a company that granted one. The distinction is the point of the row.
+    expect(denied).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+
+    // ANCHORED IN THE DATABASE, not the return value. TOOL-002 requires the refusal to be recorded, and a
+    // denial nobody can audit is the failure mode this suite exists for.
+    const rows = await callRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ tool_id: 'send_email', denial_reason: 'approval_invalid' });
+  });
+
+  test('CONTROL: the SAME approval, unexpired, authorizes — so the refusal above is about expiry', async () => {
+    // Without this the expired case passes just as happily against a build that refuses `send_email` for any
+    // reason at all — a missing policy, a broken binding, a typo in the tool id. Same tool, same run, same
+    // seed path, one field different.
+    await seedDecision('send_email', 'approve', "interval '30 days'");
+    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
+    expect(ok.status).toBe('authorized');
   });
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────

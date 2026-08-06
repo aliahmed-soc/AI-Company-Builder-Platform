@@ -202,18 +202,19 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
   {
     number: 9,
     failure: 'Expired authorization (approval)',
-    consequence: 'the database refuses an approval decided by a worker',
+    consequence: 'the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls`',
     status: 'unmeasured',
     anchor: 'database_state',
-    injection: 'an INSERT that violates the decider_type CHECK',
-    file: 'packages/database/src/integration/approvals.integration.test.ts',
-    testTitle: 'a WORKER cannot be recorded as having decided an approval — the database refuses it',
-    entryPoint: '',
-    mutation: "Widen the decider_type CHECK to accept 'worker'.",
+    injection: 'a real human `approve` seeded with `expires_at` already in the past, then a real dispatch',
+    file: 'packages/core/src/tools/dispatcher.integration.test.ts',
+    testTitle: 'an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED',
+    entryPoint: 'dispatchToolCall',
+    mutation: 'Drop the `expires_at` conjunct from approvalUsability AND from verifyAndConsume\'s conditional UPDATE — both, because the UPDATE is the real enforcement and the pre-check is an equivalent mutation on its own (dispatcher.ts:388).',
     mutationRunId: '',
     doesNotProve:
-      'EXPIRY, which is what the row is about. This is the nearest real evidence and it is about WHO may decide, not WHEN an approval lapses. "Cannot execute" is never asserted at `dispatchToolCall`: searching both dispatcher suites for "expired" returns ZERO cases while every sibling approval state has one. Identical to trust-critical #7, which ACBP-P7-007 recorded as `not_covered`. The cited test also does not INJECT into a production path — it exercises a constraint directly.',
-    notes: 'Verified slice 1. The weakest citation in this index, and it says so.',
+      'The row\'s "task → cancelled/waiting" transition, its `approval.expired` audit event, or "Reservation released". A paired CONTROL seeds the identical approval unexpired and asserts it AUTHORIZES, so the refusal is about expiry rather than about anything else refusing `send_email`.',
+    notes:
+      'BUILT IN SLICE 4, and it closes trust-critical #7 at the same time. Until now BOTH were proven at the repository layer only — a `decider_type` CHECK test about WHO may decide, not WHEN an approval lapses — and searching either dispatcher suite for "expired" returned ZERO cases while every sibling approval state had one. The enforcement existed the whole time; nothing drove it from the chokepoint.',
   },
   {
     number: 10,
