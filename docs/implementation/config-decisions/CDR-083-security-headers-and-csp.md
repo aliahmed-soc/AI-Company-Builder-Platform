@@ -581,6 +581,28 @@ genuine `failure`. The void shape is therefore visible across branches and disti
 and sibling runs `31120503219` and `31119574444` went green in the same window, so this is not an account-wide
 block of the kind PROJECT-STATE records for 2026-07-28.
 
+**A fourth attempt, and a better explanation than "runners were unavailable".** A *fresh* run on a new SHA —
+`31123051670` on `135a883` — went void the same way, so the cause is not the rerun path. Meanwhile sibling run
+`31120503219` reports `steps=14, success` in the same window: **runners were being acquired, just not for this
+PR.** The distinguishing property is that **PR #80's base is `p7-007-security-test-pass`, a branch another
+session is actively committing to**, while every PR that ran green targets `main`.
+
+`pull_request` CI runs against `refs/pull/80/merge`, which GitHub recomputes on every push to the **base**.
+`ci.yml` sets `concurrency: cancel-in-progress: true` keyed on `github.ref`, so a base push during a run
+cancels it. The timeline fits: base commit `381601a` landed **17:35:30 UTC**, inside `31123051670`'s window
+(created 17:24:55 UTC), and `gh pr view 80` still reports `mergeable=UNKNOWN, mergeStateStatus=UNKNOWN` —
+GitHub has not settled the merge ref. The base has moved four times in roughly three hours.
+
+**This is the stacking decision from the header note arriving as a concrete cost**, and it is an owner gate
+rather than something to keep retrying. The options, none of which this ticket may take unilaterally:
+
+1. **Wait for ACBP-P7-007 to merge**, then rebase this branch onto `main` and re-run. Cleanest; costs time.
+2. **Re-target PR #80 at `main`.** Gets a stable base immediately, but the PR diff then contains all of
+   P7-007's commits, which misrepresents what this ticket changed.
+3. **Accept local verification**, as the owner explicitly did on 2026-07-29 during the CI outage
+   (PROJECT-STATE). The local sweep here is real but is one machine and one PostgreSQL version, and the
+   real-PostgreSQL suites are **skipped**, not green.
+
 **Nothing here is measured until a run with `steps > 0` goes green on this branch's exact SHA.** §10.1's
 figures stay labelled local, the trust-critical standard is unmet, and this is stated in the CDR rather than
 left for a reader to infer from a red badge.
