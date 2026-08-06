@@ -144,6 +144,15 @@ call would leave the platform's most expensive per-request dependency unbounded 
 behind the thing most worth protecting. The account check runs after identity resolution, because that is the
 earliest point at which the account is known.
 
+**When there is no session id the key falls back to the USER id — never a shared key, never a refusal.** The first
+implementation refused outright, reasoning that Clerk does not produce a verified user without a session. Hosted CI
+disproved the premise expensively: five real-database route suites stub `auth()` as `{ userId }` alone, and **every
+route in them returned 503**. The strict version's real failure mode was therefore not one unmeterable request
+refused — it was the whole surface down at once, from a single unexpected provider shape. The user id is the right
+fallback precisely because it is **stricter**: every session of one user then shares one bucket, so the ceiling
+still binds, and binds harder. A shared constant key would let any caller throttle everyone else; admitting
+unmetered would fail open. Recorded as F7 in `P7-013-REVIEW-COVERAGE.md` §2.
+
 **Unauthenticated requests are deliberately NOT metered here, and this is the sharpest limitation in the ticket.**
 See §6.1.
 

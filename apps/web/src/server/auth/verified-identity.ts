@@ -135,14 +135,24 @@ export async function resolveVerifiedIdentity(
   try {
     sessionId = await deps.getSessionId();
   } catch {
-    return { status: 'unavailable' };
+    sessionId = null;
   }
-  // A verified user with no session id is not a shape Clerk produces, and metering it under one shared empty
-  // key would let any caller throttle every other caller. Fail closed rather than admit an unmeterable request.
-  if (sessionId === null || sessionId === '') {
-    return { status: 'unavailable' };
-  }
-  const limit = await deps.checkSessionLimit(sessionId);
+  // ── WHEN THERE IS NO SESSION ID, FALL BACK TO THE USER ID — NEVER TO A SHARED KEY, NEVER TO AN OUTAGE ──────
+  //
+  // An earlier version of this refused the request outright, on the reasoning that a verified user without a
+  // session id is not a shape Clerk produces. Hosted CI disproved the premise in the bluntest way available: five
+  // real-database route suites stub `auth()` as `{ userId }` with no `sessionId`, and EVERY route in them
+  // returned 503. That is the failure mode the strict version actually has — not one unmeterable request
+  // refused, but every request refused at once, from one unexpected provider shape.
+  //
+  // The user id is the right fallback because it is STRICTER, not looser: all of one user's sessions then share
+  // a single bucket, so the ceiling still binds and binds harder. The alternatives are both wrong — a shared
+  // constant key would let any caller throttle everyone else, and admitting unmetered would fail open.
+  //
+  // The `getSessionId` throw is folded into the same path for the same reason: an unreadable session id is a
+  // reason to meter more coarsely, not a reason to take the platform down.
+  const limitKey = sessionId !== null && sessionId !== '' ? sessionId : userId;
+  const limit = await deps.checkSessionLimit(limitKey);
   if (limit.kind === 'throttled') return { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds };
   // `unavailable` is reported as unavailable, never as throttled: telling a caller "you are sending too many
   // requests" when the truth is "we could not tell" is a different claim, and the wrong one.

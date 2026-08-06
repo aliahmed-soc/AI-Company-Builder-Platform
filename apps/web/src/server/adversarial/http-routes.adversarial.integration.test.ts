@@ -68,7 +68,10 @@ function setForgedClaims(target: { accountId: string; companyId: string }): void
 }
 
 vi.mock('@clerk/nextjs/server', () => ({
-  auth: () => Promise.resolve({ userId: sessionProviderUserId }),
+  // ACBP-P7-013: a real `auth()` carries a sessionId whenever it carries a userId, and the per-session
+  // ceiling is keyed on it. Stubbed here so these suites exercise the PRIMARY path rather than the user-id
+  // fallback; the fallback has its own cases in verified-identity.test.ts.
+  auth: () => Promise.resolve({ userId: sessionProviderUserId, sessionId: `sess_${sessionProviderUserId}` }),
   clerkClient: () =>
     Promise.resolve({
       users: {

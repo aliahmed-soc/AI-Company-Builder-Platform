@@ -195,21 +195,53 @@ describe('resolveVerifiedIdentity (server request boundary)', () => {
       expect(r.status).toBe('unavailable');
     });
 
-    test('a session with no id FAILS CLOSED rather than sharing one unmeterable bucket', async () => {
-      // Metering every keyless request under one shared bucket would let any caller throttle every other
-      // caller — a protection turned into a denial-of-service primitive.
-      let limitCalls = 0;
+    test('with NO session id it falls back to the user id — stricter, never a shared key, never an outage', async () => {
+      // REGRESSION TEST FOR A DEFECT THIS TICKET SHIPPED AND HOSTED CI CAUGHT. The first version refused when
+      // the session id was absent, reasoning that Clerk never produces that shape. Five real-database route
+      // suites stub `auth()` as `{ userId }` alone, and every route in them returned 503 — so the strict
+      // version's real failure mode was not one request refused but the whole surface down.
+      //
+      // The user id is stricter, not looser: every session of one user then shares a single bucket.
+      const seen: string[] = [];
       const r = await resolveVerifiedIdentity(
         deps({
+          getUserId: () => Promise.resolve('user_123'),
           getSessionId: () => Promise.resolve(null),
-          checkSessionLimit: () => {
-            limitCalls += 1;
+          checkSessionLimit: (key) => {
+            seen.push(key);
             return Promise.resolve({ kind: 'allowed' } as const);
           },
         }),
       );
-      expect(r.status).toBe('unavailable');
-      expect(limitCalls).toBe(0);
+      expect(r.status).toBe('authenticated');
+      expect(seen).toEqual(['user_123']);
+    });
+
+    test('a THROWING getSessionId also falls back rather than taking the request down', async () => {
+      const seen: string[] = [];
+      const r = await resolveVerifiedIdentity(
+        deps({
+          getSessionId: () => Promise.reject(new Error('provider blip')),
+          checkSessionLimit: (key) => {
+            seen.push(key);
+            return Promise.resolve({ kind: 'allowed' } as const);
+          },
+        }),
+      );
+      expect(r.status).toBe('authenticated');
+      expect(seen).toEqual(['user_123']);
+    });
+
+    test('the fallback still METERS — it is a coarser key, not an exemption', async () => {
+      // The fallback must not become a way to be admitted unmetered: a throttled verdict on the fallback key
+      // refuses exactly as it would on a session key.
+      const r = await resolveVerifiedIdentity(
+        deps({
+          getSessionId: () => Promise.resolve(null),
+          checkSessionLimit: () => Promise.resolve({ kind: 'throttled', scope: 'session', retryAfterSeconds: 3 } as const),
+        }),
+      );
+      expect(r.status).toBe('rate_limited');
     });
 
     test('an UNAUTHENTICATED request is not metered — it has no verified key to meter', async () => {
