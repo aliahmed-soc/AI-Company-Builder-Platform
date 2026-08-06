@@ -354,8 +354,42 @@ lesson (a probe that went red at *lint* and never reached the tests) arriving th
 the probe never ran the tests; here, it ran them and never touched their path. **Before recording a mutation
 result, confirm the edited code is on the path the named test executes.** That instruction is now in the index
 row itself, which spells out which function to edit and which not to.
-6. **Scanner hardening + its first regression suite.** `tools/check-secrets.mjs` has **zero tests** while
-   `check-boundaries`, `check-reset-lists` and `check-approval-port` all have them; plus the extension holes,
-   allowlist hygiene, a scripted full-history sweep (the 2026-07-31 figure is unreproducible prose), and a named
-   CI step so *"zero findings"* is a linkable check.
+6. **Scanner hardening + its first regression suite** — **DONE.**
+   - **The file-selection rule is now a DENYLIST, not an allowlist**, and that is the substance of the slice.
+     The old rule scanned 11 named extensions, so **any other file inside a scanned root was invisible** — 16
+     existed, including `tools/local/db.ps1` and `tools/local/provision.sh`, shell and PowerShell being exactly
+     where a connection string gets pasted. Now everything is scanned except known-binary/build types, with a
+     size cap and a NUL-byte guard: the default is **covered**, and an exclusion is a visible edit. Files
+     scanned went from the old allowlist's subset to **732**.
+   - **Stale allowlist entries are now a finding.** All seven pre-existing entries silence a rule for a whole
+     file forever; an entry that suppresses nothing is a permanent silence nobody revisits, which is how a real
+     credential eventually hides behind a reviewed decision. The clean line now reports *"N allowlist entries,
+     all still in use."*
+   - **A negative self-test**, house style: every pattern must still match a synthetic value before the tool
+     reports a clean tree, or it exits 2. A scanner that stops matching otherwise prints "0 findings", which
+     reads as proof the repository is clean.
+   - **`--json` mode** for the slice-7 evidence bundle, with values redacted there too.
+   - **A named CI step** — *"Secret scan — zero findings (NFR-018; launch gate 12 evidence)"* — running before
+     the aggregate gate. It duplicates coverage on purpose: a green line buried inside a step called *"Aggregate
+     gate"* cannot be cited as launch-gate-12 evidence, and a committed credential now fails in seconds.
+   - **28 regression cases** in `tools/tests/check-secrets.test.mjs`, the scanner's first ever: one per pattern,
+     the newly-covered extensions, excluded directories, the `.env` prohibition, allowlist scoping in three
+     directions, staleness, redaction, and both `--json` paths.
+
+### §8.4 The scanner was invisible to itself, and the fix was not to allowlist it
+
+While hardening it I wrote the binary-content guard with a **literal NUL byte**. That byte made
+`check-secrets.mjs` fail its own NUL check — so **the scanner skipped its own file**, and its self-test probes
+went unseen. Replacing the literal with the escape ` ` restored self-coverage and immediately produced
+**nine findings: the tool had been invisible to itself.**
+
+The tempting fix is `tools/check-secrets.mjs|<rule>` in the allowlist. That is the wrong fix — it would blind
+the gate to a real credential pasted into the gate. The probes are **assembled from parts** instead, so every
+byte stays readable to a person while matching no pattern at rest. The regression suite does the same, for the
+same reason: it lives inside a scanned root too.
+
+Not done, and left to a follow-up: **the scripted full-history sweep.** PROJECT-STATE records one run on
+2026-07-31 (8,689 objects / 3,989 blobs / 35 matches, all synthetic or allowlisted) but no script exists, so
+that figure is unreproducible prose — the same weakness `P7-002-REVIEW-COVERAGE.md` §2.1 names about its own
+unpreserved probe.
 7. **Report, mutation probe, canon corrections, review, finalization** — with the probe's **run id** recorded.

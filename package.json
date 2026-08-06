@@ -22,7 +22,7 @@
     "check:usage-kind-predicate": "node tools/check-usage-kind-predicate.mjs",
     "check:migration-drain-loops": "node tools/check-migration-drain-loops.mjs",
     "check:trust-critical-index": "node tools/check-trust-critical-index.mjs",
-    "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs tools/tests/check-trust-critical-index.test.mjs",
+    "test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs tools/tests/check-trust-critical-index.test.mjs tools/tests/check-secrets.test.mjs",
     "test:config": "vitest run packages/config",
     "test:observability": "vitest run packages/observability",
     "test:database": "vitest run packages/database",

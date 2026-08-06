@@ -63,6 +63,12 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: CI database preflight (fails if integration tests would silently skip)
         run: pnpm run ci:preflight
+      # ACBP-P7-007 (CDR-080 §8 slice 6). The secret scan also runs inside the aggregate gate below, so this is
+      # not extra coverage — it is a NAMED, LINKABLE check. Launch gate 12 wants "zero findings on secrets" as
+      # evidence, and a green line buried inside a step called "Aggregate gate" cannot be cited as that. It runs
+      # BEFORE the aggregate gate so a committed credential fails in seconds rather than after the full suite.
+      - name: Secret scan — zero findings (NFR-018; launch gate 12 evidence)
+        run: pnpm run check:secrets
       - name: Aggregate gate (typecheck, lint, secret scan, boundaries + regression, contracts, unit, real-PostgreSQL integration + migrations)
         run: pnpm run check
       # ACBP-P1-015 acceptance criterion ("Demo script passes E2E incl. live denial") and its verification
