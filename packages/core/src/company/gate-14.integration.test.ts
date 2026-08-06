@@ -146,7 +146,7 @@ describe.skipIf(!hasTestDatabase)('LAUNCH GATE 14 — no new autonomous work (re
   });
 
   test('but a REPLAY of a job enqueued BEFORE the pause is still answered — not refused', async () => {
-    // NFR-006 replay safety, and the whole reason the gate sits after the idempotency question (CDR-079 §6-G5).
+    // NFR-006 replay safety, and the whole reason the gate's REFUSAL branch asks the idempotency question before refusing (CDR-079 §6-G5).
     // The dedupe is INSERT-FIRST, so a naive gate would refuse a retry of a request that already succeeded, and
     // the caller could never learn their job exists — a control meant to stop NEW work breaking replay instead.
     const first = await enqueueJob(product, { ...base(), kind: 'understanding.generate', payload: { documentId: 'doc-1' }, idempotencyKey: 'k-replay' });

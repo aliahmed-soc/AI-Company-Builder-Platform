@@ -169,7 +169,9 @@ function gate(answer: unknown): GateAnswer['kind'] {
  * Decide whether a proposed tool call may execute.
  *
  * TOTAL and deny-by-default: every input shape produces a decision, and every unrecognised input produces a REFUSAL.
- * The order is canon's (diagram 07) and each step's position is load-bearing — checking the allowlist before
+ * The order follows canon's (diagram 07) for the steps canon draws, with ACBP-P7-002's lifecycle gate inserted
+ * AHEAD of all of them — a step diagram 07 has no record of, because the control did not exist when it was
+ * drawn (CDR-079 §4.3). Each step's position is load-bearing — checking the allowlist before
  * registration, for instance, would report a tool that does not exist as one the worker is not permitted, sending
  * whoever reads the record to fix the wrong thing.
  */

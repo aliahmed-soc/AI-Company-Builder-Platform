@@ -38,7 +38,7 @@ Retention default: activity-projected events with company data; audit-relevant e
 | company.created | Account&Company | Workflow coord. (provisioning), activity | company_id, creation_mode | audited | with company |
 | company.updated | Account&Company | activity | changed_fields (names only) | audited | with company |
 | company.paused / company.resumed | Account&Company | activity. **NOT a workflow-coordinator consumer** — see Notes | reason?, held_work_count (resume) | audited | with company |
-| company.deactivated | Account&Company | export. **NOT EMITTED** — see Notes | — | audited | permanent record |
+| company.deactivated | Account&Company | **NO CONSUMER** — `export` is not one; **NOT EMITTED** — see Notes | — | **not registered** — see Notes | permanent record |
 | provisioning.started | Account&Company (P1-012) | audit only — never activity | step_count | audited (company-scoped) | with company |
 | provisioning.step_started / step_completed / step_failed | Account&Company (P1-012) | audit only — never activity | step, attempt (+ result_code / failure_code — closed sets) | audited; step_failed outcome=blocked; system actor | with company |
 | provisioning.retry_requested | Account&Company (P1-012) | audit only — never activity | step, next_attempt | audited; USER actor; causation for the retry run | with company |
@@ -299,33 +299,40 @@ Retention default: activity-projected events with company data; audit-relevant e
   company's lifecycle status before doing autonomous work* — pausing a company was a label, not a control. (The
   qualifier matters: `startInterviewSession` did read and refuse on the status, but that is a human-initiated
   discovery start.) The row is corrected rather than quietly deleted because it is one of **five artefacts that
-  made the gap look closed** — with the predicate's docstring, a green test named after enforcement it did not
-  exercise, `REQUIREMENT-TRACEABILITY.csv`'s COMP-006 `Covered (MVP)` cell, and (from P6-007 on)
-  `stop-service.ts`'s docstring, which had already recorded that nothing stops a task being created, planned,
-  queued and started while a stop stands. A catalog row is a design intent, and an intent that is
-  indistinguishable from a shipped guarantee is how this happens.
+  let the gap survive** — and they are not five of a kind. **Four ASSERTED a control that did not exist and
+  agreed with each other**: this row, the predicate's docstring, a green test named after enforcement it did not
+  exercise, and `REQUIREMENT-TRACEABILITY.csv`'s COMP-006 `Covered (MVP)` cell. **The fifth said the OPPOSITE and
+  was ignored**: `stop-service.ts:514` (from P6-007 on) had already recorded that nothing stops a task being
+  created, planned, queued and started while a stop stands. Four agreeing artefacts are not four pieces of
+  evidence — they are one unverified belief with four copies, and the fifth was the disconfirmation already
+  written down. A catalog row is a design intent, and an intent that is indistinguishable from a shipped
+  guarantee is how this happens.
 
   **Enforcement as shipped is a status READ, not a subscription**: `readLifecycleDecision` reads
   `accounts.status` and then, if the account is active, `companies.status` — both `FOR SHARE`, inside the
   caller's transaction — at four points: `startRun`, `dispatchToolCall`, `enqueueJob`, `runJobStep`. It hands
-  both rows to `mayStartAutonomousWork`, which is a **pure predicate and performs no I/O of its own**. Credit
+  what it read to `mayStartAutonomousWork` — both rows when the account is active, otherwise the account row
+  alone and `undefined` for the company — and that predicate is **pure and performs no I/O of its own**. Credit
   the reads to the reader: this note originally credited them to the predicate, which is precisely the
   `canPickUpAutonomousWork` defect it exists to document. Emitting the event is neither necessary nor sufficient
   for the halt; if this ever becomes event-driven, the read must stay, because an unconsumed event is the failure
   this note records.
-- **`company.deactivated` is NOT EMITTED, and it has NO CONSUMER EITHER (ACBP-P7-002 / CDR-079 §9.10, and §9.5
-  for the transition it waits on).** The `deactivating`/`deactivated` states exist in the CHECK constraint
-  (migration 0054) and the gate above refuses them, but **no code performs the transition that would emit this
-  event** — in production those states are reachable only by a direct database write. The name is not even a
-  registered audit event (`CDR-015:35` lists it as *"NOT registered"*), so the `audited` cell is aspirational
-  too.
+- **`company.deactivated` is NOT EMITTED, and it has NO CONSUMER EITHER** (ACBP-P7-002 / CDR-079 **§9.10** for
+  the event name; the transition itself is **§10 slice 5**, gated behind §9.5, *"Does pause now raise a real
+  halt?"*). The `deactivating`/`deactivated` states exist in the CHECK constraint (migration 0054) and the gate
+  above refuses them, but **no code performs the transition that would emit this event** — in production those
+  states are reachable only by a direct database write. The name is not even a registered audit event
+  (`CDR-015:34-35` lists it under *"NOT registered"*), which is why the row's Audit cell is corrected too.
 
   **The `export` consumer in this row is also not a consumer** — this note asserted it was "real and
   independent", which was wrong in the same column, in the same paragraph, as the correction above. There is no
-  event-delivery machinery anywhere in this repository: no outbox, no subscriber, no `LISTEN`. What is true is
-  narrower and is not consumption of anything: **`exportCompanyData` keeps working when `companies.status =
-  'deactivated'`**, which ADR-002's ownership guarantee requires and a real-PostgreSQL test asserts
-  (`gate-14.integration.test.ts:301`). That is the *absence of a gate*, not a reaction to an event.
+  **asynchronous** event-delivery machinery anywhere in this repository: no outbox, no subscriber, no `LISTEN`.
+  The only fan-out that exists is the synchronous, in-transaction `activity_events` projection
+  (`projectCompanyActivity`), which covers `company.created/updated/paused/resumed` — that is the `activity` cell
+  in the row above, and it is not a workflow coordinator. What is true of export is narrower and is not
+  consumption of anything: **`exportCompanyData` keeps working when `companies.status = 'deactivated'`**, which
+  ADR-002's ownership guarantee requires and a real-PostgreSQL test asserts (`gate-14.integration.test.ts:301`).
+  That is the *absence of a gate*, not a reaction to an event.
 - **`interview.started` activity fan-out is DEFERRED (ACBP-P2-001 / CDR-022 §4).** As implemented in P2-001 the
   event is **audit-only**: it is registered in `AUDIT_EVENTS` and emitted in the session-start transaction, but
   it is NOT projected into the `activity_events` feed. Projecting it would extend P1-009's deliberately closed

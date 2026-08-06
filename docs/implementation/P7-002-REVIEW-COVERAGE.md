@@ -28,16 +28,18 @@ constraint and let the existing gate refuse them.
 **Five** artefacts made that gap look closed, which is why it survived six phases. CDR-079 §1.1 names four; the
 fifth was found last, during the documentation pass, and is the worst of them:
 
-| Artefact | What it says | What is true |
+| Artefact | What it said, on `origin/main` | What is true |
 |---|---|---|
 | `canPickUpAutonomousWork`'s docstring | *"the single truth a scheduler/worker consults before opening a run"* | **Zero production callers** |
 | A green integration test | `'pause blocks new autonomous-work pickup (invariant 16 groundwork)'` | Calls the pure predicate on a returned value; exercises no pickup path |
 | `EVENT-CATALOG.md:40` | `company.paused` consumer: *"Workflow coord. (halt/resume pickup, invariant 16)"* | No such consumer exists — and the row predates P1-010, unchanged since the Phase-0 initial commit |
-| `stop-service.ts:513` (from P6-007 on) | *"nothing stops a task being created, planned, queued and started while the stop stands"* | Not a false claim — the opposite: a **recorded admission**, already written down, about the machinery deactivation was to reuse |
-| **`REQUIREMENT-TRACEABILITY.csv`, COMP-006** | `Coverage status` = **`Covered (MVP)`**, verified by *"Pause-then-schedule negative tests"* | **Neither test existed.** This is the most consequential of the five: a traceability matrix is what a reader consults to ask *"is this requirement covered"* — the exact question it answered wrongly |
+| `stop-service.ts:514` (from P6-007 on) | *"nothing stops a task being created, planned, queued and started while the stop stands"* | Not a false claim — the opposite: a **recorded admission**, already written down, about the machinery deactivation was to reuse |
+| **`REQUIREMENT-TRACEABILITY.csv`, COMP-006** | `Coverage status` = **`Covered (MVP)`**, verified by *"Pause-then-schedule negative tests; in-flight safe-stop tests"* | **Neither existed.** The first exists now; the second still does not, which is why the corrected cell reads `Partially covered - new-work halt only (MVP)`. This is the most consequential of the five: a traceability matrix is what a reader consults to ask *"is this requirement covered"* — the exact question it answered wrongly |
 
-A docstring, a test name, a catalog row, a comment and a coverage cell agreeing with each other is not five
-pieces of evidence. It is one unverified belief with five copies.
+**They are not five of a kind.** Four ASSERTED a control that did not exist and agreed with each other — the
+docstring, the test name, the catalog row and the coverage cell. The fifth said the OPPOSITE and was ignored.
+Four agreeing artefacts are not four pieces of evidence: they are one unverified belief with four copies, and
+the fifth was the disconfirmation that had already been written down.
 
 A nine-agent design investigation (four read-only lenses → synthesis → three refutation lenses → completeness
 critic) then **killed the first enforcement plan**: its five points did not cover the three shipped worker
@@ -73,7 +75,7 @@ CDR-079 still read *"the enforcement plan the investigation KILLED"* and *"Enfor
 the branch shipped four of those five points, each carrying a *"launch Gate 14"* banner. The only place the
 ruling was argued was a code comment.
 
-**Identical to the PROJECT-STATE forward pointer corrected on ACBP-P7-001 the day before** (`cf67c7f`,
+**Identical to the PROJECT-STATE forward pointer corrected on ACBP-P7-001 FOUR HOURS EARLIER THE SAME EVENING** (`cf67c7f` at 19:52; this ticket's stale-CDR finding landed as `970929d` at 23:55 —
 2026-08-05). Twice in two days the record went stale first — because CI verifies code on every push and prose is
 verified by nobody. New §4.3 records what was actually built, why four points and not five, and that §4.1's
 objection is **not** dissolved.
@@ -83,7 +85,9 @@ objection is **not** dissolved.
 **This ticket silently disabled a merged trust-critical control.** The lifecycle gate outranks the stop gate in
 `decideDispatch`, and P6-007's held-work capture was keyed on *which refusal was reported*
 (`finalReason === 'emergency_stopped'`). For a company **both** non-active **and** covered by a live stop — a
-combination **no fixture in this repository produces**, which is exactly why nothing caught it — the capture
+combination **no fixture ever DISPATCHES from** (the harness pauses company B2 and one dispatcher case raises an
+account-wide stop over account B, but every dispatch in that suite runs from the active company A1), which is
+exactly why nothing caught it — the capture
 stopped running: no `held_work` row, no `running`→`paused`, and ADMIN-002's confirm-or-discard review lost that
 task. Clear the stop before resuming the company and it resumes with no review at all.
 
@@ -142,14 +146,16 @@ three blocking states, the attempt-budget case, the account level, `enqueueJob`,
 
 **Read that number with two caveats, both of which are this ticket's fault:**
 
-- **The probe branch was disposable and was NOT preserved, and no CI run is cited.** ACBP-P6-006 did this
-  properly: a labelled probe commit (`fe85082`) that still resolves, plus the run id. Nobody can re-derive this
-  ticket's figure — which makes "mutation-proven" rest on prose, the precise weakness §0 is about. The next
-  probe should be a preserved commit.
+- **The probe branch was disposable and was NOT preserved, and no CI run is cited.** ACBP-P6-006 did the
+  recoverable half properly: it wrote down BOTH the probe SHA (`fe85082`) AND its CI run id (`30646208952`,
+  recorded in CDR-071:184). **That SHA is reachable from no ref today either** — P6-006's branch was
+  squash-merged and deleted — so the RUN ID is the half that actually survived, and the half to copy. Nobody can
+  re-derive this ticket's figure at all, which makes "mutation-proven" rest on prose: the precise weakness §0 is
+  about. **Record the next probe's run id, not just its commit.**
 - **The suite is 18 cases now, not 17.** `970929d` later seeded a policy and added the dispatch control case, and
   the probe was not re-run. The enumeration above is also probably short by one: `'RESUMING restores the ability
-  to work'` asserts the same refusal and cannot have stayed green under a neutralised gate, which would make it
-  9. Recorded as measured rather than adjusted after the fact.
+  to work — the gate is not a one-way door'` asserts the same refusal and cannot have stayed green under a
+  neutralised gate, which would make it 9. Recorded as measured rather than adjusted after the fact.
 
 Two things came out of it worth more than the green run:
 
@@ -192,10 +198,12 @@ untested combination does not belong in it.
   *creation* paths are ungated, live HTTP routes are unruled, and `RELEASE-GATES.md:10` wants a **drill**.
 - **`lifecycle-guard.test.ts:6`** — the `FOR SHARE` ordering guarantee is asserted **structurally**, not by a
   real-PG race. A race that happens not to interleave is a green test proving nothing; a structural assertion
-  fails every run the lock is missing. Stated so nobody mistakes it for a concurrency proof. Note that CDR-079
-  §6-G3 does **not** carry this caveat and its claim that *"the transition's is `FOR UPDATE`"* is false —
-  `CompanyRepository.findById` is an unlocked `SELECT`. The ordering rests on the gate's `FOR SHARE` conflicting
-  with the row lock the transition's `UPDATE` takes.
+  fails every run the lock is missing. Stated so nobody mistakes it for a concurrency proof. **CDR-079 §6-G3 now
+  carries the same caveat**, and records that an earlier draft of it wrongly asserted the transition's read *"is
+  `FOR UPDATE`"*. It is not: `CompanyRepository.findById` (`company-repositories.ts:35`) is an unlocked
+  `SELECT`, and the ordering rests on the gate's `FOR SHARE` conflicting with the row lock the transition's
+  `UPDATE` takes implicitly. *(This bullet said §6-G3 did **not** carry the caveat — written in the same commit
+  that added it. A cross-document claim about a file you are editing goes stale before the commit closes.)*
 
 ## §5 What must happen before this ticket is Done
 

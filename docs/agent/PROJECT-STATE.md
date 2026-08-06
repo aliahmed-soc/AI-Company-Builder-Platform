@@ -94,7 +94,7 @@ ticket without a DONE line above it is genuinely in flight._
     branch neutralised the gate without touching a test: **8 of the then-17 cases went red** through production
     paths. The first probe attempt went red at LINT and never reached the tests — a false confirmation, caught.
     It also exposed a negative-only assertion in the new suite that passed with the gate off. **But the probe was
-    not preserved and no CI run is cited**, unlike ACBP-P6-006's labelled probe commit `fe85082`, so nobody can
+    not preserved and no CI run is cited**, unlike ACBP-P6-006, which at least recorded its probe's CI run id (`30646208952`, CDR-071:184) beside the SHA `fe85082` — that SHA is on no ref either, so the run id is the durable half — so nobody can
     re-derive the figure; and the suite is 18 cases now. Preserve the next probe.
   - **THE REVIEW FOUND THIS TICKET DISABLING A MERGED CONTROL.** The lifecycle gate outranks the stop gate, and
     P6-007's held-work capture was keyed on *which refusal was reported* — so a company both non-active and under

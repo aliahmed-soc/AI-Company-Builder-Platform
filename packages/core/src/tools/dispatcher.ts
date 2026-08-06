@@ -771,8 +771,11 @@ function requestedEvent(
   const base = { callId: row.id, toolId: row.tool_id, toolVersion: row.tool_version, riskClass: row.risk_class, externalEffect: row.external_effect, ...(injectionSignals === '' ? {} : { injectionSignals }) };
   // WHICH SCOPES HALTED IT (CDR-072 §1-G5), taken from the evaluation that actually decided this call rather than
   // re-derived — a second derivation is one that can disagree with the refusal it is supposed to explain. The
-  // factory records it only on an `emergency_stopped` refusal, so passing it unconditionally here is safe and
-  // keeps the "what halted this" answer next to the reason instead of behind a branch that could be missed.
+  // factory records it only on a refusal a stop can EXPLAIN — `emergency_stopped` OR `company_not_active`, the
+  // two-member `stopExplainsRefusal` set in `audit.ts` — and drops an empty value, so passing it unconditionally
+  // here is safe and keeps the "what halted this" answer next to the reason instead of behind a branch that
+  // could be missed. (This said "only on an `emergency_stopped` refusal" for five commits after ACBP-P7-002 grew
+  // that set to two. The behaviour stayed safe; the REASON GIVEN was false, which is the harder defect to see.)
   const stopScopes = stopEvaluation.kind === 'stopped' ? stopEvaluation.scopes.join(',') : '';
   return denialReason === null
     ? toolCallRequested(base)

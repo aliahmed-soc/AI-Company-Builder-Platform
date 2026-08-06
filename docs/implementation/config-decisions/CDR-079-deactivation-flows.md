@@ -42,19 +42,25 @@ them — that is the point of the ticket. Where it changed, the row says so.
 |---|---|
 | `canPickUpAutonomousWork(status)` — `contracts/company/company.ts:70` | Exists, correct, **zero production callers**. → **DELETED by this branch**; tombstone at `company.ts:103` |
 | Run pickup — `runs/coordinator.ts` + `task-run-repository.claimAttempt` | authz, attempt validity, task exists, `canStartRunForTask(task.state)`, attempt-not-claimed. **No company status**. → **now reads it at `coordinator.ts:155`** |
-| Tool dispatcher — `tools/dispatcher.ts` | Many precondition gates (membership, authz, run state, idempotency, registry, spend, policy, approval, emergency stop). **Company lifecycle is not among them**; `DispatchRequestFacts` has no field for it. → **now a REQUIRED field, `dispatch.ts:131`** |
+| Tool dispatcher — `tools/dispatcher.ts` | Many precondition gates (membership, authz, run state, idempotency, registry, spend, policy, approval, emergency stop). **Company lifecycle is not among them**; `DispatchRequestFacts` has no field for it. → **now a REQUIRED field, `dispatch.ts:132`** |
 | Worker runtime — `workers/runtime.ts` | Checks the **worker's** state, never the company's. → **still true; §9.3** |
 | `elevateToCompanyScope` — `database/transaction.ts:128` | `select('id')` — existence only. → **still true** |
 | RLS / CHECK / partial indexes | Account and company **identity**. No policy references `companies.status`. → **still true**; the gate is application-level |
 | Account level | **Nothing anywhere refuses on `accounts.status`.** → **now `lifecycle-guard.ts:43-44` reads it `FOR SHARE` and refuses `account_not_active`.** Still true: no `AccountStatus` contract exists, and `AccountRepository.findById` has **zero callers** |
 
 The production readers of `companies.status` on `origin/main` were: `interview-session.ts:79`,
-`provisioning-service.ts:164,191,298-299,354-369`, `company-lifecycle.ts:85-94,207-210`, `admin-service.ts:82`.
-Only the first refuses anything, and it covers a human-initiated discovery start — which is why the true form of
-this ticket's headline claim carries a qualifier: nothing read the status **before doing autonomous work**. This
-branch adds the fifth reader and the only enforcing one: `lifecycle-guard.ts:45`.
+`provisioning-service.ts:164,191,298-299,354-369`, `company-lifecycle.ts:85-94,207-210`, `admin-service.ts:82`,
+and `portfolio-service.ts:94` (via `portfolio-repository.ts:65`, reached from
+`apps/web/.../companies-request.ts`). Only `interview-session.ts` refuses anything, and it covers a
+human-initiated discovery start — which is why the true form of this ticket's headline claim carries a
+qualifier: nothing read the status **before doing autonomous work**. This branch adds `lifecycle-guard.ts:45`,
+**the only reader that enforces before autonomous work**.
 
-### §1.1 Four artefacts that made the gap look closed
+*(An earlier draft called this list "closed" at four entries and called the new reader "the only enforcing one".
+It was neither: `portfolio-service` was missing, and `interview-session` enforces. An inventory asserting
+completeness is worth exactly what its search was worth — see §1.1.)*
+
+### §1.1 Four artefacts that made the gap look closed — and a FIFTH, found later
 
 - **The predicate's docstring** — *"this pure predicate is the single truth a scheduler/worker consults before
   opening a run … Pausing is the enforcement point (P1-010); the scheduler is later."* The first clause describes
@@ -68,6 +74,17 @@ branch adds the fifth reader and the only enforcing one: `lifecycle-guard.ts:45`
 - **`stop-service.ts:513-515`**, which already says the quiet part about the machinery deactivation was going to
   reuse: *"AN INDEPENDENT REVIEW FOUND THAT FALSE FOR ALL FOUR: activation holds only tasks that are in flight AT
   THAT MOMENT, and nothing stops a task being created, planned, queued and started while the stop stands."*
+- **AND A FIFTH, found only during the documentation pass, after the code had shipped and been reviewed twice:**
+  `REQUIREMENT-TRACEABILITY.csv`'s **COMP-006** row read `Coverage status = Covered (MVP)`, verified by
+  *"Pause-then-schedule negative tests; in-flight safe-stop tests"* — **neither of which existed**. This is the
+  most consequential of the five, because a traceability matrix is what a reader consults to ask *"is this
+  requirement covered"*, which is the exact question it answered wrongly. The same claim also survived in a
+  SECOND matrix, `docs/implementation/REQUIREMENT-TO-TICKET-TRACEABILITY.csv`, which the first correction pass
+  missed entirely.
+
+  Note the five are not five of a kind: four ASSERTED a control that did not exist and agreed with each other;
+  `stop-service.ts` said the OPPOSITE and was ignored. Four agreeing artefacts are not four pieces of evidence —
+  they are one unverified belief with four copies — and the fifth was the disconfirmation already written down.
 
 ## §2 A canon conflict about WHEN, ruled
 
@@ -90,8 +107,8 @@ whose control is absent.
   typed `string` for this reason.
 - **G3.2 — WRITTEN AS AN ALLOWLIST, POSITIVELY.** Allowed **iff** company status is `'active'` **and** account
   status is `'active'`. Not a denylist, not `!== 'active'` over a union with a `default:` arm. This is canon's own
-  phrasing (`WORKFLOW-STATE-MACHINES.md:72`: *"stop-state clear; company active"*; `diagrams/06:10` writes it
-  *"stop-state clear + company active"*), and it buys
+  phrasing (`WORKFLOW-STATE-MACHINES.md:81`, the `queued→running` row: *"stop-state clear; company active"*;
+  `diagrams/06:10` writes it *"stop-state clear + company active"*), and it buys
   three things: fail-closed on unrecognised values **falls out by construction** with no branch to forget; a
   future state is refused before anyone remembers to add it; and `deleted` needs no vocabulary entry (§3.6).
 - **G3.3 — LOGICAL AND, EVALUATED INDEPENDENTLY, NEVER A CASCADE.** Account deactivation performs **no cascade
@@ -158,7 +175,7 @@ ticket enforces **new-work refusal** — Gate 14's headline — at four points, 
 |---|---|
 | `startRun` | Before `claimAttempt`, so a refusal does not burn an attempt number |
 | `dispatchToolCall` | Beside the other gate facts, NOT an early return, so the refusal is still RECORDED (TOOL-002) |
-| `enqueueJob` | AFTER the idempotency question, so a replay of a pre-pause success still answers `deduplicated` (NFR-006) |
+| `enqueueJob` | BEFORE the insert, with the REFUSAL withheld until the idempotency read-back finds no existing job, so a replay of a pre-pause success still answers `deduplicated` (NFR-006; see §6-G5) |
 | `runJobStep` | After the already-completed short-circuit, before the step closure |
 
 **Why four and not five.** `runWorkerStep` is the in-flight shape, and in-flight halt needs the durable-stop
@@ -221,7 +238,7 @@ The investigation's hardest finding after §4.1: the design assumed setting a st
   read is therefore `FOR SHARE` (`lifecycle-guard.ts:43,45`).
 
   **AS SHIPPED, the transition does NOT take an explicit lock** — `CompanyRepository.findById`
-  (`company-repositories.ts:35`) is a plain `SELECT`, and no `forUpdate()` exists on any pause/resume path. The
+  (`company-repositories.ts:35`) is a plain `SELECT`, and no `forUpdate()` exists on the `pauseCompany`/`resumeCompany` transition path. (The `forUpdate()` calls on `companies` at `provisioning-service.ts:290,347` belong to provisioning completion and resume, not to the lifecycle transition.) The
   ordering rests on the gate's `FOR SHARE` conflicting with the row lock the transition's `UPDATE` takes
   implicitly. **This is asserted STRUCTURALLY, not by a real-PostgreSQL race** — see `lifecycle-guard.test.ts:6`,
   *"structurally, where its removal is detectable every run"*. A race that happens not to interleave is a green
@@ -279,11 +296,15 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
 1. **The two Post-MVP cells** — `MASTER-PRD:157` (ACC-004) and `:399` (J-20) versus a launch gate.
 2. **The account vocabulary, now on better evidence.** `accounts.status` is `active | suspended | closed`, and
    **`suspended` and `closed` have no semantic definition anywhere in the repo** — every occurrence is the CHECK
-   constraint plus two passing comments. There is no account state machine and no account transition table. The
-   registered account-scoped audit events are `membership.invited` and `membership.revoked` (CDR-015:36-37);
-   **there is no account LIFECYCLE event at all.** `account.created` is NOT one — it is a `logger.info` at
+   constraint plus two passing comments. There is no account state machine and no account transition table.
+   Account-scoped audit events DO exist — `membership.invited` and `membership.revoked` (CDR-015:36-37), and
+   `usage.rollup_reconciled`, the one registry entry carrying `subjectType: 'account'` (`audit.ts:270`) — but
+   **there is no account LIFECYCLE event at all.** `account.created` is not one either: it is a `logger.info` at
    `accounts/provisioning.ts:44`, deliberately absent from `AUDIT_EVENTS`, and `audit.test.ts:196` requires it to
-   be *rejected* as an `AuditEventName`. And the investigation found the argument had been run
+   be *rejected* as an `AuditEventName`. *(Two earlier drafts of this sentence were both wrong — first "no
+   account-scoped audit event beyond `account.created`", then an enumeration that missed
+   `usage.rollup_reconciled`. Enumerating a registry by memory fails twice as easily as reading it.)* And the
+   investigation found the argument had been run
    on the wrong entity: **`DATA-ARCHITECTURE:10` gives the USER lifecycle as `active→deactivated→deleted`** — the
    only canon lifecycle containing the literal word "deactivated" is the User, not the Account.
    **The gate does not depend on this**: an allowlist on `'active'` is correct whichever value means deactivated.
@@ -304,7 +325,7 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
    `autonomy.ts` level 1: *"Propose only … nothing at all runs until you approve it"*, restrict-only,
    most-restrictive-wins, already wired into policy evaluation №3. Whether the lifecycle refusal belongs there is
    the same question as the owner gate already on the board about policy evaluation point 1; answer them together.
-10. **The event names.** `company.deactivated` is catalogued but `CDR-015:35` lists it as *"NOT registered"*, and
+10. **The event names.** `company.deactivated` is catalogued but `CDR-015:34-35` lists it under *"NOT registered"*, and
     canon fires it on **entering `deactivating`**, not on reaching `deactivated` — the name and the state it
     records diverge. Canon names **no event at all** for `deactivating → deactivated`.
 11. **Deactivation from `draft`/`onboarding`** is ruled illegal (canon's sources are `active/paused` only), so a
@@ -331,7 +352,10 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
     never going to run, so it must not enter the review queue. What shipped is a **two-member set** —
     `dispatcher.ts:622` computes `stopInterrupted = finalReason === 'emergency_stopped' || finalReason ===
     'company_not_active'` and captures only when that **and** `stopEvaluation.kind === 'stopped'` hold;
-    `audit.ts:1067-1071` guards `stop_scopes`/`held_by_stop_id` on the identical condition. The distinction is
+    `audit.ts:1073-1077` guards `stop_scopes`/`held_by_stop_id` on the identical condition, via
+    `stopExplainsRefusal`. *(That citation read `:1067-1071` for one commit — correct until the docstring rewrite
+    in the very same commit pushed the guard down six lines. A line number invalidated by its own commit.)* The
+    distinction is
     between a call the stop **interrupted** and one that was never going to happen. **The general rule: a new
     gate that outranks an existing one inherits responsibility for every side effect the old one carried** — a
     duty on the author, not something the code does by itself; what it did by itself was the bug. Nothing in this
@@ -348,7 +372,7 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
    for the new denial reason (without which the dispatcher's denial INSERT raises 23514 and aborts the
    transaction, losing the refusal's own evidence). The account half waits on §9.2.
 4. **Enforcement** — DONE for the four new-work points (§4.3). The worker bodies remain §9.3.
-5. **The transitions + the durable-stop sweep** — NOT DONE. The sweep is §9.5 (*"does pause raise a real
+5. **The transitions + the durable-stop sweep** — NOT DONE. The sweep is §9.5 (*"Does pause now raise a real
    halt?"*) and the transitions depend on it. Consequence, stated plainly: **nothing can reach `deactivating` in
    production yet**, so the two new states are reachable only by a direct database write and
    `company.deactivated` is never emitted (§9.10). The GATE is live for `paused`, which is what the owner's
@@ -357,7 +381,7 @@ Gate 14's wording outruns the platform. Recorded so the evidence pack cannot cla
    the gate without touching a test turned 8 of the suite's then-17 cases red through production paths. **Two
    caveats this ticket owns**: the probe was not preserved and no CI run is cited (ACBP-P6-006's labelled probe
    commit `fe85082` is the standard to copy), and the suite is 18 cases since the dispatch control landed.
-7. **Review, docs, finalization** — DONE, and it took **three** passes, not one.
+7. **Review and docs** — DONE, and it took **four** passes, not one. **FINALIZATION IS NOT DONE**: setting the row `Done`, marking the PR ready and merging are owner gates and none has been taken. (This slice read `Review, docs, finalization — DONE` while the status line four paragraphs below said the merge gate was untaken — the same defect as the worst finding of the third pass, surviving in the slice list of the document that records it.)
    - The code review (six lenses → per-finding refutation → completeness critic) is recorded in
      **`docs/implementation/P7-002-REVIEW-COVERAGE.md`**, including the finding that matters most to future
      tickets: **this ticket silently disabled a merged trust-critical control** — see §9.14.
