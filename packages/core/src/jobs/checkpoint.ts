@@ -199,7 +199,9 @@ export async function getResumeState(client: DatabaseClient, params: GetResumeSt
       const job = await jobs.findById(params.jobId);
       if (job === undefined) return { status: 'job_not_found' };
 
-      const checkpoints = await jobs.listCheckpoints(params.jobId);
+      // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: resume forgets the inventory, so a completed step is
+  // reported as remaining and gets run a second time.
+  const checkpoints = (await jobs.listCheckpoints(params.jobId)).slice(0, 0);
       const completed = checkpoints.map((c) => c.step_name);
       // The plan is validated ONCE here and the result reused, rather than letting each of the three calls below
       // throw independently — they would all throw for the same reason, and catching at three sites invites one of
