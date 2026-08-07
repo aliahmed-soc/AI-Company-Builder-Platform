@@ -87,6 +87,37 @@ whole reason CDR-084 §8 insists a mutation be type-safe.
 
 ---
 
+## §3.2 The §7.11 cross-check was run BY HAND, and it is mechanizable
+
+CDR-080 §7.11 records that **nothing machine-checks a mutation against the test title it claims to redden** —
+the gap that let ACBP-P7-007 mark row 19 `measured` on a run in which a different test failed. Before reporting
+this ticket complete I ran that cross-check manually against every `measured` row in both indexes: for each, pull
+`gh run view <mutationRunId> --log-failed` and assert the row's own `testTitle` appears among the failing tests.
+
+| Row | Run | Verdict |
+|---|---|---|
+| scenario 9 | `31129056434` | CONFIRMED |
+| scenario 14 | `31140772210` | CONFIRMED |
+| scenario 15 | `31129196873` | CONFIRMED |
+| scenario 16 | `31140011057` | CONFIRMED |
+| trust-critical #7 | `31129056434` | CONFIRMED |
+| trust-critical #10 | `31139103437` | CONFIRMED |
+| trust-critical #15 | `31113087854` | CONFIRMED *(ACBP-P7-007's)* |
+| trust-critical #16 | `31113087854` | CONFIRMED *(ACBP-P7-007's)* |
+
+Row 19 is correctly **absent** from this table: P7-007 demoted it to `unmeasured` when two reviews caught that
+its run had reddened a different test. The check agreeing with that demotion is the strongest evidence the check
+is measuring the right thing.
+
+**The finding is that this is automatable, and it is the one gap both indexes name and neither closes.** It was
+not built here for a stated reason rather than an omission: the checkers deliberately never contact GitHub, so
+they run offline, unauthenticated, and identically in CI. A resolver belongs in a **separate opt-in tool**, not
+in `check:static` — otherwise every build depends on GitHub being reachable and on a token, and a gate that
+cannot run is a gate people remove. Recommending it rather than building it, because adding a network dependency
+to the build is an architecture decision, not a test decision.
+
+---
+
 ## §4 Owner decisions this ticket does not take
 
 CDR-084 §7, unchanged: rows 5, 6, 8, 10 and 16; whether NFR-019 stays `Covered` while its queue/banner/drain
