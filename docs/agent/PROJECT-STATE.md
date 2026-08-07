@@ -316,9 +316,52 @@ ticket without a DONE line above it is genuinely in flight._
   `7730d84`: the same 268 / 3874, zero skips. The working block below described this as *"IN FLIGHT — draft PR #81"*
   and was left stale to avoid a four-way conflict while the other tickets were merging; this line supersedes it.
   **The backlog row is NOT `Done`, and that is a substantive refusal rather than an unopened gate:** the acceptance
-  criterion is *"16-scenario matrix green"*, and twelve of sixteen scenario rows remain unmeasured while two have no
-  injectable subject in this system at all (CDR-084 §0.1). Marking it `Done` would make the backlog assert something
+  criterion is *"16-scenario matrix green"*, and two of sixteen scenario rows have no injectable subject in this
+  system at all (CDR-084 §0.1). Marking it `Done` would make the backlog assert something
   the evidence contradicts — the exact artefact class this ticket was built to remove.
+  *(The count in this paragraph read "twelve of sixteen scenario rows remain unmeasured while two have no
+  injectable subject" until `442456d` measured ten of them; only the subject-less pair is left. The refusal is
+  unchanged — the criterion still cannot be met on its literal wording — but its arithmetic is now different, and
+  the reason it holds is now ONLY rows 5 and 10.)*
+
+- **DONE — ACBP-P7-008 scenario measurement completed.** Squash **`442456d`**, PR **#88**, branch
+  `p7-008-record-wave12`, no migration. Exact-head CI
+  [`31223200241`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31223200241) on
+  `e28218d`: **277 files / 4056 tests, zero skips**; exact-main
+  [`31223904952`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31223904952) on
+  `442456d`: the same 277 / 4056, zero skips.
+  **FOURTEEN OF SIXTEEN SCENARIO ROWS ARE NOW `measured` — every row that has a subject.** The two that remain are
+  row 5 (`absent`: nothing injects it) and row 10 (`unbuildable`: the failure has no subject in this system), so
+  `MAX_UNPROVEN` moved **12 → 2 and is at its floor**. Its doc comment now states that a future commit lowering it
+  further is claiming a test or a subject that did not exist here; the checker enforces the ceiling, not the floor.
+  Rows measured: 1, 2, 3, 4, 6, 7, 8, 11, 12, 13.
+  - **THREE ROWS PASSED THE SLICE-6 STATIC RULE WHILE BEING WRONG**, and each was caught only by a human reading a
+    test body or a run log — which is the finding, not the count. **Row 11's recorded mutation was INERT**: skipping
+    `enqueueJob`'s `findByIdempotencyKey` read-back cannot create a second job, because dedupe is the partial unique
+    index plus `ON CONFLICT DO NOTHING`; corrected to storing `idempotencyKey: null` on the insert. **Row 12's named
+    the wrong one of two call sites**: `listCheckpoints` is called in `runJobStep` (already-completed guard) and in
+    `getResumeState` (plan-minus-inventory), the cited test never asks `runJobStep` to re-run anything, and mutating
+    it reddened three neighbours while leaving the cited test **green** (run `31212362663`) — the ACBP-P7-007 row-19
+    shape caught from the other side. **Row 2's first attempt was rejected by lint** and never ran.
+    The rule verifies that a mutation names REAL SYMBOLS IN REAL FILES; it cannot tell whether the edit achieves the
+    effect the row claims. That is its known ceiling, and it is recorded in the rows themselves.
+  - **ROW 6'S COLLATERAL IS RECORDED, NOT AVERAGED AWAY.** Its mutation reddened **175 tests**, because
+    `withTransaction` wraps every database write in the platform and there is no narrower edit — the row's claim is
+    about the wrapper itself. The row states what the run proves (the rollback is load-bearing across the suite) and
+    what it does not (with 175 failures a cascade explains any single one, so it does **not** isolate row 6's own
+    assertion the way row 8's **single-test** run does).
+  - `verify:mutation-runs` — the CDR-080 §7.11 resolver, built and merged at **`ca2a901`**, which the backlog row
+    had listed as *"RECOMMENDED AND NOT BUILT"* — confirms all **18** measured rows across both indexes against the
+    logs GitHub serves. Its own caveat stands: it does not prove the described edit produced the run.
+  - **`442456d` also carries a nanoid override unrelated to the measurement work.** GHSA-2v37-7h3g-55p8
+    (`nanoid <3.3.17`) landed after `main` last ran green at `ca2a901`, and the branch changed no dependency file,
+    so the same red was waiting on `main` and every open branch. The override is a **caret, not the `>=` its three
+    neighbours use**: nanoid 4+ is ESM-only while postcss asks for `^3.3.11` and requires it from CommonJS, so
+    `>=3.3.17` would resolve to the 6.x line and break postcss at runtime while the audit went green. `apps/web`
+    was built to check that, because hosted CI does not run `next build` and postcss is the Next.js CSS pipeline.
+  - **The branch `p7-008-record-wave12` (`e28218d`) and ~11 `p7-008-probe-*` branches still exist; deleting them is
+    an owner action.** Unlike the P7-008 probe branches, these were NOT reverted commit-by-commit: each probe branch
+    carries a live mutation and IS the evidence behind a recorded run id.
 
 - **ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
   Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
@@ -334,7 +377,9 @@ ticket without a DONE line above it is genuinely in flight._
   - **NFR-020 removed from the backlog row** per CDR-084 §5 and the owner ruling — the repository already said
     three times that it was deferred scope governed by an ADR this ticket does not cite. Verified by re-parsing
     the CSV and diffing all 101 rows: exactly one cell changed.
-  - **THE PROBE RAN (2026-08-07), and four rows are now GREEN in the sense CDR-084 SS1 defines.** Five
+  - **THE PROBE RAN (2026-08-07), and four rows are now GREEN in the sense CDR-084 SS1 defines.**
+    **(SUPERSEDED BY `442456d` — it is FOURTEEN now. This bullet records the first four and the runs that bought
+    them; the other ten are in the `442456d` block above.)** Five
     mutations on a disposable branch `p7-008-mutation-probe`, one live at a time, each type-safe and lint-clean
     so it reached the tests: M1 `31129056434` (approval expiry, both halves; 2 red) measured scenario 9 AND
     trust-critical #7; M2 `31129196873` (account_wide covers nothing; 9 red) measured scenario 15; M3
@@ -343,11 +388,16 @@ ticket without a DONE line above it is genuinely in flight._
     scenario 14. Every failed test name was READ OUT OF THE RUN LOG. Ceilings moved DOWN for the first time:
     failure-scenario 16 to 12, trust-critical 18 to 16 (`Ceiling 16 <= baseline 18 (origin/main)`). Full table
     and the green-half reasoning: CDR-084 SS11.
-  - **TWELVE SCENARIO ROWS AND SIXTEEN TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and the acceptance
-    criterion "16-scenario matrix green" is still NOT met — SS0.1 explains why it cannot be on its literal
-    wording. The blocker was a GitHub Actions outage (15:22 UTC 2026-08-06, webhooks ~15%) that created no run
-    for this branch at all; the `workflow_dispatch` trigger added at `2314ef7` re-opened the route, and the
-    claim in that commit that it could not help its own branch was tested and found FALSE.
+    **(SUPERSEDED BY `442456d`: the failure-scenario ceiling is now 2, not 12. The trust-critical ceiling is
+    still 16 — that half is untouched.)**
+  - **~~TWELVE SCENARIO ROWS~~ TWO SCENARIO ROWS AND SIXTEEN TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and
+    the acceptance criterion "16-scenario matrix green" is still NOT met — SS0.1 explains why it cannot be on its
+    literal wording. **The reason has changed and the sentence is corrected rather than left to read as though it
+    had not:** when this was written, twelve rows were unmeasured and the blocker was a GitHub Actions outage
+    (15:22 UTC 2026-08-06, webhooks ~15%) that created no run for this branch at all; the `workflow_dispatch`
+    trigger added at `2314ef7` re-opened the route, and the claim in that commit that it could not help its own
+    branch was tested and found FALSE. Ten of those twelve were then measured on `442456d`. The two that remain,
+    rows 5 and 10, are not waiting on a probe — they have no injectable subject, so no run can ever measure them.
   - **BOTH BRANCHES WERE DELETED on the owner's instruction (2026-08-07)** — `p7-008-failure-injection-pass`
     (was `76facb5`) and the disposable probe branch `p7-008-mutation-probe` (was `6cf0d6f`). Neither held
     content that existed nowhere else, and that was checked rather than assumed: `git diff 76facb5 7730d84` is
