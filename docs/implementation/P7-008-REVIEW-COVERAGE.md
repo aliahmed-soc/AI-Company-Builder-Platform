@@ -54,12 +54,36 @@ asserts what its row claims. The limits are recorded where they apply rather tha
 ## §3 The acceptance criterion is NOT met, and this is why
 
 "16-scenario matrix green" means, per CDR-084 §1, that a recorded mutation made the cited test go red in a
-hosted CI run. **0 of 16 rows are `measured`.** Fourteen have live tests that pass; nothing has yet proved any
-of them can fail. Two have no injectable subject.
+hosted CI run. **4 of 16 rows are `measured`** — scenario 9, 14, 15 and 16, plus trust-critical #7 and #10.
+**Twelve are not.** They have live tests that pass; nothing has yet tried to break them. Two have no injectable
+subject at all.
 
-The probe is written and ready (each row's `mutation` is now an applicable edit naming real code) and was
-blocked for the whole of 2026-08-06–07 by a **major GitHub Actions outage**, during which no workflow run was
-created for this branch by any push. The manual trigger added at `2314ef7` is what re-opened the route.
+The probe ran on 2026-08-07 as five mutations on a disposable branch, one live at a time, after a **major
+GitHub Actions outage** had blocked it for a day — no workflow run was created for this branch by any push
+during it. The manual trigger added at `2314ef7` re-opened the route, and the claim in that commit that it
+could not help its own branch was **tested and found false** (finding 11 above).
+
+Run ids and the full result table are CDR-084 §11. Ceilings moved down for the first time: failure-scenario
+16 → **12**, trust-critical 18 → **16**, with the ratchet reporting `Ceiling 16 ≤ baseline 18 (origin/main)`.
+
+### §3.1 What the probe added to this ledger
+
+**M4 proved finding 12 was a real defect and not a stylistic one.** Row 16 had named `startRun` while its test
+drives `enqueueJob`. A human caught that by reading the test body; the mutation-names-real-code rule could not,
+because both are real functions in the same file. The probe then *demonstrated* it: mutating `enqueueJob`
+reddens the test, and `startRun` is a function that test never calls. Had the probe run against the row as
+originally written, it would have edited `startRun`, seen a red somewhere, and recorded a run id proving
+nothing — the ACBP-P7-007 row-19 defect, reproduced by a ticket built to prevent it.
+
+**M3 proved that rows citing the same file still need separate runs.** M2 cut `account_wide` and left
+trust-critical #10's test green; only M3, cutting `company`, reddened it. A probe that assumed one run covers
+every row in a file would have recorded #10 on M2's id.
+
+**Two more defects of my own, both caught by guards rather than by me.** `check:encoding` caught backticks put
+through a PowerShell double-quoted string *while writing the comments that record these measurements* — `` `t ``
+ate a "t" and left a raw TAB inside a comment in both index files, which survives typecheck, lint and every
+test. And M4 took three attempts to write type-safely; the first two died at the static gate, which is the
+whole reason CDR-084 §8 insists a mutation be type-safe.
 
 ---
 

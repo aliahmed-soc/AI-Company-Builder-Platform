@@ -81,7 +81,24 @@ ticket without a DONE line above it is genuinely in flight._
   - **NFR-020 removed from the backlog row** per CDR-084 §5 and the owner ruling — the repository already said
     three times that it was deferred scope governed by an ADR this ticket does not cite. Verified by re-parsing
     the CSV and diffing all 101 rows: exactly one cell changed.
-  - **THE OPEN ITEM IS THE PROBE, AND IT IS BLOCKED.** "16-scenario matrix green" means a recorded mutation
+  - **THE PROBE RAN (2026-08-07), and four rows are now GREEN in the sense CDR-084 SS1 defines.** Five
+    mutations on a disposable branch `p7-008-mutation-probe`, one live at a time, each type-safe and lint-clean
+    so it reached the tests: M1 `31129056434` (approval expiry, both halves; 2 red) measured scenario 9 AND
+    trust-critical #7; M2 `31129196873` (account_wide covers nothing; 9 red) measured scenario 15; M3
+    `31139103437` (company scope matches nothing; 4 red) measured trust-critical #10; M4 `31140011057` (paused
+    company enqueues; 1 red) measured scenario 16; M5 `31140772210` (audit rejection swallowed; 1 red) measured
+    scenario 14. Every failed test name was READ OUT OF THE RUN LOG. Ceilings moved DOWN for the first time:
+    failure-scenario 16 to 12, trust-critical 18 to 16 (`Ceiling 16 <= baseline 18 (origin/main)`). Full table
+    and the green-half reasoning: CDR-084 SS11.
+  - **TWELVE SCENARIO ROWS AND SIXTEEN TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and the acceptance
+    criterion "16-scenario matrix green" is still NOT met — SS0.1 explains why it cannot be on its literal
+    wording. The blocker was a GitHub Actions outage (15:22 UTC 2026-08-06, webhooks ~15%) that created no run
+    for this branch at all; the `workflow_dispatch` trigger added at `2314ef7` re-opened the route, and the
+    claim in that commit that it could not help its own branch was tested and found FALSE.
+  - **A disposable branch `p7-008-mutation-probe` still exists**, head `6cf0d6f`, tree byte-identical to its
+    base `b42101b`. It carries no change anyone wants; it exists so five run ids resolve to a readable diff.
+    Deleting it is an owner action.
+  - **(superseded) The open item WAS the probe, and it WAS blocked.** "16-scenario matrix green" means a recorded mutation
     reddened the cited test in a hosted run. **GitHub Actions entered a major outage at 15:22 UTC on 2026-08-06**
     (webhooks throttled to ~15%) and **has created no workflow run for this branch at all** — not for `f90566b`,
     not for `9c34123`, not since. So **0 of 16 rows are measured**, and the slice-4 and slice-5 tests are

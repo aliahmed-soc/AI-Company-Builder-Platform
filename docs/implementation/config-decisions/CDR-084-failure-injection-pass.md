@@ -389,3 +389,61 @@ The probe itself. GitHub Actions entered a major outage at 15:22 UTC on 2026-08-
 ~15%, and **no run has ever been created for this branch** — not for `f90566b`, not for `9c34123`, not since.
 The slice-4 and slice-5 tests are therefore written, typechecked and cited but **unverified**: they are
 `describe.skipIf(!hasTestDatabase)` and skip locally, 51 collected and 51 skipped. Nothing here claims they pass.
+---
+
+## §11 The probe ran — what five mutations proved, and what they did not
+
+Slice 6 executed on a disposable branch, `p7-008-mutation-probe`, cut from `b42101b`. **One mutation was live at
+a time**, each reverted by the commit introducing the next, and the branch head is now byte-identical to its
+base. Every mutation was type-safe and lint-clean on purpose: one that dies at the static gate never reaches the
+tests, which is how ACBP-P7-002's first probe produced a false confirmation.
+
+| # | Mutation | Hosted run | Red / 3874 | Row measured |
+|---|---|---|---:|---|
+| M1 | The `expires_at` conjunct removed from `verifyAndConsume`'s conditional UPDATE **and** the usability pre-check | `31129056434` | 2 | scenario **9**, trust-critical **#7** |
+| M2 | `evaluateStops` stops pushing `account_wide` as a covering scope | `31129196873` | 9 | scenario **15** |
+| M3 | `evaluateStops` excludes `company` from the identity match | `31139103437` | 4 | trust-critical **#10** |
+| M4 | The lifecycle refusal `return` removed from `enqueueJob` | `31140011057` | 1 | scenario **16** |
+| M5 | The in-transaction audit rejection swallowed in `enqueueJob` | `31140772210` | 1 | scenario **14** |
+
+**Every failed test name was read out of the run log.** None was inferred from what the edit was meant to do —
+that inference is exactly how ACBP-P7-007 marked row 19 `measured` on a run in which a different test went red.
+
+### The green half is the evidence
+
+A red test alone is consistent with a build that refuses everything. What makes each run evidence about its own
+control is what stayed **green** beside it:
+
+- **M1** — the paired control `CONTROL: the SAME approval, unexpired, authorizes` passed. The refusal is about
+  expiry, not about `send_email` failing for any reason.
+- **M2 and M3** — each cut one arm of the same function and left the others intact. Under M2 the four sibling
+  scopes and every `MISSES` case passed; under M3 the same, with `account_wide` now among the survivors. **M3
+  was necessary precisely because M2 left trust-critical #10's test green** — two rows citing tests in the same
+  file still need two runs when they exercise different arms.
+- **M4** — the replay sibling `but a REPLAY of a job enqueued BEFORE the pause is still answered — not refused`
+  passed, so the run also shows the gate is scoped to NEW work and does not break replay (CDR-079 §6-G5).
+
+### M4 independently confirmed a correction no tool could make
+
+Until slice 6, scenario row 16 named `startRun` as its entry point while its cited test drives `enqueueJob`.
+Both are real functions used in the same file, so the mutation-names-real-code rule passed it; a human reading
+the test body caught it. **The probe then proved the correction**: mutating `enqueueJob` reddens the test, and
+`startRun` is a function this test never calls. Run against the row as originally written, the probe would have
+edited `startRun`, observed a red somewhere, and recorded a run id that proves nothing about row 16.
+
+### What is still NOT measured
+
+**Twelve of sixteen scenario rows and sixteen of twenty trust-critical rows remain `unmeasured`.** They have
+live tests that pass; nothing has yet tried to break them. Two scenario rows have no injectable subject at all.
+The ceilings record this honestly — failure-scenario 16 → **12**, trust-critical 18 → **16** — and the
+trust-critical ratchet reports `Ceiling 16 ≤ baseline 18 (origin/main)`, the first time it has moved down.
+
+**The acceptance criterion "16-scenario matrix green" is still NOT met**, and §0.1 explains why it cannot be on
+its literal wording. What the probe changed is that four rows are now green in the sense CDR-084 §1 defines,
+rather than none.
+
+### The limits, unchanged by the probe
+
+A `mutationRunId` is still **shape-checked and never resolved** — nothing here contacts GitHub, so the five ids
+above are audit trail, not oracle; `gh run view <id>` is the human step. And nothing machine-checks a mutation
+against the test title it claims to redden. Both remain CDR-080 §7.10 and §7.11.
