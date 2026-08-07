@@ -50,7 +50,7 @@ export const STATUSES = Object.freeze([
  * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
  * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
  */
-export const MAX_UNPROVEN = 14;
+export const MAX_UNPROVEN = 13;
 
 /**
  * One row per matrix row.
@@ -336,7 +336,13 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 16,
     failure: 'Company pause during execution',
     consequence: 'a paused company cannot START new autonomous work — refused before the claim',
-    status: 'unmeasured',
+    // MEASURED in slice 6, run 31140011057, and it is the CLEANEST result in the probe: EXACTLY ONE test failed
+    // of 3874, this row's own, with no collateral at all. The sibling case `but a REPLAY of a job enqueued
+    // BEFORE the pause is still answered — not refused` stayed GREEN, because the replay branch returns before
+    // the removed refusal; so the run also demonstrates the gate is scoped to NEW work rather than to replays.
+    // It confirms the entryPoint correction above independently: mutating `enqueueJob` reddens this test, and
+    // `startRun` — which the row named until slice 6 — is a different function this test never calls.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a company moved to `paused`, then a real attempt to start a run',
     file: 'packages/core/src/company/gate-14.integration.test.ts',
@@ -346,7 +352,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     // rule states about itself, found by the same audit that built it. A human read the test body; no tool did.
     entryPoint: 'enqueueJob',
     mutation: 'Delete the `readLifecycleDecision` gate from `enqueueJob` (enqueue-job.ts), so a paused company enqueues the job and a row is created.',
-    mutationRunId: '',
+    mutationRunId: '31140011057',
     doesNotProve:
       'THE ROW AS WRITTEN, AND THE CANON CONTRADICTS ITSELF HERE. The matrix says "Safe-stop: current tool call completes, then halt". `WORKFLOW-STATE-MACHINES.md:35` says the opposite of today\'s system: *"\'in-flight safe-stop\' is NOT enforced by pausing. Pause refuses new work; it does not terminate a run already executing. The durable-stop sweep that would is unbuilt."* What is proven is the refusal of NEW work. **One of the two canon documents is wrong**, and CDR-084 §7 item 3 makes it an owner decision rather than a test decision.',
     notes: 'Verified slice 1. ACBP-P7-002 built the gate; the in-flight half was never built.',

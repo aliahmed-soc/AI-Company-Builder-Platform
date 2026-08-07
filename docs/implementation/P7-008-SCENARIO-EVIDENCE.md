@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **2 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **12 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **3 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **11 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **14**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **13**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -39,7 +39,7 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 13 | Usage-recording failure | unmeasured | `return_value_only` | metered work BLOCKS — the call aborts and the output is withheld | a `recordUsage` dependency that rejects | callModel |
 | 14 | Audit-event failure | unmeasured | `database_state` | the action is BLOCKED and rolled back — no job row survives an audit-write failure | the documented `auditWriter` test seam, substituted with one that rejects | enqueueJob |
 | 15 | Emergency stop during execution | **MEASURED** | `recorded_row` | the next tool call is blocked at the dispatcher and the refusal is RECORDED | a live stop activated between calls, then a real dispatch attempt | dispatchToolCall |
-| 16 | Company pause during execution | unmeasured | `database_state` | a paused company cannot START new autonomous work — refused before the claim | a company moved to `paused`, then a real attempt to start a run | enqueueJob |
+| 16 | Company pause during execution | **MEASURED** | `database_state` | a paused company cannot START new autonomous work — refused before the claim | a company moved to `paused`, then a real attempt to start a run | enqueueJob |
 
 ## Per row: what proves it, and what it does not prove
 
@@ -175,12 +175,12 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — so "execution halts" is proven for five of seven, not seven. The "in-flight call finishes/aborts safely" clause shares row 16's problem below. The launch-gate-8 ≤5s window now IS measured across the production `activateStop` use case (slice 5), but for the `company` scope only; the per-scope matrix beside it still times a raw INSERT and therefore still measures transaction visibility rather than activation.
 - **Verification note:** Verified slice 1. Slice 5 closed the half this field previously recorded as excluded — the ≤5s measurement no longer skips the production activation path.
 
-### 16. Company pause during execution — unmeasured
+### 16. Company pause during execution — **MEASURED**
 
 - **Test:** `packages/core/src/company/gate-14.integration.test.ts`
   - "a paused company CANNOT enqueue a job, and NO jobs row is created"
 - **Mutation that should redden it:** Delete the `readLifecycleDecision` gate from `enqueueJob` (enqueue-job.ts), so a paused company enqueues the job and a row is created.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31140011057`
 - **Does not prove:** THE ROW AS WRITTEN, AND THE CANON CONTRADICTS ITSELF HERE. The matrix says "Safe-stop: current tool call completes, then halt". `WORKFLOW-STATE-MACHINES.md:35` says the opposite of today's system: *"'in-flight safe-stop' is NOT enforced by pausing. Pause refuses new work; it does not terminate a run already executing. The durable-stop sweep that would is unbuilt."* What is proven is the refusal of NEW work. **One of the two canon documents is wrong**, and CDR-084 §7 item 3 makes it an owner decision rather than a test decision.
 - **Verification note:** Verified slice 1. ACBP-P7-002 built the gate; the in-flight half was never built.
 
