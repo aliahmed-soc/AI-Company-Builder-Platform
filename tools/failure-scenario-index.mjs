@@ -47,10 +47,17 @@ export const STATUSES = Object.freeze([
  * — the property CDR-080 §6.1 records as having claimed an enforcer it did not have until someone built one.
  *
  * It STARTED at 16, because nothing was measured until slice 6 ran the probe. Each row the probe proves lowers
- * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
- * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
+ * it by one — that is the only direction it may move, and lowering it is the work. A test that nobody has tried
+ * to break is not evidence.
+ *
+ * IT IS NOW AT ITS FLOOR AND CANNOT LEGITIMATELY GO LOWER. All fourteen rows that have a subject are measured.
+ * The two that remain are row 5, `absent` — nothing injects it — and row 10, `unbuildable` — the failure has no
+ * subject in this system. Neither can be measured without first building the thing being measured, so a future
+ * commit that lowers this number to 1 or 0 is claiming a test or a subject that did not exist here; read the row
+ * before believing it. The checker enforces the ceiling, not the floor: nothing stops a wrong lowering except
+ * this paragraph and review.
  */
-export const MAX_UNPROVEN = 12;
+export const MAX_UNPROVEN = 2;
 
 /**
  * One row per matrix row.
@@ -74,14 +81,17 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 1,
     failure: 'Model timeout',
     consequence: 'call → `timeout`; the deadline is enforced by the gateway, not the provider',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 2, run 31215176255. TWO tests red, both about the deadline: this row's own, and
+    // the sibling pinning that the deadline follows the TASK class rather than the request field. The edit
+    // multiplied the per-class deadline so the 500ms hang finishes inside it; nothing else in the suite noticed.
+    status: 'measured',
     anchor: 'return_value_only',
     injection: 'FakeModelProvider `{ kind: "hang", ms }` — a real deadline, not a thrown error',
     file: 'packages/core/src/model/model-gateway.test.ts',
     testTitle: 'gateway enforces the per-class timeout when the provider hangs',
     entryPoint: 'callModel',
     mutation: 'Remove the per-class deadline from callModel so a hanging provider hangs the caller.',
-    mutationRunId: '',
+    mutationRunId: '31215176255',
     doesNotProve:
       'The row\'s "Taking longer than expected" USER-FACING STATUS, its `model.call_completed(timeout)` audit, or the billable-once rule. This is a unit suite over an in-memory events array: no persisted usage row is read back.',
     notes: 'Verified slice 1. A sibling case pins that the deadline follows the TASK class rather than the request field.',
@@ -90,7 +100,11 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 2,
     failure: 'Provider outage',
     consequence: 'fallback fires for an eligible class, and NEVER for a quality-bearing one',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 2, run 31215094462. THREE red, all about fallback eligibility. The edit flipped ONE
+    // class - `extraction`, the class this test drives - rather than the whole policy map, so the
+    // ineligible-generation sibling stayed untouched and a red here is about eligibility, not about fallback
+    // existing at all. A first attempt (`return false && ...`) was REJECTED BY LINT and never ran.
+    status: 'measured',
     anchor: 'return_value_only',
     injection: 'FakeModelProvider `{ kind: "fail", error: "provider_unavailable" }` on the primary',
     file: 'packages/core/src/model/model-gateway.test.ts',
@@ -100,7 +114,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     // INELIGIBLE sibling case, not this row's test, which stays green when MORE classes are eligible. A mutation
     // aimed at a neighbouring test is the ACBP-P7-007 row-19 defect exactly.
     mutation: 'Make `isFallbackEligible` return false for every task class, so an eligible class exhausting a retryable error returns the primary error instead of the fallback output.',
-    mutationRunId: '',
+    mutationRunId: '31215094462',
     doesNotProve:
       'THE OTHER HALF OF THE ROW, which does not exist. The matrix requires "tasks queue", an "Honest banner: provider degraded", and "Operator: drain queue on recovery". There is no queue-on-outage, no provider-health banner and no drain path in the repository. CDR-059:98 already records this and assigns it to P6/observability. NFR-019 is nonetheless marked `Covered` in BOTH traceability matrices — CDR-084 §7 item 4 asks whether that stands.',
     notes: 'Verified slice 1: fallback genuinely injected; the queue/banner/drain half genuinely absent.',
@@ -109,7 +123,9 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 3,
     failure: 'Invalid structured output',
     consequence: '`invalid_output` after bounded re-asks — the cap is enforced, not advisory',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 1, run 31211276891. THREE red: this row's test and the conformance case asserting
+    // `bounded retries <= 2, bounded re-ask <= 1` - honest collateral, since both read the same constant.
+    status: 'measured',
     anchor: 'return_value_only',
     injection: 'FakeModelProvider scripted to return unparseable output on every call',
     file: 'packages/core/src/model/model-gateway.test.ts',
@@ -119,7 +135,7 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     // suite timeout, which is a red that says nothing about the bound. +1 reddens the callCount and the accumulated
     // token assertions directly.
     mutation: 'Raise `MAX_REASK_ATTEMPTS` in @acbp/contracts from 1 to 2, so `runProvider` re-asks twice and the bound is no longer where canon puts it.',
-    mutationRunId: '',
+    mutationRunId: '31211276891',
     doesNotProve:
       'The row\'s "plain-language reason (TASK-006)" reaching a user, or "credit released". A sibling case proves the bounded re-ask SUCCEEDS when the second attempt is valid, which is the control that stops this passing on a gateway that never re-asks at all.',
     notes: 'Verified slice 1.',
@@ -128,14 +144,18 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 4,
     failure: 'Worker crash',
     consequence: 'run `running→failed(worker_lost)` after the heartbeat grace, read back from the database',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 2, run 31215216065. SEVEN red, every one about heartbeat liveness or the reclaim
+    // sweep, plus the Slice F journey which drives a real run. Wider collateral than rows 1 or 13, and recorded
+    // as such: `isRunLost` is consulted by the sweep, the revive guard and the zombie check, so an edit to the
+    // grace is felt by all of them. Confined to the mutated control's own behaviour is what surgical means here.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a worker that stops heartbeating past the grace window, then the real reaper sweep',
     file: 'packages/core/src/runs/coordinator.integration.test.ts',
     testTitle: 'TIMEOUT WORKS — a run whose worker went silent past the grace is failed as worker_lost',
     entryPoint: 'reclaimLostRuns',
     mutation: 'Make `isRunLost` always return false (equivalently, set `DEFAULT_HEARTBEAT_GRACE_MS` to a value no test can outlive), so `reclaimLostRuns` never reclaims a silent worker.',
-    mutationRunId: '',
+    mutationRunId: '31215216065',
     doesNotProve:
       'The resume-from-checkpoint alternative in the same row — that is proven separately by the kill-and-resume case in `checkpoint.integration.test.ts` — nor the "Dead-letter → Decision Room blocked queue" recovery. Siblings pin that a LIVE run is never reclaimed and that a heartbeat cannot revive an already-reclaimed one.',
     notes: 'Verified slice 1. The NFR-005 anchor. Real PostgreSQL; skipped locally without ACBP_TEST_DATABASE_URL.',
@@ -160,14 +180,22 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 6,
     failure: 'Database outage',
     consequence: 'no partial writes — a transaction that fails midway leaves nothing behind',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 4, run 31220529856 — AND THE MUTATION WAS NOT SURGICAL. 175 tests went red,
+    // this row's among them. That is not sloppiness, it is what this control IS: `withTransaction` wraps every
+    // database write in the platform, so making its callback swallow rejections (and therefore COMMIT) breaks
+    // atomicity everywhere at once. There is no narrower edit — the row's claim is about the wrapper itself.
+    // WHAT THE RUN THEREFORE PROVES, AND WHAT IT DOES NOT: it proves the rollback is load-bearing across the
+    // suite; it does NOT isolate this row's own assertion the way rows 8 or 16 do, because with 175 failures a
+    // cascade is an equally good explanation for any single one of them. ACBP-P7-007 recorded that a
+    // non-surgical mutation makes a red run harder to read, and this is the clearest instance of that so far.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a throw inside `withTransaction` after a real statement has already executed',
     file: 'packages/database/src/integration/database.integration.test.ts',
     testTitle: 'transaction rolls back on failure and releases the connection',
     entryPoint: 'withTransaction',
     mutation: 'Swallow the error inside withTransaction so it COMMITs instead of rolling back.',
-    mutationRunId: '',
+    mutationRunId: '31220529856',
     doesNotProve:
       'The row\'s "Platform read-only/unavailable" TRANSITION or its "Honest maintenance status". Nothing asserts a user-facing surface degrades when the database is down. `client.test.ts`\'s `checkDatabaseHealth` case does inject a real ECONNREFUSED, but asserts a returned health object — not that any product path refuses work.',
     notes:
@@ -177,14 +205,18 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 7,
     failure: 'Object-storage failure',
     consequence: 'artifact persist fails ⇒ task fails, and NO artifact row exists afterwards',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 4, run 31220565493. SIX red, every one about a storage write that lies —
+    // this row's test plus the truncated-write, retry-after-refusal and needs_revision siblings. The edit left
+    // `verifyPersistedObject` running and ignored its verdict, which is exactly what "trust `storage.head`"
+    // means; a plain `if (false)` was not available because lint refuses a constant condition.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'InMemoryObjectStorage `dropNextPut()` — the dependency LIES, reporting success while storing nothing',
     file: 'packages/core/src/artifacts/persist.integration.test.ts',
     testTitle: 'a storage write that REPORTS SUCCESS while storing nothing refuses, and writes no row',
     entryPoint: 'persistArtifact',
     mutation: 'Delete the `verifyPersistedObject` call in `persistArtifact` and trust `storage.head`, so a write that reports success while storing nothing is accepted.',
-    mutationRunId: '',
+    mutationRunId: '31220565493',
     doesNotProve:
       'The row\'s "Credit released" or its `task.failed` audit. Sibling cases cover a THROWING write and a TRUNCATED one, and that a retry after refusal ends with exactly one artifact.',
     notes:
@@ -194,14 +226,18 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 8,
     failure: 'Tool/API failure (future external)',
     consequence: 'a throwing step is recorded as a failure with a category — but NOT a distinguishable one',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 4, run 31220599482, and it is a SINGLE-TEST result: exactly one test failed
+    // in the whole suite, this row's own. The edit let the step's throw propagate instead of reaching
+    // `finishAs`, so the transaction rolled back and no failed row survived — the state the row says must not
+    // be reachable. A bare rethrow would have tripped `no-useless-catch`, so the probe throws a fresh error.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a worker step that throws, driven through the real runtime',
     file: 'packages/core/src/workers/runtime.integration.test.ts',
     testTitle: 'a THROWING step is recorded as a provider_error, not rolled back into nothing',
     entryPoint: 'runWorkerStep',
     mutation: 'Wrap the body of `runWorkerStep` so a throwing step rolls its own transaction back instead of reaching `finishAs` with `provider_error`, leaving no failed row.',
-    mutationRunId: '',
+    mutationRunId: '31220599482',
     doesNotProve:
       'THE ROW\'S ACTUAL CLAIM. The row wants a tool call `failed` with a NORMALIZED CATEGORY distinguishing a tool fault from a provider fault, and requires idempotency keys for external classes. `runtime.ts` has a bare `catch {}` that finishes with `failureCategory: "provider_error"` unconditionally, so the two are indistinguishable. Fixing it needs a MIGRATION, not just code: `RUN_FAILURE_CATEGORIES` is a closed five-value set with no `tool_error`, mirrored by CHECK constraints on `task_runs` and `worker_runs` and pinned by a test asserting the constant and the CHECK are the same set. CDR-084 §7 item 5.',
     notes: 'Verified slice 1. CDR-059:103 named this row unserved for the same reason; the migration requirement is new.',
@@ -247,14 +283,21 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 11,
     failure: 'Duplicate delivery (job/event)',
     consequence: 'the duplicate is suppressed AND the suppression is recorded',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 2, run 31215134001. SIX red, all idempotency behaviour plus the Slice F journey.
+    // THE MUTATION HAD TO BE CORRECTED FIRST: the previous text said to skip the `findByIdempotencyKey`
+    // read-back, which CANNOT create a second job - dedupe is the partial unique index plus ON CONFLICT DO
+    // NOTHING, and the read-back only resolves what already exists. The slice-6 rule passed that text because
+    // its symbols are real; it cannot tell whether an edit achieves the effect the row claims.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'the production enqueue path is called TWICE with the same idempotency key',
     file: 'packages/core/src/idempotency/replay.integration.test.ts',
     testTitle: 'a re-delivered enqueue creates no second job, and the suppression is recorded',
     entryPoint: 'enqueueJob',
-    mutation: 'Make `enqueueJob` skip its `findByIdempotencyKey` read-back, so a re-delivered key inserts a second job row.',
-    mutationRunId: '',
+    // CORRECTED in slice 6 wave 2, after the probe proved the old text inert: skipping the read-back cannot
+    // create a second job, because the partial unique index plus ON CONFLICT DO NOTHING is what dedupes.
+    mutation: 'Store `idempotencyKey: null` on the insert inside `enqueueJob`, so the partial unique index cannot match a re-delivery and a second job row is created.',
+    mutationRunId: '31215134001',
     doesNotProve:
       'The row\'s "duplicate-suppression incident counter" as an operational metric. Two anchors per case — real row counts read through the OWNER client plus a suppression log incident — because CDR-074 §0 requires that a suite checking only "one row exists" would pass against a build with every guard removed. Negative controls pin that two KEYLESS deliveries are two jobs, so the mechanism never suppresses by accident.',
     notes:
@@ -264,14 +307,22 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 12,
     failure: 'Partial completion (multi-step run)',
     consequence: 'resume from checkpoint — a killed run continues rather than restarting',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 3, run 31218111959 — and it took TWO attempts, which is the finding.
+        // The FIRST mutation followed this row's own text and made `runJobStep` ignore its `listCheckpoints`
+        // read. Three NEIGHBOURING tests went red and THIS ONE STAYED GREEN (run 31212362663). There are two
+        // listCheckpoints call sites, and the cited test never asks runJobStep to re-run anything: it reads
+        // `remainingSteps` from `getResumeState` and runs only those, so the no-re-run property is enforced by
+        // the plan-minus-inventory computation, not by the already-completed guard. Mutating THAT reddens it.
+        // Recorded because it is the ACBP-P7-007 row-19 shape caught from the other side: a mutation naming a
+        // real symbol in a real function, aimed at the wrong one of two call sites.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a run killed mid-sequence, then resumed against the real checkpoint rows',
     file: 'packages/core/src/jobs/checkpoint.integration.test.ts',
     testTitle: 'KILL AND RESUME — a crashed plan resumes without re-running the step that already completed',
-    entryPoint: 'runJobStep',
-    mutation: 'Make `runJobStep` ignore its `listCheckpoints` read, so a step that already completed runs a second time on resume.',
-    mutationRunId: '',
+    entryPoint: 'getResumeState',
+    mutation: 'Make `getResumeState` ignore its `listCheckpoints` read, so a completed step is reported as remaining and the caller runs it a second time. NOT `runJobStep`: that call site guards a direct re-invocation the cited test never makes, and mutating it leaves this test green.',
+    mutationRunId: '31218111959',
     doesNotProve:
       'The row\'s "fail with partials LABELED partial" branch, or the "Discard-partials option" compensation. No user-facing partial-labelling surface was found. The checkpoint/transaction case (a step that writes then throws leaving nothing) is row 6\'s evidence, not this row\'s.',
     notes: 'Verified slice 1.',
@@ -280,14 +331,16 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 13,
     failure: 'Usage-recording failure',
     consequence: 'metered work BLOCKS — the call aborts and the output is withheld',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 1, run 31212321748. THREE red, all fail-closed metering: this row's test and the
+    // two siblings asserting the same rule on the persisted and invalid-output paths.
+    status: 'measured',
     anchor: 'return_value_only',
     injection: 'a `recordUsage` dependency that rejects',
     file: 'packages/core/src/model/model-gateway.test.ts',
     testTitle: 'a usage-write failure aborts the call and withholds the output',
     entryPoint: 'callModel',
     mutation: 'Catch the `recordUsage` rejection inside `callModel` and return the output anyway, so the call is answered un-metered.',
-    mutationRunId: '',
+    mutationRunId: '31212321748',
     doesNotProve:
       'That the ledger is reconcilable afterwards, or the row\'s "Compensating entries". Withholding is asserted on the returned result, not on a persisted row — the fail-closed decision is in-process, so there is no durable artefact to read back.',
     notes: 'Verified slice 1 — genuine injection, and the USAGE-001 fail-closed anchor.',
