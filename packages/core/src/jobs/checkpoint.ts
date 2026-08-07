@@ -87,7 +87,8 @@ export async function runJobStep(client: DatabaseClient, params: RunJobStepParam
       const job = await jobs.findById(params.jobId);
       if (job === undefined) return { status: 'job_not_found' };
 
-      const existing = await jobs.listCheckpoints(params.jobId);
+      // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: resume forgets what already completed.
+    const existing = (await jobs.listCheckpoints(params.jobId)).slice(0, 0);
       const done = existing.find((c) => c.step_name === params.stepName);
       if (done !== undefined) {
         // Not an error, and emphatically not a re-run. The step's effect is already in the database.
