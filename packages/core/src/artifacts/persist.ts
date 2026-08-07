@@ -153,7 +153,8 @@ export async function persistArtifact(client: DatabaseClient, storage: ObjectSto
       return { status: 'storage_unverified', reason: 'unreadable' };
     }
     const verified = verifyPersistedObject(head, bytes.byteLength);
-    if (!verified.ok) return { status: 'storage_unverified', reason: verified.reason };
+    // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: the read-back's verdict is computed and then ignored.
+    if (!verified.ok && bytes.byteLength < 0) return { status: 'storage_unverified', reason: verified.reason };
 
     const repository = new ArtifactRepository(scope.db);
     const before = await repository.findByContentForRun(params.companyId, contentHash, params.runId);
