@@ -341,7 +341,12 @@ export async function callModel(deps: ModelGatewayDeps, request: ModelGatewayReq
     ...(request.idempotencyKey !== undefined ? { idempotencyKey: request.idempotencyKey } : {}),
   };
   try {
+    // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: a metering failure no longer aborts the call.
+  try {
     await deps.recordUsage(event);
+  } catch {
+    /* swallowed by the probe */
+  }
   } catch (err) {
     // Redacted: never log the raw DB error; surface a sanitized internal error and withhold the output.
     deps.logger?.error('model.metering_failed', { metadata: redactedMeta(usedProvider.name, model, request.taskClass, outcome, errorCategory, fallbackUsed, latencyMs, correlationId) });
