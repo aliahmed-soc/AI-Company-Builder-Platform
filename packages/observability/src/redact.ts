@@ -5,6 +5,7 @@
 // (case-insensitive), sensitive substrings in strings (assignments, Bearer tokens, sensitive
 // URL query params, known key formats), and recurses through objects, arrays, and Error causes.
 import { Secret } from '@acbp/config';
+import { redactSecrets } from '@acbp/contracts';
 
 export const REDACTED = '[REDACTED]';
 
@@ -27,6 +28,20 @@ function redactString(input: string): string {
   out = out.replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, REDACTED);
   out = out.replace(/\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b/g, REDACTED);
   out = out.replace(/-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/g, REDACTED);
+  // ACBP-P7-007 — THE CANONICAL SHAPE LIST, APPLIED LAST so the friendlier forms above win where they match.
+  //
+  // The rules above are the ORIGINAL P0-017 set, and an independent review measured what they miss: a
+  // `scheme://user:password@host` CONNECTION STRING, a JWT, an AWS key id, a Slack token, SendGrid, npm, and the
+  // `Basic` authorization scheme all passed through this function verbatim. That mattered here specifically
+  // because ACBP-P7-007's own new comment in `logger.ts` offered "a connection string or `password=…`" as
+  // interchangeable examples while only the second was handled — a sentence that named a guarantee the code did
+  // not provide, which is the defect class this ticket exists to close, committed by the fix for it.
+  //
+  // `redactSecrets` (contracts `SECRET_PATTERNS`) is a strict superset and was already a dependency of this
+  // package, so this is one import rather than a second pattern list to keep in step. It is also the SAME
+  // detector `containsSecret` uses, which is what makes the audit sweep and the log redactor agree on what a
+  // secret is — before this they did not, and the sweep was the stricter of the two.
+  out = redactSecrets(out);
   return out;
 }
 

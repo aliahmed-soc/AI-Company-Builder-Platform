@@ -16,7 +16,7 @@ import type { InternalUserReconciliation } from '@acbp/core';
 export type InternalUserForRequest =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
-  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-081; NFR-010). */
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
   | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'session_unavailable' }
   | InternalUserReconciliation;

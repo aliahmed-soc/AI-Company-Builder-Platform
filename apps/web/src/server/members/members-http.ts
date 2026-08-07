@@ -79,7 +79,7 @@ export function toMembersResponse(result: MembersRequestResult): Response {
     case 'revoked':
       return new Response(null, { status: 204 });
     case 'rate_limited':
-      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-081). Shared helper so every surface throttles
+      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-082). Shared helper so every surface throttles
       // identically — same status, same opaque body, same Retry-After.
       return rateLimitedResponse(result.retryAfterSeconds);
     case 'validation':

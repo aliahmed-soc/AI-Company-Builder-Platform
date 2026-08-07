@@ -1,0 +1,126 @@
+# ACBP-P7-008 — review coverage ledger
+
+Branch `p7-008-failure-injection-pass`, draft PR #81. Companion to CDR-084 and to
+`P7-008-SCENARIO-EVIDENCE.md` (which is generated — do not edit it).
+
+**This file records REVIEW FINDINGS. The evidence lives in `tools/failure-scenario-index.mjs` and is rendered.**
+Written that way on purpose: ACBP-P7-007's ledger opened with a status sentence that was true when written and
+false the moment the ticket merged, and a review pass had to catch it. Claims here name commits, not states.
+
+---
+
+## §1 What review found, in the order it was found
+
+Every item below changed code or an artefact. Items marked **self-caught** were found by me before any gate ran;
+they are listed because a ledger that only records what a reviewer found overstates how clean the first draft was.
+
+| # | Found in | The defect | Fixed in |
+|---|---|---|---|
+| 1 | slice 1 | CDR-084's provisional disposition table recorded rows 6 and 14 as having **no coverage**. Both were wrong — row 14 is among the best-covered rows in the repository. | `259dcea` |
+| 2 | slice 1 | The CDR's premise "build the fault-injection rig" was **retracted entirely**: the rig already exists. | `259dcea` |
+| 3 | slice 3, **by the new checker on its first run** | **Four of sixteen `testTitle`s were written from memory rather than read.** The checker named all four. Row 15 had also moved file. | slice 3 |
+| 4 | slice 3, **self-caught via lint** | `isRunId` was imported into the migrated checker without being used — meaning the inline `/^\d{6,}$/` was still there. Extraction that leaves the duplicate behind is not extraction. | slice 3 |
+| 5 | slice 3, **self-caught** | The new checker's test harness had a `row()` helper that accepted overrides and never spread them, so `secondRow()` silently duplicated row 1 and 17 cases failed for an unrelated reason. Driving the checker by hand exited 0, which located it. | slice 3 |
+| 6 | slice 4 | Canon says an expired approval "cannot execute". Both indexes proved it **at the repository layer only**, through a `decider_type` CHECK test about *who* may decide rather than *when* one lapses. Searching either dispatcher suite for "expired" returned **zero** cases while every sibling approval state had one. The enforcement was in production and nothing drove it. | slice 4 |
+| 7 | slice 5 | Launch **gate 8** was measured from a raw `INSERT INTO emergency_stops` helper *named* `activateStop`, so the ≤5s window measured transaction visibility and **excluded activation entirely** — ACBP-P7-007 recorded this as trust-critical #10's defect and could not fix it there. | slice 5 |
+| 8 | slice 6 | **Eighteen of the thirty-three `mutation` cells were wishes, not edits** — they named no function, file or column. Three were not merely vague but wrong; one (trust-critical #1) was an **equivalent mutation** whose green probe would have been read as proof. | `0cca4e2` |
+| 9 | slice 6, **by the new rule, on a row I had written an hour earlier** | Trust-critical #10's rewritten mutation still named no symbol — `evaluateStops` was unnamed. | `0cca4e2` |
+| 10 | slice 6, review of my own diff | The mutation rule's tokeniser **did not admit hyphens**, so `enqueue-job.ts` became `job.ts` and a row naming a real file would have read as stale. **A rule that fails honest rows is worse than one that misses a bad row** — people delete it. | `668198f` |
+| 11 | review of the **rendered** document | I asserted that `workflow_dispatch` cannot help the branch that adds it. **Tested instead of assumed: it can** — run `31128906516` was created on `2314ef7` during the outage. | `c2649aa` |
+| 12 | review of the **rendered** document | Four `entryPoint` cells named prose where a real function exists, and **row 15's named the wrong place entirely** (worker runtime step boundary, while its test drives `dispatchToolCall`). The same defect I had corrected in row 16 an hour earlier and not swept for. | `c2649aa` |
+
+---
+
+## §2 What the review method actually caught, and what it did not
+
+**Tools caught 3, 4, 5, 9.** Every one was a case where the artefact and the code disagreed and a machine could
+see it. That is what the two index checkers are for, and the ratio is the argument for building them.
+
+**Reading a DIFFERENT rendering caught 11 and 12.** Both had survived two passes over the index itself. This is
+the "verify with a different anchor" rule paying out: re-checking with the method that produced the work
+verifies nothing. The rendered document was the different anchor.
+
+**Nothing mechanical caught 6, 7, 8 or 12's root.** Those needed someone to read a test body and ask whether it
+asserts what its row claims. The limits are recorded where they apply rather than papered over:
+
+- a `mutationRunId` is **shape-checked, never resolved** (CDR-080 §7.10);
+- **nothing cross-checks a mutation against the test title it claims to redden** (CDR-080 §7.11);
+- the new mutation rule **cannot tell a right symbol from a wrong-but-real one** — scenario row 16 named
+  `startRun` while its test drives `enqueueJob`, both real, same file. Pinned as a test case so the limit
+  cannot quietly stop being true.
+
+---
+
+## §3 The acceptance criterion is NOT met, and this is why
+
+"16-scenario matrix green" means, per CDR-084 §1, that a recorded mutation made the cited test go red in a
+hosted CI run. **4 of 16 rows are `measured`** — scenario 9, 14, 15 and 16, plus trust-critical #7 and #10.
+**Twelve are not.** They have live tests that pass; nothing has yet tried to break them. Two have no injectable
+subject at all.
+
+The probe ran on 2026-08-07 as five mutations on a disposable branch, one live at a time, after a **major
+GitHub Actions outage** had blocked it for a day — no workflow run was created for this branch by any push
+during it. The manual trigger added at `2314ef7` re-opened the route, and the claim in that commit that it
+could not help its own branch was **tested and found false** (finding 11 above).
+
+Run ids and the full result table are CDR-084 §11. Ceilings moved down for the first time: failure-scenario
+16 → **12**, trust-critical 18 → **16**, with the ratchet reporting `Ceiling 16 ≤ baseline 18 (origin/main)`.
+
+### §3.1 What the probe added to this ledger
+
+**M4 proved finding 12 was a real defect and not a stylistic one.** Row 16 had named `startRun` while its test
+drives `enqueueJob`. A human caught that by reading the test body; the mutation-names-real-code rule could not,
+because both are real functions in the same file. The probe then *demonstrated* it: mutating `enqueueJob`
+reddens the test, and `startRun` is a function that test never calls. Had the probe run against the row as
+originally written, it would have edited `startRun`, seen a red somewhere, and recorded a run id proving
+nothing — the ACBP-P7-007 row-19 defect, reproduced by a ticket built to prevent it.
+
+**M3 proved that rows citing the same file still need separate runs.** M2 cut `account_wide` and left
+trust-critical #10's test green; only M3, cutting `company`, reddened it. A probe that assumed one run covers
+every row in a file would have recorded #10 on M2's id.
+
+**Two more defects of my own, both caught by guards rather than by me.** `check:encoding` caught backticks put
+through a PowerShell double-quoted string *while writing the comments that record these measurements* — `` `t ``
+ate a "t" and left a raw TAB inside a comment in both index files, which survives typecheck, lint and every
+test. And M4 took three attempts to write type-safely; the first two died at the static gate, which is the
+whole reason CDR-084 §8 insists a mutation be type-safe.
+
+---
+
+## §3.2 The §7.11 cross-check was run BY HAND, and it is mechanizable
+
+CDR-080 §7.11 records that **nothing machine-checks a mutation against the test title it claims to redden** —
+the gap that let ACBP-P7-007 mark row 19 `measured` on a run in which a different test failed. Before reporting
+this ticket complete I ran that cross-check manually against every `measured` row in both indexes: for each, pull
+`gh run view <mutationRunId> --log-failed` and assert the row's own `testTitle` appears among the failing tests.
+
+| Row | Run | Verdict |
+|---|---|---|
+| scenario 9 | `31129056434` | CONFIRMED |
+| scenario 14 | `31140772210` | CONFIRMED |
+| scenario 15 | `31129196873` | CONFIRMED |
+| scenario 16 | `31140011057` | CONFIRMED |
+| trust-critical #7 | `31129056434` | CONFIRMED |
+| trust-critical #10 | `31139103437` | CONFIRMED |
+| trust-critical #15 | `31113087854` | CONFIRMED *(ACBP-P7-007's)* |
+| trust-critical #16 | `31113087854` | CONFIRMED *(ACBP-P7-007's)* |
+
+Row 19 is correctly **absent** from this table: P7-007 demoted it to `unmeasured` when two reviews caught that
+its run had reddened a different test. The check agreeing with that demotion is the strongest evidence the check
+is measuring the right thing.
+
+**The finding is that this is automatable, and it is the one gap both indexes name and neither closes.** It was
+not built here for a stated reason rather than an omission: the checkers deliberately never contact GitHub, so
+they run offline, unauthenticated, and identically in CI. A resolver belongs in a **separate opt-in tool**, not
+in `check:static` — otherwise every build depends on GitHub being reachable and on a token, and a gate that
+cannot run is a gate people remove. Recommending it rather than building it, because adding a network dependency
+to the build is an architecture decision, not a test decision.
+
+---
+
+## §4 Owner decisions this ticket does not take
+
+CDR-084 §7, unchanged: rows 5, 6, 8, 10 and 16; whether NFR-019 stays `Covered` while its queue/banner/drain
+half is unimplemented; and the Closed-beta launch-gate sign-off. Row 16 is a **canon contradiction** — the
+matrix requires in-flight safe-stop, `WORKFLOW-STATE-MACHINES.md:35` says pause does not terminate a running
+run. One of the two is wrong, and that is an architecture decision rather than a test decision.

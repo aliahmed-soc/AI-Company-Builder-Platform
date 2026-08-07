@@ -29,26 +29,26 @@ Status: Proposed for owner review. Layers defined now; implemented incrementally
 
 1. Tenant A cannot retrieve Tenant B's company. *(P1-014)*
 2. Tenant A cannot guess/enumerate Tenant B's artifacts (IDs, storage paths, exports). *(P1-014, P5-011, P7-001)*
-3. A worker cannot run without explicit tenant context. *(P5-001/005)*
-4. A tool not in the worker allowlist is denied. *(P5-003)*
+3. A worker cannot run without explicit tenant context. *(P5-001a — the enqueue proof. **`/005` is UNEARNED**: `workers/runtime.ts:1` and `migrations/0040_worker_runs.ts:1` both DECLARE this negative, and no worker-runtime entry point is driven with absent context — ACBP-P7-007.)*
+4. A tool not in the worker allowlist is denied. *(P5-003/004 — P5-003 built the chokepoint; the proof that the enforced list is the worker's own registered allowlist is P5-004's. Corrected by ACBP-P7-007.)*
 5. Model output cannot approve an action. *(P6-003/004)*
 6. Editing a material approved payload invalidates approval. *(P6-005 — **built**; launch gate 4. Evidence:
    `policy-enforcement.integration.test.ts` `describe('gate 4 …')` — one case per bound element plus a control,
    each ending at the dispatcher and each asserting the approval is not burned; rebinding in
    `approval-service.integration.test.ts`. Index in CDR-070 §2.)*
-7. Expired approval cannot execute. *(P6-004)*
-8. Revoked integration cannot execute. *(rig in P6-002; full when integrations exist)*
-9. Paused company cannot start new autonomous work. *(P6-007)*
-10. Emergency stop blocks new external execution (all scopes, ≤5s). *(P6-007)*
-11. Replayed jobs do not duplicate authoritative effects. *(P6-011)*
+7. Expired approval cannot execute. *(P6-004 — proven at the REPOSITORY layer only. "Cannot EXECUTE" is never asserted at `dispatchToolCall`: both dispatcher suites contain zero expired-approval cases, while every sibling approval state has one. ACBP-P7-007.)*
+8. Revoked integration cannot execute. *(**NOT BUILT, and the claimed rig does not exist.** There is no integrations entity anywhere — no table, no migration, no service, no contract, and no integration-related value in `TOOL_DENIAL_REASONS`. CDR-067, P6-002's own decision record, never mentions integrations. Cannot go green until integrations exist — ACBP-P7-007; CDR-080 §7.)*
+9. Paused company cannot start new autonomous work. *(**P7-002**, not P6-007 — `packages/core/src/company/gate-14.integration.test.ts`. P6-007 shipped no company-lifecycle gate; nothing read `companies.status` before doing autonomous work until ACBP-P7-002 built the gate. Corrected by ACBP-P7-007.)*
+10. Emergency stop blocks new external execution (all scopes, ≤5s). *(P6-007 — but "all scopes" is **five ENFORCEABLE scopes**, and the timing helper NAMED `activateStop` is a raw INSERT rather than the production use case, so the measured interval EXCLUDES activation. Annotated by ACBP-P7-007.)*
+11. Replayed jobs do not duplicate authoritative effects. *(P6-011, on foundations from P5-001b (checkpoints) and P5-003b (per-tool idempotency) — ACBP-P7-007. `idempotencyKey` is caller-supplied and optional; no production producer derives one.)*
 12. Duplicate usage messages do not double count. *(P6-009/011)*
 13. Usage corrections create compensating records (never edits). *(P6-009)*
 14. Account usage equals the deterministic sum of eligible company usage. *(P6-009)*
 15. Provider keys never appear in browser responses. *(P0-019, P7-007)*
 16. Secret values never appear in logs or audit payloads. *(P0-017, P7-007)*
-17. Raw untrusted content cannot directly trigger a tool call (injection corpus). *(P5-003/006, P7-007)*
-18. Failed model output cannot create a completed task. *(P5-010/013)*
-19. Silent fallback does not occur for a material decision. *(P5-009)*
+17. Raw untrusted content cannot directly trigger a tool call (injection corpus). *(**P5-003c** built the suite; the **P5-006 credit is unearned** — ACBP-P7-007. ACBP-P6-002/CDR-067 §2-G9 restored this boundary after it went DEAD and is uncredited. Three gaps remain: `params.args` is never inspected, anything past `detectInjection`'s 64,000-character slice is unseen, and untrusted context PLUS a standing approval is AUTHORIZED by design and untested.)*
+18. Failed model output cannot create a completed task. *(**P5-011 and P6-008**, not P5-010/013 — P5-010 self-files as "groundwork" and its own review coverage calls the criterion "honestly HALF met". Corrected by ACBP-P7-007. The seeded run state is `running`, not `failed`, so the claim AS WORDED is covered by construction rather than by execution.)*
+19. Silent fallback does not occur for a material decision. *(P5-009 built the suite; the mechanism is P2-003 — ACBP-P7-007. Two assertions in that suite could not fail and were fixed by ACBP-P7-007; which decisions are MATERIAL is still unpinned for several template families.)*
 20. A user cannot obtain elevated authority by altering a Clerk organization or role value in the client. *(P1-007, P1-014)*
 
 ## Verification discipline

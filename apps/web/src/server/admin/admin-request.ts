@@ -15,7 +15,7 @@ import type { AdminReadParams, AdminReadResult, AdminOpOptions, InternalUserReco
 export type AdminRequestResult =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
-  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-081; NFR-010). */
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
   | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'unavailable' }
   | { readonly status: 'invalid_reason' }

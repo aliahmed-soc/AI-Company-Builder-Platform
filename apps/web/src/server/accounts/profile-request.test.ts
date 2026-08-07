@@ -31,7 +31,7 @@ function identityDeps(resolution: InternalUserReconciliation): ProfileRequestDep
 function fakeAccounts(overrides: Partial<AccountOps> = {}): { ops: AccountOps; calls: { ensured: string[]; updated: { userId: string; input: ProfileUpdateInput }[] } } {
   const calls = { ensured: [] as string[], updated: [] as { userId: string; input: ProfileUpdateInput }[] };
   const ops: AccountOps = {
-    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-081 section 2).
+    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-082 section 2).
     checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
 
     ensurePersonalAccount: (userId: string): Promise<ProvisionResult> => {

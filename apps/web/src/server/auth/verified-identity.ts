@@ -23,7 +23,7 @@ export type VerifiedIdentityResult =
   | { readonly status: 'authenticated'; readonly identity: NormalizedIdentity }
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
-  /** CDR-008 §8's per-session ceiling refused this request (ACBP-P7-013; CDR-081). */
+  /** CDR-008 §8's per-session ceiling refused this request (ACBP-P7-013; CDR-082). */
   | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'unavailable' };
 
@@ -54,7 +54,7 @@ export interface VerifiedIdentityDeps {
   /** Fetches the authoritative Backend User by id over the trusted server SDK. */
   readonly getBackendUser: (userId: string) => Promise<BackendUserView>;
   /**
-   * Consume one request against the per-session ceiling (ACBP-P7-013; CDR-081; NFR-010).
+   * Consume one request against the per-session ceiling (ACBP-P7-013; CDR-082; NFR-010).
    *
    * ⚠️ REQUIRED, NEVER OPTIONAL, AND NEVER DEFAULTED TO "ALLOW". ACBP-P6-007 deleted a caller-injectable stop
    * port for exactly this shape: it defaulted to `clear`, which was true only while no engine existed, and with
@@ -122,7 +122,7 @@ export async function resolveVerifiedIdentity(
     return { status: 'unauthenticated' };
   }
 
-  // ── THE RATE LIMIT RUNS HERE, AND THE POSITION IS THE POINT (ACBP-P7-013; CDR-081 §3.3) ────────────────────
+  // ── THE RATE LIMIT RUNS HERE, AND THE POSITION IS THE POINT (ACBP-P7-013; CDR-082 §3.3) ────────────────────
   //
   // AFTER the session is established, so the key is cryptographically verified rather than browser-asserted —
   // an IP-keyed limit would be evadable by setting a header and, worse, would let an attacker spend a victim's

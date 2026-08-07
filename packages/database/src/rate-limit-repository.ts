@@ -1,4 +1,4 @@
-// @acbp/database — the API request-limit bucket (ACBP-P7-013; CDR-081 §3.2; migration 0055; NFR-010).
+// @acbp/database — the API request-limit bucket (ACBP-P7-013; CDR-082 §3.2; migration 0055; NFR-010).
 //
 // ── THE ONE THING THIS FILE IS ABOUT: THE DECISION HAPPENS UNDER THE ROW LOCK ─────────────────────────────────
 //
@@ -24,7 +24,7 @@
 //
 // ── THIS FILE MUST AGREE WITH `consumeTokens`, AND A TEST MEASURES THAT ───────────────────────────────────────
 //
-// `@acbp/contracts`' `consumeTokens` is the specification (CDR-081 §3.2) and this is a second implementation of
+// `@acbp/contracts`' `consumeTokens` is the specification (CDR-082 §3.2) and this is a second implementation of
 // the same arithmetic in SQL. Two implementations of one rule drift. `rate-limit-bucket.integration.test.ts`
 // replays the specification's own cases through this repository against real PostgreSQL and asserts the two
 // agree case for case, so a divergence is a red test rather than a discrepancy someone notices later.

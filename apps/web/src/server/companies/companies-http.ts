@@ -204,7 +204,7 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'email_unverified':
       return jsonResponse(403, { error: 'email_unverified' });
     case 'rate_limited':
-      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-081). 429 with `Retry-After`, and the body carries the
+      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-082). 429 with `Retry-After`, and the body carries the
       // SAME opaque envelope as every other refusal — no bucket balance, no limit value, no scope name. A
       // response that told a caller which ceiling they hit and how much of it remains is a measurement tool for
       // finding the cheapest way to stay just under it.

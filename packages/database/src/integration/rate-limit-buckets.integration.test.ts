@@ -1,10 +1,10 @@
-// ACBP-P7-013 / CDR-081 — real-PostgreSQL proof of `api_rate_limit_buckets` under the RESTRICTED role.
+// ACBP-P7-013 / CDR-082 — real-PostgreSQL proof of `api_rate_limit_buckets` under the RESTRICTED role.
 //
 // ── WHY THIS SUITE IS A DIFFERENTIAL TEST AND NOT A LIST OF EXPECTATIONS ──────────────────────────────────────
 //
 // The bucket arithmetic exists TWICE: once as `consumeTokens` in `@acbp/contracts` (the specification) and once
 // as SQL inside `consumeBucket` (the implementation, in SQL because the decision has to happen under the row
-// lock — CDR-081 §3.2). Two implementations of one rule drift, and hand-written expectations here would drift
+// lock — CDR-082 §3.2). Two implementations of one rule drift, and hand-written expectations here would drift
 // with whichever one the author was looking at.
 //
 // So §1 replays the SPECIFICATION'S OWN CASES through the database and asserts the two agree, case for case. The
@@ -59,7 +59,7 @@ const SESSION = rateLimitRule({ perMinute: 60, burst: 120 });
 const T0 = new Date('2026-01-01T00:00:00.000Z');
 const at = (msAfterT0: number) => new Date(T0.getTime() + msAfterT0);
 
-describe.skipIf(!hasTestDatabase)('api_rate_limit_buckets (real PostgreSQL, restricted role) — ACBP-P7-013/CDR-081', () => {
+describe.skipIf(!hasTestDatabase)('api_rate_limit_buckets (real PostgreSQL, restricted role) — ACBP-P7-013/CDR-082', () => {
   let su: DatabaseClient;
   let app: DatabaseClient;
 

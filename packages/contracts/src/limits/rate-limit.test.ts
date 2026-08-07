@@ -1,7 +1,7 @@
-// ACBP-P7-013 — the token-bucket specification (CDR-081 §3.2).
+// ACBP-P7-013 — the token-bucket specification (CDR-082 §3.2).
 //
 // THIS FILE IS THE SPECIFICATION, not merely a test of it. `consumeTokens` is pure and the production consume is
-// a single SQL statement (CDR-081 §3.2, for atomicity); the real-PostgreSQL differential suite replays this same
+// a single SQL statement (CDR-082 §3.2, for atomicity); the real-PostgreSQL differential suite replays this same
 // table of cases through the database and asserts the two agree. So a case added here is a case the SQL must also
 // satisfy, and a divergence is a red test rather than a silent drift between two implementations of one rule.
 import { describe, expect, it } from 'vitest';

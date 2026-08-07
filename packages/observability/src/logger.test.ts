@@ -87,6 +87,58 @@ describe('logging', () => {
     expect(JSON.stringify(records)).not.toContain(SENTINEL);
   });
 
+  // ACBP-P7-007 (trust-critical #16). The case above honestly names its own scope — "metadata + error" — and
+  // that scope was the whole of the redaction: `message` was emitted VERBATIM while `metadata` and `error` both
+  // went through `redact()`. Nothing asserted the third field, so nothing noticed the asymmetry.
+  test('sentinel secret never appears in an emitted MESSAGE either (trust-critical #16)', () => {
+    const { logger, records } = createTestLogger();
+    logger.error('failed', { message: `connect failed: password=${SENTINEL}` });
+    expect(JSON.stringify(records)).not.toContain(SENTINEL);
+  });
+
+  test('a message with nothing sensitive survives intact — redaction is not blanket erasure', () => {
+    const { logger, records } = createTestLogger();
+    logger.info('ok', { message: 'connected to the primary replica' });
+    expect(JSON.stringify(records)).toContain('connected to the primary replica');
+  });
+
+  // ACBP-P7-007, SECOND REVIEW PASS. The case above plants `password=…`, which the ORIGINAL P0-017 pattern set
+  // already handled — so it proved the field is piped through `redact()` and nothing about which shapes
+  // `redact()` knows. A review measured the rest and every one of these was emitted VERBATIM, including a
+  // connection string, which the fix's own comment had offered as its example. One case per shape, because a
+  // single combined assertion would go green again the moment any one pattern was restored.
+  describe.each([
+    ['a connection string', 'connect failed: postgresql://acbp_app:zz-sentinel-01-value@db.internal:5432/acbp'],
+    ['a JWT', 'rejected token eyJhbGciOi.eyJzdWIiOiIx.zz-sentinel-01-value'],
+    ['an AWS access key id', `aws creds AKI${'A'}ZZSENTINEL01VALUE`],
+    // Assembled, not spelled: written whole this line is a `slack-token` finding in the repository's own secret
+    // scanner — which is exactly what it did, on the run that added it. Same technique as the sibling suites.
+    ['a Slack token', `slack xox${'b'}-zz-sentinel-01-value-0123456789`],
+    ['the Basic auth scheme', `Basic${' '}zz-sentinel-01-valuezz-sentinel-01-value`],
+  ])('a MESSAGE carrying %s is redacted', (_label, message) => {
+    test('the distinctive part never reaches an adapter', () => {
+      const { logger, records } = createTestLogger();
+      logger.error('failed', { message });
+      expect(JSON.stringify(records)).not.toContain('zz-sentinel-01-value');
+    });
+  });
+
+  // The `event` name is the OTHER free-text field. It is a dotted name by convention only — its type is
+  // `string`, and the file header's claim that every emitted record is redacted was false until it was piped
+  // through `redact()` too.
+  test('an EVENT NAME carrying a secret is redacted — the convention is not a control', () => {
+    const { logger, records } = createTestLogger();
+    logger.error(`db.connect.failed postgresql://acbp_app:${SENTINEL}@db.internal:5432/acbp`);
+    expect(JSON.stringify(records)).not.toContain(SENTINEL);
+    expect(records).toHaveLength(1);
+  });
+
+  test('CONTROL: an ordinary event name survives intact — otherwise the case above passes on blanket erasure', () => {
+    const { logger, records } = createTestLogger();
+    logger.info('company.paused');
+    expect(JSON.stringify(records)).toContain('company.paused');
+  });
+
   test('malformed / unusual metadata does not throw and still emits', () => {
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;

@@ -1,4 +1,4 @@
-// @acbp/contracts — the token bucket that expresses CDR-008 §8's request limits (ACBP-P7-013; CDR-081 §3.2).
+// @acbp/contracts — the token bucket that expresses CDR-008 §8's request limits (ACBP-P7-013; CDR-082 §3.2).
 //
 // ── WHY A TOKEN BUCKET AND NOT A WINDOW ──────────────────────────────────────────────────────────────────────
 //
@@ -12,7 +12,7 @@
 //
 // Production consumes a bucket in ONE SQL statement, because a read-then-write pair is a lost-update race in
 // which two concurrent requests observe the same balance and both spend it — the exact defect this control
-// exists to prevent, reintroduced inside its own implementation (CDR-081 §3.2). That leaves two implementations
+// exists to prevent, reintroduced inside its own implementation (CDR-082 §3.2). That leaves two implementations
 // of one rule, which is a drift risk, so it is closed the way ACBP-P7-001 closed its table classification: with
 // a DIFFERENTIAL test against a second anchor. `rate-limit-bucket.integration.test.ts` replays this file's cases
 // through real PostgreSQL and asserts the database agrees with this function, case for case. Divergence is a red

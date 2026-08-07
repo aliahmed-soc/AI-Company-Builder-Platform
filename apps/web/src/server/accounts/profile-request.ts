@@ -16,7 +16,7 @@ export type ProfileRequestResult =
   | { readonly status: 'ok'; readonly profile: AccountProfileView }
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
-  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-081; NFR-010). */
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
   | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
@@ -25,7 +25,7 @@ export type ProfileRequestResult =
 
 /** The account operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface AccountOps {
-  /** CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-081). Required — see CompanyRuntime for why. */
+  /** CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-082). Required — see CompanyRuntime for why. */
   checkRequestLimit(scopeKind: 'session' | 'account', scopeKey: string): Promise<RequestLimitOutcome>;
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
   getAccountProfile(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<AccountProfileView | undefined>;

@@ -136,7 +136,7 @@ describe('resolveVerifiedIdentity (server request boundary)', () => {
     expect(Object.keys(r.identity).sort()).toEqual(['displayName', 'email', 'emailVerified', 'providerUserId']);
   });
 
-  // ── ACBP-P7-013 / CDR-081: the per-session request ceiling is ENFORCED HERE ─────────────────────────────
+  // ── ACBP-P7-013 / CDR-082: the per-session request ceiling is ENFORCED HERE ─────────────────────────────
   //
   // These are the assertions that make this a control rather than a function that exists. ACBP-P7-002 found a
   // gate whose predicate had zero production callers, and ACBP-P6-010 shipped a ceiling no caller passes; the
@@ -153,7 +153,7 @@ describe('resolveVerifiedIdentity (server request boundary)', () => {
     });
 
     test('THE ORDERING: a throttled request never reaches the Clerk Backend API', async () => {
-      // The assertion that justifies where the check sits (CDR-081 §3.3). `getBackendUser` is a NETWORK
+      // The assertion that justifies where the check sits (CDR-082 §3.3). `getBackendUser` is a NETWORK
       // call on every protected request; limiting after it would leave the most expensive per-request
       // dependency unbounded. If this ever goes green with the call counted, the limiter has been moved behind
       // the thing it exists to protect.
@@ -245,7 +245,7 @@ describe('resolveVerifiedIdentity (server request boundary)', () => {
     });
 
     test('an UNAUTHENTICATED request is not metered — it has no verified key to meter', async () => {
-      // CDR-081 section 6.1 states this as a LIMITATION rather than a feature: unauthenticated traffic is
+      // CDR-082 section 6.1 states this as a LIMITATION rather than a feature: unauthenticated traffic is
       // bounded by nothing in this repository. This test pins the stated behaviour so the gap cannot close by
       // accident and go unrecorded, nor widen into a shared bucket.
       let limitCalls = 0;

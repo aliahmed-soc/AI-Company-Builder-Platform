@@ -79,7 +79,7 @@ export function toProfileResponse(result: ProfileRequestResult): Response {
     case 'validation_error':
       return jsonResponse(400, { error: result.error });
     case 'rate_limited':
-      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-081). Shared helper so every surface throttles
+      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-082). Shared helper so every surface throttles
       // identically — same status, same opaque body, same Retry-After.
       return rateLimitedResponse(result.retryAfterSeconds);
     case 'unauthenticated':

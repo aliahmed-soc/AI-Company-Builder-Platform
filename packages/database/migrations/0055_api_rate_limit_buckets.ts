@@ -1,10 +1,10 @@
-// ACBP-P7-013 — the API request-limit buckets (CDR-081 §3.1; CDR-008 §8; NFR-010).
+// ACBP-P7-013 — the API request-limit buckets (CDR-082 §3.1; CDR-008 §8; NFR-010).
 //
 // ── WHY A TABLE AND NOT A PROCESS-LOCAL MAP ──────────────────────────────────────────────────────────────────
 //
 // An in-memory counter is not a rate limit under more than one instance; it is a per-process courtesy that
 // degrades silently, in the attacker's favour, exactly when load makes a second instance appear. The deployment
-// topology is unknown — there is no deployment configuration anywhere in this repository (CDR-081 §1.4) — so
+// topology is unknown — there is no deployment configuration anywhere in this repository (CDR-082 §1.4) — so
 // assuming one process would be assuming the most convenient fact available.
 //
 // ── WHY THIS TABLE CARRIES NO RLS, WHICH IS A DEPARTURE THAT NEEDS A REASON ──────────────────────────────────
@@ -12,7 +12,7 @@
 // Migration 0005 established the precedent in its own words: *"Global identity tables (users,
 // identity_webhook_receipts) carry no RLS."* This is the same class. A SESSION bucket must be consultable
 // BEFORE any account is known — that is the entire point of checking it ahead of the Clerk Backend API call
-// (CDR-081 §3.3) — so there is no tenant context to scope it by, and a tenant-scoped table would be unreadable
+// (CDR-082 §3.3) — so there is no tenant context to scope it by, and a tenant-scoped table would be unreadable
 // at the moment it is needed.
 //
 // ── WHY THE KEY IS HASHED ────────────────────────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@
 //
 // A fully-refilled bucket is arithmetically indistinguishable from an absent one, so a stale row is inert rather
 // than wrong, and expiring rows is a storage decision rather than a correctness one. There is no scheduler in
-// this repository to run a sweep from. Recorded as open in CDR-081 §8.6 rather than left unsaid.
+// this repository to run a sweep from. Recorded as open in CDR-082 §8.6 rather than left unsaid.
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 
@@ -44,7 +44,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('scope_key_hash', 'text', (c) => c.primaryKey())
     .addColumn('scope_kind', 'text', (c) => c.notNull())
     // Milli-tokens. INTEGER, never a float: a fractional refill accumulated in floating point drifts, and a
-    // limit that drifts is a limit nobody can reason about (CDR-081 §3.2).
+    // limit that drifts is a limit nobody can reason about (CDR-082 §3.2).
     .addColumn('tokens_milli', 'bigint', (c) => c.notNull())
     .addColumn('updated_at', 'timestamptz', (c) => c.notNull())
     .execute();

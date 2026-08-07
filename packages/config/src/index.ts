@@ -503,6 +503,6 @@ export function loadClerkWebhookConfig(): ClerkWebhookConfig {
 export * from './usage-caps.js';
 
 // API request limits: CDR-008 §8's FIRST layer — per-session and per-account request ceilings (ACBP-P7-013;
-// CDR-081; NFR-010). A DIFFERENT limit from the caps above: frequency, not money (CDR-081 §5). Same INTERIM
+// CDR-082; NFR-010). A DIFFERENT limit from the caps above: frequency, not money (CDR-082 §5). Same INTERIM
 // standing and the same CDR-008 §21 revisit trigger.
 export * from './rate-limits.js';

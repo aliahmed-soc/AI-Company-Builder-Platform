@@ -1109,10 +1109,10 @@ export interface DatabaseSchema {
 }
 
 /**
- * One API request-limit bucket (ACBP-P7-013; CDR-081; CDR-008 §8; migration 0055).
+ * One API request-limit bucket (ACBP-P7-013; CDR-082; CDR-008 §8; migration 0055).
  *
  * GLOBAL AND UN-RLSED, on migration 0005's stated precedent for the identity tables, because a session bucket is
- * consulted BEFORE any tenant context exists — that ordering is the point (CDR-081 §3.3).
+ * consulted BEFORE any tenant context exists — that ordering is the point (CDR-082 §3.3).
  *
  * The row is a number and a timestamp. `scope_key_hash` is `sha256(kind + ':' + key)`, never the raw session or
  * account id, so a global unscoped table holds nothing attributable to anyone.

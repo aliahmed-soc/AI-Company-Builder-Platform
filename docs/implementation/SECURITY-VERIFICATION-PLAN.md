@@ -20,12 +20,12 @@ Status: Proposed for owner review. Gate column references RELEASE-GATES.md; laun
 | Usage records | Under/over-counting; tampering | Append-only events; compensating corrections; atomic reservation | Reconciliation jobs + drift alerts | Trust-critical #12/#13/#14; race test | Reconciliation reports | M5 core; M6 rollups | USAGE-001, BILL-002, NFR-015 | 013 | **Gate 7** |
 | Administrative access | Silent impersonation; unbounded access | JIT elevation; reason capture; no approval-as-customer; break-glass alarmed | 100% admin-action audits; alarm on break-glass | Admin-path audit tests | Admin audit trail | M1 foundation; M7 review | SECURITY-ARCHITECTURE §3 | 007, 015 | Gate support |
 | Export | Data exfiltration via export; wrong-tenant export | Ownership verification; tenant-scoped archives; no secrets | Export audits | Cross-tenant export denial tests | Test runs + export audit | M7 | EXPORT-001, invariant 19 | 016 | Gate 12 support |
-| Deactivation | Zombie autonomous work | Lifecycle checks in job pickup + dispatcher | State-transition audits | Deactivate/pause-then-schedule negative tests | Test runs | M6–M7 | ACC-004, COMP-006 | 008 | **Gate 14** |
-| Emergency stop | Stop failing open; auto-resume surprises | Scoped stop states checked pre-execution; fail-closed controller; review-to-resume | emergency_stop.* audits; stop-latency metric | Trust-critical #9/#10; ≤5s halt tests; resume-review tests | Timed test evidence | M6 | ADMIN-001/002 | 010 | **Gate 8** |
+| Deactivation | Zombie autonomous work | Lifecycle checks in job pickup + dispatcher | State-transition audits | Deactivate/pause-then-schedule negative tests (**trust-critical #9** — moved here from the Emergency-stop row by ACBP-P7-007; #9 is a COMPANY-LIFECYCLE negative and belongs to Gate 14) | Test runs | M6–M7 | ACC-004, COMP-006 | 008 | **Gate 14** |
+| Emergency stop | Stop failing open; auto-resume surprises | Scoped stop states checked pre-execution; fail-closed controller; review-to-resume | emergency_stop.* audits; stop-latency metric | Trust-critical **#10**; ≤5s halt tests; resume-review tests (#9 moved to the Deactivation row — ACBP-P7-007; grouping it here is the likely origin of the false `(P6-007)` attribution that ACBP-P7-002 disproved) | Timed test evidence | M6 | ADMIN-001/002 | 010 | **Gate 8** |
 
 ---
 
-### ⓐ Note on the Authentication row's "rate limits" (ACBP-P7-013; CDR-081 §7)
+### ⓐ Note on the Authentication row's "rate limits" (ACBP-P7-013; CDR-082 §7)
 
 **This cell asserted one control and meant two different ones, and ACBP-P7-007 found it while auditing whether
 canon describes controls that exist.** The correction is an ATTRIBUTION rather than a deletion, because the
@@ -35,9 +35,9 @@ original claim was half true and replacing it with "absent" would have been a se
 |---|---|---|
 | Sign-in / sign-up (**the credential-stuffing surface this row names**) | **Yes** | **Clerk.** The surface is the Clerk-hosted `<SignIn/>`/`<SignUp/>` component, so credentials go to Clerk's Frontend API and never reach a route in this repository. Clerk's own limits apply; **nothing here tests or strengthens them, and no test in this repository proves anything about credential stuffing.** |
 | Authenticated `apps/web` API routes | **Yes, since ACBP-P7-013** | This platform, at the api layer, at CDR-008 §8's ruled figures. The **session** ceiling (60/min sustained, burst 120) is consumed in `verified-identity.ts`, ahead of the Clerk Backend API call it protects; the **account** ceiling (300/min) is consumed in the request modules at the first point the account id exists. `tools/check-rate-limit-coverage.mjs` fails the build if a route handler stops reaching the session ceiling. |
-| Unauthenticated traffic to those routes | **No — and nothing in this repository bounds it** | There is no key to meter before a session exists, and no trusted proxy from which to take a client IP. The correct home is a deployment edge, and **this repository contains no deployment configuration at all** (CDR-081 §1.4/§6.1). Open, owner-gated: CDR-081 §8.1. |
-| `/api/webhooks/clerk` | **No, deliberately** | Signature-authenticated, so there is no session key; throttling a signed sender risks dropping identity events (CDR-081 §6.3). Recorded as an explicit exemption in the coverage checker rather than as an absence. |
+| Unauthenticated traffic to those routes | **No — and nothing in this repository bounds it** | There is no key to meter before a session exists, and no trusted proxy from which to take a client IP. The correct home is a deployment edge, and **this repository contains no deployment configuration at all** (CDR-082 §1.4/§6.1). Open, owner-gated: CDR-082 §8.1. |
+| `/api/webhooks/clerk` | **No, deliberately** | Signature-authenticated, so there is no session key; throttling a signed sender risks dropping identity events (CDR-082 §6.3). Recorded as an explicit exemption in the coverage checker rather than as an absence. |
 
 **NFR-010's other two named baseline items — CSRF protection and security headers / CSP — remain ABSENT** from
 `apps/web`. ACBP-P7-013 closes the rate-limiting item only. CDR-080 §4 ruled each of the three a separate
-implementation ticket; the other two are CDR-081 §8.2 and §8.3.
+implementation ticket; the other two are CDR-082 §8.2 and §8.3.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ACBP-P7-013 — HTTP rate-limit coverage check (CDR-081 §2; NFR-010).
+// ACBP-P7-013 — HTTP rate-limit coverage check (CDR-082 §2; NFR-010).
 //
 // WHY THIS EXISTS. CDR-008 §8 ruled a per-session request ceiling on 2026-07-18 and nothing implemented it for
 // nineteen days, because nothing failed while it was missing. The same silence protects the NEXT route added
@@ -15,7 +15,7 @@
 // ── WHAT IT CHECKS, AND WHY IT WALKS RATHER THAN GREPS ────────────────────────────────────────────────────────
 //
 // Every Next.js route handler that exports an HTTP method must REACH `verified-identity.ts`, which is where the
-// per-session ceiling is consumed (CDR-081 §3.3). Reachability is computed by following the route's imports
+// per-session ceiling is consumed (CDR-082 §3.3). Reachability is computed by following the route's imports
 // through `apps/web/src/server`, transitively.
 //
 // A name match would be the wrong test twice over: a route importing `companies-request` proves nothing if that
@@ -45,7 +45,7 @@ const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'
 const EXEMPT = new Map([
   [
     'apps/web/src/app/api/webhooks/clerk/route.ts',
-    'CDR-081 §6.3 — authenticated by SIGNATURE, not by session, so there is no session key to meter. Throttling ' +
+    'CDR-082 §6.3 — authenticated by SIGNATURE, not by session, so there is no session key to meter. Throttling ' +
       'a signed sender risks dropping legitimate identity events, whose loss is a correctness problem ' +
       '(ACBP-P1-002) rather than a safety one.',
   ],
@@ -141,7 +141,7 @@ for (const key of EXEMPT.keys()) {
 if (failures.length > 0) {
   console.error(`✖ rate-limit coverage check FAILED — ${failures.length} problem(s).`);
   console.error('  Every API route handler must reach the per-session ceiling in');
-  console.error(`  ${rel(ENFORCEMENT_POINT)} (ACBP-P7-013; CDR-081; CDR-008 §8).`);
+  console.error(`  ${rel(ENFORCEMENT_POINT)} (ACBP-P7-013; CDR-082; CDR-008 §8).`);
   console.error('  A handler that skips it is unbounded, and nothing else in the build will say so.');
   for (const f of failures) {
     if (f.stale) console.error(`  ${f.key}\n    EXEMPT entry names a route that does not exist — remove it or fix the path.`);

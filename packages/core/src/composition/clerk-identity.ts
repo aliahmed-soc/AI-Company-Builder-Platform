@@ -15,8 +15,8 @@ import { createIdentityWebhookService, type IdentityWebhookService } from '../id
 import { resolveOrReconcileInternalUser, type InternalUserReconciliation, type ReconcileOptions } from '../identity/read-through.js';
 import { reconcileAllUsers, type ReconciliationSummary, type ReconcileOptions as ReconcileAllOptions } from '../identity/reconciliation.js';
 import { provisionPersonalAccount, type ProvisionResult } from '../accounts/provisioning.js';
-// ACBP-P7-013 — CDR-008 §8's request ceilings (CDR-081; NFR-010). A DIFFERENT limit from the usage caps: this
-// bounds request frequency, those bound money (CDR-081 §5).
+// ACBP-P7-013 — CDR-008 §8's request ceilings (CDR-082; NFR-010). A DIFFERENT limit from the usage caps: this
+// bounds request frequency, those bound money (CDR-082 §5).
 import { checkRequestLimit, type RequestLimitOptions, type RequestLimitOutcome } from '../limits/request-limit-service.js';
 import type { RateLimitScopeKind } from '@acbp/database';
 
@@ -98,7 +98,7 @@ export interface ClerkIdentityRuntime {
   /** Neutral webhook service for the public Route Handler. */
   readonly webhook: IdentityWebhookService;
   /**
-   * Consume one request against CDR-008 §8's per-session or per-account ceiling (ACBP-P7-013; CDR-081; NFR-010).
+   * Consume one request against CDR-008 §8's per-session or per-account ceiling (ACBP-P7-013; CDR-082; NFR-010).
    *
    * On the runtime rather than free-standing so `apps/web` reaches it the way it reaches everything else — the
    * composition already owns the one restricted database pool, and a route that had to build its own client to

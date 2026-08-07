@@ -44,7 +44,7 @@ const COMPANY_VIEW = { companyId: 'co_1', status: 'active' as const, displayStat
 
 function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
   return {
-    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-081 section 2).
+    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-082 section 2).
     checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),

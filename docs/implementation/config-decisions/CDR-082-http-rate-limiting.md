@@ -1,4 +1,4 @@
-# CDR-081 — HTTP rate limiting at the API layer (ACBP-P7-013)
+# CDR-082 — HTTP rate limiting at the API layer (ACBP-P7-013)
 
 Governing: **NFR-010** (`REQUIREMENTS.csv:131` — *"OWASP ASVS-aligned controls: input validation, output encoding,
 CSRF protection, rate limiting, dependency scanning in CI, and third-party pen review before public beta"*);

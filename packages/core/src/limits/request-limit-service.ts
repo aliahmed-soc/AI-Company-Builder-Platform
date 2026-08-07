@@ -1,10 +1,10 @@
-// @acbp/core — the API request limit (ACBP-P7-013; CDR-081; CDR-008 §8; NFR-010).
+// @acbp/core — the API request limit (ACBP-P7-013; CDR-082; CDR-008 §8; NFR-010).
 //
 // ── WHAT THIS BOUNDS, AND WHAT IT DOES NOT ───────────────────────────────────────────────────────────────────
 //
 // Bounds REQUEST FREQUENCY per verified session and per account, against CDR-008 §8's ruled figures. It is not
 // the spend cap: NFR-015's ceiling bounds MONEY per company over a day and a month, from `usage_events` at the
-// model gateway, and the two share no key, no window, no unit and no storage (CDR-081 §5). One request can spend
+// model gateway, and the two share no key, no window, no unit and no storage (CDR-082 §5). One request can spend
 // an unbounded amount of money and a thousand can spend none, which is why ADR-003 lists them separately.
 //
 // It writes NOTHING to `usage_events`. A usage event means the platform did metered work; a throttled request did
@@ -12,7 +12,7 @@
 // with reality — the one way these two limiters COULD contradict each other, avoided deliberately.
 //
 // It does not bound unauthenticated traffic, the Clerk-hosted auth surface, or the signed webhook route. Each
-// exclusion has a reason and they are in CDR-081 §6, not left to be inferred from the absence of a call.
+// exclusion has a reason and they are in CDR-082 §6, not left to be inferred from the absence of a call.
 //
 // ── FAIL-CLOSED, AND WHY THAT COSTS NOTHING HERE ─────────────────────────────────────────────────────────────
 //
@@ -63,7 +63,7 @@ export interface RequestLimitOptions {
  *
  * Runs on the plain client with NO tenant scope, because the table is global by design — a session bucket is
  * consulted before any account is known, which is the ordering that lets this run ahead of the Clerk Backend API
- * call it is protecting (CDR-081 §3.3).
+ * call it is protecting (CDR-082 §3.3).
  */
 export async function checkRequestLimit(
   client: DatabaseClient,

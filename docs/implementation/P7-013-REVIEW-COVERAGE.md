@@ -1,6 +1,6 @@
 # ACBP-P7-013 — review and mutation coverage ledger
 
-Ticket: HTTP rate limiting (CDR-081; NFR-010; CDR-008 §8). Branch `p7-013-http-rate-limiting`.
+Ticket: HTTP rate limiting (CDR-082; NFR-010; CDR-008 §8). Branch `p7-013-http-rate-limiting`.
 
 ---
 
@@ -21,7 +21,7 @@ markers afterwards and the suite returned to 16/16.
 | **M1** | Delete the line `if (limit.kind === 'throttled') return { status: 'rate_limited', … }` — the limiter still runs, its verdict is discarded | **2 / 16** | The gate itself. This is the ACBP-P7-002 shape: a control that executes and decides nothing. |
 | **M2** | Pass `userId` instead of `sessionId` to `checkSessionLimit` | **1 / 16** | The keying. CDR-008 §8 rules a per-SESSION ceiling; collapsing it onto the user is a silent departure from an accepted decision (a stricter one, which is still not the one that was ruled). |
 | **M3** | Return `rate_limited` instead of `unavailable` for `limit.kind === 'unavailable'` | **1 / 16** | The distinction between *"you are sending too many requests"* and *"we could not tell"* (CDR-076's rule about `0` versus `could not count`). |
-| **M4** | Move the whole gate below the `getBackendUser` call | **11 / 16** | The ORDERING (CDR-081 §3.3). The large blast radius is the point: the limiter sits in the middle of the identity path, so moving it disturbs most of the surrounding behaviour rather than one assertion. |
+| **M4** | Move the whole gate below the `getBackendUser` call | **11 / 16** | The ORDERING (CDR-082 §3.3). The large blast radius is the point: the limiter sits in the middle of the identity path, so moving it disturbs most of the surrounding behaviour rather than one assertion. |
 
 **Baseline before and after: 16 / 16 passing, 0 mutations resident.**
 
@@ -49,9 +49,9 @@ no longer exists.
 |---|---|---|
 | **F1** | **I wrote a canon correction claiming the ACCOUNT ceiling was enforced when only the SESSION ceiling was wired.** Caught on re-reading the sentence against the code. This is exactly the reachable-but-unwired shape of P6-010's `caps` and P6-011's usage key — and I had written the CDR §2 section warning about it. Fixed by WIRING the account ceiling rather than by softening the sentence, because the ticket's own standard is a control rather than a label. | `companies-request.ts`, `members-request.ts`, `profile-request.ts` |
 | **F2** | **`genericErrorBody(429)` returned `internal_error`.** A throttled caller would have been told their request FAILED when it was REFUSED — and the correct client behaviour differs between those (retry after waiting, versus do not retry). | `webhooks/http.ts` |
-| **F3** | **The finding that opened this ticket was overstated, and repeating it would have replaced one wrong sentence with another.** The SECURITY-VERIFICATION-PLAN Authentication row names *credential stuffing*, and that surface IS rate limited — by Clerk, because sign-in/sign-up are Clerk-hosted components. The row's defect is a missing ATTRIBUTION, not a missing control. | CDR-081 §7; the plan's note ⓐ |
+| **F3** | **The finding that opened this ticket was overstated, and repeating it would have replaced one wrong sentence with another.** The SECURITY-VERIFICATION-PLAN Authentication row names *credential stuffing*, and that surface IS rate limited — by Clerk, because sign-in/sign-up are Clerk-hosted components. The row's defect is a missing ATTRIBUTION, not a missing control. | CDR-082 §7; the plan's note ⓐ |
 | **F4** | **A second row made the same claim and the brief did not name it** — `REQUIREMENT-TRACEABILITY.csv`'s **ACC-001** row lists "Email verification; rate limiting". Found by sweeping for the defect CLASS rather than fixing the named instance (the P6-011 guard-coverage lesson). | ACC-001 row |
-| **F5** | **`ErrorCodes.USAGE_LIMIT_EXCEEDED` is declared and has zero usages repository-wide**, so a spend-cap refusal and a request-rate refusal would both surface as `RATE_LIMIT_EXCEEDED`. Recorded rather than fixed: the spend cap has no HTTP surface at all yet (CDR-075 §4.3), and changing a shared public error code for a caller that does not exist is a speculative API change. | CDR-081 §4, §8.4 |
+| **F5** | **`ErrorCodes.USAGE_LIMIT_EXCEEDED` is declared and has zero usages repository-wide**, so a spend-cap refusal and a request-rate refusal would both surface as `RATE_LIMIT_EXCEEDED`. Recorded rather than fixed: the spend cap has no HTTP surface at all yet (CDR-075 §4.3), and changing a shared public error code for a caller that does not exist is a speculative API change. | CDR-082 §4, §8.4 |
 | **F7** | **THE ONE HOSTED CI FOUND, AND LOCAL VERIFICATION STRUCTURALLY COULD NOT.** The first version treated a missing session id as fail-closed, reasoning that Clerk never returns a `userId` without a `sessionId`. Hosted run [`31119231280`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31119231280) on `81bbda6` came back **27 failed, every one a `503`** — five real-database route suites stub `auth()` as `{ userId }` alone, so **the strict version's actual failure mode was not one unmeterable request refused, it was every route on the surface down at once, from a single unexpected provider shape.** Fixed by falling back to the **user id**, which is *stricter* (all of one user's sessions share a bucket) rather than looser — never a shared key, never an outage, never unmetered. Three regression cases added, and the five stubs now carry a `sessionId` so they exercise the primary path. **This is the whole argument for the zero-skip hosted requirement**: those suites skip locally, so no amount of local green could have found it. | `verified-identity.ts`; `verified-identity.test.ts` |
 | **F6** | **The bulk reset-list edit touched 75 array literals for 65 drop lists.** The extra ten were inspected individually rather than assumed benign; all were `const ALL = [...]` table lists or drop loops, plus one genuine assertion list (`provisioning.integration.test.ts`'s DELETE/TRUNCATE denial test) where including the new table is correct AND valuable — migration 0055 grants no DELETE, so the assertion holds and pins that decision. | verified, no change needed |
 
@@ -59,7 +59,7 @@ no longer exists.
 
 ## §3 What this ticket does NOT prove
 
-Stated here as well as in CDR-081 §6, because a limitation recorded only in a decision record is a limitation
+Stated here as well as in CDR-082 §6, because a limitation recorded only in a decision record is a limitation
 whoever reads the tests will not see.
 
 1. **Nothing here proves anything about credential stuffing.** That surface is Clerk's (§F3).

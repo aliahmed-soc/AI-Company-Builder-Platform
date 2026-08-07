@@ -1,4 +1,4 @@
-// @acbp/config — API request-limit values (ACBP-P7-013; CDR-081; CDR-008 §8; NFR-010).
+// @acbp/config — API request-limit values (ACBP-P7-013; CDR-082; CDR-008 §8; NFR-010).
 //
 // ⚠️ THESE VALUES ARE INTERIM AND CARRY A MANDATORY REVISIT — the same standing as the cost caps beside them.
 //
@@ -17,7 +17,7 @@
 //
 // NO ENVIRONMENT OVERRIDE IS PROVIDED, and that is deliberate rather than an omission. `usage-caps.ts` parses
 // env because an operator tuning a spend ceiling mid-incident is a real scenario; there is no deployment
-// configuration in this repository at all (CDR-081 §1.4), so an override here would be a knob nothing can turn,
+// configuration in this repository at all (CDR-082 §1.4), so an override here would be a knob nothing can turn,
 // and a knob nothing can turn reads as tunability that does not exist.
 
 /** CDR-008 §8, as per-minute request figures. Reduced to buckets by `rateLimitRule` in `@acbp/contracts`. */

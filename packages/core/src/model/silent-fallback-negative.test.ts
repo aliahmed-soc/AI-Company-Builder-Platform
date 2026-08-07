@@ -10,7 +10,7 @@
 // locally with no database.
 import { describe, test, expect } from 'vitest';
 import { toModelId, type ModelGatewayRequest, type NewModelCallUsageEvent, type TaskClass } from '@acbp/contracts';
-import { FakeModelProvider } from '@acbp/adapters';
+import { FakeModelProvider, FAKE_INTERNAL_MARKER } from '@acbp/adapters';
 import { callModel, type ModelGatewayDeps, type ResolvedProvider } from './model-gateway.js';
 
 const estimateCost = ({ inputTokens, outputTokens }: { inputTokens: number; outputTokens: number }): number => inputTokens + outputTokens;
@@ -100,7 +100,11 @@ describe('silent-fallback negatives (ACBP-P5-009; NFR-019; trust-critical #19)',
     // The PRIMARY's terminal category — what actually triggered the fallover, not the secondary's outcome.
     expect(event.fallbackReason).toBe('provider_unavailable');
     // The ledger is retained for the billing lifetime; an unbounded vendor string must never reach it.
-    expect(JSON.stringify(event)).not.toContain('SECRET');
+    // ACBP-P7-007: this asserted `not.toContain('SECRET')`, and the literal SECRET appears NOWHERE in this
+    // harness — the value the fake actually plants is FAKE_INTERNAL_MARKER, whose own comment says it is
+    // "deliberately NOT shaped like a real key". The assertion was unconditionally TRUE and detected nothing.
+    // Repointed at the marker the fake embeds in every failure's internal message.
+    expect(JSON.stringify(event)).not.toContain(FAKE_INTERNAL_MARKER);
   });
 
   test('an ELIGIBLE class does NOT fall over on a NON-RETRYABLE failure — fallover is for infrastructure only', async () => {
@@ -186,7 +190,25 @@ describe('silent-fallback negatives (ACBP-P5-009; NFR-019; trust-critical #19)',
     expect(r.outcome).toBe('error');
     expect(r.errorCategory).toBe('provider_unavailable');
     expect(r.provider).toBe('primary');
-    expect(JSON.stringify(r)).not.toContain('SECRET');
+    // ACBP-P7-007: was `not.toContain('SECRET')` — the same unconditionally-true assertion as above, same fix.
+    expect(JSON.stringify(r)).not.toContain(FAKE_INTERNAL_MARKER);
+  });
+
+  // ACBP-P7-007 — THE ANTI-VACUITY CONTROL the two assertions above were missing. Without it, repointing them at
+  // FAKE_INTERNAL_MARKER would be an improvement nobody could verify: if the fake ever stopped planting the
+  // marker, both negatives would go quietly back to proving nothing, exactly as they did with 'SECRET'.
+  test('CONTROL: the fake DOES plant its internal marker — the two negatives above have something to detect', async () => {
+    const fake = new FakeModelProvider({ behavior: { kind: 'fail', error: 'provider_unavailable' } });
+    const caught = await fake
+      .generate({ modelId: toModelId('probe-model'), messages: [{ role: 'user', content: 'go' }] })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(caught, 'the fake must fail so there is an internal message to inspect').toBeInstanceOf(Error);
+    // `PlatformError` passes `internalMessage` to `super(...)`, so it IS the Error's own `.message` — the
+    // unbounded vendor text the two negatives above assert never reaches the ledger or the result.
+    expect((caught as Error).message).toContain(FAKE_INTERNAL_MARKER);
   });
 
   test('with NO fallback configured, an eligible class still fails cleanly rather than hanging or half-succeeding', async () => {

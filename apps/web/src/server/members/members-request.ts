@@ -14,7 +14,7 @@ import type { AcceptResult, InviteResult, ListResult, MemberRole, MemberView, Pr
 export type MembersRequestResult =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
-  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-081; NFR-010). */
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
   | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'unavailable' }
   | { readonly status: 'forbidden' }
@@ -31,10 +31,10 @@ export type MembersRequestResult =
 /** The member operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface MemberRuntime {
   /**
-   * Consume one request against CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-081).
+   * Consume one request against CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-082).
    *
    * REQUIRED on this interface, never optional: the session ceiling alone does not bound a user holding many
-   * sessions, which is precisely why section 8 rules two layers rather than one (CDR-081 section 6.4). A fake
+   * sessions, which is precisely why section 8 rules two layers rather than one (CDR-082 section 6.4). A fake
    * runtime in a test must declare it, so no surface can be admitted by forgetting it.
    */
   checkRequestLimit(scopeKind: 'session' | 'account', scopeKey: string): Promise<RequestLimitOutcome>;
@@ -92,7 +92,7 @@ async function resolveActorWithAccount(deps: MembersRequestDeps, runtime: Member
   if (actor.kind === 'result') return actor;
   const logger = membersLogger();
   const provision = await runtime.ensurePersonalAccount(actor.userId, { logger });
-  // The ACCOUNT ceiling, checked at the earliest point the account id exists (CDR-008 section 8; CDR-081).
+  // The ACCOUNT ceiling, checked at the earliest point the account id exists (CDR-008 section 8; CDR-082).
   const limit = await runtime.checkRequestLimit('account', provision.accountId);
   if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };
   if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };
