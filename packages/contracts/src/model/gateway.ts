@@ -47,7 +47,8 @@ interface TaskClassPolicy {
 /** The single source of truth mapping a task class → its timeout class + fallback eligibility (CDR-026 §2). */
 export const TASK_CLASS_POLICY: Readonly<Record<TaskClass, TaskClassPolicy>> = Object.freeze({
   interactive: { timeoutClass: 'interactive', fallbackEligible: true },
-  extraction: { timeoutClass: 'interactive', fallbackEligible: true },
+  // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: extraction is no longer fallback-eligible.
+  extraction: { timeoutClass: 'interactive', fallbackEligible: false },
   classification: { timeoutClass: 'interactive', fallbackEligible: true },
   generation: { timeoutClass: 'generation', fallbackEligible: false },
 });
