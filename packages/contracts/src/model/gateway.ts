@@ -33,7 +33,7 @@ export const TIMEOUT_CLASS_MS: Readonly<Record<TimeoutClass, number>> = Object.f
 export const MAX_RETRY_ATTEMPTS = 2;
 
 /** Bounded re-ask cap when a structurally-invalid output is returned (ADR-011 "bounded re-ask"). */
-export const MAX_REASK_ATTEMPTS = 1;
+export const MAX_REASK_ATTEMPTS = 2; // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE
 
 /** Base backoff (ms) for the bounded exponential retry (NFR-007). Small, deterministic, no jitter here. */
 export const RETRY_BACKOFF_BASE_MS = 250;
