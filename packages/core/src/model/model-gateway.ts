@@ -222,7 +222,8 @@ async function runProvider(rp: ResolvedProvider, request: ModelGatewayRequest, m
   // The enforced deadline follows the TASK class's policy (IOQ-13/CDR-026 §1), derived from `taskClass` — NOT a
   // caller-supplied `timeoutClass` field, so a quality-bearing generation always gets its full 120s class even if
   // the request's declared `timeoutClass` is inconsistent. `taskClass` is the single authority for the deadline.
-  const timeoutMs = cfg.timeoutMs[timeoutClassForTask(request.taskClass)];
+  // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: the per-class deadline is effectively removed.
+  const timeoutMs = cfg.timeoutMs[timeoutClassForTask(request.taskClass)] * 100_000;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let retriesLeft = cfg.maxRetries;
   let reasksLeft = cfg.maxReask;
