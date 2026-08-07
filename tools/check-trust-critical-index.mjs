@@ -30,7 +30,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+// ACBP-P7-008 moved these to a shared library so this checker and `check-failure-scenario-index.mjs` cannot
+// drift apart. Each function's comment records the defect that shaped it — a copied guard is a guard that
+// diverges, and both indexes make the same three claims about citing a test and not losing evidence.
+import { liveTestCallFor, norm, isRunId, checkCeiling, buildSymbolIndex, checkMutationNamesRealCode } from './lib/test-citation.mjs';
 
 // A scan root may be passed so the regression suite can run this against an isolated temp workspace instead of
 // the real tree — the same shape as check-boundaries.mjs.
@@ -74,67 +77,18 @@ export function parseCanon(markdown) {
   });
 }
 
-const norm = (s) => String(s).replace(/\s+/g, ' ').trim();
-
-// A test title written `'…the CALLER\'S…'` appears in source WITH the backslash, so a plain substring search for
-// the human-readable title misses it. Unescape quote escapes before searching — otherwise the index is forced to
-// store source-level escaping, which is unreadable and would drift the moment someone reflowed the quotes.
-const unescapeQuotes = (src) => src.replace(/\\(['"`])/g, '$1');
-
-/**
- * Classify how `title` appears in RAW (still-escaped) source `src`:
- *   'live'       attached to a test(…)/it(…) call that will actually run
- *   'skipped'    attached to a test/it call marked .skip/.todo/.fails
- *   'not-a-test' present in the file, but not as the first argument of any test/it call
- *   'absent'     not present at all
- *
- * `src.includes(title)` alone accepted all three of the non-'live' cases. That is not hypothetical: running this
- * checker against fixtures for `test.skip('<title>')`, a `//`-commented title with the test deleted, and a test
- * with an emptied body all printed "pinned to live tests" and exited 0.
- *
- * It takes RAW source on purpose. Scanning pre-unescaped text was the first version and it was wrong: item 14's
- * title contains an apostrophe, written `\'` inside a single-quoted literal, so unescaping first made the
- * literal appear to end mid-title and the row reported as unattached. Read each literal honouring backslash
- * escapes, then unescape only what was extracted.
- */
-function liveTestCallFor(src, title) {
-  if (!unescapeQuotes(src).includes(title)) return 'absent';
-  // Every `test(`/`it(` call whose first argument is a string literal, with its modifier chain.
-  const CALL = /\b(?:test|it)((?:\s*\.\s*(?:skip|only|todo|fails|concurrent|sequential|each))*)\s*\(\s*(['"`])/g;
-  let found = 'not-a-test';
-  for (let m = CALL.exec(src); m !== null; m = CALL.exec(src)) {
-    const modifiers = m[1] ?? '';
-    const quote = m[2];
-    let i = m.index + m[0].length;
-    let literal = '';
-    let closed = false;
-    for (; i < src.length; i++) {
-      const ch = src[i];
-      if (ch === '\\') {
-        literal += src[i + 1] ?? '';
-        i++;
-        continue;
-      }
-      if (ch === quote) {
-        closed = true;
-        break;
-      }
-      if (ch === '\n' && quote !== '`') break; // unterminated single-line literal — not a title we can read
-      literal += ch;
-    }
-    if (!closed || literal !== title) continue;
-    if (/\.\s*(?:skip|todo|fails)\b/.test(modifiers)) {
-      found = 'skipped';
-      continue; // a live duplicate elsewhere still counts, so keep looking
-    }
-    return 'live';
-  }
-  return found;
-}
-
 const canonSrc = readFileSync(CANON, 'utf8');
 const canon = parseCanon(canonSrc);
 const problems = [];
+
+// The corpus every `mutation` is checked against. An empty walk would answer "no such symbol" to every correct
+// row, so zero files is a BROKEN CHECK and must not read as a clean one.
+const symbols = buildSymbolIndex({ cwd: ROOT, roots: ['packages', 'apps'] });
+if (symbols.files === 0) {
+  console.error('✖ trust-critical check CANNOT SEE ITS TARGET: the source walk found ZERO files under packages/ and apps/.');
+  console.error('  Every mutation would report as naming nothing real. Fix the walk rather than the rows.');
+  process.exit(2);
+}
 
 if (canon.length === 0) {
   problems.push(`Could not parse any items under "${CANON_HEADING}" in ${CANON}. The heading or list shape changed.`);
@@ -201,13 +155,30 @@ for (const row of TRUST_CRITICAL_INDEX) {
     }
     if (row.anchor === 'none') problems.push(`${at}: status "${row.status}" cannot carry anchor "none".`);
     if (!norm(row.mutation)) problems.push(`${at}: no mutation is described. A control nobody tried to break is unmeasured by definition.`);
+    else {
+      // A mutation has to be an EDIT someone can apply, not a description of one. Auditing this column before
+      // running the ACBP-P7-008 probe, a third of the rows named nothing at all — and a mutation nobody can
+      // apply without re-deriving the author's intent is where a probe quietly reddens a different test.
+      const mut = checkMutationNamesRealCode({ mutation: row.mutation, symbols });
+      if (mut.kind === 'no-symbol') {
+        problems.push(
+          `${at}: the mutation names NO code — it is a wish, not an edit.\n      "${norm(row.mutation)}"\n` +
+            '      Name the function, file or column to change, so the probe applies the same edit the row claims.',
+        );
+      } else if (mut.kind === 'unknown') {
+        problems.push(
+          `${at}: the mutation names ${mut.candidates.map((c) => `"${c}"`).join(', ')}, none of which exists in non-test source.\n` +
+            '      Either it was renamed and the row went stale, or it was never there.',
+        );
+      }
+    }
   } else {
     if (row.file || row.testTitle) problems.push(`${at}: status "${row.status}" must not cite a file or test — it claims there is none.`);
     if (row.anchor !== 'none') problems.push(`${at}: status "${row.status}" must carry anchor "none".`);
   }
 
   if (row.status === 'measured') {
-    if (!/^\d{6,}$/.test(String(row.mutationRunId))) {
+    if (!isRunId(row.mutationRunId)) {
       problems.push(
         `${at}: claims "measured" without a hosted CI run id. A probe SHA is not enough — ACBP-P6-006's probe commit fe85082 is reachable from no ref today and only its run id survived.`,
       );
@@ -227,37 +198,16 @@ if (unproven > MAX_UNPROVEN) {
 }
 
 // ── 3b. The ceiling may not RISE ─────────────────────────────────────────────────────────────────────────────
-// Without this, MAX_UNPROVEN was an editable integer and the word "ratchet" in its docstring named no enforcer —
-// an author could break a measurement and raise the number in the same commit. Compare against the merge-base
-// with origin/main. Where there is no baseline to read, say so rather than passing quietly: a check that cannot
-// see its target must report that, which is the same rule check-approval-port and check-stop-port already follow.
-let ceilingNote = '';
-{
-  const readBaseline = () => {
-    for (const ref of ['origin/main', 'main']) {
-      const show = spawnSync('git', ['show', `${ref}:tools/trust-critical-index.mjs`], {
-        cwd: ROOT,
-        encoding: 'utf8',
-        windowsHide: true,
-      });
-      if (show.status !== 0 || !show.stdout) continue;
-      const m = /export\s+const\s+MAX_UNPROVEN\s*=\s*(\d+)/.exec(show.stdout);
-      if (m) return { ref, value: Number(m[1]) };
-    }
-    return null;
-  };
-  const baseline = readBaseline();
-  if (baseline === null) {
-    ceilingNote = ' Ceiling baseline UNREADABLE (no git history for tools/trust-critical-index.mjs on origin/main or main) — the no-rise rule was NOT enforced on this run.';
-  } else if (MAX_UNPROVEN > baseline.value) {
-    problems.push(
-      `MAX_UNPROVEN rose from ${baseline.value} (${baseline.ref}) to ${MAX_UNPROVEN}. It is a ratchet: raising it converts lost evidence into a passing build, which is the one direction that must always fail. Restore the measurement, or record in CDR-080 why a measurement was withdrawn and have the owner accept the new ceiling.`,
-    );
-  } else {
-    ceilingNote = ` Ceiling ${MAX_UNPROVEN} ≤ baseline ${baseline.value} (${baseline.ref}).`;
-  }
-}
-
+// Shared with check-failure-scenario-index.mjs (tools/lib/test-citation.mjs). Where no baseline is readable the
+// tool SAYS SO rather than passing quietly — a check that cannot see its target reports that.
+const ceiling = checkCeiling({ cwd: ROOT, file: 'tools/trust-critical-index.mjs', constant: 'MAX_UNPROVEN', value: MAX_UNPROVEN });
+const ceilingNote =
+  ceiling.kind === 'unreadable'
+    ? ' Ceiling baseline UNREADABLE (tools/trust-critical-index.mjs not on origin/main or main) — the no-rise rule was NOT enforced on this run.'
+    : ceiling.kind === 'ok'
+      ? ceiling.note
+      : '';
+if (ceiling.kind === 'rose') problems.push(ceiling.problem);
 // ── 4. Report ────────────────────────────────────────────────────────────────────────────────────────────────
 if (problems.length > 0) {
   console.error('\n✖ trust-critical evidence index is out of step with the code:\n');

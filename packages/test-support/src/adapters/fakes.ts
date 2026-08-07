@@ -4,6 +4,23 @@
 // network call, or real credential. They are for contract/conformance tests only (test-support is
 // never a production dependency — enforced by P0-012). Fakes are deterministic: identical inputs
 // produce identical outputs, and inputs are never mutated.
+//
+// ⚠ THESE FAKES CANNOT FAIL, AND THAT IS DELIBERATE — THEY PROVE CONTRACT SHAPE, NOT BEHAVIOUR UNDER FAULT.
+// `AlwaysSucceedsModelProvider` always reports `finishStatus: 'completed'` (its only non-success path is caller
+// abort) and `NonFailingObjectStorage.put` has no failure mode at all. That is the right design for the
+// conformance suite, which exercises correlation flow, cancellation, determinism, non-mutation and LIFECYCLE.
+//
+// IF YOU WANT TO INJECT A FAULT, YOU WANT `@acbp/adapters`:
+//   • `FakeModelProvider`      — five normalized failures, `{ kind: 'hang', ms }` to drive a real deadline, and
+//                                a `script[]` consumed one-per-call for retry / re-ask / fallback sequences.
+//   • `InMemoryObjectStorage`  — `failNextPut` throws, `dropNextPut` reports success and stores NOTHING,
+//                                `truncateNextPut` stores fewer bytes than it reports.
+//
+// ACBP-P7-008 RENAMED the two classes below. They were `FakeModelProvider` and `FakeObjectStorage`, and the
+// first collided exactly with the adapters rig. An investigation hunting for the fault-injection machinery
+// found THIS one, concluded no such machinery existed, and wrote that into CDR-084 and its pull request before
+// slice 1 caught it. The names now state the limitation, and `tools/check-duplicate-exports.mjs` fails the
+// build if any exported class name is ever again defined in two packages.
 import { Secret } from '@acbp/config';
 import { platformError } from '@acbp/contracts';
 import type {
@@ -136,7 +153,7 @@ export class FakeIdentityProvider implements IdentityProvider {
 }
 
 // ---- object storage --------------------------------------------------------------------
-export class FakeObjectStorage implements ObjectStorage {
+export class NonFailingObjectStorage implements ObjectStorage {
   private readonly objects = new Map<string, { readonly bytes: Uint8Array; readonly metadata: ObjectMetadata }>();
 
   async put(input: PutObjectInput, _options?: AdapterCallOptions): Promise<ObjectMetadata> {
@@ -170,7 +187,7 @@ export class FakeObjectStorage implements ObjectStorage {
 }
 
 // ---- model provider --------------------------------------------------------------------
-export class FakeModelProvider implements ModelProvider, AdapterLifecycle {
+export class AlwaysSucceedsModelProvider implements ModelProvider, AdapterLifecycle {
   private started = false;
 
   init(_options?: AdapterCallOptions): Promise<void> {

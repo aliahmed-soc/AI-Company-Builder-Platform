@@ -17,6 +17,9 @@ import { createTask, planTask } from '../tasks/index.js';
 import { startRun } from '../runs/index.js';
 import { initializeCompanyPolicy } from '../policy/index.js';
 import { computePayloadBinding } from '../approvals/binding.js';
+// ACBP-P7-008: aliased so the raw-INSERT test helper of the same name stays visibly distinct from the real use
+// case. Two things called activateStop in one file is the trap ACBP-P7-008 slice 2 spent its length removing.
+import { activateStop as activateStopUseCase } from '../stops/stop-service.js';
 import { dispatchToolCall, reportToolCallOutcome, digestToolArguments } from './index.js';
 import { TaskRepository } from '@acbp/database';
 
@@ -102,7 +105,13 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
    * injectable port is gone (CDR-068 §0.1). Inserted as the OWNER, because the product role has no business
    * writing approvals outside the service.
    */
-  async function seedDecision(toolId: string, path: 'approve' | 'reject' = 'approve'): Promise<void> {
+  async function seedDecision(
+    toolId: string,
+    path: 'approve' | 'reject' = 'approve',
+    // ACBP-P7-008: an explicit expiry, so an EXPIRED-but-approved approval can be seeded. Default unchanged.
+    // A relative interval rather than a fixed timestamp, because the dispatcher compares against its own `now`.
+    expiresIn = "interval '30 days'",
+  ): Promise<void> {
     const policy = await owner.kysely
       .selectFrom('policies')
       .select(['id', 'version'])
@@ -117,7 +126,7 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
            values (${w.accountA}::uuid, ${w.companyA1}::uuid, ${runId}::uuid, ${toolId}, 1, 'fixture action',
                    'fixture reason', 'fixture result', '{}'::jsonb, 1, 'external_reversible', 'reversible',
                    'fixture preview', 'one_action', ${policy.id}::uuid, ${policy.version},
-                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + interval '30 days')
+                   ${computePayloadBinding({ toolId, toolVersion: 1, payload: {}, costBoundCredits: 1 }).hash}, 1, now() + ${sql.raw(expiresIn)})
            returning id`.execute(owner.kysely)
     ).rows[0]!;
     await sql`insert into approval_decisions
@@ -349,6 +358,47 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     expect(elapsedMs).toBeLessThan(5_000);
   });
 
+  // ── LAUNCH GATE 8, MEASURED THROUGH THE PRODUCTION ACTIVATION PATH (ACBP-P7-008) ───────────────────────────
+  //
+  // WHAT WAS WRONG WITH THE MEASUREMENT ABOVE, and it is a real gap rather than a nicety. `activateStop` in this
+  // file is a raw `INSERT INTO emergency_stops`. The matrix above therefore measures TRANSACTION VISIBILITY — the
+  // interval between a committed row and the first refusal — and that is a genuine property worth pinning. But
+  // launch gate 8 asks how long after AN OWNER PRESSES STOP the platform stops, and the owner does not run an
+  // INSERT. The production use case also resolves company scope, checks `stop:activate` authorization, writes an
+  // audit event, and captures held work in the same transaction. None of that was inside the measured window.
+  //
+  // ACBP-P7-007 recorded this as trust-critical #10's defect: *"the helper NAMED `activateStop` is a raw INSERT,
+  // not the production use case, so the measured ≤5s window excludes activation entirely."* A test helper whose
+  // NAME asserts a control it does not exercise is the artefact class this repository keeps finding.
+  //
+  // One scope is enough here, deliberately: the per-scope matrix above already proves enforcement for all five,
+  // and what THIS adds is the missing half of the interval, which is scope-independent.
+  test('gate 8 — the PRODUCTION activateStop use case halts a call under 5s, activation included', async () => {
+    // Control first: this call is not stop-refused before the stop exists, so the refusal below is caused by it.
+    expect(await dispatch({ toolId: 'web_research' })).not.toMatchObject({ reason: 'emergency_stopped' });
+
+    const startedAt = performance.now();
+    const activated = await activateStopUseCase(product, {
+      userId: w.aOwner,
+      accountId: w.accountA,
+      companyId: w.companyA1,
+      scope: 'company',
+      targetId: w.companyA1,
+      reason: 'gate 8 measurement',
+    });
+    const stopped = await dispatch({ toolId: 'web_research' });
+    const elapsedMs = performance.now() - startedAt;
+
+    // The use case must genuinely have succeeded — a `forbidden` or `refused` result would leave no stop at all,
+    // and then the assertion below would be measuring nothing while looking green.
+    expect(activated).toMatchObject({ status: 'ok', scope: 'company' });
+    expect(stopped).toMatchObject({ status: 'denied', reason: 'emergency_stopped' });
+    console.info(
+      `[ACBP-P7-008] gate 8 / production activateStop: first refusal ${elapsedMs.toFixed(1)}ms after the owner acted (bound 5000ms)`,
+    );
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
   test('MISSES — another ACCOUNT\'s account-wide stop does not halt this one', async () => {
     // The dual-scope RLS predicate is what makes this true, and it is the one that would silently over-halt the
     // whole platform if `company_id is null` had been written without the account check beside it.
@@ -560,6 +610,45 @@ describe.skipIf(!hasTestDatabase)('tool dispatcher (real PostgreSQL, restricted 
     // …while an INFORMATIONAL call, which the same policy plainly allows, needs no approval at all. THIS is the
     // loosening, asserted end to end: policy decides, and it did not ask.
     expect((await dispatch({ toolId: 'web_research' })).status).toBe('authorized');
+  });
+
+  // ── EXPIRED APPROVAL (ACBP-P7-008; FAILURE-AND-RECOVERY row 9; trust-critical #7) ──────────────────────────
+  //
+  // THE GAP THIS CLOSES. Canon row 9 says an expired approval "cannot execute", and trust-critical #7 says the
+  // same. Until now BOTH were proven only at the repository layer: searching either dispatcher suite for
+  // "expired" returned ZERO cases, while every sibling approval state — revoked, spent, mismatched-payload,
+  // version-moved, pending, deferred, scheduled — had one. The enforcement existed the whole time
+  // (`approvalUsability` reads `expires_at`, and `verifyAndConsume` re-checks it atomically); nothing drove it
+  // from the chokepoint.
+  //
+  // ORDER MATTERS, for the reason the sibling test above records: the EXPIRED case is asserted first, against a
+  // store where the only standing approval is the expired one. Seeding a live approval first would leave a
+  // usable row behind and the refusal would prove nothing.
+  test('an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED', async () => {
+    // A real human `approve`, genuinely decided, whose window has closed. This is the shape that matters:
+    // not a missing approval, not a rejected one — a YES that is no longer valid.
+    await seedDecision('send_email', 'approve', "interval '-1 minute'");
+
+    const denied = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
+
+    // `approval_invalid`, NOT `approval_required`: an approval DID stand against this call, and saying "you need
+    // an approval" would misdescribe a company that granted one. The distinction is the point of the row.
+    expect(denied).toMatchObject({ status: 'denied', reason: 'approval_invalid' });
+
+    // ANCHORED IN THE DATABASE, not the return value. TOOL-002 requires the refusal to be recorded, and a
+    // denial nobody can audit is the failure mode this suite exists for.
+    const rows = await callRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ tool_id: 'send_email', denial_reason: 'approval_invalid' });
+  });
+
+  test('CONTROL: the SAME approval, unexpired, authorizes — so the refusal above is about expiry', async () => {
+    // Without this the expired case passes just as happily against a build that refuses `send_email` for any
+    // reason at all — a missing policy, a broken binding, a typo in the tool id. Same tool, same run, same
+    // seed path, one field different.
+    await seedDecision('send_email', 'approve', "interval '30 days'");
+    const ok = await dispatchToolCall(product, { ...base(), runId, toolId: 'send_email', args: {}, allowlist: allowAll, context: [] });
+    expect(ok.status).toBe('authorized');
   });
 
   // ── ACCEPTANCE: unconfirmed is never success (TOOL-002) ───────────────────────────────────────────────────

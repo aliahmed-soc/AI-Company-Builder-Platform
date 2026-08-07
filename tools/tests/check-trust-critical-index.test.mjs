@@ -46,7 +46,9 @@ const row = (over = {}) => ({
   file: PROVING_FILE,
   testTitle: PROVING_TITLE,
   entryPoint: 'doThing',
-  mutation: 'Delete the guard.',
+  // Names `doThing`, written into non-test source by `run` below. A mutation naming nothing real is now refused,
+  // so the DEFAULT row has to be well-formed or every case here would fail for that reason instead of its own.
+  mutation: 'Delete the guard inside `doThing`.',
   mutationRunId: '',
   doesNotProve: 'Nothing beyond the single path.',
   ...over,
@@ -90,6 +92,10 @@ function run(opts = {}) {
         opts.provingFileText ?? `import { test } from 'vitest';\ntest('${PROVING_TITLE}', () => {});\n`,
       );
     }
+    // NON-TEST source, so the mutation-names-real-code rule has a corpus to check against. Without it the walk
+    // finds only the proving file — a test file, and therefore excluded — and the checker correctly refuses to
+    // run at all, which would fail every case below for a reason unrelated to what it is testing.
+    if (!opts.omitSource) write(root, 'packages/core/src/thing.ts', 'export function doThing() { return 1; }\n');
     write(
       root,
       'tools/trust-critical-index.mjs',
@@ -203,7 +209,7 @@ rejects('more unproven rows than the ratchet allows', { maxUnproven: 0 }, 'not M
 accepts('giving an uncovered negative its first test does NOT trip the ratchet', {
   rows: [
     row(),
-    secondRow({ status: 'unmeasured', anchor: 'database_state', file: PROVING_FILE, testTitle: PROVING_TITLE, mutation: 'Delete the other guard.' }),
+    secondRow({ status: 'unmeasured', anchor: 'database_state', file: PROVING_FILE, testTitle: PROVING_TITLE, mutation: 'Delete the other guard inside `doThing`.' }),
   ],
   maxUnproven: 2,
 });
