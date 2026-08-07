@@ -50,7 +50,7 @@ export const STATUSES = Object.freeze([
  * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
  * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
  */
-export const MAX_UNPROVEN = 6;
+export const MAX_UNPROVEN = 5;
 
 /**
  * One row per matrix row.
@@ -284,14 +284,22 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 12,
     failure: 'Partial completion (multi-step run)',
     consequence: 'resume from checkpoint — a killed run continues rather than restarting',
-    status: 'unmeasured',
+    // MEASURED in slice 6 wave 3, run 31218111959 — and it took TWO attempts, which is the finding.
+        // The FIRST mutation followed this row's own text and made `runJobStep` ignore its `listCheckpoints`
+        // read. Three NEIGHBOURING tests went red and THIS ONE STAYED GREEN (run 31212362663). There are two
+        // listCheckpoints call sites, and the cited test never asks runJobStep to re-run anything: it reads
+        // `remainingSteps` from `getResumeState` and runs only those, so the no-re-run property is enforced by
+        // the plan-minus-inventory computation, not by the already-completed guard. Mutating THAT reddens it.
+        // Recorded because it is the ACBP-P7-007 row-19 shape caught from the other side: a mutation naming a
+        // real symbol in a real function, aimed at the wrong one of two call sites.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a run killed mid-sequence, then resumed against the real checkpoint rows',
     file: 'packages/core/src/jobs/checkpoint.integration.test.ts',
     testTitle: 'KILL AND RESUME — a crashed plan resumes without re-running the step that already completed',
-    entryPoint: 'runJobStep',
-    mutation: 'Make `runJobStep` ignore its `listCheckpoints` read, so a step that already completed runs a second time on resume.',
-    mutationRunId: '',
+    entryPoint: 'getResumeState',
+    mutation: 'Make `getResumeState` ignore its `listCheckpoints` read, so a completed step is reported as remaining and the caller runs it a second time. NOT `runJobStep`: that call site guards a direct re-invocation the cited test never makes, and mutating it leaves this test green.',
+    mutationRunId: '31218111959',
     doesNotProve:
       'The row\'s "fail with partials LABELED partial" branch, or the "Discard-partials option" compensation. No user-facing partial-labelling surface was found. The checkpoint/transaction case (a step that writes then throws leaving nothing) is row 6\'s evidence, not this row\'s.',
     notes: 'Verified slice 1.',

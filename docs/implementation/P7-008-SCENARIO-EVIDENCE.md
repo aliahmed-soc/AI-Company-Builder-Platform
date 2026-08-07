@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **10 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **4 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **11 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **3 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **6**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **5**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -35,7 +35,7 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 9 | Expired authorization (approval) | **MEASURED** | `database_state` | the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls` | a real human `approve` seeded with `expires_at` already in the past, then a real dispatch | dispatchToolCall |
 | 10 | Revoked integration | unbuildable | `none` | — | — | — |
 | 11 | Duplicate delivery (job/event) | **MEASURED** | `database_state` | the duplicate is suppressed AND the suppression is recorded | the production enqueue path is called TWICE with the same idempotency key | enqueueJob |
-| 12 | Partial completion (multi-step run) | unmeasured | `database_state` | resume from checkpoint — a killed run continues rather than restarting | a run killed mid-sequence, then resumed against the real checkpoint rows | runJobStep |
+| 12 | Partial completion (multi-step run) | **MEASURED** | `database_state` | resume from checkpoint — a killed run continues rather than restarting | a run killed mid-sequence, then resumed against the real checkpoint rows | getResumeState |
 | 13 | Usage-recording failure | **MEASURED** | `return_value_only` | metered work BLOCKS — the call aborts and the output is withheld | a `recordUsage` dependency that rejects | callModel |
 | 14 | Audit-event failure | **MEASURED** | `database_state` | the action is BLOCKED and rolled back — no job row survives an audit-write failure | the documented `auditWriter` test seam, substituted with one that rejects | enqueueJob |
 | 15 | Emergency stop during execution | **MEASURED** | `recorded_row` | the next tool call is blocked at the dispatcher and the refusal is RECORDED | a live stop activated between calls, then a real dispatch attempt | dispatchToolCall |
@@ -139,12 +139,12 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** The row's "duplicate-suppression incident counter" as an operational metric. Two anchors per case — real row counts read through the OWNER client plus a suppression log incident — because CDR-074 §0 requires that a suite checking only "one row exists" would pass against a build with every guard removed. Negative controls pin that two KEYLESS deliveries are two jobs, so the mechanism never suppresses by accident.
 - **Verification note:** Verified slice 1 — joint-strongest. All nine cases call the production path twice rather than testing a dedupe helper in isolation. The file records a PAST version of this defect: a test that called the inner function directly was green while the only surface that suppresses anything in production recorded nothing.
 
-### 12. Partial completion (multi-step run) — unmeasured
+### 12. Partial completion (multi-step run) — **MEASURED**
 
 - **Test:** `packages/core/src/jobs/checkpoint.integration.test.ts`
   - "KILL AND RESUME — a crashed plan resumes without re-running the step that already completed"
-- **Mutation that should redden it:** Make `runJobStep` ignore its `listCheckpoints` read, so a step that already completed runs a second time on resume.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Mutation that should redden it:** Make `getResumeState` ignore its `listCheckpoints` read, so a completed step is reported as remaining and the caller runs it a second time. NOT `runJobStep`: that call site guards a direct re-invocation the cited test never makes, and mutating it leaves this test green.
+- **Hosted CI run in which it did:** `31218111959`
 - **Does not prove:** The row's "fail with partials LABELED partial" branch, or the "Discard-partials option" compensation. No user-facing partial-labelling surface was found. The checkpoint/transaction case (a step that writes then throws leaving nothing) is row 6's evidence, not this row's.
 - **Verification note:** Verified slice 1.
 
