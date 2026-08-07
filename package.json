@@ -46,6 +46,7 @@
     "demo:slice-d": "tsx tools/demo/slice-d.mjs",
     "demo:slice-e": "tsx tools/demo/slice-e.mjs",
     "demo:slice-f": "tsx tools/demo/slice-f.mjs",
+    "demo:mvp-loop": "tsx tools/demo/mvp-loop.mjs",
     "local:db:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action setup",
     "local:db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action start",
     "local:db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action stop",
