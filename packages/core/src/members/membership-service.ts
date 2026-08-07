@@ -82,9 +82,14 @@ export interface MembershipStore {
   findPendingByAccountAndEmail(accountId: string, invitedEmail: string): Promise<{ readonly id: string } | undefined>;
   insertInvite(v: { readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole; readonly tokenHash: string; readonly invitedByUserId: string }): Promise<{ readonly id: string }>;
   findInAccount(accountId: string, membershipId: string): Promise<{ readonly id: string; readonly role: MemberRole; readonly status: MembershipStatus } | undefined>;
-  countActiveOwners(accountId: string): Promise<number>;
-  /** Atomically flip an ACTIVE membership to revoked; returns true iff THIS call performed the transition. */
-  revokeMembership(id: string): Promise<boolean>;
+  /**
+   * Atomically revoke an ACTIVE membership, refusing to remove the account's LAST active owner (CDR-011).
+   * The owner-count decision and the flip are one operation so concurrent revocations of different owners
+   * cannot both slip past a stale count and drain the account to zero owners. Outcomes: `'revoked'` (this
+   * call performed active→revoked), `'last_owner'` (refused — target is the sole active owner), `'noop'`
+   * (not active — already revoked / a concurrent revoke won → idempotent no-op, writes NO new audit).
+   */
+  revokeActiveMembership(accountId: string, id: string): Promise<'revoked' | 'noop' | 'last_owner'>;
   listMembers(accountId: string): Promise<readonly MemberView[]>;
 }
 
@@ -138,14 +143,15 @@ export async function revokeMemberWithStore(
   if (target === undefined) return { status: 'not_found' };
   if (target.status === 'revoked') return { status: 'ok', changed: false }; // idempotent no-op → no new audit
 
-  // Never leave an account without an owner.
-  if (target.role === 'owner' && target.status === 'active' && (await store.countActiveOwners(params.accountId)) <= 1) {
-    return { status: 'last_owner' };
-  }
-  // Conditional active→revoked transition. Under concurrency only the transaction that actually flips the
-  // row returns true; a racing revoke that lost sees `false` → an idempotent no-op with NO new audit.
-  const didRevoke = await store.revokeMembership(target.id);
-  if (!didRevoke) return { status: 'ok', changed: false };
+  // Uphold the last-owner invariant (CDR-011) ATOMICALLY. Checking the owner count and revoking as separate
+  // steps is a read-then-act race: two concurrent revocations of DIFFERENT active owners could each read
+  // "2 owners", both pass, and both flip — draining the account to zero owners. The store performs the
+  // owner-count decision and the flip as one serialized (row-locked) operation.
+  const outcome = await store.revokeActiveMembership(params.accountId, target.id);
+  if (outcome === 'last_owner') return { status: 'last_owner' };
+  // Under concurrency only the transaction that actually flips the row reports 'revoked'; a racing revoke
+  // that lost sees 'noop' → an idempotent no-op with NO new audit.
+  if (outcome === 'noop') return { status: 'ok', changed: false };
   options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
   // `changed: true` + the revoked membership's id/role → the live wrapper writes the durable audit in-tx.
   return { status: 'ok', changed: true, membershipId: target.id, role: target.role };
@@ -196,11 +202,8 @@ function liveStore(repo: MembershipRepository): MembershipStore {
       const row = await repo.findById(membershipId);
       return row === undefined || row.account_id !== accountId ? undefined : { id: row.id, role: row.role as MemberRole, status: row.status as MembershipStatus };
     },
-    countActiveOwners(accountId) {
-      return repo.countActiveOwners(accountId);
-    },
-    revokeMembership(id) {
-      return repo.revokeIfActive(id);
+    revokeActiveMembership(accountId, id) {
+      return repo.revokeActiveMembershipPreservingLastOwner(accountId, id);
     },
     async listMembers(accountId) {
       return (await repo.listByAccount(accountId)).map(toMemberView);
