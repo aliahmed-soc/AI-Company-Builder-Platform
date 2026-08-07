@@ -606,3 +606,37 @@ rather than something to keep retrying. The options, none of which this ticket m
 **Nothing here is measured until a run with `steps > 0` goes green on this branch's exact SHA.** §10.1's
 figures stay labelled local, the trust-critical standard is unmet, and this is stated in the CDR rather than
 left for a reader to infer from a red badge.
+
+### §10.3 The run now exists — option 1 was taken, and the diagnosis in §10.2 held
+
+**Hosted CI run [`31144993965`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31144993965)
+on `235dc57`: `verify: success`, `steps=16`, 270 files / 3908 tests, all passed, ZERO SKIPS.** The requirement
+§10.2 left open is discharged, and the trust-critical standard for this ticket is met on hosted evidence rather
+than on one machine.
+
+**Zero skips is anchored, not asserted.** Locally this branch is 2302 passed + 1606 skipped, and
+2302 + 1606 = 3908. Every suite that silently skips for want of a local PostgreSQL executed there.
+
+**§10.2's diagnosis is now confirmed by the fix working.** It concluded that the four void runs were caused by
+this PR's base being `p7-007-security-test-pass`, a branch under active development, because `pull_request` CI
+runs against a merge ref that GitHub recomputes on every base push while `ci.yml` cancels in-progress runs on
+`github.ref`. **Option 1 of the three it offered was taken:** ACBP-P7-007 merged to `main` as squash `1bb4751`,
+and this work was replayed onto `main`. The first attempt on a `main` base executed 16 steps and went green.
+That is the diagnosis surviving a prediction rather than merely explaining the past — had the cause been runner
+scarcity or a fault in this branch's code, a stable base would not have fixed it.
+
+**A rebase in place was not possible, and the reason is worth recording.** The old branch was cut from
+`p7-007-security-test-pass` and carried **eight of P7-007's pre-squash commits**. P7-007 landed on `main` as a
+SQUASH, so those commits' content is already in `main` under a different identity — they are duplicate history
+that conflicts with it, which is what made PR #80 show as conflicting rather than merely stale. The branch was
+therefore rebuilt as `origin/main` plus **only this ticket's own four commits**, cherry-picked: `30d2180`,
+`6fbb4c1`, `1454b46`, `235dc57`. New branch `p7-015-security-headers-on-main`, new PR **#82**.
+
+**Nothing was destroyed to do it.** `p7-015-security-headers-and-csp` still exists at `169b7d0` and PR #80 stays
+closed, so no history was rewritten and no force-push was needed. `git diff main...HEAD` is 11 files and contains
+none of P7-007's.
+
+**What this run does NOT prove**, unchanged from §10.1: the CSP is still **report-only**, so nothing here shows a
+violation being blocked; `poweredByHeader: false` still carries no response assertion, because CI never serves a
+response; HSTS is still absent pending ACBP-P7-006's deployment configuration; and the seven mutation results in
+§10.1 remain **local** figures — this run proves the suites pass, not that the mutations were re-run here.
