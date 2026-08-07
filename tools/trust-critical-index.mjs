@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 17;
+export const MAX_UNPROVEN = 16;
 
 /**
  * One row per canonical negative.
@@ -232,14 +232,20 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     number: 10,
     statement: 'Emergency stop blocks new external execution (all scopes, ≤5s).',
     attributedTo: 'P6-007',
-    builtBy: 'ACBP-P6-007',
-    status: 'unmeasured',
+    builtBy: 'ACBP-P6-007; measured through the PRODUCTION activation path by ACBP-P7-008',
+    // MEASURED in slice 6, run 31139103437. FOUR tests went red of 3874 and every one depends on the `company`
+    // scope: this row's test, the matrix's own company case, one contract unit, and the Slice F end-to-end
+    // journey (which halts a company mid-journey). The four SIBLING scopes — task, worker, account_wide,
+    // external_actions_only — all stayed GREEN, as did every `MISSES` case and the scope-completeness guard.
+    // M2 (run 31129196873) had cut `account_wide` instead and left THIS test green, which is why the row could
+    // not borrow that run and needed its own.
+    status: 'measured',
     anchor: 'return_value_only',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'gate 8 — the PRODUCTION activateStop use case halts a call under 5s, activation included',
     entryPoint: 'activateStop → dispatchToolCall',
     mutation: 'Drop the `company` case from `evaluateStops`, so an active company stop no longer covers the dispatched call.',
-    mutationRunId: '',
+    mutationRunId: '31139103437',
     doesNotProve:
       '"ALL SCOPES". The cited test drives ONE scope, `company`, because what it adds is the ACTIVATION half of the interval, which is scope-independent. Completeness across scopes is proven beside it — by `COVERS + gate 8 — a %s stop halts its call, MEASURED under 5s` and by the guard `every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven` — and neither is what this row cites. "All scopes" is in any case FIVE enforceable scopes, not seven: `capability` and `integration` are inert (CDR-072). And ≤5s is a BOUND asserted once on CI hardware, not a worst-case measurement.',
   },
