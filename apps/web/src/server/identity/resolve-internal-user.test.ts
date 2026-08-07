@@ -9,6 +9,10 @@ import { resolveInternalUserForRequest } from './resolve-internal-user.js';
 function identityDeps(over: Partial<{ userId: string | null; throws: boolean; verified: boolean }> = {}): VerifiedIdentityDeps {
   return {
     getUserId: () => (over.throws ? Promise.reject(new Error('session unavailable')) : Promise.resolve(over.userId === undefined ? 'user_verified' : over.userId)),
+    // ACBP-P7-013: both REQUIRED, never defaulted — a limiter that defaults to allowed is the
+    // P6-007 stop-port defect (CDR-072 section 1-G1). A test that wants to be admitted says so.
+    getSessionId: () => Promise.resolve('sess_test'),
+    checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const),
     getBackendUser: (userId) =>
       Promise.resolve({
         id: userId,

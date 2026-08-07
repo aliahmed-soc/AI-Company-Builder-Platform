@@ -15,6 +15,8 @@ import type { AdminReadParams, AdminReadResult, AdminOpOptions, InternalUserReco
 export type AdminRequestResult =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
+  | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'unavailable' }
   | { readonly status: 'invalid_reason' }
   | { readonly status: 'forbidden' }
@@ -51,6 +53,7 @@ export async function readCompanyOverviewForRequest(target: { readonly accountId
   const identity = await resolveVerifiedIdentity(deps.identity);
   if (identity.status === 'unauthenticated') return { status: 'unauthenticated' };
   if (identity.status === 'email_unverified') return { status: 'email_unverified' };
+  if (identity.status === 'rate_limited') return { status: 'rate_limited', retryAfterSeconds: identity.retryAfterSeconds };
   if (identity.status === 'unavailable') return { status: 'unavailable' };
 
   const resolution = await runtime.resolveInternalUser(identity.identity.providerUserId);

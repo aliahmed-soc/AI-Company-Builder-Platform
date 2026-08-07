@@ -6,6 +6,7 @@
 // no account id, email, or role from the request body/headers can target another account. Email is
 // never modified here (Clerk-authoritative). All domain access goes through @acbp/core.
 import { resolveInternalUserForRequest, type ResolveInternalUserDeps } from '../identity/resolve-internal-user.js';
+import type { RequestLimitOutcome } from '@acbp/core';
 import { isPlatformError, type PublicErrorEnvelope } from '@acbp/contracts';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
 import type { AccountProfileView, ProfileUpdateInput, ProvisionResult } from '@acbp/core';
@@ -15,6 +16,8 @@ export type ProfileRequestResult =
   | { readonly status: 'ok'; readonly profile: AccountProfileView }
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
+  | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'forbidden' }
   | { readonly status: 'not_found' }
   | { readonly status: 'unavailable' }
@@ -22,6 +25,8 @@ export type ProfileRequestResult =
 
 /** The account operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface AccountOps {
+  /** CDR-008 section 8's per-ACCOUNT ceiling (ACBP-P7-013; CDR-082). Required — see CompanyRuntime for why. */
+  checkRequestLimit(scopeKind: 'session' | 'account', scopeKey: string): Promise<RequestLimitOutcome>;
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
   getAccountProfile(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<AccountProfileView | undefined>;
   updateAccountProfile(userId: string, input: ProfileUpdateInput, options?: { correlationId?: string; logger?: Logger }): Promise<AccountProfileView | undefined>;
@@ -45,6 +50,8 @@ async function resolveActiveUser(deps: ProfileRequestDeps): Promise<ActiveUser |
       return { kind: 'result', result: { status: 'unauthenticated' } };
     case 'email_unverified':
       return { kind: 'result', result: { status: 'email_unverified' } };
+    case 'rate_limited':
+      return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: resolution.retryAfterSeconds } };
     case 'session_unavailable':
     case 'unavailable':
       return { kind: 'result', result: { status: 'unavailable' } };
@@ -74,7 +81,10 @@ export async function getAccountProfileForRequest(deps: ProfileRequestDeps = {})
 
   const ops = await accountOps(deps);
   const logger = accountsLogger();
-  await ops.ensurePersonalAccount(resolved.userId, { logger });
+  const provision = await ops.ensurePersonalAccount(resolved.userId, { logger });
+  const limit = await ops.checkRequestLimit('account', provision.accountId);
+  if (limit.kind === 'throttled') return { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds };
+  if (limit.kind === 'unavailable') return { status: 'unavailable' };
   const profile = await ops.getAccountProfile(resolved.userId, { logger });
   if (profile === undefined) return { status: 'not_found' };
   return { status: 'ok', profile };
@@ -87,7 +97,10 @@ export async function updateAccountProfileForRequest(input: ProfileUpdateInput, 
 
   const ops = await accountOps(deps);
   const logger = accountsLogger();
-  await ops.ensurePersonalAccount(resolved.userId, { logger });
+  const provision = await ops.ensurePersonalAccount(resolved.userId, { logger });
+  const limit = await ops.checkRequestLimit('account', provision.accountId);
+  if (limit.kind === 'throttled') return { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds };
+  if (limit.kind === 'unavailable') return { status: 'unavailable' };
   try {
     const profile = await ops.updateAccountProfile(resolved.userId, input, { logger });
     if (profile === undefined) return { status: 'not_found' };

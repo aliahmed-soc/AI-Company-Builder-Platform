@@ -67,7 +67,156 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
-- **IN FLIGHT — ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
+- **ACBP-P7-013 HTTP rate limiting — BUILT AND WIRED, NOT OWNER-ACCEPTED** (CDR-082; NFR-010; CDR-008 §8;
+  ADR-003's beta launch condition). Branch `p7-013-http-rate-limiting`, draft PR **#79**, commit `b20b036`,
+  migration **0055**. Ledger: `P7-013-REVIEW-COVERAGE.md`.
+  - **RAISED BY ACBP-P7-007** (CDR-080 §4), which ruled NFR-010's absent ASVS items into separate tickets rather
+    than building them inside a verification pass. **P7-007 is still unmerged** and edits the same two NFR-010
+    rows and the same plan line — whichever merges second resolves that conflict. Recorded in CDR-082 §7.
+  - **THE FINDING THAT MADE IT SMALL: nothing here was undecided.** CDR-008 §8 (Accepted **2026-07-18**) ruled
+    the values — per-session 60/min sustained, burst 120; per-account 300/min — and named **ACBP-P6-010** as its
+    consumer. P6-010 implemented the SIXTH layer (hard cost caps) and left the FIRST. The figures sat accepted
+    and unimplemented for nineteen days. `USAGE-AND-BILLING-ARCHITECTURE.md` §3 had likewise already ruled the
+    placement — *"api layer (per session/account)"* — which settles middleware-vs-route-vs-edge AND the key.
+    **This ticket invents no number and chooses no location.** What was missing was not a decision.
+  - **SCOPE ESTABLISHED, NOT ASSUMED.** (a) Clerk covers the auth surface and ONLY it — sign-in/sign-up are
+    Clerk-HOSTED components, so credentials never reach a route here; all 22 API routes had no bound at all.
+    (b) **There is no deployment configuration in this repository at all** — no vercel.json, render.yaml,
+    Dockerfile, fly.toml, terraform, and no `middleware.ts` — so an edge answer is UNBUILDABLE here and is
+    recorded as a constraint (CDR-082 §1.4) rather than proposed. (c) State is PostgreSQL, because a per-process
+    counter is not a limit under more than one instance and the topology is unknown. (d) Keyed on the
+    server-verified session and account, **never IP**: with no trusted proxy an `x-forwarded-for` limit is
+    evadable AND lets an attacker spend a VICTIM's bucket — a protection turned into a targeted DoS.
+  - **IT IS WIRED, WHICH IS THE WHOLE POINT.** The session ceiling is consumed in `verified-identity.ts` — the
+    chokepoint all five protected surfaces call — positioned BEFORE `getBackendUser`, which is a Clerk Backend
+    API network call on every protected request; the account ceiling is consumed in the request modules at the
+    first point the account id exists. `tools/check-rate-limit-coverage.mjs` (in `check:static`) fails the build
+    if a handler stops reaching it, walking imports TRANSITIVELY rather than matching names, and failing on
+    zero-handlers-found and on a stale exemption. Both limiter dependencies are **REQUIRED, never defaulted to
+    allow** — an optional permissive port is the stop-port defect P6-007 deleted (CDR-072 §1-G1).
+  - **THE DECISION HAPPENS INSIDE THE ROW LOCK** — one `INSERT … ON CONFLICT DO UPDATE … WHERE`. A
+    read-then-write pair is a lost-update race in which two concurrent requests both spend the last token: the
+    exact defect this control exists to prevent, reintroduced inside its own implementation. The pure token
+    bucket in `@acbp/contracts` is the SPECIFICATION and the SQL is a second implementation; a real-PostgreSQL
+    DIFFERENTIAL suite replays the specification's own cases through the database so the two cannot drift.
+  - **I SHIPPED THE DEFECT THIS TICKET WARNS ABOUT, AND CAUGHT IT IN MY OWN PROSE.** A canon correction I wrote
+    claimed the ACCOUNT ceiling was enforced when only the SESSION half was wired — the reachable-but-unwired
+    shape of P6-010's `caps`, written by the author of the §2 section warning against it. Fixed by WIRING the
+    account half, not by softening the sentence. Five further findings, all mine against my own work, in
+    `P7-013-REVIEW-COVERAGE.md` §2 — including `genericErrorBody(429)` returning `internal_error`, which told a
+    throttled caller their request FAILED when it was REFUSED, implying the opposite client behaviour.
+  - **THE FINDING THAT OPENED THE TICKET WAS OVERSTATED.** The plan's Authentication row names *credential
+    stuffing*, and that surface IS rate limited — by Clerk, because the credential surface is Clerk-hosted. The
+    defect is a missing ATTRIBUTION, not a missing control, and correcting it to "absent" would have replaced one
+    wrong sentence with another. **A second row made the same claim and the brief did not name it** —
+    `REQUIREMENT-TRACEABILITY`'s **ACC-001** — found by sweeping the defect CLASS rather than the named instance.
+  - **The mutation probe is PRESERVED as a reproducible table**, unlike P7-002's: 4 mutations, **2 / 1 / 1 / 11**
+    of 16 cases red, baseline restored 16/16 with zero markers resident. The static checker was probed too.
+  - **NOT CLOSED, and none of these is an engineering gap I may close alone:** CSRF protection and security
+    headers/CSP (NFR-010's other two items — CDR-082 §8.2/§8.3); the pen review (external vendor, General MVP
+    gate); **unauthenticated pre-session traffic, which nothing in this repository bounds** and which needs the
+    deployment edge §1.4 established does not exist (§8.1, OWNER); `USAGE_LIMIT_EXCEEDED` declared with zero
+    usages, so a spend refusal and a rate refusal are indistinguishable (§8.4, pre-existing); and the final
+    values (**AOQ-14 still open**). Ticket Done / PR ready / merge are owner gates and none has been taken.
+
+- **ACBP-P7-014 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
+  ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate` — **the branch name keeps the
+  old number and the ticket is ACBP-P7-014**; see the collision note below. **No migration**, no schema, no
+  new contract. A NEW ticket: ACBP-P7-007 found the gap and the owner ruled it a separate implementation
+  ticket rather than work to do inside a verification pass.
+  - **⚠️ TICKET-ID COLLISION, RESOLVED BY YIELDING — OWNER MAY WANT TO REVISIT.** A concurrent session
+    independently took **ACBP-P7-013** for **HTTP rate limiting** (branch `p7-013-http-rate-limiting`,
+    commit `b20b036`, branched from the same `2c4f0f5`). Both sessions picked "the next free number" from
+    the same backlog within minutes of each other, and both add a `BACKLOG.csv` row — so a **duplicate
+    ticket id would have merged**. This ticket renumbered itself to **ACBP-P7-014** rather than wait,
+    because yielding is the only move that removes the failure mode WITHOUT requiring the other session to
+    act, and one session cannot edit another's branch. The branch name and PR #78 title still say
+    `p7-013`; renaming a pushed branch means closing and reopening the PR, which is the owner's call.
+    **This is not a claim that the other session's number is correct** — CDR-080 §4 lists CSRF first, and
+    this branch was pushed eight minutes earlier. It is a claim that a duplicate id is worse than a
+    number nobody argued about.
+  - **THE SAME COLLISION HAPPENED AGAIN ONE LAYER DOWN, AND IS RESOLVED THE OTHER WAY: the CDR number.**
+    Both branches added a file called `CDR-081` — this one `CDR-081-csrf-origin-gate.md`, the rate-limiting
+    branch `CDR-081-http-rate-limiting.md`. Unlike the ticket id, this one has a **tie-breaker on the
+    record**: CDR-080 §4 names the three missing ASVS items in the order *CSRF, HTTP rate limiting,
+    security headers / CSP*, and the third branch has already taken **CDR-083** for headers/CSP. That fixes
+    the scheme — CSRF **081**, rate limiting **082**, headers **083** — so this branch KEEPS `CDR-081` and
+    the rate-limiting branch is the one that must renumber to `CDR-082`. Recorded here because the cheaper
+    renumber is the wrong one (49 references here versus 75 there), and a future session optimising for
+    effort would pick it.
+  - **THE FIRST JOB WAS TO DISPROVE THE FINDING, NOT TO BUILD.** *"CSRF protection is absent"* could
+    honestly have been *"partially covered by the provider"*. Three provider mechanisms were checked and
+    none covers it (CDR-081 §0.2). The sharpest is the first: **`__session`'s `SameSite` attribute is
+    chosen by Clerk's Frontend API**, not by the SDK — `@clerk/backend` appends handshake `Set-Cookie`
+    values verbatim (`chunk-NVYUROUB.mjs:6697`, `:7063`), and the only `SameSite` it writes itself is on a
+    2-second handshake counter cookie. So the attribute that would carry the defence **is not observable,
+    assertable or pinnable from this repository**. That is deliberately NOT a claim that `__session` lacks
+    `SameSite` — it is a claim that the repository cannot know, and a control it cannot know about cannot
+    be its answer to NFR-010. `authorizedParties` is wired but structurally irrelevant: `azp` records the
+    origin the token was MINTED for, which in a forgery against this app is this app's own origin.
+  - **A CORRECTION TO THE FINDING AS WRITTEN:** it named `apps/web/src/middleware.ts`, which does not
+    exist. Next 16 renamed the boundary; this app's is `apps/web/src/proxy.ts`.
+  - **WHAT LANDED.** A fail-closed same-origin gate at the request-interception boundary: `Sec-Fetch-Site`
+    first and exclusively when present, `Origin` against `APP_PUBLIC_URL` as the fallback, and **deny when
+    neither is present** — absence of provenance is never permission. **Nine rows in the pure function**
+    plus the proxy's pre-existing webhook early return, closed vocabulary, asserted by REASON rather than by
+    allow/deny so a row that stops denying cannot pass by coincidence.
+    `proxy.ts` gained its **first test file**, which is where the ordering claim lives (refused before any
+    session is established, so a forgery reaches no Clerk round trip and no handler).
+  - **A TOKEN WAS REJECTED ON THE RECORD** (CDR-081 §1). There is no rendered UI, so a synchronizer token
+    would ship with **no producer of a valid token anywhere in production** — the shape this repository has
+    been bitten by three times (P6-010's caps, P6-011's usage key, P7-002's zero-caller predicate).
+  - **ENFORCED IN ONE PLACE, WHICH IS THE STRENGTH AND THE WHOLE RISK.** A route module that does not exist
+    yet is covered the day it is written; and the gate can be switched off for all sixteen at once by four
+    edits that each look reasonable alone. `tools/check-csrf-origin-gate.mjs` fails the build on each, plus
+    two exemption rules. It reports **17 state-changing of 23 route modules**, so the CDR's count is
+    machine-re-derivable rather than prose.
+  - **THE CHECKER'S FIRST RUN AGAINST THE REAL TREE FAILED, ON ITS AUTHOR'S BUG.** The matcher's first
+    entry contains `[^?]` — a `]` **inside a string literal** — and a non-greedy bracket regex truncated the
+    array, so every entry went invisible and a perfectly correct matcher was reported as not covering
+    `/api`. **No synthetic fixture could have caught it**: every fixture had a simpler matcher than the real
+    file. Replaced with a depth-and-string-state scanner; the real-shaped matcher is now a self-test probe.
+  - **AND THEN AN INDEPENDENT REVIEW DEFEATED THAT CHECKER FOUR WAYS.** Its exemption rule matched
+    `return undefined`, so `return;`, `return NextResponse.next();`, `return new Response(...)` and
+    `if (request.url.startsWith('https://internal…')) return undefined;` **each added a working second CSRF
+    exemption with the checker exiting 0** — the last because the comment stripper removed line comments
+    BEFORE string literals and truncated the line at the `//` inside the URL, a bug in a *shared* helper
+    that could have blinded any detector. Rule changed to **no early return before the gate**, which cannot
+    be evaded by changing what is returned. This is the same class AND the same count as
+    `check-approval-port.mjs`'s four evasions — whose header was **read and cited in this checker's own
+    header** while the same mistake was being made underneath it. Knowing the lesson did not prevent it.
+  - **THE REVIEW RETURNED NO BLOCKER, 2 HIGH, 5 MEDIUM, 6 LOW — and every finding except the guard's was in
+    PROSE.** It could construct no attacker path to a handler, no URL that satisfies `isClerkWebhookPath`
+    while routing elsewhere, and no vacuous assertion; the gate itself came through unchanged. The second
+    HIGH was this file's sibling claim in CDR-081 §0.3 that *three* routes had a media-type check when
+    **nine** do, with the admin POST — which requires an exact `{ reason }` body — filed among the bodyless
+    ones. Third consecutive ticket where the defects are in the sentences, not the code.
+  - **NO REAL-POSTGRESQL PROOF EXISTS AND NONE IS CLAIMED — and the reason is not the missing database.**
+    The planned composition test was **withdrawn as VACUOUS** (CDR-081 §6.3): it would call `proxy()`, get a
+    403, decline to call the route *on that basis*, and then assert no row exists — asserting only that the
+    harness did not call the route. Delete the entire gate and it still passes. What would be non-vacuous is
+    driving a running Next server so the FRAMEWORK composes proxy with handler; no harness in this
+    repository does that. So *"a forged request reaches no handler"* rests on statement ORDER in `proxy.ts`
+    (asserted through the real module, pinned statically) plus Next running the proxy first, which this
+    repository does not verify. Local PostgreSQL is unreachable as always, but that is **not** why the test
+    is absent.
+  - **CLOSES ONE OF THREE.** CDR-080 §4 named CSRF, HTTP rate limiting and security headers/CSP. **Rate
+    limiting and security headers/CSP remain ABSENT** and are still owed their own tickets; the pen review
+    is untouched and stays at the General MVP gate. The NFR-010 traceability cells say exactly that.
+  - **⚠️ THE TWO NFR-010 TRACEABILITY CELLS ARE ALSO REWRITTEN BY THE UNMERGED `p7-007-security-test-pass`
+    BRANCH** (CDR-080 §5), whose wording names CSRF as ABSENT — true when written, stale the moment this
+    merges. Whichever lands second must **merge, not overwrite**. Flagged because a conflict resolved by
+    taking one side wholesale is how a corrected record silently reverts, which P7-002 hit three times.
+  - **HOSTED CI IS GREEN WITH ZERO SKIPS ON THE EXACT HEAD.** Run
+    [`31119574444`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31119574444) on
+    `5c6f2b5`: **262 files / 3765 tests, all passed, not one `N skipped` line in the job log**, DB preflight
+    passed. Locally this suite is 148/114-skipped and 2162/1603-skipped, and **2162 + 1603 = 3765** — so
+    every suite that silently skips on this machine ran against real PostgreSQL there. The earlier run
+    `31117906801` on `1357508` said `cancelled` and was **VOID, not a regression** (`steps=0`, no runner
+    ever assigned); the green run on the same code plus the review fixes is what confirms that reading.
+  - **Ticket Done / PR ready / merge are OWNER GATES and none has been taken.**
+
+- **ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
   Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
   Rendered evidence: `docs/implementation/P7-008-SCENARIO-EVIDENCE.md` (generated; `check:scenario-evidence`
   fails the build if it drifts from the index).

@@ -501,3 +501,8 @@ export function loadClerkWebhookConfig(): ClerkWebhookConfig {
 // Usage caps: CDR-008's interim per-company and per-account spend ceilings and the soft-alert threshold
 // (ACBP-P6-010; CDR-075 §4). INTERIM — CDR-008 §21 binds a mandatory revisit at first alpha telemetry.
 export * from './usage-caps.js';
+
+// API request limits: CDR-008 §8's FIRST layer — per-session and per-account request ceilings (ACBP-P7-013;
+// CDR-082; NFR-010). A DIFFERENT limit from the caps above: frequency, not money (CDR-082 §5). Same INTERIM
+// standing and the same CDR-008 §21 revisit trigger.
+export * from './rate-limits.js';

@@ -26,6 +26,10 @@ const REASON = 'Ticket #12: verify reported company state';
 function identityDeps(): VerifiedIdentityDeps {
   return {
     getUserId: () => Promise.resolve('clerk_adm'),
+    // ACBP-P7-013: both REQUIRED, never defaulted — a limiter that defaults to allowed is the
+    // P6-007 stop-port defect (CDR-072 section 1-G1). A test that wants to be admitted says so.
+    getSessionId: () => Promise.resolve('sess_test'),
+    checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const),
     getBackendUser: () => Promise.resolve({ id: 'clerk_adm', primaryEmailAddressId: 'e1', emailAddresses: [{ id: 'e1', emailAddress: 'a@example.com', verification: { status: 'verified' } }], firstName: null, lastName: null }),
   };
 }
@@ -134,6 +138,10 @@ describe('handleAdminReadPost — the full handler', () => {
         calls.push(['identity']);
         return Promise.resolve('clerk_adm');
       },
+      // ACBP-P7-013: both REQUIRED, never defaulted — a limiter that defaults to allowed is the
+      // P6-007 stop-port defect (CDR-072 section 1-G1). A test that wants to be admitted says so.
+      getSessionId: () => Promise.resolve('sess_test'),
+      checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const),
       getBackendUser: () => Promise.reject(new Error('must not be called')),
     };
     for (const bad of ['{bad', '{}', JSON.stringify({ reason: REASON, extra: 1 }), JSON.stringify({ reason: '   ' }), JSON.stringify({ reason: `x${NUL}` })]) {
