@@ -171,7 +171,9 @@ export async function enqueueJob(client: DatabaseClient, params: EnqueueJobParam
         companyId: scope.tenant.companyId,
         kind: request.kind,
         payload: request.payload,
-        idempotencyKey: request.idempotencyKey,
+        // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: the key is dropped, so the partial unique index
+        // cannot match a re-delivery and a second job row is created.
+        idempotencyKey: null,
         createdByUserId: request.createdByUserId,
       });
 
