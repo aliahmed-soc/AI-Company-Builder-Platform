@@ -24,6 +24,10 @@ export { runSliceEJourney } from './tenancy/slice-e-journey.js';
 export type { SliceEOps, SliceEJourneyDeps, SliceEFakeBehavior, SliceEGateway, SliceEArtifact, SliceELineageArtifact, SliceESource } from './tenancy/slice-e-journey.js';
 // ACBP-P6-012 / CDR-077 — the Slice F (safety and recovery) journey, shared by `pnpm demo:slice-f` and the CI suite.
 export { runSliceFJourney } from './tenancy/slice-f-journey.js';
+// ACBP-P7-009 / CDR-085 — the MVP loop journey (interview → understanding → strategy → decision → roadmap →
+// planning → run → artifact → revision, threaded through ONE company), shared by `pnpm demo:mvp-loop` and the CI suite.
+export { runMvpLoopJourney } from './tenancy/mvp-loop-journey.js';
+export type { MvpLoopOps, MvpLoopJourneyDeps, MvpLoopFakeBehavior, MvpLoopGateway, MvpLoopValidator, MvpLoopArtifact, MvpLoopLineageArtifact, MvpLoopSource } from './tenancy/mvp-loop-journey.js';
 // ACBP-P7-007 / CDR-080 §2 — the audit/activity secret sweep (trust-critical #16). Call at the end of any
 // real-PostgreSQL suite that performed audited work, so #16 becomes a suite-wide property rather than one file's.
 export { sweepAuditPayloadsForSecrets, assertNoSecretsInAuditPayloads, SWEPT_TABLES } from './security/audit-secret-sweep.js';
