@@ -19,6 +19,7 @@
     "check:conflict-targets": "node tools/check-conflict-targets.mjs",
     "check:approval-port": "node tools/check-approval-port.mjs",
     "check:stop-port": "node tools/check-stop-port.mjs",
+    "check:rate-limit-coverage": "node tools/check-rate-limit-coverage.mjs",
     "check:usage-kind-predicate": "node tools/check-usage-kind-predicate.mjs",
     "check:migration-drain-loops": "node tools/check-migration-drain-loops.mjs",
     "check:csrf-origin-gate": "node tools/check-csrf-origin-gate.mjs",
@@ -52,7 +53,7 @@
     "local:db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action start",
     "local:db:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action stop",
     "local:db:status": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/local/db.ps1 -Action status",
-    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run check:stop-port && pnpm run check:usage-kind-predicate && pnpm run check:migration-drain-loops && pnpm run check:trust-critical-index && pnpm run check:csv-shape && pnpm run check:duplicate-exports && pnpm run check:failure-scenario-index && pnpm run check:scenario-evidence && pnpm run check:csrf-origin-gate && pnpm run test:boundaries",
+    "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run check:stop-port && pnpm run check:usage-kind-predicate && pnpm run check:migration-drain-loops && pnpm run check:trust-critical-index && pnpm run check:csv-shape && pnpm run check:duplicate-exports && pnpm run check:failure-scenario-index && pnpm run check:scenario-evidence && pnpm run check:csrf-origin-gate && pnpm run check:rate-limit-coverage && pnpm run test:boundaries",
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "pnpm run check:static && pnpm run test"

@@ -6,6 +6,7 @@
 // never reaches the domain. ALL malformed-input causes collapse to ONE generic 400 (content type, size, JSON
 // shape, unknown key, invalid reason — no malformed-cause oracle) and every denial to ONE generic 403. The
 // response carries ONLY the four approved fields; the reason is never echoed anywhere. No cache, no redirect.
+import { rateLimitedResponse } from '../companies/companies-http.js';
 import { isJsonContentType, genericErrorBody } from '../webhooks/http.js';
 import { readLimitedRawBody, type RawBodyRequest } from '../webhooks/raw-body.js';
 import { validateAdminReason } from '@acbp/contracts';
@@ -53,6 +54,10 @@ export function toAdminReadResponse(result: AdminRequestResult): Response {
       // EXACTLY the four approved fields (CDR-019 §16) — no accountId, actor ids, reason echo, profile,
       // member, provisioning or audit data.
       return jsonResponse(200, { companyId: result.company.companyId, status: result.company.status, creationMode: result.company.creationMode, createdAt: result.company.createdAt });
+    case 'rate_limited':
+      // CDR-008 section 8's request ceiling (ACBP-P7-013; CDR-082). Shared helper so every surface throttles
+      // identically — same status, same opaque body, same Retry-After.
+      return rateLimitedResponse(result.retryAfterSeconds);
     case 'invalid_reason':
       return jsonResponse(400, genericErrorBody(400));
     case 'forbidden':

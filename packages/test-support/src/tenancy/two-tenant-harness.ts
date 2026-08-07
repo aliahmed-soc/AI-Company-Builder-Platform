@@ -70,7 +70,7 @@ export const ALL_TABLES = [
   // ledger (CDR-073 §1-G9) disappears. It is not reachable from application code — the app role is granted only
   // SELECT and INSERT on usage_events (0017:70), never DELETE — so it fires for a migration, a superuser, or a
   // cascade from an account/company deletion (0017:46-47), not for anything the product does.
-  'usage_corrections',
+  'usage_corrections', 'api_rate_limit_buckets',
   'account_usage_rollups',
   'usage_events',
   'planning_run_inputs', 'planning_runs', 'task_review_flags',

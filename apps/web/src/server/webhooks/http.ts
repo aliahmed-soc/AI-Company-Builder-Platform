@@ -40,6 +40,11 @@ export function genericErrorBody(status: number): { readonly error: string } {
   if (status === 415) return { error: 'unsupported_media_type' };
   if (status === 400) return { error: 'bad_request' };
   if (status === 405) return { error: 'method_not_allowed' };
+  // ACBP-P7-013. Without this line a throttled response would carry `internal_error`, which is not merely untidy:
+  // it tells a caller their request FAILED when it was REFUSED, and the correct client behaviour differs (wait
+  // and retry, versus do not retry). The name says no more than the 429 status already does — no limit value,
+  // no remaining balance, no scope.
+  if (status === 429) return { error: 'rate_limited' };
   return { error: 'internal_error' };
 }
 

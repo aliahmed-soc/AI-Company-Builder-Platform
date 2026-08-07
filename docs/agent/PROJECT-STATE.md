@@ -67,6 +67,58 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **ACBP-P7-013 HTTP rate limiting — BUILT AND WIRED, NOT OWNER-ACCEPTED** (CDR-082; NFR-010; CDR-008 §8;
+  ADR-003's beta launch condition). Branch `p7-013-http-rate-limiting`, draft PR **#79**, commit `b20b036`,
+  migration **0055**. Ledger: `P7-013-REVIEW-COVERAGE.md`.
+  - **RAISED BY ACBP-P7-007** (CDR-080 §4), which ruled NFR-010's absent ASVS items into separate tickets rather
+    than building them inside a verification pass. **P7-007 is still unmerged** and edits the same two NFR-010
+    rows and the same plan line — whichever merges second resolves that conflict. Recorded in CDR-082 §7.
+  - **THE FINDING THAT MADE IT SMALL: nothing here was undecided.** CDR-008 §8 (Accepted **2026-07-18**) ruled
+    the values — per-session 60/min sustained, burst 120; per-account 300/min — and named **ACBP-P6-010** as its
+    consumer. P6-010 implemented the SIXTH layer (hard cost caps) and left the FIRST. The figures sat accepted
+    and unimplemented for nineteen days. `USAGE-AND-BILLING-ARCHITECTURE.md` §3 had likewise already ruled the
+    placement — *"api layer (per session/account)"* — which settles middleware-vs-route-vs-edge AND the key.
+    **This ticket invents no number and chooses no location.** What was missing was not a decision.
+  - **SCOPE ESTABLISHED, NOT ASSUMED.** (a) Clerk covers the auth surface and ONLY it — sign-in/sign-up are
+    Clerk-HOSTED components, so credentials never reach a route here; all 22 API routes had no bound at all.
+    (b) **There is no deployment configuration in this repository at all** — no vercel.json, render.yaml,
+    Dockerfile, fly.toml, terraform, and no `middleware.ts` — so an edge answer is UNBUILDABLE here and is
+    recorded as a constraint (CDR-082 §1.4) rather than proposed. (c) State is PostgreSQL, because a per-process
+    counter is not a limit under more than one instance and the topology is unknown. (d) Keyed on the
+    server-verified session and account, **never IP**: with no trusted proxy an `x-forwarded-for` limit is
+    evadable AND lets an attacker spend a VICTIM's bucket — a protection turned into a targeted DoS.
+  - **IT IS WIRED, WHICH IS THE WHOLE POINT.** The session ceiling is consumed in `verified-identity.ts` — the
+    chokepoint all five protected surfaces call — positioned BEFORE `getBackendUser`, which is a Clerk Backend
+    API network call on every protected request; the account ceiling is consumed in the request modules at the
+    first point the account id exists. `tools/check-rate-limit-coverage.mjs` (in `check:static`) fails the build
+    if a handler stops reaching it, walking imports TRANSITIVELY rather than matching names, and failing on
+    zero-handlers-found and on a stale exemption. Both limiter dependencies are **REQUIRED, never defaulted to
+    allow** — an optional permissive port is the stop-port defect P6-007 deleted (CDR-072 §1-G1).
+  - **THE DECISION HAPPENS INSIDE THE ROW LOCK** — one `INSERT … ON CONFLICT DO UPDATE … WHERE`. A
+    read-then-write pair is a lost-update race in which two concurrent requests both spend the last token: the
+    exact defect this control exists to prevent, reintroduced inside its own implementation. The pure token
+    bucket in `@acbp/contracts` is the SPECIFICATION and the SQL is a second implementation; a real-PostgreSQL
+    DIFFERENTIAL suite replays the specification's own cases through the database so the two cannot drift.
+  - **I SHIPPED THE DEFECT THIS TICKET WARNS ABOUT, AND CAUGHT IT IN MY OWN PROSE.** A canon correction I wrote
+    claimed the ACCOUNT ceiling was enforced when only the SESSION half was wired — the reachable-but-unwired
+    shape of P6-010's `caps`, written by the author of the §2 section warning against it. Fixed by WIRING the
+    account half, not by softening the sentence. Five further findings, all mine against my own work, in
+    `P7-013-REVIEW-COVERAGE.md` §2 — including `genericErrorBody(429)` returning `internal_error`, which told a
+    throttled caller their request FAILED when it was REFUSED, implying the opposite client behaviour.
+  - **THE FINDING THAT OPENED THE TICKET WAS OVERSTATED.** The plan's Authentication row names *credential
+    stuffing*, and that surface IS rate limited — by Clerk, because the credential surface is Clerk-hosted. The
+    defect is a missing ATTRIBUTION, not a missing control, and correcting it to "absent" would have replaced one
+    wrong sentence with another. **A second row made the same claim and the brief did not name it** —
+    `REQUIREMENT-TRACEABILITY`'s **ACC-001** — found by sweeping the defect CLASS rather than the named instance.
+  - **The mutation probe is PRESERVED as a reproducible table**, unlike P7-002's: 4 mutations, **2 / 1 / 1 / 11**
+    of 16 cases red, baseline restored 16/16 with zero markers resident. The static checker was probed too.
+  - **NOT CLOSED, and none of these is an engineering gap I may close alone:** CSRF protection and security
+    headers/CSP (NFR-010's other two items — CDR-082 §8.2/§8.3); the pen review (external vendor, General MVP
+    gate); **unauthenticated pre-session traffic, which nothing in this repository bounds** and which needs the
+    deployment edge §1.4 established does not exist (§8.1, OWNER); `USAGE_LIMIT_EXCEEDED` declared with zero
+    usages, so a spend refusal and a rate refusal are indistinguishable (§8.4, pre-existing); and the final
+    values (**AOQ-14 still open**). Ticket Done / PR ready / merge are owner gates and none has been taken.
+
 - **ACBP-P7-014 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
   ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate` — **the branch name keeps the
   old number and the ticket is ACBP-P7-014**; see the collision note below. **No migration**, no schema, no

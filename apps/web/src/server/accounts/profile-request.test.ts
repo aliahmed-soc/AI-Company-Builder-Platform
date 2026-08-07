@@ -11,6 +11,10 @@ function identityDeps(resolution: InternalUserReconciliation): ProfileRequestDep
   return {
     identity: {
       getUserId: () => Promise.resolve('clerk_1'),
+      // ACBP-P7-013: both REQUIRED, never defaulted — a limiter that defaults to allowed is the
+      // P6-007 stop-port defect (CDR-072 section 1-G1). A test that wants to be admitted says so.
+      getSessionId: () => Promise.resolve('sess_test'),
+      checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const),
       getBackendUser: () =>
         Promise.resolve({
           id: 'clerk_1',
@@ -27,6 +31,9 @@ function identityDeps(resolution: InternalUserReconciliation): ProfileRequestDep
 function fakeAccounts(overrides: Partial<AccountOps> = {}): { ops: AccountOps; calls: { ensured: string[]; updated: { userId: string; input: ProfileUpdateInput }[] } } {
   const calls = { ensured: [] as string[], updated: [] as { userId: string; input: ProfileUpdateInput }[] };
   const ops: AccountOps = {
+    // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-082 section 2).
+    checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
+
     ensurePersonalAccount: (userId: string): Promise<ProvisionResult> => {
       calls.ensured.push(userId);
       return Promise.resolve({ accountId: 'acc_1', created: true });
@@ -44,7 +51,7 @@ function fakeAccounts(overrides: Partial<AccountOps> = {}): { ops: AccountOps; c
 describe('getAccountProfileForRequest', () => {
   test('unauthenticated request → unauthenticated (no account touched)', async () => {
     const { ops, calls } = fakeAccounts();
-    const r = await getAccountProfileForRequest({ identity: { identity: { getUserId: () => Promise.resolve(null), getBackendUser: () => Promise.reject(new Error('unused')) } }, accounts: ops });
+    const r = await getAccountProfileForRequest({ identity: { identity: { getUserId: () => Promise.resolve(null), getSessionId: () => Promise.resolve('sess_test'), checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const), getBackendUser: () => Promise.reject(new Error('unused')) } }, accounts: ops });
     expect(r.status).toBe('unauthenticated');
     expect(calls.ensured).toEqual([]);
   });
@@ -107,7 +114,7 @@ describe('updateAccountProfileForRequest', () => {
 
   test('unauthenticated update → unauthenticated (no write)', async () => {
     const { ops, calls } = fakeAccounts();
-    const r = await updateAccountProfileForRequest({ displayName: 'X' }, { identity: { identity: { getUserId: () => Promise.resolve(null), getBackendUser: () => Promise.reject(new Error('unused')) } }, accounts: ops });
+    const r = await updateAccountProfileForRequest({ displayName: 'X' }, { identity: { identity: { getUserId: () => Promise.resolve(null), getSessionId: () => Promise.resolve('sess_test'), checkSessionLimit: () => Promise.resolve({ kind: 'allowed' } as const), getBackendUser: () => Promise.reject(new Error('unused')) } }, accounts: ops });
     expect(r.status).toBe('unauthenticated');
     expect(calls.updated).toEqual([]);
   });

@@ -16,6 +16,8 @@ import type { InternalUserReconciliation } from '@acbp/core';
 export type InternalUserForRequest =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
+  /** CDR-008 section 8's request ceiling refused this call (ACBP-P7-013; CDR-082; NFR-010). */
+  | { readonly status: 'rate_limited'; readonly retryAfterSeconds: number }
   | { readonly status: 'session_unavailable' }
   | InternalUserReconciliation;
 
@@ -30,6 +32,7 @@ export async function resolveInternalUserForRequest(deps: ResolveInternalUserDep
   const identity = await resolveVerifiedIdentity(deps.identity);
   if (identity.status === 'unauthenticated') return { status: 'unauthenticated' };
   if (identity.status === 'email_unverified') return { status: 'email_unverified' };
+  if (identity.status === 'rate_limited') return { status: 'rate_limited', retryAfterSeconds: identity.retryAfterSeconds };
   if (identity.status === 'unavailable') return { status: 'session_unavailable' };
 
   // The ONLY input to the lookup is the server-verified provider user id — never a request header.
