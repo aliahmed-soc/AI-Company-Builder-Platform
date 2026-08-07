@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **1 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **13 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **2 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **12 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **15**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **14**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -38,7 +38,7 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 12 | Partial completion (multi-step run) | unmeasured | `database_state` | resume from checkpoint — a killed run continues rather than restarting | a run killed mid-sequence, then resumed against the real checkpoint rows | runJobStep |
 | 13 | Usage-recording failure | unmeasured | `return_value_only` | metered work BLOCKS — the call aborts and the output is withheld | a `recordUsage` dependency that rejects | callModel |
 | 14 | Audit-event failure | unmeasured | `database_state` | the action is BLOCKED and rolled back — no job row survives an audit-write failure | the documented `auditWriter` test seam, substituted with one that rejects | enqueueJob |
-| 15 | Emergency stop during execution | unmeasured | `recorded_row` | the next tool call is blocked at the dispatcher and the refusal is RECORDED | a live stop activated between calls, then a real dispatch attempt | dispatchToolCall |
+| 15 | Emergency stop during execution | **MEASURED** | `recorded_row` | the next tool call is blocked at the dispatcher and the refusal is RECORDED | a live stop activated between calls, then a real dispatch attempt | dispatchToolCall |
 | 16 | Company pause during execution | unmeasured | `database_state` | a paused company cannot START new autonomous work — refused before the claim | a company moved to `paused`, then a real attempt to start a run | enqueueJob |
 
 ## Per row: what proves it, and what it does not prove
@@ -166,12 +166,12 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** The row's "low-risk queued with alert" branch — every test asserts a hard rollback and nothing exercises a degraded queue-and-alert path — nor its "Audit writes idempotent" note. The high-risk fail-closed clause is covered at roughly 25 entry points across seventeen subsystems.
 - **Verification note:** CORRECTED IN SLICE 1, AND THIS WAS THE EXPENSIVE ERROR: CDR-084 provisionally called this row ABSENT. It is one of the best-covered rows in the repository. The cited test lives in the SAME FILE the CDR cited as evidence for row 5. Building "audit failure blocks the operation" would have rebuilt mature, deliberately designed work.
 
-### 15. Emergency stop during execution — unmeasured
+### 15. Emergency stop during execution — **MEASURED**
 
 - **Test:** `packages/core/src/tools/dispatcher.integration.test.ts`
   - "a REAL account-wide stop refuses the call"
 - **Mutation that should redden it:** Drop the `account_wide` case from `evaluateStops`, so an active account-wide stop no longer covers the dispatched call.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31129196873`
 - **Does not prove:** Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — so "execution halts" is proven for five of seven, not seven. The "in-flight call finishes/aborts safely" clause shares row 16's problem below. The launch-gate-8 ≤5s window now IS measured across the production `activateStop` use case (slice 5), but for the `company` scope only; the per-scope matrix beside it still times a raw INSERT and therefore still measures transaction visibility rather than activation.
 - **Verification note:** Verified slice 1. Slice 5 closed the half this field previously recorded as excluded — the ≤5s measurement no longer skips the production activation path.
 

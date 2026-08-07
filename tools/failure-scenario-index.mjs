@@ -50,7 +50,7 @@ export const STATUSES = Object.freeze([
  * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
  * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
  */
-export const MAX_UNPROVEN = 15;
+export const MAX_UNPROVEN = 14;
 
 /**
  * One row per matrix row.
@@ -313,14 +313,20 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 15,
     failure: 'Emergency stop during execution',
     consequence: 'the next tool call is blocked at the dispatcher and the refusal is RECORDED',
-    status: 'unmeasured',
+    // MEASURED in slice 6, run 31129196873. NINE tests went red and EVERY ONE of them depends on `account_wide`:
+    // this row's test, the matrix's own account_wide case, the hold/pause/audit/evidence group that seeds an
+    // account-wide stop as its fixture, and three contract units. The FOUR sibling scopes — task, worker,
+    // company, external_actions_only — all stayed GREEN, as did `MISSES — another ACCOUNT's account-wide stop
+    // does not halt this one`. That pattern is what makes the run evidence about THIS scope rather than about
+    // stops in general; a mutation that reddened every scope would prove only that stops exist.
+    status: 'measured',
     anchor: 'recorded_row',
     injection: 'a live stop activated between calls, then a real dispatch attempt',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'a REAL account-wide stop refuses the call',
     entryPoint: 'dispatchToolCall',
     mutation: 'Drop the `account_wide` case from `evaluateStops`, so an active account-wide stop no longer covers the dispatched call.',
-    mutationRunId: '',
+    mutationRunId: '31129196873',
     doesNotProve:
       'Only FIVE of the seven stop scopes are enforceable — `capability` and `integration` are inert (CDR-072) — so "execution halts" is proven for five of seven, not seven. The "in-flight call finishes/aborts safely" clause shares row 16\'s problem below. The launch-gate-8 ≤5s window now IS measured across the production `activateStop` use case (slice 5), but for the `company` scope only; the per-scope matrix beside it still times a raw INSERT and therefore still measures transaction visibility rather than activation.',
     notes:
