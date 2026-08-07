@@ -67,6 +67,46 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — ACBP-P7-009 end-to-end MVP suite (headless half).** Squash **`e1bbc1c`**, PR **#83**, branch
+  `p7-009-e2e-mvp-suite`, no migration. Exact-head CI
+  [`31190616787`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31190616787) on
+  `a5706be`: **276 files / 4038 tests, zero skips**; exact-main
+  [`31191559654`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31191559654) on
+  `e1bbc1c`: the same 276 / 4038, zero skips. Both anchored against a local run of the same 4038 with zero skipped,
+  so the CI total is not larger than what ran here. **The backlog row is NOT `Done`** — see below.
+  - **WHAT IT PROVES THAT THE SLICE SUITES DID NOT.** One continuous journey for ONE company across eleven steps —
+    account, interview, understanding, strategy, roadmap, task planning, approval, execution, artifact, revision —
+    where each stage CONSUMES the previous stage's real output rather than a fixture shaped like it. A stage that
+    silently stops feeding the next one now fails here while every slice suite stays green. The load-bearing case is
+    that **the task that executes is the task planning produced**, resolved by id out of the plan rather than
+    created fresh in the executing step — the shortcut that would have made the whole loop vacuous.
+  - **THE JOURNEY LIVES IN `packages/test-support`, NOT IN THE TEST.** `runMvpLoopJourney` takes injected ops, so the
+    same journey drives both the CI integration test and a runnable demo (`pnpm run demo:mvp-loop`). A journey that
+    exists only inside a test cannot be run by a human against a real database, which is why the slice demos exist.
+  - **THE CONTINUITY WALK IS FALSIFIABLE AND WAS PROVEN SO.** It re-reads the finished company through a second,
+    unrelated account to confirm the loop's data does not cross the tenant boundary. That assertion was MUTATED to
+    point at the loop's own account, where it must fail, **and it did** — it is not a check that passes because
+    nothing is there.
+  - **THE ACCEPTANCE CRITERION IS HALF MET, WHICH IS WHY THE ROW IS NOT `Done`.** This is the HEADLESS half: it
+    drives use cases directly, so it proves the domain composes and proves **nothing** about the web delivery
+    boundary, the UI, or a browser. There is no rendered interface to drive and building one is an owner gate, so
+    the other half is *unbuildable here* rather than skipped for convenience.
+  - **ONE DEFERRED ITEM, NAMED RATHER THAN DROPPED** (CDR-085): the planned `assertNoSecretsInAuditPayloads` sweep is
+    absent because its `SweepableClient` parameter is structurally looser than the `DatabaseClient` this journey
+    holds and no existing caller bridges the two. Changing a shared test helper's contract does not belong inside
+    this ticket.
+
+- **DONE — ACBP-P7-013 HTTP rate limiting.** Squash **`c9c3aa1`**, PR **#79**, branch `p7-013-http-rate-limiting`,
+  migration **0055**. Exact-head CI
+  [`31188483460`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31188483460) on
+  `2f46a53`: **275 files / 4037 tests, zero skips**; exact-main
+  [`31189399856`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31189399856) on
+  `c9c3aa1`: the same 275 / 4037, zero skips. Both anchored against a local run of the same 4037 with zero skipped.
+  Merged THIRD of four, after `main` was merged into the branch and five conflicts resolved (`package.json`,
+  `PROJECT-STATE.md`, `BACKLOG.csv`, and the two NFR-010 rows) — none in application code, because this ticket and
+  its two siblings touch different layers. **The backlog row is NOT `Done`** (owner gate); **AOQ-14 remains open**,
+  so the shipped values are CDR-008 §8's accepted figures and not final ones.
+
 - **ACBP-P7-013 HTTP rate limiting — BUILT AND WIRED, NOT OWNER-ACCEPTED** (CDR-082; NFR-010; CDR-008 §8;
   ADR-003's beta launch condition). Branch `p7-013-http-rate-limiting`, draft PR **#79**, commit `b20b036`,
   migration **0055**. Ledger: `P7-013-REVIEW-COVERAGE.md`.
@@ -118,6 +158,58 @@ ticket without a DONE line above it is genuinely in flight._
     deployment edge §1.4 established does not exist (§8.1, OWNER); `USAGE_LIMIT_EXCEEDED` declared with zero
     usages, so a spend refusal and a rate refusal are indistinguishable (§8.4, pre-existing); and the final
     values (**AOQ-14 still open**). Ticket Done / PR ready / merge are owner gates and none has been taken.
+
+- **DONE — ACBP-P7-015 security response headers and Content Security Policy.** Squash **`53a35a6`**, PR **#82**,
+  branch `p7-015-security-headers-on-main`, no migration. Exact-head CI
+  [`31186016007`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31186016007) on
+  `2398cf8`: **273 files / 3992 tests, zero skips**; exact-main
+  [`31187092271`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31187092271) on
+  `53a35a6`: the same 273 / 3992, zero skips. Both anchored against a local run of the same 3992 with zero skipped.
+  **The backlog row is NOT `Done`** (owner gate). No working block was ever added for this ticket while it was in
+  flight, so this record is the whole of it.
+  - **WHAT SHIPPED.** Five enforced response headers plus a strict **report-only** CSP at `apps/web/src/proxy.ts`,
+    plus `poweredByHeader: false`. The boundary is the only place that covers pages and route handlers with ONE
+    implementation *and* covers responses the middleware generates itself — the `failClosed` 401, Clerk's sign-in
+    redirects, and now the CSRF 403 — which `next.config.ts` `headers()` can never reach, because those requests
+    never arrive at the routing layer that would apply them.
+  - **TWO INDEPENDENT REVIEWS RAN BEFORE ANY COMMIT AND CHANGED THE OUTCOME.** They agreed on five defects and the
+    most serious was a header **already shipped**: COOP, justified in four separate places by a claim about Clerk
+    this repository cannot check, whose fuller analysis pointed the other way — COOP on the callback page *causes*
+    the `window.opener` loss it was claimed to prevent. COOP is enforcing, so unlike the report-only CSP it cannot
+    be published then corrected. It was REMOVED and its absence is asserted (CDR-083 §6.2). They also showed the
+    first source guard guarded nothing (both sides of its comparison came from the same call) and that a claimed
+    TypeScript enforcement did not exist; both are now real and mutation-verified.
+  - **WHAT DELIBERATELY DID NOT SHIP, each with its deciding evidence rather than its intention:** HSTS (ADR-020
+    picks Render, but no deployment config, environment or domain exists, so the parameters cannot be chosen and
+    delivery cannot be verified — deferred to **ACBP-P7-006**); COOP (above); **CSP enforcement**, which needs a live
+    Clerk sign-in pass and is an owner gate; and **CSP report collection**, because no endpoint exists, so a
+    violation is visible in the browser console only. Claiming collection would have been false.
+  - **ONE THING HERE HAS NO EVIDENCE AND IS LABELLED AS SUCH:** `poweredByHeader: false` cannot be asserted by any
+    test in this repository, because CI never serves a response (CDR-083 §6.3).
+  - **THE MERGE WITH P7-014 WAS COMPOSED, NOT CHOSEN.** Both tickets rewrote the same function in `proxy.ts`, which
+    is why they were merged adjacently. Order is now webhook bypass → CSRF gate (before any session) → session proxy
+    with headers applied. **The CSRF 403 carries the headers**, which neither branch could decide alone: it is
+    exactly the middleware-generated response CDR-083 §2.4 argues the boundary exists for, and leaving it bare would
+    have made `security-headers.test.ts`'s *"the webhook path is the ONLY bypassed path"* true in letter and false in
+    substance, since that test defines bypassed as returning `undefined` and a 403 is a `Response`. Both static
+    guards were checked against the composition BEFORE the edit — `check-csrf-origin-gate.mjs`'s `denies` detector
+    tests for `403` and `forbidden`, both still present inside the wrapper call.
+
+- **DONE — ACBP-P7-014 CSRF protection for the web delivery boundary.** Squash **`0bad8ba`**, PR **#78**, branch
+  `p7-013-csrf-origin-gate` (the branch name keeps the old number; see the collision note below). No migration.
+  Exact-head CI
+  [`31143827343`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31143827343) on
+  `868dbec`: **271 files / 3958 tests, zero skips**; exact-main
+  [`31184196218`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31184196218) on
+  `0bad8ba`: the same 271 / 3958, zero skips. Both anchored against a local run of the same 3958 with zero skipped.
+  **The backlog row is NOT `Done`** (owner gate).
+  - **⚠️ A DEFECT IN THE MERGE ITSELF, RECORDED BECAUSE IT IS ON `main` AND CANNOT BE UNDONE WITHOUT AUTHORISATION.**
+    This squash commit carries a **`Co-authored-by: aliahmed-soc` trailer**, which CLAUDE.md forbids. The cause was
+    procedural, not the shell wrapper: `--body` was omitted, so **GitHub generated the default squash body** — the
+    concatenated branch commits *plus* a co-author trailer derived from their authors. The three later merges
+    (`53a35a6`, `c9c3aa1`, `e1bbc1c`) each passed an explicit `--body-file` and are all clean, which confirms the
+    diagnosis. Removing the trailer now would mean rewriting a pushed `main`, which is an owner gate and has NOT
+    been taken. **Anyone squash-merging here must pass `--subject` AND `--body-file`.**
 
 - **ACBP-P7-014 CSRF protection for the web delivery boundary — BUILT, TICKET NOT DONE** (CDR-081; NFR-010;
   ADR-022/ADR-023; origin: **CDR-080 §4**). Branch `p7-013-csrf-origin-gate` — **the branch name keeps the
@@ -215,6 +307,18 @@ ticket without a DONE line above it is genuinely in flight._
     `31117906801` on `1357508` said `cancelled` and was **VOID, not a regression** (`steps=0`, no runner
     ever assigned); the green run on the same code plus the review fixes is what confirms that reading.
   - **Ticket Done / PR ready / merge are OWNER GATES and none has been taken.**
+
+- **DONE — ACBP-P7-008 failure-injection pass.** Squash **`7730d84`**, PR **#81**, branch
+  `p7-008-failure-injection-pass`, no migration. Exact-head CI
+  [`31141709340`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31141709340) on
+  `76facb5`: **268 files / 3874 tests, zero skips**; exact-main
+  [`31142383986`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31142383986) on
+  `7730d84`: the same 268 / 3874, zero skips. The working block below described this as *"IN FLIGHT — draft PR #81"*
+  and was left stale to avoid a four-way conflict while the other tickets were merging; this line supersedes it.
+  **The backlog row is NOT `Done`, and that is a substantive refusal rather than an unopened gate:** the acceptance
+  criterion is *"16-scenario matrix green"*, and twelve of sixteen scenario rows remain unmeasured while two have no
+  injectable subject in this system at all (CDR-084 §0.1). Marking it `Done` would make the backlog assert something
+  the evidence contradicts — the exact artefact class this ticket was built to remove.
 
 - **ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
   Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
@@ -1989,6 +2093,26 @@ decision, not an engineering gap:
 - Also open: **§9.2** the account status vocabulary (the account half was deferred by the owner's ruling), and
   **§9.3** worker-body enforcement — `startRun` closes run *creation*, but a body invoked with a stale `runId`
   still reaches the network and the metered gateway before its first database statement.
+
+**CORRECTED AGAIN 2026-08-07 — four more tickets have merged and the list below is history from here down.** On the
+owner's explicit authorisation, **#78 → #82 → #79 → #83** were merged one at a time, each with a fresh exact-head run
+and a confirmed exact-main run between merges: **P7-014 CSRF** (`0bad8ba`), **P7-015 headers/CSP** (`53a35a6`),
+**P7-013 rate limiting** (`c9c3aa1`), **P7-009 MVP suite** (`e1bbc1c`). `main` finished green at **`e1bbc1c`** —
+[`31191559654`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31191559654), **276 files /
+4038 tests, zero skips**. Each branch tip's tree was verified **byte-identical** to `main` after its squash, which is
+the right check for a squash — ancestry is not. See the DONE lines at the top of Active for each.
+
+**NFR-010's three ASVS baseline items are now all built** — rate limiting, CSRF, security headers/CSP, one ticket
+each. **The requirement is still not fully covered**, and the remainder is not an engineering gap a session may
+close: the **pen review** has not happened (external vendor, General MVP gate); **unauthenticated pre-session
+traffic** is bounded by nothing, because bounding it needs a deployment edge this repository has no configuration for;
+and P7-015 shipped neither HSTS nor COOP, while its report-only CSP collects nothing for want of an endpoint.
+
+**PRs #62 (P5-012) and #63 (P5-014) were closed** on the owner's ruling, as superseded rather than as work lost:
+**zero** of the paths either branch touches is absent from `main`, checked path by path, and both features are
+exercised there. **#10** (P1-004's last-owner revoke race) is still open and still untouched since Phase 1.
+
+**No backlog row was set to `Done` in that sequence, and no branch was deleted** — both remain owner gates.
 
 **Remaining Phase 7 work that is backend-only** (the UI direction is still unset, so every user-facing row stays
 blocked):
