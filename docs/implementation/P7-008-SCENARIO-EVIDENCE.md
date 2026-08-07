@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **3 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **11 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **4 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **10 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **13**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **12**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -37,7 +37,7 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 11 | Duplicate delivery (job/event) | unmeasured | `database_state` | the duplicate is suppressed AND the suppression is recorded | the production enqueue path is called TWICE with the same idempotency key | enqueueJob |
 | 12 | Partial completion (multi-step run) | unmeasured | `database_state` | resume from checkpoint — a killed run continues rather than restarting | a run killed mid-sequence, then resumed against the real checkpoint rows | runJobStep |
 | 13 | Usage-recording failure | unmeasured | `return_value_only` | metered work BLOCKS — the call aborts and the output is withheld | a `recordUsage` dependency that rejects | callModel |
-| 14 | Audit-event failure | unmeasured | `database_state` | the action is BLOCKED and rolled back — no job row survives an audit-write failure | the documented `auditWriter` test seam, substituted with one that rejects | enqueueJob |
+| 14 | Audit-event failure | **MEASURED** | `database_state` | the action is BLOCKED and rolled back — no job row survives an audit-write failure | the documented `auditWriter` test seam, substituted with one that rejects | enqueueJob |
 | 15 | Emergency stop during execution | **MEASURED** | `recorded_row` | the next tool call is blocked at the dispatcher and the refusal is RECORDED | a live stop activated between calls, then a real dispatch attempt | dispatchToolCall |
 | 16 | Company pause during execution | **MEASURED** | `database_state` | a paused company cannot START new autonomous work — refused before the claim | a company moved to `paused`, then a real attempt to start a run | enqueueJob |
 
@@ -157,12 +157,12 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** That the ledger is reconcilable afterwards, or the row's "Compensating entries". Withholding is asserted on the returned result, not on a persisted row — the fail-closed decision is in-process, so there is no durable artefact to read back.
 - **Verification note:** Verified slice 1 — genuine injection, and the USAGE-001 fail-closed anchor.
 
-### 14. Audit-event failure — unmeasured
+### 14. Audit-event failure — **MEASURED**
 
 - **Test:** `packages/core/src/jobs/enqueue-job.integration.test.ts`
   - "audit-or-nothing: when the audit write fails, NO job row survives (ADR-015)"
 - **Mutation that should redden it:** Catch the `writeAuditEvent` rejection inside the transaction in `enqueueJob`, so the job row commits without its audit event.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31140772210`
 - **Does not prove:** The row's "low-risk queued with alert" branch — every test asserts a hard rollback and nothing exercises a degraded queue-and-alert path — nor its "Audit writes idempotent" note. The high-risk fail-closed clause is covered at roughly 25 entry points across seventeen subsystems.
 - **Verification note:** CORRECTED IN SLICE 1, AND THIS WAS THE EXPENSIVE ERROR: CDR-084 provisionally called this row ABSENT. It is one of the best-covered rows in the repository. The cited test lives in the SAME FILE the CDR cited as evidence for row 5. Building "audit failure blocks the operation" would have rebuilt mature, deliberately designed work.
 

@@ -50,7 +50,7 @@ export const STATUSES = Object.freeze([
  * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
  * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
  */
-export const MAX_UNPROVEN = 13;
+export const MAX_UNPROVEN = 12;
 
 /**
  * One row per matrix row.
@@ -296,14 +296,19 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 14,
     failure: 'Audit-event failure',
     consequence: 'the action is BLOCKED and rolled back — no job row survives an audit-write failure',
-    status: 'unmeasured',
+    // MEASURED in slice 6, run 31140772210: EXACTLY ONE test failed of 3874, this row's own. The swallow was a
+    // try/catch around the audit call inside the transaction, so the job row committed without its audit event —
+    // which is the state ADR-015 exists to make impossible, produced deliberately and observed at the database.
+    // The fault enters through `auditWriter`, the seam the TEST supplies, which is why this row counts as
+    // genuinely INJECTED under CDR-084 §1 rather than as an already-failed row written by hand.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'the documented `auditWriter` test seam, substituted with one that rejects',
     file: 'packages/core/src/jobs/enqueue-job.integration.test.ts',
     testTitle: 'audit-or-nothing: when the audit write fails, NO job row survives (ADR-015)',
     entryPoint: 'enqueueJob',
     mutation: 'Catch the `writeAuditEvent` rejection inside the transaction in `enqueueJob`, so the job row commits without its audit event.',
-    mutationRunId: '',
+    mutationRunId: '31140772210',
     doesNotProve:
       'The row\'s "low-risk queued with alert" branch — every test asserts a hard rollback and nothing exercises a degraded queue-and-alert path — nor its "Audit writes idempotent" note. The high-risk fail-closed clause is covered at roughly 25 entry points across seventeen subsystems.',
     notes:
