@@ -2434,8 +2434,16 @@ blocked):
   P6-011's suppression counter from "it fired" into "it would have".
 
 **Three stale draft PRs are still open and unaddressed**, none of them Phase 7: **#63** (P5-012), **#62**
-(P5-014), and **#10** (P1-004's last-owner revoke race, open since Phase 1). **ACBP-P3-006** is `Planned`,
-unblocked, and has never been picked up.
+(P5-014), and **#10** (P1-004's last-owner revoke race, open since Phase 1).
+
+**ACBP-P3-006 is `Planned` and HALF-BLOCKED — it was described here as "unblocked" and that was wrong.** Its backlog
+Dependencies are `ACBP-P2-011;ACBP-P3-002`; P3-002 is Done but **P2-011 is `Planned` and owner-gated** (live paid model
+account), and CDR-035 §5 had already recorded the gate from the other side ("the distinctness EVAL area (P3-006, gated
+on P2-011)"). The line above in this same file grouped "P2-011/P3-006/P7-012" as gated on the live-model eval, so the
+file contradicted itself; the accepted CDR governs. Area 4's gate (CDR-002 §10) is two clauses: the seeded-near-
+duplicate half is deterministic and model-free (CDR-035 §1) and is now **built and scored** under CDR-086 (`pnpm
+eval:area-4`); the ≥90% rubric-distinct-triples half and the baseline run need real generations from both pinned
+models and **remain blocked on P2-011**. P3-006 is therefore NOT Done and the ADR-019 §13 gate for area 4 is NOT met.
 
 ## Local integration environment (learned 2026-07-24)
 Local real-PostgreSQL runs ARE possible on this machine, contrary to the older "unrunnable" note below — two

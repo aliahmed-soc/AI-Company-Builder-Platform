@@ -38,3 +38,26 @@ export type { SliceFOps, SliceFJourneyDeps, SliceFDispatchResult, SliceFGateway,
 // same rows only through a fake model gateway; these do not, which is why they are separate.
 export { seedForeignRun, seedForeignArtifact, seedForeignApprovalRequest, seedForeignRoadmap } from './tenancy/isolation-fixtures.js';
 export type { ForeignFixtureParams, SeededRun, SeededArtifact, SeededApprovalRequest, SeededRoadmap } from './tenancy/isolation-fixtures.js';
+// ACBP-P3-006 / CDR-086 — evaluation area 4 (three-option strategy generation), MODEL-FREE half only: the versioned
+// seeded dataset, the CDR-002 §10 thresholds, the scorer and the report. Shared by `pnpm eval:area-4` and the CI
+// suite, so the command and the test can never measure different things. The rubric half stays deferred (ACBP-P2-011).
+export {
+  assertEvalDatasetWellFormed,
+  scoreStrategyDistinctness,
+  AREA_4_DEFERRED_METRICS,
+  AREA_4_SEEDED_REJECTION_THRESHOLD,
+  STRATEGY_DISTINCTNESS_CASES,
+  STRATEGY_EVAL_DATASET_VERSION,
+} from './eval/strategy-distinctness-eval.js';
+export type {
+  DeferredEvalMetric,
+  DistinctnessChecker,
+  DistinctnessEvalCase,
+  EvalAreaReport,
+  EvalCaseOutcome,
+  EvalMetricResult,
+  EvalThresholdSpec,
+  EvalVerdict,
+  ScoreOptions,
+} from './eval/strategy-distinctness-eval.js';
+export { evalExitCode, renderStrategyDistinctnessReport } from './eval/strategy-distinctness-report.js';
