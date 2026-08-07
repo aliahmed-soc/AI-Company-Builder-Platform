@@ -272,8 +272,9 @@ export async function runWorkerStep(client: DatabaseClient, params: RunWorkerSte
         // A THROW IS NOT A ROLLBACK. Letting it propagate would undo the whole transaction, so a step that spent real
         // provider money and then failed would leave the counter untouched — and a caller retrying in a loop could
         // spend indefinitely without ever advancing toward the cap. The exception text is never surfaced or stored.
-        const failed = await finishAs(scope, runs, params.workerRunId, { outcome: 'failed', failureCategory: 'provider_error' }, 'step_failed', audit, options);
-        return failed.status === 'step_failed' || failed.status === 'not_running' ? failed : { status: 'not_found' };
+        // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: the throw propagates, so the whole transaction rolls
+        // back and no failed row survives.
+        throw new Error('probe: step failure propagates instead of being recorded');
       }
 
       // A step reporting nonsense costs NOTHING rather than a negative, NaN or overflowing spend — any of which would
