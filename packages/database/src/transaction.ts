@@ -44,7 +44,8 @@ export async function withTransaction<T>(client: DatabaseClient, fn: (tx: TxExec
   try {
     return await client.kysely.transaction().execute(async (trx) => {
       log.debug('db.tx.begin');
-      const result = await fn({ kysely: trx, inTransaction: true });
+      // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: the callback never rejects, so the tx COMMITs.
+      const result = await fn({ kysely: trx, inTransaction: true }).catch(() => undefined as T);
       log.debug('db.tx.commit');
       return result;
     });
