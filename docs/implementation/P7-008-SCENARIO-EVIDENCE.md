@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **11 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **3 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **14 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **0 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **5**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **2**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -29,9 +29,9 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 3 | Invalid structured output | **MEASURED** | `return_value_only` | `invalid_output` after bounded re-asks — the cap is enforced, not advisory | FakeModelProvider scripted to return unparseable output on every call | callModel |
 | 4 | Worker crash | **MEASURED** | `database_state` | run `running→failed(worker_lost)` after the heartbeat grace, read back from the database | a worker that stops heartbeating past the grace window, then the real reaper sweep | reclaimLostRuns |
 | 5 | Queue/job-store outage | absent | `none` | — | — | — |
-| 6 | Database outage | unmeasured | `database_state` | no partial writes — a transaction that fails midway leaves nothing behind | a throw inside `withTransaction` after a real statement has already executed | withTransaction |
-| 7 | Object-storage failure | unmeasured | `database_state` | artifact persist fails ⇒ task fails, and NO artifact row exists afterwards | InMemoryObjectStorage `dropNextPut()` — the dependency LIES, reporting success while storing nothing | persistArtifact |
-| 8 | Tool/API failure (future external) | unmeasured | `database_state` | a throwing step is recorded as a failure with a category — but NOT a distinguishable one | a worker step that throws, driven through the real runtime | runWorkerStep |
+| 6 | Database outage | **MEASURED** | `database_state` | no partial writes — a transaction that fails midway leaves nothing behind | a throw inside `withTransaction` after a real statement has already executed | withTransaction |
+| 7 | Object-storage failure | **MEASURED** | `database_state` | artifact persist fails ⇒ task fails, and NO artifact row exists afterwards | InMemoryObjectStorage `dropNextPut()` — the dependency LIES, reporting success while storing nothing | persistArtifact |
+| 8 | Tool/API failure (future external) | **MEASURED** | `database_state` | a throwing step is recorded as a failure with a category — but NOT a distinguishable one | a worker step that throws, driven through the real runtime | runWorkerStep |
 | 9 | Expired authorization (approval) | **MEASURED** | `database_state` | the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls` | a real human `approve` seeded with `expires_at` already in the past, then a real dispatch | dispatchToolCall |
 | 10 | Revoked integration | unbuildable | `none` | — | — | — |
 | 11 | Duplicate delivery (job/event) | **MEASURED** | `database_state` | the duplicate is suppressed AND the suppression is recorded | the production enqueue path is called TWICE with the same idempotency key | enqueueJob |
@@ -87,30 +87,30 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** ANYTHING — this is the matrix's one genuine absence, and it is absent twice over. All 27 tests in `enqueue-job.integration.test.ts` were read in slice 1: tenancy stamping, three redundant refusal layers, authz, immutability, state vocabulary and idempotency. None simulates store UNAVAILABILITY. Worse, the row's detection is "Enqueue/pickup errors" and THERE IS NO PICKUP IMPLEMENTATION — `dequeue\|claimJob\|pickup\|pollJobs\|nextJob\|reserveJob` match nothing; the only hit is an index comment in `migrations/0031_jobs.ts` describing a runner that does not exist. Injecting this needs a job-store seam that does not exist, which CDR-084 §7 item 2 raises as an owner decision: a fault hook reachable in production is a liability.
 - **Verification note:** Verified slice 1 — CONFIRMED absent, and the missing pickup path is a finding the CDR did not have.
 
-### 6. Database outage — unmeasured
+### 6. Database outage — **MEASURED**
 
 - **Test:** `packages/database/src/integration/database.integration.test.ts`
   - "transaction rolls back on failure and releases the connection"
 - **Mutation that should redden it:** Swallow the error inside withTransaction so it COMMITs instead of rolling back.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31220529856`
 - **Does not prove:** The row's "Platform read-only/unavailable" TRANSITION or its "Honest maintenance status". Nothing asserts a user-facing surface degrades when the database is down. `client.test.ts`'s `checkDatabaseHealth` case does inject a real ECONNREFUSED, but asserts a returned health object — not that any product path refuses work.
 - **Verification note:** CORRECTED IN SLICE 1: CDR-084 provisionally called this row ABSENT. Wrong. The no-partial-writes half is genuinely injected, here and in at least five other places (a rejected migration mid-sequence, a stop service that throws after its first write, a policy supersession that conflicts, a checkpoint step that writes then throws, a webhook user-mutation failure). Only the outage TRANSITION is uncovered.
 
-### 7. Object-storage failure — unmeasured
+### 7. Object-storage failure — **MEASURED**
 
 - **Test:** `packages/core/src/artifacts/persist.integration.test.ts`
   - "a storage write that REPORTS SUCCESS while storing nothing refuses, and writes no row"
 - **Mutation that should redden it:** Delete the `verifyPersistedObject` call in `persistArtifact` and trust `storage.head`, so a write that reports success while storing nothing is accepted.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31220565493`
 - **Does not prove:** The row's "Credit released" or its `task.failed` audit. Sibling cases cover a THROWING write and a TRUNCATED one, and that a retry after refusal ends with exactly one artifact.
 - **Verification note:** Verified slice 1 — the strongest real injection in the repository, and the only place that distinguishes a dependency that FAILS from one that LIES. The row count is read through the OWNER client, so RLS cannot fool it.
 
-### 8. Tool/API failure (future external) — unmeasured
+### 8. Tool/API failure (future external) — **MEASURED**
 
 - **Test:** `packages/core/src/workers/runtime.integration.test.ts`
   - "a THROWING step is recorded as a provider_error, not rolled back into nothing"
 - **Mutation that should redden it:** Wrap the body of `runWorkerStep` so a throwing step rolls its own transaction back instead of reaching `finishAs` with `provider_error`, leaving no failed row.
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31220599482`
 - **Does not prove:** THE ROW'S ACTUAL CLAIM. The row wants a tool call `failed` with a NORMALIZED CATEGORY distinguishing a tool fault from a provider fault, and requires idempotency keys for external classes. `runtime.ts` has a bare `catch {}` that finishes with `failureCategory: "provider_error"` unconditionally, so the two are indistinguishable. Fixing it needs a MIGRATION, not just code: `RUN_FAILURE_CATEGORIES` is a closed five-value set with no `tool_error`, mirrored by CHECK constraints on `task_runs` and `worker_runs` and pinned by a test asserting the constant and the CHECK are the same set. CDR-084 §7 item 5.
 - **Verification note:** Verified slice 1. CDR-059:103 named this row unserved for the same reason; the migration requirement is new.
 
