@@ -8,6 +8,25 @@ on:
   pull_request:
   push:
     branches: [main]
+  # MANUAL TRIGGER, added by ACBP-P7-008 because the repository has now been stopped by its absence TWICE in two
+  # days. ACBP-P7-007 could not run exact-main CI after its merge — GitHub created no run anywhere in the
+  # repository for over an hour — and recorded the gap in its own execution log: "the workflow has no manual
+  # trigger, so an Actions outage is unrecoverable rather than merely slow." ACBP-P7-008 then lost its mutation
+  # probe to the 2026-08-06 major Actions outage, in which webhook delivery was throttled to ~15% and NO run was
+  # ever created for its branch. A push that produces no run cannot be retried into existence; `gh workflow run`
+  # goes through the REST API instead of the webhook path, so it is a genuinely different route to the same
+  # checks.
+  #
+  # IT WORKED ON THE BRANCH THAT ADDED IT, WHICH I DID NOT EXPECT. The commit that introduced this said the
+  # opposite — that GitHub only offers `workflow_dispatch` for workflows on the DEFAULT branch, so it could not
+  # help until merged. Tested instead of assumed: `gh workflow run ci.yml --ref p7-008-failure-injection-pass`
+  # was accepted and created run **31128906516** on `2314ef7`, the first run this branch ever had, during the
+  # outage. The claim is corrected here rather than left standing, because a false sentence in a comment is the
+  # artefact class this repository keeps paying for.
+  #
+  # No new capability: the job is checks-only, holds `contents: read`, and uses no repository secrets, so running
+  # it by hand can change nothing. It only makes the same verification reachable when webhooks are not.
+  workflow_dispatch:
 
 # Cancel superseded runs for the same ref (saves resources; safe for checks-only CI).
 concurrency:
@@ -52,6 +71,13 @@ jobs:
       # action's official repository and replace both the SHA and the comment (see docs/CI.md).
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # ACBP-P7-007. `check:trust-critical-index` enforces that MAX_UNPROVEN never RISES by reading its value
+      # from origin/main — the thing that makes the word "ratchet" true rather than decorative. The default
+      # checkout is depth-1 and has no origin/main ref, so without this the check reports its baseline as
+      # unreadable and the no-rise rule silently does not run in the one place it matters. Depth 1 on a single
+      # branch keeps it cheap; the checker still says so out loud if the ref is missing rather than passing quietly.
+      - name: Fetch main (baseline for the trust-critical ratchet)
+        run: git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main || echo "no main ref — the ratchet baseline will report itself unreadable"
       - name: Enable Corepack (activates the pnpm version pinned in package.json "packageManager")
         run: corepack enable
       - name: Set up Node
@@ -63,6 +89,12 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: CI database preflight (fails if integration tests would silently skip)
         run: pnpm run ci:preflight
+      # ACBP-P7-007 (CDR-080 §8 slice 6). The secret scan also runs inside the aggregate gate below, so this is
+      # not extra coverage — it is a NAMED, LINKABLE check. Launch gate 12 wants "zero findings on secrets" as
+      # evidence, and a green line buried inside a step called "Aggregate gate" cannot be cited as that. It runs
+      # BEFORE the aggregate gate so a committed credential fails in seconds rather than after the full suite.
+      - name: Secret scan — zero findings (NFR-018; launch gate 12 evidence)
+        run: pnpm run check:secrets
       - name: Aggregate gate (typecheck, lint, secret scan, boundaries + regression, contracts, unit, real-PostgreSQL integration + migrations)
         run: pnpm run check
       # ACBP-P1-015 acceptance criterion ("Demo script passes E2E incl. live denial") and its verification

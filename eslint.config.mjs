@@ -14,6 +14,12 @@ export default tseslint.config(
       '**/build/**',
       '**/.next/**',
       '**/next-env.d.ts', // Next.js-generated, gitignored, and excluded from tsconfig (ACBP-P1-001).
+      // Agent-tool git worktrees: each is a full checkout of ANOTHER branch nested inside this one, so linting
+      // them reports that branch's diagnostics against this branch — and the volume exhausts the default V8 heap
+      // (ACBP-P7-007 hit 30,288 errors and an OOM with three worktrees present). Every other checker in
+      // `check:static` takes an explicit root list and never saw this; ESLint is the only one that walks from the
+      // repository root. CI checks out a bare tree, so it is unaffected either way.
+      '**/.claude/worktrees/**',
       'docs/**',
       'evidence/**',
       'tooling/**',
