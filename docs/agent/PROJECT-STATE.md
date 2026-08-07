@@ -348,9 +348,17 @@ ticket without a DONE line above it is genuinely in flight._
     wording. The blocker was a GitHub Actions outage (15:22 UTC 2026-08-06, webhooks ~15%) that created no run
     for this branch at all; the `workflow_dispatch` trigger added at `2314ef7` re-opened the route, and the
     claim in that commit that it could not help its own branch was tested and found FALSE.
-  - **A disposable branch `p7-008-mutation-probe` still exists**, head `6cf0d6f`, tree byte-identical to its
-    base `b42101b`. It carries no change anyone wants; it exists so five run ids resolve to a readable diff.
-    Deleting it is an owner action.
+  - **BOTH BRANCHES WERE DELETED on the owner's instruction (2026-08-07)** — `p7-008-failure-injection-pass`
+    (was `76facb5`) and the disposable probe branch `p7-008-mutation-probe` (was `6cf0d6f`). Neither held
+    content that existed nowhere else, and that was checked rather than assumed: `git diff 76facb5 7730d84` is
+    EMPTY, so the squash is tree-identical to the verified head, and `git diff b42101b 6cf0d6f` is EMPTY, so
+    the probe branch carried no change at all.
+    **THE FIVE PROBE COMMITS ARE NOW REACHABLE FROM NO REF, AND THAT IS THE DESIGN RATHER THAN AN OVERSIGHT.**
+    It is precisely what happened to ACBP-P6-006's probe commit `fe85082`, which `tools/trust-critical-index.mjs`
+    cites in its own header as the reason a measurement is recorded as a hosted RUN ID and never as a SHA. All
+    five still resolve under `gh run view`: `31129056434`, `31129196873`, `31139103437`, `31140011057`,
+    `31140772210`. This bullet previously read *"still exists … deleting it is an owner action"*, which the
+    deletion made false — recorded here rather than silently rewritten.
   - **(superseded) The open item WAS the probe, and it WAS blocked.** "16-scenario matrix green" means a recorded mutation
     reddened the cited test in a hosted run. **GitHub Actions entered a major outage at 15:22 UTC on 2026-08-06**
     (webhooks throttled to ~15%) and **has created no workflow run for this branch at all** — not for `f90566b`,
