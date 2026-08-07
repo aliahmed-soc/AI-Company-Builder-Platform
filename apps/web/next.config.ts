@@ -10,6 +10,17 @@ import type { NextConfig } from 'next';
 // hermetic (Link hrefs fall back to plain strings).
 const nextConfig: NextConfig = {
   typedRoutes: false,
+  // ACBP-P7-015 — Next's default is `poweredByHeader: true` (next/dist/server/config-shared.js), and
+  // next/dist/server/send-payload.js sets `X-Powered-By: Next.js` on every HTML document response. That is
+  // framework-version disclosure on exactly the surfaces this ticket is about, and this is the ONLY place it can
+  // be turned off: the header is added when the payload is sent, long after middleware has returned, so
+  // src/proxy.ts cannot delete it.
+  //
+  // HONESTLY LABELLED: unlike every other header in this ticket, this ONE setting is not covered by a response
+  // assertion, for the same reason CDR-083 §2.2 rejects next.config.ts as the home for the rest — CI never runs
+  // `next build` or `next start`, so nothing here can observe a served response. It is a one-line removal of a
+  // disclosure with no failure mode, which is worth doing anyway; it is not evidence, and CDR-083 §6.3 says so.
+  poweredByHeader: false,
   // The web app consumes @acbp/* workspace packages as TypeScript SOURCE (each package's `main` is
   // src/index.ts). Next/Turbopack otherwise treats these pnpm-linked node_modules packages as
   // pre-compiled JS and does not apply TypeScript resolution to their internal `.js`-suffixed ESM
