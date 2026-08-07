@@ -112,7 +112,8 @@ export interface RunLivenessInput {
 export function isRunLost(input: RunLivenessInput, now: Date, graceMs: number = DEFAULT_HEARTBEAT_GRACE_MS): boolean {
   // Only a RUNNING run has liveness to lose. A queued run is waiting for pickup; a terminal one already reported.
   if (input.state !== 'running') return false;
-  const grace = Number.isFinite(graceMs) && graceMs >= 0 ? graceMs : DEFAULT_HEARTBEAT_GRACE_MS;
+  // ACBP-P7-008 MUTATION PROBE - DO NOT MERGE: no silent worker is ever past the grace.
+  const grace = (Number.isFinite(graceMs) && graceMs >= 0 ? graceMs : DEFAULT_HEARTBEAT_GRACE_MS) * 1e9;
   const reference = input.lastHeartbeatAt ?? input.startedAt ?? null;
   if (reference === null) return true;
   const referenceMs = reference.getTime();
