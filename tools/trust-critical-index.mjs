@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 18;
+export const MAX_UNPROVEN = 17;
 
 /**
  * One row per canonical negative.
@@ -182,14 +182,19 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     number: 7,
     statement: 'Expired approval cannot execute.',
     attributedTo: 'P6-004',
-    builtBy: 'ACBP-P6-004 (repository layer only)',
-    status: 'unmeasured',
+    builtBy: 'ACBP-P6-004 (repository layer only); DRIVEN from the chokepoint by ACBP-P7-008',
+    // THE FIRST ROW IN THIS INDEX MEASURED BY THIS TICKET. Run 31129056434 cut BOTH halves of the expiry
+    // enforcement and 2 of 3874 tests failed: this row's test, and the repository-layer sibling. The paired
+    // CONTROL (`the SAME approval, unexpired, authorizes`) stayed GREEN, which is what makes the run evidence
+    // about EXPIRY rather than about a build that refuses everything. ACBP-P7-007 demoted this row to
+    // not_covered rather than let it keep borrowing a decider_type CHECK test about WHO may decide.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED',
     entryPoint: 'dispatchToolCall',
     mutation: 'Delete the `expires_at > now()` conjunct from verifyAndConsume\'s conditional UPDATE AND the approval-usability pre-check — both, because the UPDATE is the enforcement and the pre-check alone is an equivalent mutation (dispatcher.ts:388).',
-    mutationRunId: '',
+    mutationRunId: '31129056434',
     doesNotProve:
       'The "task → cancelled/waiting" transition or an `approval.expired` audit event — only that the CALL is refused and the refusal recorded. A paired CONTROL seeds the identical approval unexpired and asserts it authorizes, so the refusal is about expiry and not about `send_email` being refused for some other reason. HISTORY, kept because it is the point: ACBP-P7-007 found this row citing `approvals.integration.test.ts`s decider_type case — BYTE-IDENTICAL to row 5\'s citation, about WHO may decide rather than WHEN an approval lapses — with a recorded mutation that could not have reddened it. It was demoted to `not_covered` with an empty citation rather than left borrowing. ACBP-P7-008 slice 4 built the real dispatcher case; the enforcement had existed the whole time, and nothing drove it from the chokepoint.',
   },

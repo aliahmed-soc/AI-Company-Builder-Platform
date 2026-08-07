@@ -46,10 +46,11 @@ export const STATUSES = Object.freeze([
  * CEILING on rows not in the `measured` state. Compared against `origin/main` by the checker, so it cannot RISE
  * — the property CDR-080 §6.1 records as having claimed an enforcer it did not have until someone built one.
  *
- * It starts at 16 because NOTHING is measured yet: slice 6 runs the mutation probe. Fourteen rows have tests,
- * one is absent and one is unbuildable, and none of that is evidence until a red run says so.
+ * It STARTED at 16, because nothing was measured until slice 6 ran the probe. Each row the probe proves lowers
+ * it by one — that is the only direction it may move, and lowering it is the work. Fourteen rows have tests, one
+ * is absent and one is unbuildable, and a test that nobody has tried to break is not evidence.
  */
-export const MAX_UNPROVEN = 16;
+export const MAX_UNPROVEN = 15;
 
 /**
  * One row per matrix row.
@@ -209,14 +210,18 @@ export const FAILURE_SCENARIO_INDEX = Object.freeze([
     number: 9,
     failure: 'Expired authorization (approval)',
     consequence: 'the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls`',
-    status: 'unmeasured',
+    // MEASURED in slice 6, run 31129056434: 2 of 3874 tests failed and they were the right two — this row's test
+    // and the repository-layer sibling — while the CONTROL (`the SAME approval, unexpired, authorizes`) stayed
+    // GREEN. The control holding is what makes the run evidence about EXPIRY rather than about a build that
+    // refuses everything.
+    status: 'measured',
     anchor: 'database_state',
     injection: 'a real human `approve` seeded with `expires_at` already in the past, then a real dispatch',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
     testTitle: 'an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED',
     entryPoint: 'dispatchToolCall',
     mutation: 'Drop the `expires_at` conjunct from approvalUsability AND from verifyAndConsume\'s conditional UPDATE — both, because the UPDATE is the real enforcement and the pre-check is an equivalent mutation on its own (dispatcher.ts:388).',
-    mutationRunId: '',
+    mutationRunId: '31129056434',
     doesNotProve:
       'The row\'s "task → cancelled/waiting" transition, its `approval.expired` audit event, or "Reservation released". A paired CONTROL seeds the identical approval unexpired and asserts it AUTHORIZES, so the refusal is about expiry rather than about anything else refusing `send_email`.',
     notes:

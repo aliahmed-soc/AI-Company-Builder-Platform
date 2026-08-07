@@ -10,10 +10,10 @@ This document is **rendered from the machine-checked index**, per CDR-084 §6, s
 
 A row is GREEN only when a test **injects** the failure at a production entry point, asserts **that row's own documented consequence**, and a **recorded mutation made that test go red in a hosted CI run**. A passing test that nobody has tried to break is `unmeasured`, in that word — not green.
 
-- **0 of 16 MEASURED** — a recorded run id says the cited test can fail.
-- **14 unmeasured** — a live test exists and passes; nothing has proved it can fail.
+- **1 of 16 MEASURED** — a recorded run id says the cited test can fail.
+- **13 unmeasured** — a live test exists and passes; nothing has proved it can fail.
 - **2 with no injectable subject** — the failure has no entity in this system. See each row.
-- Ceiling on not-yet-measured rows: **16**, compared against `origin/main` so it cannot rise.
+- Ceiling on not-yet-measured rows: **15**, compared against `origin/main` so it cannot rise.
 
 ## Two limits of this evidence, stated up front
 
@@ -32,7 +32,7 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 | 6 | Database outage | unmeasured | `database_state` | no partial writes — a transaction that fails midway leaves nothing behind | a throw inside `withTransaction` after a real statement has already executed | withTransaction |
 | 7 | Object-storage failure | unmeasured | `database_state` | artifact persist fails ⇒ task fails, and NO artifact row exists afterwards | InMemoryObjectStorage `dropNextPut()` — the dependency LIES, reporting success while storing nothing | persistArtifact |
 | 8 | Tool/API failure (future external) | unmeasured | `database_state` | a throwing step is recorded as a failure with a category — but NOT a distinguishable one | a worker step that throws, driven through the real runtime | runWorkerStep |
-| 9 | Expired authorization (approval) | unmeasured | `database_state` | the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls` | a real human `approve` seeded with `expires_at` already in the past, then a real dispatch | dispatchToolCall |
+| 9 | Expired authorization (approval) | **MEASURED** | `database_state` | the call is DENIED with `approval_invalid`, and the denial is recorded in `tool_calls` | a real human `approve` seeded with `expires_at` already in the past, then a real dispatch | dispatchToolCall |
 | 10 | Revoked integration | unbuildable | `none` | — | — | — |
 | 11 | Duplicate delivery (job/event) | unmeasured | `database_state` | the duplicate is suppressed AND the suppression is recorded | the production enqueue path is called TWICE with the same idempotency key | enqueueJob |
 | 12 | Partial completion (multi-step run) | unmeasured | `database_state` | resume from checkpoint — a killed run continues rather than restarting | a run killed mid-sequence, then resumed against the real checkpoint rows | runJobStep |
@@ -114,12 +114,12 @@ A row is GREEN only when a test **injects** the failure at a production entry po
 - **Does not prove:** THE ROW'S ACTUAL CLAIM. The row wants a tool call `failed` with a NORMALIZED CATEGORY distinguishing a tool fault from a provider fault, and requires idempotency keys for external classes. `runtime.ts` has a bare `catch {}` that finishes with `failureCategory: "provider_error"` unconditionally, so the two are indistinguishable. Fixing it needs a MIGRATION, not just code: `RUN_FAILURE_CATEGORIES` is a closed five-value set with no `tool_error`, mirrored by CHECK constraints on `task_runs` and `worker_runs` and pinned by a test asserting the constant and the CHECK are the same set. CDR-084 §7 item 5.
 - **Verification note:** Verified slice 1. CDR-059:103 named this row unserved for the same reason; the migration requirement is new.
 
-### 9. Expired authorization (approval) — unmeasured
+### 9. Expired authorization (approval) — **MEASURED**
 
 - **Test:** `packages/core/src/tools/dispatcher.integration.test.ts`
   - "an EXPIRED approval cannot execute — the call is denied and the denial is RECORDED"
 - **Mutation that should redden it:** Drop the `expires_at` conjunct from approvalUsability AND from verifyAndConsume's conditional UPDATE — both, because the UPDATE is the real enforcement and the pre-check is an equivalent mutation on its own (dispatcher.ts:388).
-- **Hosted CI run in which it did:** — *(not yet run)*
+- **Hosted CI run in which it did:** `31129056434`
 - **Does not prove:** The row's "task → cancelled/waiting" transition, its `approval.expired` audit event, or "Reservation released". A paired CONTROL seeds the identical approval unexpired and asserts it AUTHORIZES, so the refusal is about expiry rather than about anything else refusing `send_email`.
 - **Verification note:** BUILT IN SLICE 4, and it closes trust-critical #7 at the same time. Until now BOTH were proven at the repository layer only — a `decider_type` CHECK test about WHO may decide, not WHEN an approval lapses — and searching either dispatcher suite for "expired" returned ZERO cases while every sibling approval state had one. The enforcement existed the whole time; nothing drove it from the chokepoint.
 
