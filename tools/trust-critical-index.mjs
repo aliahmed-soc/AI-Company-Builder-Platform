@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 12;
+export const MAX_UNPROVEN = 9;
 
 /**
  * One row per canonical negative.
@@ -108,13 +108,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: "Tenant A cannot guess/enumerate Tenant B's artifacts (IDs, storage paths, exports).",
     attributedTo: 'P1-014, P5-011, P7-001',
     builtBy: 'ACBP-P1-014 (ids), ACBP-P5-011 (storage keys), ACBP-P7-001 (exports)',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 3, run 31229785328, and it is a SINGLE-TEST result: exactly one
+    // test failed in the whole suite, this row's own. The edit kept the constraint NAME and replaced its predicate
+    // with `true`, which is the sharper mutation - a test that only checked the constraint EXISTS would have
+    // stayed green, and this one did not, so it is asserting the predicate rather than the name.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/artifacts.integration.test.ts',
     testTitle: 'TRUST-CRITICAL #2: an object key carrying ANOTHER company prefix is refused by the row itself',
     entryPoint: 'direct INSERT under the restricted role (the constraint IS the control)',
     mutation: 'Drop the object_key prefix CHECK added by migration 0043.',
-    mutationRunId: '',
+    mutationRunId: '31229785328',
     doesNotProve:
       'The READ side over HTTP: no route serves artifacts or exports yet, and the only storage adapter is in-memory. This is the WRITE-side proof only.',
   },
@@ -166,13 +170,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Model output cannot approve an action.',
     attributedTo: 'P6-003/004',
     builtBy: 'ACBP-P6-003/004',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 3, run 31229883306. TWO red: this row's own, and
+    // "every CHECK vocabulary equals its @acbp/contracts set" - which is exactly right rather than stray
+    // collateral. Widening the CHECK to admit 'worker' makes the database vocabulary diverge from the contract
+    // that declares it, and the repository has a test whose whole job is to notice that.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/approvals.integration.test.ts',
     testTitle: 'a WORKER cannot be recorded as having decided an approval — the database refuses it',
     entryPoint: 'direct INSERT under the restricted role (the CHECK constraint IS the control)',
     mutation: "Widen the decider_type CHECK to accept 'worker'.",
-    mutationRunId: '',
+    mutationRunId: '31229883306',
     doesNotProve:
       'That no code PATH attempts it — this proves the database refuses the write, not that the application never tries.',
   },
@@ -239,13 +247,18 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Paused company cannot start new autonomous work.',
     attributedTo: 'P6-007',
     builtBy: 'ACBP-P7-002 — the P6-007 attribution is FALSE',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 2, run 31227546745, on a CORRECTED mutation - see `mutation`.
+    // SEVEN red, and all seven are gate-14 lifecycle tests: paused, deactivating and deactivated each refusing a
+    // run, this row's own reason assertion, the attempt-not-burned sibling, the non-active ACCOUNT case and the
+    // resume-restores-work case. That is the honest shape for this control rather than wide collateral - all
+    // seven drive `startRun` through the one gate the edit neutralised, so each is a real consequence of it.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/company/gate-14.integration.test.ts',
     testTitle: 'the refusal is `company_not_active`, NOT `task_not_startable` — the task is startable, the company is not',
     entryPoint: 'startRun',
     mutation: 'Neutralise the lifecycle gate in `startRun` (packages/core/src/runs/coordinator.ts) so `readLifecycleDecision`\u2019s verdict is read and ignored, and a PAUSED company starts a run. NOT \u201Cadd a fifth entry point\u201D, which is what this cell used to say: the cited test calls `startRun`, so ADDING an unrelated entry point elsewhere leaves it green and proves nothing.',
-    mutationRunId: '',
+    mutationRunId: '31227546745',
     doesNotProve:
       'That the four gated points are ALL of them. Approvals have check-approval-port.mjs and stops have check-stop-port.mjs; there is no check-lifecycle-gate.mjs, so a fifth ungated entry point would fail nothing. Also: only `paused` is reachable in production — the deactivate transitions are unbuilt (CDR-079 §10 slice 5).',
   },
@@ -302,7 +315,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     file: 'packages/database/src/integration/usage-events.integration.test.ts',
     testTitle: 'A RE-DELIVERED USAGE ROW IS SUPPRESSED, not written and not thrown (trust-critical #12)',
     entryPoint: 'the usage-event insert path under the restricted role',
-    mutation: 'Drop the `usage_events_company_idempotency_uq` unique index added by migration 0052, so a re-delivery inserts twice.',
+    // THE OBVIOUS MUTATION WAS RUN AND IS INVALID AS EVIDENCE (run 31230001046, wave 3). Dropping UNIQUE while
+    // keeping the index does NOT remove deduplication - it removes the thing `ON CONFLICT (company_id,
+    // idempotency_key) DO NOTHING` needs in order to resolve at all, so every usage write raises SQLSTATE 42P10,
+    // 'there is no unique or exclusion constraint matching the ON CONFLICT specification'. NINETY-FOUR tests went
+    // red across planning, steering and authz, because metering sits on every model call. This row's cited test
+    // was among them - and the run STILL proves nothing about this row, because the test failed on the FIRST
+    // insert throwing rather than on a second row being written; the question it asks was never reached.
+    // THAT IS A DEMONSTRATED LIMIT OF THE §7.11 CROSS-CHECK, which reported CONFIRMED: it verifies the cited
+    // test is among the failures and cannot tell 'the property broke' from 'the code threw'.
+    mutation:
+      'Store `idempotencyKey: null` on the usage-event insert, so the PARTIAL unique index (WHERE idempotency_key IS NOT NULL) cannot match a re-delivery and a second row is written. NOT dropping the index: ON CONFLICT then fails to resolve and every usage write throws 42P10, which reddens the cited test for a reason that has nothing to do with duplicate suppression. This is the same correction failure-scenario row 11 and trust-critical row 11 both needed.',
     mutationRunId: '',
     doesNotProve: 'Same producer-contract gap as #11: suppression depends on a key the caller chooses to supply.',
   },
@@ -318,6 +341,14 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     entryPoint: 'recordUsageCorrection',
     mutation: 'Make recordUsageCorrection UPDATE the original row instead of inserting a compensating one.',
     mutationRunId: '',
+    // THE RECORDED MUTATION CANNOT BE WRITTEN IN TYPESCRIPT, found by attempting it (wave 4, aborted at typecheck).
+    // "Make recordUsageCorrection UPDATE the original row" is inexpressible: every `usage_events` column is typed
+    // `ColumnType<T, T, never>` in packages/database/src/schema.ts, and the THIRD parameter is the UPDATE type, so
+    // any `updateTable('usage_events')` is a compile error (TS2322 on the probe).
+    // THIS IS A RESULT, NOT AN OBSTACLE: the "never edits" half of this row has a SECOND enforcement layer above
+    // the test, and that layer is the schema type rather than a runtime check. Measuring the row therefore needs a
+    // TWO-FILE mutation - weaken the schema type AND edit the service - which proves less than a one-file mutation
+    // because the reader cannot tell which of the two edits the test noticed. Left `unmeasured` deliberately.
     doesNotProve:
       'That no OTHER path can edit a usage row — the service suite states in its own text that "never edits" is not proven in that file; the privilege proof lives in usage-rollups.integration.test.ts.',
   },
