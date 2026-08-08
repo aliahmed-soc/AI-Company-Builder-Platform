@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 16;
+export const MAX_UNPROVEN = 8;
 
 /**
  * One row per canonical negative.
@@ -108,13 +108,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: "Tenant A cannot guess/enumerate Tenant B's artifacts (IDs, storage paths, exports).",
     attributedTo: 'P1-014, P5-011, P7-001',
     builtBy: 'ACBP-P1-014 (ids), ACBP-P5-011 (storage keys), ACBP-P7-001 (exports)',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 3, run 31229785328, and it is a SINGLE-TEST result: exactly one
+    // test failed in the whole suite, this row's own. The edit kept the constraint NAME and replaced its predicate
+    // with `true`, which is the sharper mutation - a test that only checked the constraint EXISTS would have
+    // stayed green, and this one did not, so it is asserting the predicate rather than the name.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/artifacts.integration.test.ts',
     testTitle: 'TRUST-CRITICAL #2: an object key carrying ANOTHER company prefix is refused by the row itself',
     entryPoint: 'direct INSERT under the restricted role (the constraint IS the control)',
     mutation: 'Drop the object_key prefix CHECK added by migration 0043.',
-    mutationRunId: '',
+    mutationRunId: '31229785328',
     doesNotProve:
       'The READ side over HTTP: no route serves artifacts or exports yet, and the only storage adapter is in-memory. This is the WRITE-side proof only.',
   },
@@ -123,13 +127,18 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'A worker cannot run without explicit tenant context.',
     attributedTo: 'P5-001/005',
     builtBy: 'ACBP-P5-001a — the `/005` half is UNEARNED (see doesNotProve)',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 1, run 31226840384. THREE red, and all three are LAYER 3
+    // tenancy tests - this row's own, the sentinel-company-id sibling and the one asserting the refusal is
+    // REACHABLE rather than swallowed by scope resolution. The edit left `validateJobTenancy` alone and made
+    // its verdict unreachable AT THE CALL SITE: mutating the contracts helper would have reddened a dozen unit
+    // tests that have nothing to do with this row, which is collateral that proves less, not more.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/jobs/enqueue-job.integration.test.ts',
     testTitle: 'LAYER 3 — a context-stripped enqueue is REFUSED with a typed reason and writes nothing',
     entryPoint: 'enqueueJob',
     mutation: 'Delete the tenancy refusal in enqueueJob so a context-stripped request reaches the insert.',
-    mutationRunId: '',
+    mutationRunId: '31226840384',
     doesNotProve:
       'The WORKER RUNTIME. `runtime.ts:1` and `migrations/0040_worker_runs.ts:1` both DECLARE trust-critical #3, and no worker-runtime entry point is ever driven with absent context. The proof is about enqueue, not about running.',
   },
@@ -145,6 +154,14 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     entryPoint: 'dispatchToolCall',
     mutation: 'Remove the allowlist conjunct from decideDispatch and dispatch an unregistered tool.',
     mutationRunId: '',
+    // THE CITED TEST DOES NOT TEST THIS ROW, found by reading the body during the wave-1 audit. The row claims
+    // "a tool not in the worker allowlist is denied"; the cited test asserts that the EMERGENCY-STOP scope map
+    // `COVERING_CASE` has the same key set as `ENFORCEABLE_STOP_SCOPES`. It dispatches nothing, names no tool and
+    // never reaches the allowlist, so removing the allowlist conjunct from `decideDispatch` would leave it GREEN.
+    // This is the ACBP-P7-007 row-19 shape at its widest: not a wrong mutation against a right test, but a row
+    // pointing at a test for a DIFFERENT CONTROL. The status stays `unmeasured` rather than moving to
+    // `not_covered`, because whether a test exists that DOES drive an unregistered tool through `dispatchToolCall`
+    // has not been searched yet - and claiming absence without looking is the error this index exists to prevent.
     doesNotProve:
       'That the chokepoint is UNAVOIDABLE. `dispatchToolCall` has no production caller — every call site is a test or the slice-F journey — and there is no static guard (cf. check-approval-port.mjs) preventing a step closure from calling a tool directly.',
   },
@@ -153,13 +170,17 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Model output cannot approve an action.',
     attributedTo: 'P6-003/004',
     builtBy: 'ACBP-P6-003/004',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 3, run 31229883306. TWO red: this row's own, and
+    // "every CHECK vocabulary equals its @acbp/contracts set" - which is exactly right rather than stray
+    // collateral. Widening the CHECK to admit 'worker' makes the database vocabulary diverge from the contract
+    // that declares it, and the repository has a test whose whole job is to notice that.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/approvals.integration.test.ts',
     testTitle: 'a WORKER cannot be recorded as having decided an approval — the database refuses it',
     entryPoint: 'direct INSERT under the restricted role (the CHECK constraint IS the control)',
     mutation: "Widen the decider_type CHECK to accept 'worker'.",
-    mutationRunId: '',
+    mutationRunId: '31229883306',
     doesNotProve:
       'That no code PATH attempts it — this proves the database refuses the write, not that the application never tries.',
   },
@@ -175,6 +196,14 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     entryPoint: 'dispatchToolCall',
     mutation: 'Drop one bound element from the digest computed by `computePayloadBinding`, so editing that element no longer invalidates the approval.',
     mutationRunId: '',
+    // THE CITED TEST IS THE CONTROL, NOT THE PROPERTY, found by reading the body during the wave-1 audit. The row
+    // claims "editing a material approved payload invalidates approval"; the cited test is
+    // "the UNCHANGED action still runs - the suite is not simply refusing everything", whose whole assertion is
+    // that an UNCHANGED payload is authorized. Dropping a bound element from `computePayloadBinding` leaves an
+    // unchanged payload matching, so that test stays GREEN and the recorded mutation cannot measure this row.
+    // A control is the right thing to have and the wrong thing to cite: it proves the suite is not refusing
+    // everything, never that editing invalidates. Status stays `unmeasured` for the same reason as row 4 - the
+    // sibling that asserts the EDITED payload is refused has not been located yet.
     doesNotProve:
       'Nothing outstanding — this is the anti-vacuity CONTROL for the gate-4 set. The per-element cases are indexed in CDR-070 §2 and are the substantive proof.',
   },
@@ -218,13 +247,18 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Paused company cannot start new autonomous work.',
     attributedTo: 'P6-007',
     builtBy: 'ACBP-P7-002 — the P6-007 attribution is FALSE',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 2, run 31227546745, on a CORRECTED mutation - see `mutation`.
+    // SEVEN red, and all seven are gate-14 lifecycle tests: paused, deactivating and deactivated each refusing a
+    // run, this row's own reason assertion, the attempt-not-burned sibling, the non-active ACCOUNT case and the
+    // resume-restores-work case. That is the honest shape for this control rather than wide collateral - all
+    // seven drive `startRun` through the one gate the edit neutralised, so each is a real consequence of it.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/company/gate-14.integration.test.ts',
     testTitle: 'the refusal is `company_not_active`, NOT `task_not_startable` — the task is startable, the company is not',
     entryPoint: 'startRun',
-    mutation: 'Add a fifth autonomous-work entry point that does not call readLifecycleDecision.',
-    mutationRunId: '',
+    mutation: 'Neutralise the lifecycle gate in `startRun` (packages/core/src/runs/coordinator.ts) so `readLifecycleDecision`\u2019s verdict is read and ignored, and a PAUSED company starts a run. NOT \u201Cadd a fifth entry point\u201D, which is what this cell used to say: the cited test calls `startRun`, so ADDING an unrelated entry point elsewhere leaves it green and proves nothing.',
+    mutationRunId: '31227546745',
     doesNotProve:
       'That the four gated points are ALL of them. Approvals have check-approval-port.mjs and stops have check-stop-port.mjs; there is no check-lifecycle-gate.mjs, so a fifth ungated entry point would fail nothing. Also: only `paused` is reachable in production — the deactivate transitions are unbuilt (CDR-079 §10 slice 5).',
   },
@@ -254,13 +288,20 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Replayed jobs do not duplicate authoritative effects.',
     attributedTo: 'P6-011',
     builtBy: 'ACBP-P6-011, on foundations from ACBP-P5-001b (checkpoints) and ACBP-P5-003b (per-tool idempotency)',
-    status: 'unmeasured',
+    // MEASURED on run 31215134001 - AND NO PROBE WAS RUN FOR IT, which is worth stating plainly. This row cites
+    // THE SAME FILE AND THE SAME TEST TITLE as failure-scenario matrix row 11, which that probe already measured.
+    // One test, two indexes, one run: recording a second identical run would have bought nothing.
+    // THE MUTATION TEXT WAS INERT AND IS CORRECTED, the same correction the scenario row needed: skipping the
+    // `findByIdempotencyKey` read-back CANNOT create a second job, because dedupe is the partial unique index plus
+    // ON CONFLICT DO NOTHING and the read-back only resolves what already exists. Both indexes carried the same
+    // wrong sentence, which is what a shared defect looks like when two tables cite one test.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/idempotency/replay.integration.test.ts',
     testTitle: 'a re-delivered enqueue creates no second job, and the suppression is recorded',
     entryPoint: 'enqueueJob',
-    mutation: 'Make `enqueueJob` skip its `findByIdempotencyKey` read-back, so a re-delivered key inserts a second row.',
-    mutationRunId: '',
+    mutation: 'Store `idempotencyKey: null` on the insert inside `enqueueJob`, so the partial unique index cannot match a re-delivery and a second job row is created. NOT skipping the read-back: that edit is INERT, because the index plus ON CONFLICT DO NOTHING is what dedupes.',
+    mutationRunId: '31215134001',
     doesNotProve:
       'That producers SUPPLY a key. `idempotencyKey` is caller-supplied and optional at every call site, and no production producer derives one — two keyless enqueues are correctly two jobs.',
   },
@@ -269,13 +310,31 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Duplicate usage messages do not double count.',
     attributedTo: 'P6-009/011',
     builtBy: 'ACBP-P6-009/011',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 5, run 31231269923, on the SECOND mutation this row has named -
+    // and the contrast between the two runs is the reason both are recorded. The first (31230001046) dropped
+    // UNIQUE and reddened NINETY-FOUR tests on SQLSTATE 42P10; this one reddens THREE and the log contains no
+    // 42P10 at all, so ON CONFLICT still resolves and the failures are about duplicate suppression rather than a
+    // throwing insert. The three are this row's own test, the re-delivered-metered-call sibling, and the Slice F
+    // journey, which drives a real metered call end to end.
+    // THE FIRST RUN WOULD HAVE PASSED THE §7.11 CROSS-CHECK, and did: the cited test was among its failures. What
+    // separated them was reading the stack trace, not the title list. Blast radius (94 vs 3) was the signal.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/usage-events.integration.test.ts',
     testTitle: 'A RE-DELIVERED USAGE ROW IS SUPPRESSED, not written and not thrown (trust-critical #12)',
     entryPoint: 'the usage-event insert path under the restricted role',
-    mutation: 'Drop the `usage_events_company_idempotency_uq` unique index added by migration 0052, so a re-delivery inserts twice.',
-    mutationRunId: '',
+    // THE OBVIOUS MUTATION WAS RUN AND IS INVALID AS EVIDENCE (run 31230001046, wave 3). Dropping UNIQUE while
+    // keeping the index does NOT remove deduplication - it removes the thing `ON CONFLICT (company_id,
+    // idempotency_key) DO NOTHING` needs in order to resolve at all, so every usage write raises SQLSTATE 42P10,
+    // 'there is no unique or exclusion constraint matching the ON CONFLICT specification'. NINETY-FOUR tests went
+    // red across planning, steering and authz, because metering sits on every model call. This row's cited test
+    // was among them - and the run STILL proves nothing about this row, because the test failed on the FIRST
+    // insert throwing rather than on a second row being written; the question it asks was never reached.
+    // THAT IS A DEMONSTRATED LIMIT OF THE §7.11 CROSS-CHECK, which reported CONFIRMED: it verifies the cited
+    // test is among the failures and cannot tell 'the property broke' from 'the code threw'.
+    mutation:
+      'Store `idempotencyKey: null` on the usage-event insert, so the PARTIAL unique index (WHERE idempotency_key IS NOT NULL) cannot match a re-delivery and a second row is written. NOT dropping the index: ON CONFLICT then fails to resolve and every usage write throws 42P10, which reddens the cited test for a reason that has nothing to do with duplicate suppression. This is the same correction failure-scenario row 11 and trust-critical row 11 both needed.',
+    mutationRunId: '31231269923',
     doesNotProve: 'Same producer-contract gap as #11: suppression depends on a key the caller chooses to supply.',
   },
   {
@@ -290,6 +349,14 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     entryPoint: 'recordUsageCorrection',
     mutation: 'Make recordUsageCorrection UPDATE the original row instead of inserting a compensating one.',
     mutationRunId: '',
+    // THE RECORDED MUTATION CANNOT BE WRITTEN IN TYPESCRIPT, found by attempting it (wave 4, aborted at typecheck).
+    // "Make recordUsageCorrection UPDATE the original row" is inexpressible: every `usage_events` column is typed
+    // `ColumnType<T, T, never>` in packages/database/src/schema.ts, and the THIRD parameter is the UPDATE type, so
+    // any `updateTable('usage_events')` is a compile error (TS2322 on the probe).
+    // THIS IS A RESULT, NOT AN OBSTACLE: the "never edits" half of this row has a SECOND enforcement layer above
+    // the test, and that layer is the schema type rather than a runtime check. Measuring the row therefore needs a
+    // TWO-FILE mutation - weaken the schema type AND edit the service - which proves less than a one-file mutation
+    // because the reader cannot tell which of the two edits the test noticed. Left `unmeasured` deliberately.
     doesNotProve:
       'That no OTHER path can edit a usage row — the service suite states in its own text that "never edits" is not proven in that file; the privilege proof lives in usage-rollups.integration.test.ts.',
   },
@@ -359,13 +426,16 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Failed model output cannot create a completed task.',
     attributedTo: 'P5-010/013',
     builtBy: 'ACBP-P5-011 (completeTask) and ACBP-P6-008 (evidence join) — P5-010 self-files as "groundwork"',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 1, run 31226870309, and it is a SINGLE-TEST result: exactly one
+    // test failed in the whole suite, this row's own. The edit admitted `running` alongside `succeeded`, which is
+    // the narrowest weakening that reaches the cited test - the test seeds a RUNNING run on purpose.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/core/src/artifacts/complete.integration.test.ts',
     testTitle: 'a run that has NOT succeeded refuses — a running attempt cannot complete its task',
     entryPoint: 'completeTask',
     mutation: 'Weaken the run-state guard inside `completeTask` from an equality on `succeeded`, so a non-succeeded run can complete its task.',
-    mutationRunId: '',
+    mutationRunId: '31226870309',
     doesNotProve:
       'THE CLAIM AS WORDED. The seeded run state is `running`, not `failed` — searching this file for "failed" returns nothing. A `failed` run is covered by CONSTRUCTION (the guard is a single !== succeeded), never by execution. Nor does any test join model failure to a completion attempt.',
   },
@@ -374,14 +444,20 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Silent fallback does not occur for a material decision.',
     attributedTo: 'P5-009',
     builtBy: 'ACBP-P5-009 (suite); the mechanism is ACBP-P2-003',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 2, run 31226897626, on the THIRD mutation this row has named -
+    // see `mutation` for the two that were wrong. FIVE red, and every one is about generation being
+    // fallback-INELIGIBLE: this row's own test, the ineligible-fallback-never-called sibling, the
+    // no-reason-recorded pair, the timeout-class assertion, and `a material decision that fails, fails HONESTLY`
+    // - which is the very test the FIRST wrong measurement reddened. The corrected edit reaches both, which is
+    // the point: the earlier run reddened that test and only that test, and was read as covering this one.
+    status: 'measured',
     anchor: 'return_value_only',
     file: 'packages/core/src/model/silent-fallback-negative.test.ts',
     testTitle: 'a MATERIAL decision does NOT silently fall over — generation fails on the primary',
     entryPoint: 'the model gateway',
     mutation:
-      "Two, and they fail DIFFERENT cases. (a) For the LEAK assertions: add a field carrying the provider's internal error text to the result object built at the END of callModel — NOT to `errorResult`, which serves only the policy-precheck and early-internal paths and is never reached by a provider failure. (b) For the FALLBACK claim itself — the one this row is about: re-label the `strategy.options` template family as `extraction` so the platform's most material decision becomes fallback-eligible. NEITHER IS RECORDED, AND THAT IS A CORRECTION. (a) was run in CI 31113087854 and this row was briefly marked `measured` on it, which was WRONG TWICE OVER: the run reddened `a material decision that fails, fails HONESTLY` — a DIFFERENT test in this file — and it reddened it through that test's LEAK assertion, so it is evidence about #16-style egress, not about silent fallback. The test named above asserts only outcome/fallbackUsed/callCount/validatedOutput and mutation (a) cannot touch any of them. Two independent reviews caught this; the checker could not, because it never cross-checks `mutation` against `testTitle`. (b) is the mutation that would actually prove this row, and it has never been run.",
-    mutationRunId: '',
+      'Set `generation.fallbackEligible` to true in TASK_CLASS_POLICY (packages/contracts/src/model/gateway.ts), so the platform\u2019s most material class becomes fallback-eligible and a material decision CAN silently fall over. THIS CELL HAS BEEN WRONG TWICE. (1) It first named a mutation that added the provider\u2019s internal error text to the result object; that was run in CI 31113087854 and this row was marked measured on it, but the run reddened a DIFFERENT test in the same file and reddened it through a LEAK assertion - evidence about egress, not about fallback. (2) The correction that replaced it said to re-label the `strategy.options` TEMPLATE FAMILY as `extraction`; that is ALSO inert here, because the cited test calls `requestFor(\u2018generation\u2019)` and passes the task class DIRECTLY with a synthetic `templateRef`, while the gateway gates fallback on `isFallbackEligible(request.taskClass)` (model-gateway.ts:301). A correction that is itself wrong is the failure mode this index was built to expose, and it survived two independent reviews.',
+    mutationRunId: '31226897626',
     doesNotProve:
       'WHICH decisions are material — mutation (b) above turns fallback on for strategy generation WITH THE WHOLE SUITE GREEN, because the task class is unpinned for several material template families. It is also a unit suite over an in-memory events array, so no PERSISTED usage row is checked (migration 0030 added usage_events.fallback_reason; a real-PG case would be stronger). FIXED BY ACBP-P7-007: this file carried two assertions that could not fail — not.toContain("SECRET") where the literal SECRET appears nowhere in the harness, the planted value being FAKE_INTERNAL_MARKER. Both now target that marker, with a CONTROL proving the fake still plants it, and mutation (a) confirms they detect a leak.',
   },
