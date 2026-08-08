@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 9;
+export const MAX_UNPROVEN = 8;
 
 /**
  * One row per canonical negative.
@@ -310,7 +310,15 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Duplicate usage messages do not double count.',
     attributedTo: 'P6-009/011',
     builtBy: 'ACBP-P6-009/011',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 5, run 31231269923, on the SECOND mutation this row has named -
+    // and the contrast between the two runs is the reason both are recorded. The first (31230001046) dropped
+    // UNIQUE and reddened NINETY-FOUR tests on SQLSTATE 42P10; this one reddens THREE and the log contains no
+    // 42P10 at all, so ON CONFLICT still resolves and the failures are about duplicate suppression rather than a
+    // throwing insert. The three are this row's own test, the re-delivered-metered-call sibling, and the Slice F
+    // journey, which drives a real metered call end to end.
+    // THE FIRST RUN WOULD HAVE PASSED THE §7.11 CROSS-CHECK, and did: the cited test was among its failures. What
+    // separated them was reading the stack trace, not the title list. Blast radius (94 vs 3) was the signal.
+    status: 'measured',
     anchor: 'database_state',
     file: 'packages/database/src/integration/usage-events.integration.test.ts',
     testTitle: 'A RE-DELIVERED USAGE ROW IS SUPPRESSED, not written and not thrown (trust-critical #12)',
@@ -326,7 +334,7 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     // test is among the failures and cannot tell 'the property broke' from 'the code threw'.
     mutation:
       'Store `idempotencyKey: null` on the usage-event insert, so the PARTIAL unique index (WHERE idempotency_key IS NOT NULL) cannot match a re-delivery and a second row is written. NOT dropping the index: ON CONFLICT then fails to resolve and every usage write throws 42P10, which reddens the cited test for a reason that has nothing to do with duplicate suppression. This is the same correction failure-scenario row 11 and trust-critical row 11 both needed.',
-    mutationRunId: '',
+    mutationRunId: '31231269923',
     doesNotProve: 'Same producer-contract gap as #11: suppression depends on a key the caller chooses to supply.',
   },
   {
