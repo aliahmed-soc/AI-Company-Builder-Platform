@@ -362,6 +362,37 @@ ticket without a DONE line above it is genuinely in flight._
   - **The branch `p7-008-record-wave12` (`e28218d`) and ~11 `p7-008-probe-*` branches still exist; deleting them is
     an owner action.** Unlike the P7-008 probe branches, these were NOT reverted commit-by-commit: each probe branch
     carries a live mutation and IS the evidence behind a recorded run id.
+    **(`p7-008-record-wave12` and `p7-008-postmerge-docs` were deleted on the owner's instruction after each squash
+    was proved tree-identical to its CI-green head. The ~11 `p7-008-probe-row*` branches remain.)**
+
+- **DONE — the TRUST-CRITICAL index, 4 measured → 12 of 20.** Squash **`5b7ad92`**, PR **#90**, branch
+  `p7-trust-critical-measurement`, no migration, **no production code change** — every mutation lived on a
+  disposable probe branch. Exact-head CI
+  [`31232429428`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31232429428) on
+  `6fbf001`: **277 files / 4056 tests, zero skips**. `MAX_UNPROVEN` **16 → 8**. Measured: rows 2, 3, 5, 9, 11,
+  12, 18, 19 (joining 7, 10, 15, 16). Rows 2 and 18 are **single-test results**.
+  - **THE AUDIT CAME BEFORE THE PROBE AND IS THE SUBSTANTIVE RESULT.** Reading the cited test body of all fifteen
+    unmeasured rows found **five whose recorded text cannot prove what the row claims** — the same rate P7-008 hit.
+    **Row 4 cites a test for a DIFFERENT CONTROL** (it claims the worker allowlist denies unregistered tools; the
+    cited test compares key sets of the emergency-STOP scope map and dispatches nothing). **Row 6 cites the
+    CONTROL, not the property** (`the UNCHANGED action still runs`, which stays green under the recorded
+    mutation). **Row 9** named a mutation that ADDS an entry point, which cannot redden a test calling `startRun`.
+    **Row 11** carried the same inert mutation the scenario index did. **Row 19 had been corrected once and the
+    correction was ALSO wrong** — it proposed re-labelling a template family the cited test never touches.
+    Rows 4 and 6 stay `unmeasured` rather than `not_covered`: whether a correct test exists has not been searched.
+  - **ROW 12 KEEPS BOTH OF ITS RUNS, and the pair is the finding.** Dropping UNIQUE from the usage idempotency
+    index does not remove deduplication — it removes what `ON CONFLICT` needs to resolve, so every usage write
+    raised `SQLSTATE 42P10` and **94** tests went red; the cited test failed on the FIRST insert throwing, so its
+    question was never reached. **That run PASSED the §7.11 cross-check and reported CONFIRMED** — a real limit of
+    that tool, which cannot tell a broken property from thrown code. The stack trace and the blast radius (94 vs
+    3) are what separated them. The recorded mutation now drops the KEY instead: 3 red, zero 42P10.
+  - **ROW 13 CANNOT BE MUTATED AS WRITTEN, and that is a result about the control.** Every `usage_events` column
+    is typed `ColumnType<T, T, never>` — the third parameter is the UPDATE type — so making `recordUsageCorrection`
+    edit the original is a compile error. The "never edits" property has a **second enforcement layer above the
+    test**, in the schema type. Measuring it needs a two-file mutation, which proves less; left `unmeasured`.
+  - **Rows 1, 14, 17 and 20 are sound but UNPROBED**, and deliberately so: their mutations need call paths that
+    were not traced, and guessing produces exactly the artefact this index removes — three of the five defects
+    above are that shape. Row 8 stays `unprovable`; no integrations entity exists to revoke.
 
 - **ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
   Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
@@ -388,9 +419,9 @@ ticket without a DONE line above it is genuinely in flight._
     scenario 14. Every failed test name was READ OUT OF THE RUN LOG. Ceilings moved DOWN for the first time:
     failure-scenario 16 to 12, trust-critical 18 to 16 (`Ceiling 16 <= baseline 18 (origin/main)`). Full table
     and the green-half reasoning: CDR-084 SS11.
-    **(SUPERSEDED BY `442456d`: the failure-scenario ceiling is now 2, not 12. The trust-critical ceiling is
-    still 16 — that half is untouched.)**
-  - **~~TWELVE SCENARIO ROWS~~ TWO SCENARIO ROWS AND SIXTEEN TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and
+    **(SUPERSEDED TWICE: `442456d` took the failure-scenario ceiling to 2, and `5b7ad92` took the trust-critical
+    ceiling 16 → 8. Neither half is at 16 any more.)**
+  - **~~TWELVE SCENARIO ROWS~~ TWO SCENARIO ROWS AND ~~SIXTEEN~~ EIGHT TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and
     the acceptance criterion "16-scenario matrix green" is still NOT met — SS0.1 explains why it cannot be on its
     literal wording. **The reason has changed and the sentence is corrected rather than left to read as though it
     had not:** when this was written, twelve rows were unmeasured and the blocker was a GitHub Actions outage
@@ -2125,7 +2156,9 @@ with a **hosted CI mutation run id** (`31113087854` bought **two** of them — a
 when review showed the run reddened a different test). **18 of 20 are unproven, and the gate prints exactly
 that**, in the vocabulary the index defines: `2 MEASURED …, 16 unmeasured, 2 with no test; 18 unproven (ceiling
 18)`. `unmeasured` and `unproven` are distinct states — quoting the wrong one is how this paragraph was wrong
-before. Do not read the twenty green checkmarks in `TEST-AND-VERIFICATION-STRATEGY.md` as coverage without
+before. **(THOSE FIGURES ARE P7-007's AND ARE SUPERSEDED BY `5b7ad92`: it is now 12 measured, 7 unmeasured, 1
+unprovable — 8 unproven, ceiling 8. The paragraph is kept because the distinction it draws between `unmeasured`
+and `unproven` is still the point, and because "18 of 20 are unproven" is what P7-007 actually shipped.)** Do not read the twenty green checkmarks in `TEST-AND-VERIFICATION-STRATEGY.md` as coverage without
 reading the index beside them.
 
 **ACBP-P7-002 is MERGED (squash `4125f0f`, PR #74, branch deleted) but its backlog row is NOT `Done`, and that
