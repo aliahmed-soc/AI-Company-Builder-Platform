@@ -393,6 +393,18 @@ ticket without a DONE line above it is genuinely in flight._
   - **Rows 1, 14, 17 and 20 are sound but UNPROBED**, and deliberately so: their mutations need call paths that
     were not traced, and guessing produces exactly the artefact this index removes — three of the five defects
     above are that shape. Row 8 stays `unprovable`; no integrations entity exists to revoke.
+  - **ALL NINE BRANCHES WERE DELETED on the owner's instruction (2026-08-08), after exact-main CI
+    [`31233634438`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31233634438) on
+    `5b7ad92` came back 277 files / 4056 tests, zero skips.** `p7-trust-critical-measurement` (was `6fbf001`,
+    proved tree-identical to the squash before deleting) and the eight probe branches: `p7-tc-probe-` `row2`
+    (`4a3d33c`), `row3` (`222de48`), `row5` (`d2690a9`), `row9` (`7b1b468`), `row12` (`ede7725`), `row12b`
+    (`0d66994`), `row18` (`cb5e35f`), `row19` (`8e042fa`).
+    **THE EIGHT PROBE COMMITS ARE NOW REACHABLE FROM NO REF, AND THAT IS THE DESIGN RATHER THAN AN OVERSIGHT** —
+    the same thing that happened to ACBP-P6-006's `fe85082` and to the P7-008 probes, and the reason
+    `tools/trust-critical-index.mjs` records a measurement as a hosted RUN ID and never as a SHA. Every run still
+    resolves under `gh run view`. What is gone is the ability to re-derive the exact diff behind each red run;
+    what each mutation was is recorded in prose in the row itself. Note `row12` was the COUNTER-EXAMPLE branch
+    (the 42P10 mutation) and `row12b` the one that measures the row — that contrast now survives only as prose.
 
 - **ACBP-P7-008 failure-injection pass** (CDR-084; NFR-005, NFR-019 — **NFR-020 removed**, see below).
   Branch `p7-008-failure-injection-pass`, draft PR **#81**, head **`668198f`**. No migration.
