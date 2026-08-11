@@ -68,7 +68,7 @@ export const STATUSES = Object.freeze([
  * with git history; where there is no baseline to read (a shallow or export-only checkout) it says so out loud
  * rather than passing quietly.
  */
-export const MAX_UNPROVEN = 8;
+export const MAX_UNPROVEN = 6;
 
 /**
  * One row per canonical negative.
@@ -147,13 +147,24 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'A tool not in the worker allowlist is denied.',
     attributedTo: 'P5-003',
     builtBy: 'ACBP-P5-003 (chokepoint) + ACBP-P5-004 (the registered allowlist itself)',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 6, run 31525892216 - AND THE CITATION HAD TO BE CORRECTED FIRST,
+    // which is why this row could not be probed at all until now. It used to cite
+    // "every enforceable scope has a covering case here", a test that compares the key set of the emergency-STOP
+    // scope map against ENFORCEABLE_STOP_SCOPES. That test dispatches nothing, names no tool and never reaches the
+    // allowlist, so the recorded mutation would have left it GREEN. The real test was ~100 lines away in the SAME
+    // FILE and asserts `denial_reason` read back from the database, which is what this row's `recorded_row`
+    // anchor claims.
+    // TEN red, and every one is about the allowlist: this row's own, the no-allowlist-vs-empty sibling, the
+    // contracts unit tests, the waiver-does-not-extend test, the closed-reason-set test, and the end-to-end
+    // "the resolved allowlist is what the DISPATCHER enforces". The contracts collateral is honest - those tests
+    // exist to assert exactly the conjunct the edit removed.
+    status: 'measured',
     anchor: 'recorded_row',
     file: 'packages/core/src/tools/dispatcher.integration.test.ts',
-    testTitle: 'every enforceable scope has a covering case here — a scope added without one fails rather than goes unproven',
+    testTitle: 'a tool NOT on the worker allowlist is denied — and the refusal is recorded',
     entryPoint: 'dispatchToolCall',
-    mutation: 'Remove the allowlist conjunct from decideDispatch and dispatch an unregistered tool.',
-    mutationRunId: '',
+    mutation: 'Make the allowlist conjunct in `decideDispatch` (packages/contracts/src/tools/dispatch.ts) unreachable, so a tool ABSENT from the worker allowlist dispatches instead of being denied `not_allowlisted`.',
+    mutationRunId: '31525892216',
     // THE CITED TEST DOES NOT TEST THIS ROW, found by reading the body during the wave-1 audit. The row claims
     // "a tool not in the worker allowlist is denied"; the cited test asserts that the EMERGENCY-STOP scope map
     // `COVERING_CASE` has the same key set as `ENFORCEABLE_STOP_SCOPES`. It dispatches nothing, names no tool and
@@ -189,13 +200,22 @@ export const TRUST_CRITICAL_INDEX = Object.freeze([
     statement: 'Editing a material approved payload invalidates approval.',
     attributedTo: 'P6-005',
     builtBy: 'ACBP-P6-005',
-    status: 'unmeasured',
+    // MEASURED in the trust-critical probe wave 6, run 31525938185 - AND THE CITATION HAD TO BE CORRECTED FIRST.
+    // It used to cite "the UNCHANGED action still runs", which is THE CONTROL: its whole assertion is that an
+    // unchanged payload IS authorized. Dropping a bound element leaves an unchanged payload matching, so that
+    // test stays green and the recorded mutation could never measure this row. A control is the right thing to
+    // have and the wrong thing to cite.
+    // The real test binds an approval to `{}`, dispatches different bytes, expects `approval_invalid`, and then
+    // shows the human's actual approval still works - so the refusal is a MISMATCH rather than a loss.
+    // TWELVE red, all about payload binding: this row's own, the gains-a-field and changes-a-value siblings, the
+    // array-order sensitivity case, the binding-material unit tests, and the Slice F journey.
+    status: 'measured',
     anchor: 'recorded_row',
     file: 'packages/core/src/tools/policy-enforcement.integration.test.ts',
-    testTitle: 'the UNCHANGED action still runs — the suite is not simply refusing everything',
+    testTitle: 'a MISMATCHED PAYLOAD is refused, and does NOT burn the approval (APPR-004)',
     entryPoint: 'dispatchToolCall',
-    mutation: 'Drop one bound element from the digest computed by `computePayloadBinding`, so editing that element no longer invalidates the approval.',
-    mutationRunId: '',
+    mutation: 'Drop the PAYLOAD element from `bindingMaterial` (packages/contracts/src/approvals/binding.ts), so editing the payload no longer changes the digest and an edited action runs under the approval taken over the original. It must be the payload element specifically: `tool`, `version` and `cost` are bound too, and dropping one of those reddens the sibling that asserts THAT element instead.',
+    mutationRunId: '31525938185',
     // THE CITED TEST IS THE CONTROL, NOT THE PROPERTY, found by reading the body during the wave-1 audit. The row
     // claims "editing a material approved payload invalidates approval"; the cited test is
     // "the UNCHANGED action still runs - the suite is not simply refusing everything", whose whole assertion is
