@@ -380,6 +380,8 @@ ticket without a DONE line above it is genuinely in flight._
     **Row 11** carried the same inert mutation the scenario index did. **Row 19 had been corrected once and the
     correction was ALSO wrong** — it proposed re-labelling a template family the cited test never touches.
     Rows 4 and 6 stay `unmeasured` rather than `not_covered`: whether a correct test exists has not been searched.
+    **(SEARCHED SINCE, AND BOTH TESTS EXIST — `584c32b`, below. Holding them at `unmeasured` rather than declaring
+    them uncovered was the right call: a correct test was sitting in each suite the whole time.)**
   - **ROW 12 KEEPS BOTH OF ITS RUNS, and the pair is the finding.** Dropping UNIQUE from the usage idempotency
     index does not remove deduplication — it removes what `ON CONFLICT` needs to resolve, so every usage write
     raised `SQLSTATE 42P10` and **94** tests went red; the cited test failed on the FIRST insert throwing, so its
@@ -393,6 +395,25 @@ ticket without a DONE line above it is genuinely in flight._
   - **Rows 1, 14, 17 and 20 are sound but UNPROBED**, and deliberately so: their mutations need call paths that
     were not traced, and guessing produces exactly the artefact this index removes — three of the five defects
     above are that shape. Row 8 stays `unprovable`; no integrations entity exists to revoke.
+
+- **DONE — trust-critical rows 4 and 6, the two that could not be probed at all.** Squash **`584c32b`**, PR **#92**,
+  branch `p7-tc-rows-4-and-6`, no migration, **no production code change**. Exact-head CI
+  [`31528689638`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31528689638) +
+  `31528690934` on `80f8bac`, and exact-main
+  [`31529565208`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31529565208) on
+  `584c32b`: all **277 files / 4056 tests, zero skips**. **`MAX_UNPROVEN` 8 → 6; FOURTEEN of twenty measured.**
+  - **NEITHER ROW NEEDED A BETTER MUTATION — THEY NEEDED A CORRECT CITATION.** Row 4's real test was **about a
+    hundred lines away in the same file** (`a tool NOT on the worker allowlist is denied — and the refusal is
+    recorded`) and asserts `denial_reason` read back from the database, matching the row's `recorded_row` anchor.
+    Row 6 had cited **the control**; its real test (`a MISMATCHED PAYLOAD is refused, and does NOT burn the
+    approval (APPR-004)`) binds an approval to `{}`, dispatches different bytes and expects `approval_invalid`.
+    10 red for row 4, all about the allowlist; 12 for row 6, all about payload binding.
+  - Row 6's `mutation` now names **which** element to drop. `tool`, `version` and `cost` are bound too, and
+    dropping one of those reddens the sibling asserting THAT element — measuring a different row than this one.
+  - **A LOCAL FLAKE IS ON THE RECORD AND IS NOT CLOSED.** The first local `pnpm run check` reported
+    `1 failed / 2429 passed`; two later local runs were clean, and **three hosted runs were 4056/4056 zero-skip**.
+    **The failing test was never identified** — the first run's output was filtered before the name was read, which
+    is a gap in method. A green CI run does not retroactively explain a red local one, so this is a watch item.
   - **ALL NINE BRANCHES WERE DELETED on the owner's instruction (2026-08-08), after exact-main CI
     [`31233634438`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31233634438) on
     `5b7ad92` came back 277 files / 4056 tests, zero skips.** `p7-trust-critical-measurement` (was `6fbf001`,
@@ -433,7 +454,7 @@ ticket without a DONE line above it is genuinely in flight._
     and the green-half reasoning: CDR-084 SS11.
     **(SUPERSEDED TWICE: `442456d` took the failure-scenario ceiling to 2, and `5b7ad92` took the trust-critical
     ceiling 16 → 8. Neither half is at 16 any more.)**
-  - **~~TWELVE SCENARIO ROWS~~ TWO SCENARIO ROWS AND ~~SIXTEEN~~ EIGHT TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and
+  - **~~TWELVE SCENARIO ROWS~~ TWO SCENARIO ROWS AND ~~SIXTEEN~~ ~~EIGHT~~ SIX TRUST-CRITICAL ROWS ARE STILL `unmeasured`**, and
     the acceptance criterion "16-scenario matrix green" is still NOT met — SS0.1 explains why it cannot be on its
     literal wording. **The reason has changed and the sentence is corrected rather than left to read as though it
     had not:** when this was written, twelve rows were unmeasured and the blocker was a GitHub Actions outage
@@ -2169,7 +2190,7 @@ when review showed the run reddened a different test). **18 of 20 are unproven, 
 that**, in the vocabulary the index defines: `2 MEASURED …, 16 unmeasured, 2 with no test; 18 unproven (ceiling
 18)`. `unmeasured` and `unproven` are distinct states — quoting the wrong one is how this paragraph was wrong
 before. **(THOSE FIGURES ARE P7-007's AND ARE SUPERSEDED BY `5b7ad92`: it is now 12 measured, 7 unmeasured, 1
-unprovable — 8 unproven, ceiling 8. The paragraph is kept because the distinction it draws between `unmeasured`
+unprovable — 8 unproven, ceiling 8; and 584c32b then took it to 14 measured, 6 unproven, ceiling 6. The paragraph is kept because the distinction it draws between `unmeasured`
 and `unproven` is still the point, and because "18 of 20 are unproven" is what P7-007 actually shipped.)** Do not read the twenty green checkmarks in `TEST-AND-VERIFICATION-STRATEGY.md` as coverage without
 reading the index beside them.
 
