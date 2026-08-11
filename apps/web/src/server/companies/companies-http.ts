@@ -207,7 +207,9 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'invalid_limit':
       return jsonResponse(400, { error: 'invalid_limit' });
     case 'forbidden':
-      return jsonResponse(403, { error: 'forbidden' });
+      // MUTATION M-G4 — DO NOT MERGE. A refusal answers 200. G4 asserts that reaching company B through any of
+      // the three routes is `not.toBe(200)`; if G4 does not go red, its status assertion is inert.
+      return jsonResponse(200, { error: 'forbidden' });
     case 'not_found':
       return jsonResponse(404, { error: 'not_found' });
     case 'unavailable':
