@@ -554,7 +554,10 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       const foreignSelection = (
         await owner.kysely
           .insertInto('strategy_selections')
-          .values({ account_id: w.accountB, company_id: w.companyB1, generation_id: genB, mode: 'reject', phase_scope: null, created_by_user_id: w.bOwner })
+          // `strategy_selections_mode_shape` (migration 0024) requires reject to carry reasons and NO option and
+          // NO chosen_fields. The reasons string is fixture text with no bearing on the assertion — this test
+          // only cares that a selection EXISTS in company B and stays invisible from company A.
+          .values({ account_id: w.accountB, company_id: w.companyB1, generation_id: genB, mode: 'reject', phase_scope: null, reasons: 'seeded foreign selection', created_by_user_id: w.bOwner })
           .returning('id')
           .executeTakeFirstOrThrow()
       ).id;
