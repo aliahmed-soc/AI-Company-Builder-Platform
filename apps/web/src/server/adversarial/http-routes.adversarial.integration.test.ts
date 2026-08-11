@@ -428,4 +428,146 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     const activity = await owner.kysely.selectFrom('activity_events').select('activity_type').execute();
     expect(activity.every((a) => ['company.created', 'company.updated', 'company.paused', 'company.resumed'].includes(a.activity_type))).toBe(true);
   });
+
+  /**
+   * CDR-087 §4 — the three strategy/decision routes join this matrix.
+   *
+   * G7 IS THE REASON THIS BLOCK LOOKS UNUSUAL. Every other route here proves the oracle at ONE granularity: a
+   * foreign COMPANY id and an unknown one must be byte-identical. These two POSTs also take a SUB-RESOURCE id
+   * (a selection), and `RecordStrategyDecisionResult`/`RecordDecisionResult` carry a `not_found` arm that the
+   * company-level routes do not have. So the oracle is asserted TWICE, at both granularities — company and
+   * selection — because a refusal that is uniform at one level and revealing at the other is still an oracle.
+   *
+   * The fixtures are seeded with the OWNER connection, following the precedent in
+   * `packages/core/src/strategy/decision-record.integration.test.ts`. That makes the negative STRONGER, not
+   * weaker: the foreign row provably exists, and is still invisible to a restricted caller.
+   */
+  describe('CDR-087 — strategy read and decision recording', () => {
+    let strategyRoute: ParamRoute<{ companyId: string }>;
+    // ParamRoute requires GET; these two export POST only. A POST-shaped alias is added rather than widening
+    // ParamRoute, which would let a GET-less route slip into the GET-based assertions elsewhere in this file.
+    type ParamPostRoute<P> = { POST(request: Request, context: { params: Promise<P> }): Promise<Response> };
+    let selectionRoute: ParamPostRoute<{ companyId: string }>;
+    let decisionsRoute: ParamPostRoute<{ companyId: string }>;
+    let genA = '';
+    let genB = '';
+
+    /** Seed a complete generation + its options directly, as the core strategy suites do. */
+    async function seedGeneration(accountId: string, companyId: string, actorId: string): Promise<string> {
+      const doc = (
+        await owner.kysely
+          .insertInto('understanding_documents')
+          .values({ account_id: accountId, company_id: companyId, version: 1, status: 'complete', overall_confidence: 0.6, created_by_user_id: actorId })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+      ).id;
+      return (
+        await owner.kysely
+          .insertInto('strategy_generations')
+          .values({ account_id: accountId, company_id: companyId, understanding_document_id: doc, understanding_version: 1, status: 'complete', option_count: 0, similarity_check_result: 'distinct', created_by_user_id: actorId })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+      ).id;
+    }
+
+    beforeAll(async () => {
+      strategyRoute = await import('../../app/api/companies/[companyId]/strategy/route.js');
+      selectionRoute = await import('../../app/api/companies/[companyId]/strategy/selection/route.js');
+      decisionsRoute = await import('../../app/api/companies/[companyId]/decisions/route.js');
+      genA = await seedGeneration(w.accountA, w.companyA1, w.aOwner);
+      genB = await seedGeneration(w.accountB, w.companyB1, w.bOwner);
+    });
+
+    const surfaceOf = async (res: Response): Promise<{ status: number; body: string }> => ({ status: res.status, body: await res.text() });
+
+    const getStrategy = async (companyId: string): Promise<{ status: number; body: string }> =>
+      surfaceOf(await strategyRoute.GET(new Request(`https://app.test/api/companies/${companyId}/strategy`), { params: Promise.resolve({ companyId }) }));
+
+    const postSelection = async (companyId: string, generationId: string): Promise<{ status: number; body: string }> =>
+      surfaceOf(
+        await selectionRoute.POST(
+          new Request(`https://app.test/api/companies/${companyId}/strategy/selection`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ generationId, request: { mode: 'reject', reasons: ['no'] } }),
+          }),
+          { params: Promise.resolve({ companyId }) },
+        ),
+      );
+
+    const postDecision = async (companyId: string, generationId: string, selectionId: string): Promise<{ status: number; body: string }> =>
+      surfaceOf(
+        await decisionsRoute.POST(
+          new Request(`https://app.test/api/companies/${companyId}/decisions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ generationId, selectionId }),
+          }),
+          { params: Promise.resolve({ companyId }) },
+        ),
+      );
+
+    test('G4 — a member of A cannot reach company B through any of the three, and NOTHING moves', async () => {
+      await signInAs(w.aOwner);
+      const before = await owner.kysely.selectFrom('strategy_selections').select('id').execute();
+
+      expect((await getStrategy(w.companyB1)).status, 'read into B').not.toBe(200);
+      expect((await postSelection(w.companyB1, genB)).status, 'select into B').not.toBe(200);
+      expect((await postDecision(w.companyB1, genB, UNKNOWN_UUID)).status, 'decide into B').not.toBe(200);
+
+      // THE DATABASE IS THE ASSERTION, not the status code: a refusal that still wrote a row would satisfy the
+      // three checks above and be exactly the defect this matrix exists to catch.
+      const after = await owner.kysely.selectFrom('strategy_selections').select('id').execute();
+      expect(after.map((r) => r.id).sort()).toEqual(before.map((r) => r.id).sort());
+    });
+
+    test('G7(a) — COMPANY granularity: a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      for (const [name, call] of [
+        ['strategy read', (id: string) => getStrategy(id)],
+        ['selection', (id: string) => postSelection(id, genA)],
+        ['decision', (id: string) => postDecision(id, genA, UNKNOWN_UUID)],
+      ] as const) {
+        const foreign = await call(w.companyB1);
+        const unknown = await call(UNKNOWN_UUID);
+        expect(foreign.status, `${name}: identical status`).toBe(unknown.status);
+        expect(foreign.body, `${name}: identical body`).toBe(unknown.body);
+      }
+    });
+
+    test('G7(b) — SELECTION granularity: a FOREIGN selection id and an UNKNOWN one are byte-identical', async () => {
+      // Inside company A, which this caller legitimately holds — so the only thing under test is whether the
+      // SUB-RESOURCE leaks. This is the granularity §4 originally missed.
+      await signInAs(w.aOwner);
+      const foreignSelection = (
+        await owner.kysely
+          .insertInto('strategy_selections')
+          .values({ account_id: w.accountB, company_id: w.companyB1, generation_id: genB, mode: 'reject', phase_scope: null, created_by_user_id: w.bOwner })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+      ).id;
+
+      const foreign = await postDecision(w.companyA1, genA, foreignSelection);
+      const unknown = await postDecision(w.companyA1, genA, UNKNOWN_UUID);
+      expect(foreign.status, 'selection: identical status').toBe(unknown.status);
+      expect(foreign.body, 'selection: identical body').toBe(unknown.body);
+    });
+
+    test('G6 — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const [name, res] of [
+          ['strategy read', await getStrategy(bad)],
+          ['selection', await postSelection(bad, genA)],
+          ['decision', await postDecision(bad, genA, UNKNOWN_UUID)],
+        ] as const) {
+          expect(res.status, `${name} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `${name} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'stack', 'password', w.companyB1, genB]) {
+            expect(res.body.toLowerCase(), `${name} '${bad}' must not leak '${forbidden}'`).not.toContain(String(forbidden).toLowerCase());
+          }
+        }
+      }
+    });
+  });
 });
