@@ -82,9 +82,11 @@ const offenders = files.filter(hasBom).map((f) => relative(ROOT, f).replace(/\\/
 //
 //      THE SET IS DEFINED BY THE THREAT, NOT TUNED AGAINST THE TREE. PowerShell's full escape list also produces NUL
 //      (`` `0 ``), TAB, CR and LF. TAB and CR are signals 1 and 2; LF is indistinguishable from a real newline; and
-//      NUL is DELIBERATELY EXCLUDED because this repo genuinely writes it — `object-key.test.ts` and
-//      `untrusted.test.ts` both embed raw NUL as control-character-rejection fixtures, so guarding it would produce
-//      two false positives on day one and get the whole checker deleted. Measured across 601 tracked source files:
+//      NUL WAS deliberately excluded, on the belief that this repo genuinely writes it. THAT BELIEF WAS TESTED ON
+//      2026-08-11 AND WAS FALSE. A byte sweep of every tracked file found raw NUL in TWO files, not the two named
+//      here: `untrusted.test.ts` (which works identically with escape sequences) and `EXECUTION-LOG.md` (which
+//      meant to PRINT an escape). `object-key.test.ts`, named here as a reason to exclude, contains none at all.
+//      Guarding NUL produced ZERO false positives, so it is now signal 4 — see the block above `ESCAPE_PRODUCTS`. Measured across 601 tracked source files:
 //      the five guarded characters appear exactly ONCE, and that one was real damage — a BEL in
 //      `credit-service.ts` where `` `a `` had eaten the "a" out of `already_reserved`, sitting undetected in a
 //      comment explaining a refusal path. Found by this signal, not by review.
@@ -94,8 +96,20 @@ const offenders = files.filter(hasBom).map((f) => relative(ROOT, f).replace(/\\/
 // returned 10 hits of which 10 were legitimate. A guard that cries wolf gets deleted, so this one only claims what
 // it can prove. The residual mitigation for that variant is the editing rule below plus review.
 const CODE_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs']);
-// BEL, BACKSPACE, VERTICAL TAB, FORM FEED, ESC — see signal 3 above. NUL is excluded on purpose (real fixtures use
-// it); TAB and CR have their own signals; LF cannot be told from a newline.
+// BEL, BACKSPACE, VERTICAL TAB, FORM FEED, ESC — see signal 3 above. TAB and CR have their own signals; LF cannot
+// be told from a newline.
+//
+// NUL USED TO BE EXCLUDED HERE, with the justification "real fixtures use it". THAT WAS WRONG, and it is corrected
+// rather than quietly dropped. A repo-wide byte sweep on 2026-08-11 found raw NULs in exactly two tracked text
+// files — `docs/agent/EXECUTION-LOG.md` and `packages/contracts/src/tools/untrusted.test.ts` — and NEITHER needed
+// one: the doc meant the six characters of an escape sequence, and the test's two-escape literal parses to the
+// same two bytes it had been written with literally. So no fixture depended on the exclusion.
+//
+// WHAT THE EXCLUSION COST: `tools/check-secrets.mjs` SKIPS any file containing a NUL (`if (text.includes(...))
+// continue`), because a NUL means binary content. Both files above were therefore invisible to the secret scanner
+// for as long as the byte was there — which is the same blindness that tool's own header records having suffered.
+// A byte this checker waved through is a byte that silently removes a file from the security scan, so NUL is now
+// signal 4 and is checked in EVERY scanned text file, code or not.
 // WRITTEN AS `\uXXXX` ESCAPES, NOT LITERALS, AND IT HAS TO BE: this checker scans `tools/`, so spelling its own
 // signal literally would make it fail on itself — which is how the literals below were first written, and caught.
 const ESCAPE_PRODUCTS = [
@@ -124,12 +138,19 @@ for (const file of files) {
     for (const [ch, name, letter] of ESCAPE_PRODUCTS) {
       if (line.includes(ch)) problems.push(`${i + 1}: raw ${name} — a PowerShell escape ate ${'aeiou'.includes(letter) ? 'an' : 'a'} "${letter}"`);
     }
+    // Signal 4 — NUL, in every scanned text file. Not a PowerShell escape product: this one is about VISIBILITY.
+    // A raw NUL makes `check-secrets.mjs` treat the file as binary and skip it, so the byte removes the file from
+    // the security scan without failing anything. Written as a code point rather than a literal for the same
+    // reason the list above is: this checker scans `tools/`, so a literal here would make it fail on itself.
+    if (line.includes(String.fromCharCode(0))) {
+      problems.push(`${i + 1}: raw NUL — this file is SKIPPED by check-secrets.mjs; write the escape sequence instead`);
+    }
   });
   if (problems.length > 0) mangled.push({ rel, problems });
 }
 
 if (offenders.length === 0 && mangled.length === 0) {
-  console.log(`✔ encoding check passed (no UTF-8 BOM, raw TAB, lone CR or PowerShell escape product in ${files.length} scanned text files).`);
+  console.log(`✔ encoding check passed (no UTF-8 BOM, raw TAB, lone CR, raw NUL or PowerShell escape product in ${files.length} scanned text files).`);
   process.exit(0);
 }
 if (offenders.length > 0) {
