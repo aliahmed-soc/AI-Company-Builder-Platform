@@ -452,7 +452,19 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     let genA = '';
     let genB = '';
 
-    /** Seed a complete generation + its options directly, as the core strategy suites do. */
+    /**
+     * Seed a generation directly, as the core strategy suites do.
+     *
+     * THE STATUS IS `fewer_than_three` WITH ZERO OPTIONS, AND THAT IS THE HONEST PAIRING, NOT A SHORTCUT.
+     * `strategy_generations_status_count_consistent` (migration 0022) admits only
+     * `(complete and option_count >= 3)` or `(fewer_than_three and option_count < 3)`. This fixture seeds no
+     * options, so `complete` would be a lie the database correctly refuses — it did, and that is why the first
+     * hosted run of this block failed in `beforeAll`.
+     *
+     * Zero options is sufficient here: nothing in this block reads option content. G4/G7/G6 assert refusal and
+     * oracle uniformity, which do not depend on what was generated, and the selection posted below is
+     * `mode: 'reject'`, which by CDR-037 selects no option at all.
+     */
     async function seedGeneration(accountId: string, companyId: string, actorId: string): Promise<string> {
       const doc = (
         await owner.kysely
@@ -464,7 +476,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       return (
         await owner.kysely
           .insertInto('strategy_generations')
-          .values({ account_id: accountId, company_id: companyId, understanding_document_id: doc, understanding_version: 1, status: 'complete', option_count: 0, similarity_check_result: 'distinct', created_by_user_id: actorId })
+          .values({ account_id: accountId, company_id: companyId, understanding_document_id: doc, understanding_version: 1, status: 'fewer_than_three', option_count: 0, similarity_check_result: 'distinct', created_by_user_id: actorId })
           .returning('id')
           .executeTakeFirstOrThrow()
       ).id;
