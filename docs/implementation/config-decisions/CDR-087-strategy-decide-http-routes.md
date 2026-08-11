@@ -128,6 +128,37 @@ variant to core without mapping it is a compile error rather than a silent succe
 | rate limited | 429 + `retryAfterSeconds` | §3.1 |
 | success | 200 | DTO only, no internal ids |
 
+### §5.1 — `not_found` is a REAL arm here, and it does not break the oracle
+
+Read from the source, not assumed. `RecordStrategyDecisionResult` and `RecordDecisionResult` each
+carry **four** arms — `ok`, `forbidden`, `not_found`, `invalid` — unlike `readDecisionRoom`, whose
+own comment records that it has *"no `not_found` arm to map: the domain answers an unknown, foreign
+and unauthorized company"* identically.
+
+So these two routes cannot simply copy the Decision Room's mapping. The question is whether a
+distinct `not_found` re-opens the oracle G5 closes. **It does not, and the reason is the granularity
+the two arms speak at:**
+
+- **`forbidden`** is decided at the **company** level, by scope resolution against an active
+  membership. A foreign company id and an unknown company id both fail there, both yield
+  `forbidden`, and G5 holds at the boundary an attacker actually probes.
+- **`not_found`** is decided at the **sub-resource** level — the generation or selection — and the
+  decision-record comment says it covers *"absent/**invisible**"*. Invisible is RLS: a selection
+  belonging to another company is not visible to this caller and is therefore indistinguishable
+  from one that never existed. A foreign selection id and an unknown selection id both yield
+  `not_found`.
+
+**G7 — the oracle property is asserted at BOTH granularities, not one.** The adversarial matrix must
+cover: (a) foreign company id vs unknown company id → byte-identical, and (b) foreign *selection*
+id vs unknown *selection* id, inside a company the caller legitimately holds → byte-identical. Only
+(a) was named in §4. Testing (a) alone would leave the sub-resource oracle unproven, and that is the
+level at which these two routes actually differ from every route built before them.
+
+**G8 — `not_found` and `forbidden` must not be collapsed into one status code to "be safe."**
+Collapsing them would hide a real distinction from a legitimate owner — who is entitled to know that
+a selection id is wrong rather than that they lack access — while buying nothing, because each arm
+is already non-distinguishing within its own granularity.
+
 ---
 
 ## §6 — Verification required before this ticket is implementation-complete
