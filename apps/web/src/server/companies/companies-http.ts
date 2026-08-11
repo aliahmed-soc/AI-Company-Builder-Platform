@@ -117,6 +117,17 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(201, { company: { companyId: result.companyId, status: result.companyStatus, creationMode: result.creationMode } });
     case 'company':
       return jsonResponse(200, { company: result.company });
+    // CDR-087 §5.0 G9 — an absent generation is a SUCCESS carrying null, never a 404. The company exists and the
+    // caller may read it; there is simply nothing generated yet, which is the honest first-visit empty state.
+    case 'strategy':
+      return jsonResponse(200, { generation: result.generation });
+    // 200, not 201. Neither call creates a resource at a new URL the client can then GET — the selection and the
+    // decision are read back through the company's strategy surface — so 201 would promise a Location that does
+    // not exist. Recorded here rather than defaulted (CDR-087 §5).
+    case 'strategy_selected':
+      return jsonResponse(200, { selection: result.selection });
+    case 'decision_recorded':
+      return jsonResponse(200, { decision: result.decision });
     case 'renamed':
       return jsonResponse(200, result.version !== undefined ? { changed: result.changed, version: result.version } : { changed: result.changed });
     case 'transitioned':
