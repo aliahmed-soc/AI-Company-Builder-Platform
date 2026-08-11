@@ -74,6 +74,17 @@ them. If a fake cannot produce the value, it **throws** rather than returning `u
 fixture that cannot produce the thing under test must fail loudly (the ACBP-P6-007 lesson: a
 fixture returning null hid two emergency-stop scopes enforcing nothing).
 
+**G3.1 — the guard fires on the first edit, and that is the intended experience.**
+`apps/web/src/server/companies/companies-request.test.ts:45` builds fakes via
+`fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime`. Because the three new
+methods are required, that object literal **stops typechecking the moment they are added**, before
+a single test is written. That is the guard doing its job, not an obstacle to route around: the
+correct response is to add all three defaults to `fakeRuntime`, each **throwing** with a message
+naming the method, so any test reaching an unstubbed surface fails loudly instead of silently
+receiving `undefined`. Do not widen the parameter to `Partial` of a looser type, and do not mark a
+method optional to get the file compiling again — either move re-admits the surface-by-forgetting
+this interface exists to prevent.
+
 ---
 
 ## §3 — Three build-breaking checks these routes must satisfy
@@ -127,6 +138,22 @@ variant to core without mapping it is a compile error rather than a silent succe
 | company not active | 409 | Gate 14 refusal, already a variant |
 | rate limited | 429 + `retryAfterSeconds` | §3.1 |
 | success | 200 | DTO only, no internal ids |
+
+### §5.0 — the GET has only TWO arms, and an absent generation is 200
+
+`LatestStrategyResult` is `{ status: 'ok'; generation: StrategyGenerationDTO | null } | { status:
+'forbidden' }` — read from `strategy-generation.ts`, not assumed from its siblings. **There is no
+`not_found` arm and no `invalid` arm.**
+
+**G9 — a company with no strategy generation yet answers `200` with `generation: null`, never
+`404`.** A 404 would be wrong on the facts: the company exists and the caller is entitled to read
+it; there is simply nothing generated. It would also be wrong for the consumer — FE-013's honest
+empty state ("no strategy yet, generate one") is a *success* the UI renders, not an error it
+recovers from. Mapping an empty read to 404 is how a UI ends up showing an error page for a normal
+first-visit.
+
+This makes the GET the simplest of the three: it follows the Decision Room's two-arm shape exactly,
+and only the two POSTs need §5.1's four-arm treatment.
 
 ### §5.1 — `not_found` is a REAL arm here, and it does not break the oracle
 
