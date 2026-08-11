@@ -207,7 +207,9 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'invalid_limit':
       return jsonResponse(400, { error: 'invalid_limit' });
     case 'forbidden':
-      return jsonResponse(403, { error: 'forbidden' });
+      // MUTATION M-G6 — DO NOT MERGE. Adds a second key to the refusal envelope. G6 asserts the envelope's keys
+      // are exactly ['error']; if G6 does not go red on this, its bounded-envelope assertion is not doing work.
+      return jsonResponse(403, { error: 'forbidden', detail: 'company scope' });
     case 'not_found':
       return jsonResponse(404, { error: 'not_found' });
     case 'unavailable':
