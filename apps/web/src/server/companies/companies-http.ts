@@ -105,8 +105,13 @@ export async function parseEditMemoryBody(request: HttpRequest): Promise<Parsed<
 export async function respondToCompaniesRequest(run: () => Promise<CompaniesRequestResult>): Promise<Response> {
   try {
     return toCompaniesResponse(await run());
-  } catch {
-    return jsonResponse(500, genericErrorBody(500));
+  } catch (err) {
+    // MUTATION M-G6-v2 — DO NOT MERGE. THIS IS THE PATH G6 ACTUALLY EXERCISES: a malformed companyId raises
+    // 22P02 in the resolver and lands here, so the bounded 500 envelope — not the 403 mapping — is what G6's
+    // assertions read. Leaks the provider exception text and a second key. G6 asserts the envelope's only key is
+    // `error` AND that the body leaks no 'select'/'insert'/'constraint'/'pg_'. If G6 does not go red, both of
+    // those assertions are inert.
+    return jsonResponse(500, { ...genericErrorBody(500), detail: String(err) });
   }
 }
 
