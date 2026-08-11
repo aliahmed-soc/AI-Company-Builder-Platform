@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -42,7 +42,14 @@ export type CompaniesRequestResult =
   | { readonly status: 'memory_list'; readonly items: readonly MemoryItemDTO[] }
   | { readonly status: 'memory_edited'; readonly item: MemoryItemDTO }
   | { readonly status: 'memory_item_single'; readonly item: MemoryItemDTO }
-  | { readonly status: 'memory_deleted'; readonly memoryItemId: string };
+  | { readonly status: 'memory_deleted'; readonly memoryItemId: string }
+  /**
+   * CDR-087 §5.0 — the company's latest strategy generation, or NULL when none exists. Null is a SUCCESS, not a
+   * not-found: the company exists and the caller may read it, there is simply nothing generated yet (G9).
+   */
+  | { readonly status: 'strategy'; readonly generation: Extract<LatestStrategyResult, { status: 'ok' }>['generation'] }
+  | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
+  | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -78,6 +85,12 @@ export interface CompanyRuntime {
   editMemoryItem(params: { userId: string; accountId: string; companyId: string; targetId: string; type: unknown; content: unknown; confidence?: unknown }, options?: { logger?: Logger }): Promise<EditMemoryItemResult>;
   getMemoryItem(params: { userId: string; accountId: string; companyId: string; memoryItemId: string }, options?: { logger?: Logger }): Promise<GetMemoryItemResult>;
   deleteMemoryItem(params: { userId: string; accountId: string; companyId: string; memoryItemId: string }, options?: { logger?: Logger }): Promise<DeleteMemoryItemResult>;
+
+  // CDR-087 — strategy read and decision recording. REQUIRED, never optional, for the reason recorded on
+  // `checkRequestLimit`: a fake runtime must declare every surface, so none is admitted by being forgotten.
+  getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
+  recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
+  recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -493,5 +506,91 @@ export async function deleteMemoryForRequest(companyId: string, memoryItemId: st
       return { status: 'not_found' };
     case 'conflict':
       return { status: 'conflict' };
+  }
+}
+
+/**
+ * Read the company's latest strategy generation (CDR-087; STRAT-001; `strategy:read` → owner + viewer).
+ *
+ * NO AUTHORIZATION CHECK HERE, DELIBERATELY (CDR-087 §1). `@acbp/core` decides from the company role resolved
+ * against an active membership. A second place answering the same question is the defect ACBP-P6-002 paid to
+ * remove when the caller-injectable approval port was deleted, and the copy here is the one no test of the
+ * registry would cover.
+ *
+ * `LatestStrategyResult` has TWO arms only — there is no `not_found` to map, because an unknown, foreign or
+ * unauthorized company is answered identically by scope resolution.
+ */
+export async function getStrategyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  // No logger option here: StrategyGenerationOptions carries correlationId and two TEST SEAMS only, so passing
+  // one would not compile. The use case builds its own logger internally.
+  const r = await runtime.getLatestStrategy({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      // `generation` may be null. That is G9: an absent generation is a success carrying null.
+      return { status: 'strategy', generation: r.generation };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * Record a strategy decision — select / edit / combine / reject (CDR-087; STRAT-005; `strategy:select` → OWNER
+ * ONLY). The owner-only rule lives in `@acbp/core`; see §1 above for why it is not repeated here.
+ *
+ * FOUR arms, and `forbidden` and `not_found` stay DISTINCT (§5.1 G8). They speak at different granularities:
+ * `forbidden` is the company-level refusal, where a foreign and an unknown company id are indistinguishable;
+ * `not_found` is the sub-resource level, where a foreign and an unknown selection id are equally
+ * indistinguishable because RLS makes another company's row invisible rather than denied.
+ */
+export async function recordStrategySelectionForRequest(
+  companyId: string,
+  body: Pick<RecordStrategyDecisionParams, 'generationId' | 'request'>,
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.recordStrategySelection({ userId: ctx.userId, accountId: ctx.accountId, companyId, generationId: body.generationId, request: body.request }, { logger: companiesLogger() });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'strategy_selected', selection: r.selection };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'invalid':
+      // The domain validated and refused; nothing was persisted. No field is echoed back.
+      return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The decision was rejected.', retryable: false } };
+  }
+}
+
+/** Record the decision that follows a strategy selection (CDR-087; `decision:record` → OWNER ONLY). Same four-arm
+ * shape and the same §1 rule: core decides, this layer maps. */
+export async function recordDecisionForRequest(
+  companyId: string,
+  body: Pick<RecordDecisionParams, 'generationId' | 'selectionId' | 'rationale'>,
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  // `rationale` is spread conditionally: it is optional in the contract and a missing one must never block the
+  // record (CDR-038 §6-G2), so an explicit `undefined` key is not the same thing as its absence.
+  const r = await runtime.recordDecision(
+    { userId: ctx.userId, accountId: ctx.accountId, companyId, generationId: body.generationId, selectionId: body.selectionId, ...(body.rationale !== undefined ? { rationale: body.rationale } : {}) },
+    { logger: companiesLogger() },
+  );
+  switch (r.status) {
+    case 'ok':
+      return { status: 'decision_recorded', decision: r.decision };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'invalid':
+      return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The decision was rejected.', retryable: false } };
   }
 }

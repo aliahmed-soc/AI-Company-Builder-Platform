@@ -62,6 +62,11 @@ import { adminReadCompanyOverview, type AdminReadParams, type AdminReadResult, t
 import { startInterviewSession, suspendInterviewSession, resumeInterviewSession, getInterviewSession, type InterviewSessionParams, type InterviewSessionOptions, type StartInterviewResult, type InterviewTransitionResult, type GetInterviewResult } from '../discovery/interview-session.js';
 import { recordInterviewAnswer, getSessionQa, type InterviewQaParams, type InterviewQaOptions, type RecordAnswerResult, type GetSessionQaResult } from '../discovery/interview-qa.js';
 import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, deleteMemoryItem, type CreateMemoryItemParams, type ListMemoryItemsParams, type EditMemoryItemParams, type GetMemoryItemParams, type DeleteMemoryItemParams, type MemoryOptions, type CreateMemoryItemResult, type ListMemoryItemsResult, type EditMemoryItemResult, type GetMemoryItemResult, type DeleteMemoryItemResult } from '../memory/memory-item.js';
+// CDR-087 — strategy read and decision recording, exposed over HTTP by apps/web. Composition only: the
+// authorization for each lives inside the use case, not here and not at the route (CDR-087 §1).
+import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
+import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
+import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -198,6 +203,11 @@ export interface ClerkIdentityRuntime {
   editMemoryItem(params: EditMemoryItemParams, options?: MemoryOptions): Promise<EditMemoryItemResult>;
   getMemoryItem(params: GetMemoryItemParams, options?: MemoryOptions): Promise<GetMemoryItemResult>;
   deleteMemoryItem(params: DeleteMemoryItemParams, options?: MemoryOptions): Promise<DeleteMemoryItemResult>;
+
+  // CDR-087 slice 1. Required members, matching every other domain surface on this runtime.
+  getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
+  recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
+  recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -304,6 +314,15 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     deleteMemoryItem(params, options) {
       return deleteMemoryItem(client, params, options ?? {});
+    },
+    getLatestStrategy(params, options) {
+      return getLatestStrategyGeneration(client, params, options ?? {});
+    },
+    recordStrategySelection(params, options) {
+      return recordStrategyDecision(client, params, options ?? {});
+    },
+    recordDecision(params, options) {
+      return recordDecision(client, params, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});

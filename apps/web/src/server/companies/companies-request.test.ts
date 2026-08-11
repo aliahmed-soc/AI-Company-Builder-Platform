@@ -10,6 +10,9 @@ import {
   resumeCompanyForRequest,
   getCompanyActivityForRequest,
   getDecisionRoomForRequest,
+  getStrategyForRequest,
+  recordStrategySelectionForRequest,
+  recordDecisionForRequest,
   getPortfolioForRequest,
   getProvisioningForRequest,
   resumeProvisioningForRequest,
@@ -69,6 +72,12 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     editMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
     getMemoryItem: () => Promise.resolve({ status: 'ok', item: MEMORY_DTO }),
     deleteMemoryItem: () => Promise.resolve({ status: 'ok', memoryItemId: 'mem_1' }),
+    // CDR-087 G3.1 — these THROW rather than returning undefined. A fixture that cannot produce the thing under
+    // test must fail loudly; ACBP-P6-007 is the case where a null-returning fixture hid two emergency-stop
+    // scopes that were enforcing nothing. Every test needing one of these stubs it explicitly.
+    getLatestStrategy: () => Promise.reject(new Error('getLatestStrategy: unstubbed in this fake runtime')),
+    recordStrategySelection: () => Promise.reject(new Error('recordStrategySelection: unstubbed in this fake runtime')),
+    recordDecision: () => Promise.reject(new Error('recordDecision: unstubbed in this fake runtime')),
     ...overrides,
   };
 }
@@ -419,5 +428,97 @@ describe('typed memory requests (ACBP-P2-006)', () => {
     expect((await listMemoryForRequest('c', {}, { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
     expect((await editMemoryForRequest('c', 'm1', { type: 'x', content: 'y', confidence: null }, { identity: identityDeps({ userId: null }), runtime: fakeRuntime() })).status).toBe('unauthenticated');
     expect((await deleteMemoryForRequest('c', 'm1', { identity: identityDeps({ verified: false }), runtime: fakeRuntime() })).status).toBe('email_unverified');
+  });
+});
+
+/**
+ * CDR-087 slice 1 — strategy read and decision recording at the request layer.
+ *
+ * THESE TESTS ASSERT MAPPING, NOT DTO SHAPE. The DTO's fields are core's contract and are tested there; what can
+ * only go wrong HERE is the translation from a domain result union to a `CompaniesRequestResult` variant. So each
+ * success case uses a SENTINEL object and asserts IDENTITY (`toBe`), which proves the request layer passed the
+ * domain's value through untouched rather than rebuilding a lookalike.
+ */
+describe('CDR-087 — strategy read and decision recording (request layer)', () => {
+  const GENERATION = { sentinel: 'generation' } as unknown as never;
+  const SELECTION = { sentinel: 'selection' } as unknown as never;
+  const DECISION = { sentinel: 'decision' } as unknown as never;
+
+  describe('GET strategy — LatestStrategyResult has TWO arms (CDR-087 §5.0)', () => {
+    test('an existing generation is passed through by identity', async () => {
+      const runtime = fakeRuntime({ getLatestStrategy: () => Promise.resolve({ status: 'ok', generation: GENERATION }) });
+      const r = await getStrategyForRequest('co_1', { runtime, identity: identityDeps() });
+      expect(r.status).toBe('strategy');
+      if (r.status !== 'strategy') return;
+      expect(r.generation).toBe(GENERATION);
+    });
+
+    test('G9 — NO generation yet is a SUCCESS carrying null, never a not-found', async () => {
+      // The company exists and the caller may read it; there is simply nothing generated. Mapping this to a
+      // not-found is how a UI shows an error page on a normal first visit.
+      const runtime = fakeRuntime({ getLatestStrategy: () => Promise.resolve({ status: 'ok', generation: null }) });
+      const r = await getStrategyForRequest('co_1', { runtime, identity: identityDeps() });
+      expect(r.status).toBe('strategy');
+      if (r.status !== 'strategy') return;
+      expect(r.generation).toBeNull();
+    });
+
+    test('forbidden maps to forbidden — the only other arm this result has', async () => {
+      const runtime = fakeRuntime({ getLatestStrategy: () => Promise.resolve({ status: 'forbidden' }) });
+      const r = await getStrategyForRequest('co_1', { runtime, identity: identityDeps() });
+      expect(r.status).toBe('forbidden');
+    });
+  });
+
+  describe('POST strategy selection — FOUR arms (CDR-087 §5.1)', () => {
+    test('ok is passed through by identity', async () => {
+      const runtime = fakeRuntime({ recordStrategySelection: () => Promise.resolve({ status: 'ok', selection: SELECTION }) });
+      const r = await recordStrategySelectionForRequest('co_1', { generationId: 'gen_1', request: {} as never }, { runtime, identity: identityDeps() });
+      expect(r.status).toBe('strategy_selected');
+      if (r.status !== 'strategy_selected') return;
+      expect(r.selection).toBe(SELECTION);
+    });
+
+    test.each([
+      ['forbidden', 'forbidden'],
+      ['not_found', 'not_found'],
+      ['invalid', 'validation'],
+    ])('the %s arm maps to %s, and G8 keeps forbidden and not_found DISTINCT', async (domain, mapped) => {
+      const runtime = fakeRuntime({ recordStrategySelection: () => Promise.resolve({ status: domain } as never) });
+      const r = await recordStrategySelectionForRequest('co_1', { generationId: 'gen_1', request: {} as never }, { runtime, identity: identityDeps() });
+      expect(r.status).toBe(mapped);
+    });
+  });
+
+  describe('POST decisions — FOUR arms (CDR-087 §5.1)', () => {
+    test('ok is passed through by identity', async () => {
+      const runtime = fakeRuntime({ recordDecision: () => Promise.resolve({ status: 'ok', decision: DECISION }) });
+      const r = await recordDecisionForRequest('co_1', { generationId: 'gen_1', selectionId: 'sel_1' }, { runtime, identity: identityDeps() });
+      expect(r.status).toBe('decision_recorded');
+      if (r.status !== 'decision_recorded') return;
+      expect(r.decision).toBe(DECISION);
+    });
+
+    test.each([
+      ['forbidden', 'forbidden'],
+      ['not_found', 'not_found'],
+      ['invalid', 'validation'],
+    ])('the %s arm maps to %s', async (domain, mapped) => {
+      const runtime = fakeRuntime({ recordDecision: () => Promise.resolve({ status: domain } as never) });
+      const r = await recordDecisionForRequest('co_1', { generationId: 'gen_1', selectionId: 'sel_1' }, { runtime, identity: identityDeps() });
+      expect(r.status).toBe(mapped);
+    });
+  });
+
+  describe('G3.1 — an unstubbed new surface FAILS LOUDLY', () => {
+    test.each(['getLatestStrategy', 'recordStrategySelection', 'recordDecision'])(
+      'the default %s throws rather than returning undefined',
+      async (method) => {
+        // A fixture that cannot produce the thing under test must fail loudly. Returning undefined here is how
+        // ACBP-P6-007 hid two emergency-stop scopes that were enforcing nothing.
+        const runtime = fakeRuntime();
+        await expect((runtime as unknown as Record<string, () => Promise<unknown>>)[method]!()).rejects.toThrow(method);
+      },
+    );
   });
 });
