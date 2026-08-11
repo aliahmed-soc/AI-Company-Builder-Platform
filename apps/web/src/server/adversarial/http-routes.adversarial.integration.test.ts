@@ -486,6 +486,20 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       strategyRoute = await import('../../app/api/companies/[companyId]/strategy/route.js');
       selectionRoute = await import('../../app/api/companies/[companyId]/strategy/selection/route.js');
       decisionsRoute = await import('../../app/api/companies/[companyId]/decisions/route.js');
+    });
+
+    /**
+     * SEEDED PER TEST, NOT ONCE — the parent suite's `beforeEach` calls `truncateFixtures(owner)` before every
+     * test (line 143), so anything seeded in `beforeAll` is gone by the time the first test body runs. A nested
+     * `beforeEach` runs AFTER the parent's, which is the only place these rows survive to be used.
+     *
+     * G7(b) is what exposed this: it is the only one of the four that INSERTS a row referencing a generation, so
+     * it failed on `strategy_selections_generation_fk` while the other three passed against generations that
+     * silently did not exist. Those passes were still testing company-scope refusal, which is what they assert —
+     * but a fixture that is absent when the assertion runs is not a fixture, and the next test added here would
+     * have inherited the same trap.
+     */
+    beforeEach(async () => {
       genA = await seedGeneration(w.accountA, w.companyA1, w.aOwner);
       genB = await seedGeneration(w.accountB, w.companyB1, w.bOwner);
     });
