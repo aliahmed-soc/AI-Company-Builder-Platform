@@ -73,6 +73,7 @@ import { getTaskDetail, type GetTaskDetailParams, type GetTaskDetailResult } fro
 import type { TaskOptions } from '../tasks/task-management.js';
 import { getArtifact, listRunArtifacts, type ArtifactDTO, type PersistArtifactOptions } from '../artifacts/persist.js';
 import { readArtifactLineage, type ReadLineageParams, type ReadLineageOptions, type ReadLineageResult } from '../artifacts/lineage.js';
+import { listApprovalInbox, type ListApprovalInboxParams, type ListApprovalInboxResult, type ApprovalServiceOptions } from '../approvals/approval-service.js';
 import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
 import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
 import type { AccountContextResolution } from '@acbp/contracts';
@@ -220,6 +221,7 @@ export interface ClerkIdentityRuntime {
   getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
   listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
+  listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -351,6 +353,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     readArtifactLineage(params, options) {
       return readArtifactLineage(client, params, options ?? {});
+    },
+    listApprovalInbox(params, options) {
+      return listApprovalInbox(client, params, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});

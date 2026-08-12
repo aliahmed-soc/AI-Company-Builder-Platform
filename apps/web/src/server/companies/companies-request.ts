@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -61,6 +61,7 @@ export type CompaniesRequestResult =
   | { readonly status: 'artifact'; readonly artifact: Exclude<Awaited<ReturnType<CompanyRuntime['getArtifact']>>, string> }
   | { readonly status: 'artifacts'; readonly artifacts: Exclude<Awaited<ReturnType<CompanyRuntime['listRunArtifacts']>>, string> }
   | { readonly status: 'lineage'; readonly lineage: Extract<ReadLineageResult, { status: 'ok' }> }
+  | { readonly status: 'approvals'; readonly approvals: readonly ApprovalInboxItem[] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -110,6 +111,7 @@ export interface CompanyRuntime {
   getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
   listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
+  listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -627,6 +629,69 @@ export async function getTaskDetailForRequest(companyId: string, taskId: string,
       return { status: 'forbidden' };
     case 'not_found':
       return { status: 'not_found' };
+  }
+}
+
+/**
+ * What an approval request looks like ON THE WIRE.
+ *
+ * WRITTEN AS AN ALLOWLIST, NOT A REDACTION, AND THAT IS THE POINT. `listApprovalInbox` returns
+ * `ApprovalRequestRow`, which is `Selectable<ApprovalRequestsTable>` — every column of the table, including any
+ * column added to it in future. Spreading a row and deleting the unwanted keys would silently publish the next
+ * column somebody adds. Naming the fields means a new column is invisible here until a human adds it.
+ *
+ * DELIBERATELY ABSENT, each for a reason:
+ * - `data` — `ColumnType<unknown, …>`, the raw tool payload. Arbitrary content, the single highest leak risk on
+ *   this table, and nothing an inbox list needs to render.
+ * - `account_id`, `company_id` — internal scoping. The caller already knows which company they asked about, and
+ *   echoing tenant ids back is how they end up in client logs and URLs.
+ * - `run_id` — an internal execution id the caller cannot read anyway; there is no run-read route (ACBP-API-003).
+ * - `policy_id`, `policy_version` — evaluation-point machinery, not a decision the approver makes.
+ */
+export interface ApprovalInboxItem {
+  readonly approvalRequestId: string;
+  readonly action: string;
+  readonly reason: string;
+  readonly expectedResult: string;
+  readonly preview: string;
+  readonly riskClass: string;
+  readonly reversibility: string;
+  readonly scope: string;
+  readonly estimatedCostCredits: number;
+  readonly toolId: string;
+  readonly toolVersion: number;
+}
+
+/**
+ * The approvals awaiting a human in this company (CDR-088; enforced in `@acbp/core`).
+ *
+ * The mapper below is the ONLY thing standing between a raw database row and the wire — see `ApprovalInboxItem`.
+ */
+export async function listApprovalInboxForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listApprovalInbox({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return {
+        status: 'approvals',
+        approvals: r.requests.map((row) => ({
+          approvalRequestId: row.id,
+          action: row.action,
+          reason: row.reason,
+          expectedResult: row.expected_result,
+          preview: row.preview,
+          riskClass: row.risk_class,
+          reversibility: row.reversibility,
+          scope: row.scope,
+          estimatedCostCredits: row.estimated_cost_credits,
+          toolId: row.tool_id,
+          toolVersion: row.tool_version,
+        })),
+      };
+    case 'forbidden':
+      return { status: 'forbidden' };
   }
 }
 
