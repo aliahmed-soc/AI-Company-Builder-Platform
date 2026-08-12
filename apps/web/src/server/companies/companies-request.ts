@@ -679,8 +679,13 @@ export async function editRoadmapForRequest(
       return { status: 'forbidden' };
     case 'not_found':
       return { status: 'not_found' };
+    // MUTATION M-DISTINCT-1 — DO NOT MERGE. Collapses stale_version into forbidden, which is the realistic
+    // defect: someone "simplifies" the refusal arms and destroys the difference between "re-read and retry" and
+    // "stop". The guard asserts all four refusals stay distinguishable; if it does not redden, that assertion is
+    // decorative. This is a REQUEST-LAYER mutation, so the fake-runtime unit test CAN witness it — the method
+    // note from M-ORACLE-B, applied rather than repeated.
     case 'stale_version':
-      return { status: 'stale_version' };
+      return { status: 'forbidden' };
     case 'decision_rejected':
       return { status: 'decision_rejected' };
     case 'invalid':
