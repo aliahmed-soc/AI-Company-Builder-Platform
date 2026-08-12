@@ -71,6 +71,8 @@ import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetT
 // not exported, so importing it from there fails to compile rather than silently binding the wrong type.
 import { getTaskDetail, type GetTaskDetailParams, type GetTaskDetailResult } from '../tasks/task-controls.js';
 import type { TaskOptions } from '../tasks/task-management.js';
+import { getArtifact, listRunArtifacts, type ArtifactDTO, type PersistArtifactOptions } from '../artifacts/persist.js';
+import { readArtifactLineage, type ReadLineageParams, type ReadLineageOptions, type ReadLineageResult } from '../artifacts/lineage.js';
 import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
 import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
 import type { AccountContextResolution } from '@acbp/contracts';
@@ -215,6 +217,9 @@ export interface ClerkIdentityRuntime {
   getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
   getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
   getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
+  getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
+  listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
+  readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -337,6 +342,15 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getTaskDetail(params, options) {
       return getTaskDetail(client, params, options ?? {});
+    },
+    getArtifact(params, options) {
+      return getArtifact(client, params, options ?? {});
+    },
+    listRunArtifacts(params, options) {
+      return listRunArtifacts(client, params, options ?? {});
+    },
+    readArtifactLineage(params, options) {
+      return readArtifactLineage(client, params, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});

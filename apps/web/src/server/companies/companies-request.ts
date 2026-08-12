@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -55,6 +55,12 @@ export type CompaniesRequestResult =
   // case here and none is invented for symmetry with the roadmap read above.
   | { readonly status: 'tasks'; readonly board: Extract<GetTaskBoardResult, { status: 'ok' }>['board'] }
   | { readonly status: 'task'; readonly task: Extract<GetTaskDetailResult, { status: 'ok' }>['task'] }
+  // CDR-088 §2.1a. `getArtifact` and `listRunArtifacts` return BARE unions carrying string literals, not the
+  // tagged shape everything else here uses, so the payload types are derived with `Exclude<…, string>` rather
+  // than `Extract<…, {status:'ok'}>`. Hand-copying ArtifactDTO would drift the moment core changes.
+  | { readonly status: 'artifact'; readonly artifact: Exclude<Awaited<ReturnType<CompanyRuntime['getArtifact']>>, string> }
+  | { readonly status: 'artifacts'; readonly artifacts: Exclude<Awaited<ReturnType<CompanyRuntime['listRunArtifacts']>>, string> }
+  | { readonly status: 'lineage'; readonly lineage: Extract<ReadLineageResult, { status: 'ok' }> }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -101,6 +107,9 @@ export interface CompanyRuntime {
   getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
   getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
   getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
+  getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
+  listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
+  readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -617,6 +626,66 @@ export async function getTaskDetailForRequest(companyId: string, taskId: string,
     case 'forbidden':
       return { status: 'forbidden' };
     case 'not_found':
+      return { status: 'not_found' };
+  }
+}
+
+/**
+ * One artifact (CDR-088 §2.1a; `artifact:read`, enforced in `@acbp/core`).
+ *
+ * THE REFUSAL IS A BARE STRING, NOT A TAGGED ARM, AND THAT IS THE WHOLE RISK HERE. `getArtifact` resolves to
+ * `ArtifactDTO | 'forbidden' | 'not_found'`. If this adapter failed to check, `'forbidden'` would be serialized
+ * into a 200 body AS THOUGH IT WERE THE ARTIFACT — a defect the tagged convention makes impossible on every
+ * other route in this programme, and which only this function prevents. The string check therefore comes FIRST,
+ * before anything touches the value as a DTO.
+ */
+export async function getArtifactForRequest(companyId: string, artifactId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getArtifact({ userId: ctx.userId, accountId: ctx.accountId, companyId, artifactId }, {});
+  if (r === 'forbidden') return { status: 'forbidden' };
+  if (r === 'not_found') return { status: 'not_found' };
+  return { status: 'artifact', artifact: r };
+}
+
+/**
+ * Every artifact produced by one run (CDR-088 §2.1a).
+ *
+ * `listRunArtifacts` resolves to `readonly ArtifactDTO[] | 'forbidden'` and has NO `not_found` arm. An unknown
+ * run id and a real run with zero artifacts are therefore INDISTINGUISHABLE — both are an empty array. That is
+ * oracle-safe by construction, but it means this route cannot honestly 404 an unknown run, and it does not
+ * pretend to. Distinguishing them would need a run read, which is ACBP-API-003.
+ */
+export async function listRunArtifactsForRequest(companyId: string, runId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listRunArtifacts({ userId: ctx.userId, accountId: ctx.accountId, companyId, runId }, {});
+  if (r === 'forbidden') return { status: 'forbidden' };
+  return { status: 'artifacts', artifacts: r };
+}
+
+/**
+ * An artifact's lineage — what it was revised from, and what revised it (CDR-088).
+ *
+ * `readArtifactLineage` IS tagged, unlike its two neighbours, so it is mapped by `status` like every other route.
+ * The inconsistency is core's, not this layer's; §2.1a records the decision to adapt rather than normalize.
+ */
+export async function readArtifactLineageForRequest(companyId: string, artifactId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.readArtifactLineage({ userId: ctx.userId, accountId: ctx.accountId, companyId, artifactId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'lineage', lineage: r };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    // Core names this arm `artifact_not_found`, not `not_found` — a THIRD naming divergence in the artifacts
+    // area, after the two bare unions. It is normalized to the boundary's `not_found` here so the HTTP surface
+    // stays uniform; the compiler caught the wrong guess rather than letting it through.
+    case 'artifact_not_found':
       return { status: 'not_found' };
   }
 }

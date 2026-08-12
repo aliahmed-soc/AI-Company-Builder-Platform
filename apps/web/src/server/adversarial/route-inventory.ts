@@ -34,6 +34,10 @@ export const ALL_PARAMS = {
   // it cannot build a URL for is a route it cannot sweep, and silently passing over it would have left the task
   // detail endpoint outside the security-headers and secret-egress guarantees while the suite stayed green.
   taskId: '00000000-0000-4000-8000-000000007a5c',
+  artifactId: '00000000-0000-4000-8000-000000000a27',
+  // Hex only — 'ru' would not survive a uuid cast, and a sweep value that cannot be parsed tests the error path
+  // rather than the route.
+  runId: '00000000-0000-4000-8000-00000000c0d3',
 };
 
 // EVERY EXTENSION NEXT ACTUALLY ROUTES, not just the ones this app happens to use today. Matching the literal

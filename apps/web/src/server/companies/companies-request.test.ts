@@ -14,6 +14,9 @@ import {
   getRoadmapForRequest,
   getTaskBoardForRequest,
   getTaskDetailForRequest,
+  getArtifactForRequest,
+  listRunArtifactsForRequest,
+  readArtifactLineageForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -57,6 +60,9 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     getLatestRoadmap: () => Promise.reject(new Error('getLatestRoadmap was called without being stubbed')),
     getTaskBoard: () => Promise.reject(new Error('getTaskBoard was called without being stubbed')),
     getTaskDetail: () => Promise.reject(new Error('getTaskDetail was called without being stubbed')),
+    getArtifact: () => Promise.reject(new Error('getArtifact was called without being stubbed')),
+    listRunArtifacts: () => Promise.reject(new Error('listRunArtifacts was called without being stubbed')),
+    readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -463,6 +469,54 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * different granularities — `forbidden` is the company-level refusal, `not_found` is the task-level one — and
  * collapsing them would throw away information the client needs to tell "not yours" from "not there".
  */
+/**
+ * CDR-088 §2.1a — the artifact reads, whose core use cases return BARE unions carrying string literals rather
+ * than the tagged shape everything else here uses.
+ *
+ * THE FIRST TEST BELOW IS THE WHOLE SAFETY ARGUMENT FOR ADAPTING AT THIS LAYER. If the adapter ever stops
+ * checking, `'forbidden'` is a perfectly good JSON value and would be serialized into a 200 body AS THE
+ * ARTIFACT. No type error, no crash — a refusal rendered as content. Nothing else in this file needs a test
+ * like this, because every other use case makes that state unrepresentable.
+ */
+describe('CDR-088 — artifact reads (request layer)', () => {
+  const ARTIFACT = { sentinel: 'artifact' } as unknown as never;
+
+  test('EVERY refusal STRING maps to a refusal and never reaches a success payload', async () => {
+    for (const refusal of ['forbidden', 'not_found'] as const) {
+      const r = await getArtifactForRequest('co_1', 'art_1', { runtime: fakeRuntime({ getArtifact: () => Promise.resolve(refusal) }), identity: identityDeps() });
+      expect(r.status, `${refusal} must map to a refusal`).toBe(refusal);
+      expect(JSON.stringify(r), `${refusal} must not appear as an artifact payload`).not.toContain('"artifact"');
+    }
+    const listed = await listRunArtifactsForRequest('co_1', 'run_1', { runtime: fakeRuntime({ listRunArtifacts: () => Promise.resolve('forbidden') }), identity: identityDeps() });
+    expect(listed.status).toBe('forbidden');
+    expect(JSON.stringify(listed)).not.toContain('"artifacts"');
+  });
+
+  test('an artifact is passed through by IDENTITY, not rebuilt', async () => {
+    const r = await getArtifactForRequest('co_1', 'art_1', { runtime: fakeRuntime({ getArtifact: () => Promise.resolve(ARTIFACT) }), identity: identityDeps() });
+    expect(r.status).toBe('artifact');
+    if (r.status !== 'artifact') return;
+    expect(r.artifact).toBe(ARTIFACT);
+  });
+
+  test('an EMPTY artifact list is a success, not a not-found — an unknown run and an empty run agree', async () => {
+    // §2.1a: listRunArtifacts has no not_found arm, so this layer must not invent one.
+    const r = await listRunArtifactsForRequest('co_1', 'run_1', { runtime: fakeRuntime({ listRunArtifacts: () => Promise.resolve([]) }), identity: identityDeps() });
+    expect(r.status).toBe('artifacts');
+    if (r.status !== 'artifacts') return;
+    expect(r.artifacts).toEqual([]);
+  });
+
+  test('lineage is tagged, so not_found stays distinct from forbidden', async () => {
+    // Core names this arm `artifact_not_found`; the boundary normalizes it to `not_found`. Asserting the CORE
+    // name here is deliberate — it fails if that mapping is ever dropped.
+    const missing = await readArtifactLineageForRequest('co_1', 'art_1', { runtime: fakeRuntime({ readArtifactLineage: () => Promise.resolve({ status: 'artifact_not_found' }) }), identity: identityDeps() });
+    const denied = await readArtifactLineageForRequest('co_1', 'art_1', { runtime: fakeRuntime({ readArtifactLineage: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(missing.status).toBe('not_found');
+    expect(denied.status).toBe('forbidden');
+  });
+});
+
 describe('CDR-088 — task detail (request layer)', () => {
   const TASK = { sentinel: 'task' } as unknown as never;
 

@@ -129,6 +129,14 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { board: result.board });
     case 'task':
       return jsonResponse(200, { task: result.task });
+    case 'artifact':
+      return jsonResponse(200, { artifact: result.artifact });
+    // An empty list is a 200. There is no not_found arm to map (CDR-088 §2.1a): an unknown run and an empty run
+    // are the same answer from core, and this layer must not invent a distinction core did not make.
+    case 'artifacts':
+      return jsonResponse(200, { artifacts: result.artifacts });
+    case 'lineage':
+      return jsonResponse(200, { lineage: result.lineage });
     // 200, not 201. Neither call creates a resource at a new URL the client can then GET — the selection and the
     // decision are read back through the company's strategy surface — so 201 would promise a Location that does
     // not exist. Recorded here rather than defaulted (CDR-087 §5).
