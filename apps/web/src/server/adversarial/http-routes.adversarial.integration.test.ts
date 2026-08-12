@@ -430,6 +430,81 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the task board read joins this matrix.
+   *
+   * THIS BLOCK SEEDS REAL DATA, AND THAT MAKES IT STRICTLY STRONGER THAN THE ROADMAP BLOCK BELOW. `tasks` needs
+   * only account_id, company_id, title and created_by_user_id — `milestone_id` is nullable and `state` defaults —
+   * so a task can be seeded WITHOUT the decision chain a roadmap requires. That means this matrix can prove the
+   * property the roadmap block explicitly cannot: a foreign task PROVABLY EXISTS and is still invisible.
+   *
+   * The fixture is seeded on the OWNER connection and its existence is ASSERTED before the negative runs. A
+   * negative that would pass just as well against an empty table proves nothing, which is the trap three CDR-087
+   * tests fell into when the parent `beforeEach` truncated their fixtures away.
+   *
+   * Seeded in a NESTED `beforeEach` (§4.1) for that same reason — the parent truncates before every test.
+   */
+  describe('CDR-088 — task board read', () => {
+    let tasksRoute: ParamRoute<{ companyId: string }>;
+    let foreignTaskTitle = '';
+
+    beforeAll(async () => {
+      tasksRoute = await import('../../app/api/companies/[companyId]/tasks/route.js');
+    });
+
+    beforeEach(async () => {
+      foreignTaskTitle = 'FOREIGN-TASK-DO-NOT-LEAK';
+      await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: foreignTaskTitle, created_by_user_id: w.bOwner })
+        .execute();
+      // The fixture must EXIST for the negative below to mean anything. If this ever returns zero the test must
+      // fail here, loudly, rather than pass vacuously downstream.
+      const seeded = await owner.kysely.selectFrom('tasks').select('id').where('company_id', '=', w.companyB1).execute();
+      expect(seeded.length, 'fixture guard: the foreign task must exist before the negative runs').toBeGreaterThan(0);
+    });
+
+    const getTasks = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await tasksRoute.GET(new Request(`https://app.test/api/companies/${companyId}/tasks`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot reach company B, and B\'s task NEVER appears in any response', async () => {
+      await signInAs(w.aOwner);
+      expect((await getTasks(w.companyB1)).status, 'read into B').not.toBe(200);
+      // The board A legitimately CAN read must not contain B's task either — the stronger claim, and the whole
+      // reason this block seeds.
+      const own = await getTasks(w.companyA1);
+      expect(own.body, "A's own board must not contain B's task").not.toContain(foreignTaskTitle);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getTasks(w.companyB1);
+      const unknown = await getTasks(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getTasks(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'tasks_', foreignTaskTitle, w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+    });
+
+    test('an unknown query parameter is REFUSED, not ignored', async () => {
+      await signInAs(w.aOwner);
+      const res = await tasksRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/tasks?state=done`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  /**
    * CDR-088 §4 — the roadmap read joins this matrix.
    *
    * WHAT THESE TESTS PROVE, AND WHAT THEY DO NOT. **No roadmap is seeded.** `roadmaps.decision_id` is NOT NULL,
