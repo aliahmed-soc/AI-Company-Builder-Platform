@@ -67,6 +67,37 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — ACBP-API-001 strategy read + decision-recording HTTP routes (slice 1 of the missing-route programme).**
+  Squash **`d1d4ae8`**, PR **#96**, branch `p8-api-strategy-decide`, CDR-087, **no migration**. Exact-head CI
+  [`31545009499`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31545009499) on
+  `a2d2267`: **278 files / 4083 tests, zero skips**. Exposes three already-built core use cases at the HTTP
+  boundary; no domain logic added and no authorization decision moved out of `@acbp/core` (CDR-087 §1). All three
+  handlers joined `check:rate-limit-coverage` (25) and the two POSTs joined `check:csrf-origin-gate` (19
+  state-changing of 26). **This ticket is OUTSIDE the P1–P7 numbering, so its absence from `BACKLOG.csv` is not
+  drift.**
+  - **MUTATION EVIDENCE, AND ITS LIMITS — read this before citing the §4 matrix.** Two of the four new adversarial
+    guards are mutation-proven, each with the cited test NAMED in the `Failed Tests` block: **G4's status
+    assertion** (run [`31546435218`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31546435218),
+    branch `p8-mut-g4`) and **G6** (run [`31547265773`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31547265773),
+    branch `p8-mut-g6-v2`).
+    - **G4's DATABASE assertion is NOT proven.** The status half was killed; the "no row moved" half needs a
+      write-despite-refusal mutation, which hits the same structural wall as G7.
+    - **G7(a) and G7(b) are UNMEASURABLE by single-point mutation, not merely unrun.**
+      `packages/core/src/company/company-context-resolver.ts:73-77` resolves a foreign company and an unknown one
+      to the same `undefined` — the membership lookup runs under account scope, so RLS hides the foreign row and
+      the absent row simply is not there. Both exit at line 91 with `company_access_denied`. The distinction is
+      NEVER COMPUTED, so no perturbation of an existing expression can separate them. The guards pass; passing is
+      not the same claim as proven, and the two must not be conflated when this row is cited.
+    - **A FIRST G6 MUTATION KILLED NOTHING AND MUST NOT BE COUNTED.** Run
+      [`31546371986`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31546371986) (branch
+      `p8-mut-g6`) reddened **6 tests and zero CDR-087 tests**: it mutated the `forbidden` 403 mapping, but G6
+      drives MALFORMED ids, which raise 22P02 and land in `respondToCompaniesRequest`'s catch. G6 never executed
+      the mutated line. Its failure count (6) is nearly identical to the valid M-G6-v2 run's (6) — the two are
+      indistinguishable by conclusion or count, and separable ONLY by the red test names. The branch is kept as
+      evidence of a mutation that must not be counted.
+  - **Open finding, low severity, deliberately not fixed here:** `getStrategyForRequest` threads no
+    `correlationId`, so the strategy read is less traceable in logs than the two writes.
+
 - **DONE — ACBP-P7-009 end-to-end MVP suite (headless half).** Squash **`e1bbc1c`**, PR **#83**, branch
   `p7-009-e2e-mvp-suite`, no migration. Exact-head CI
   [`31190616787`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31190616787) on

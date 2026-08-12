@@ -1,7 +1,17 @@
 # CDR-087 — HTTP routes for strategy read and decision recording
 
-**Status:** proposed · **Ticket:** ACBP-API-001 (slice 1 of the missing-route programme) ·
+**Status:** accepted, implemented and merged as squash `d1d4ae8` (PR #96) ·
+**Ticket:** ACBP-API-001 (slice 1 of the missing-route programme) ·
 **Base:** `main` at `2761e7b` · **Input:** the slice-1 canonical discovery, not re-derived here.
+
+**Evidence for the acceptance criteria, stated as it is.** Exact-head CI `31545009499` on `a2d2267`:
+4083 passed, 278 files, zero skips — the §4 matrix ran against a real database. Of its four guards,
+**G4's status assertion and G6 are mutation-proven** (runs `31546435218` and `31547265773`, each with
+the cited test named in the `Failed Tests` block). **G4's database assertion is not proven**, and
+**G7(a)/G7(b) are unmeasurable by single-point mutation**: `company-context-resolver.ts:73-77`
+resolves a foreign company and an unknown one to the same `undefined` before any decision is made, so
+no perturbation of an existing expression separates them. §4 should be read with that limit attached —
+the two oracle guards pass, but passing is not the same claim as proven.
 
 **Number:** 087, not 086. CDR-086 is claimed by ACBP-P3-006 on the unmerged branch
 `p3-006-strategy-eval-area`, which is confirmed to exist on the remote. Taking 086 would repeat the
