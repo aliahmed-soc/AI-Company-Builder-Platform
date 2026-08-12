@@ -766,9 +766,13 @@ export async function getArtifactForRequest(companyId: string, artifactId: strin
   const ctx = await resolveActorWithAccount(deps, runtime);
   if ('kind' in ctx) return ctx.result;
   const r = await runtime.getArtifact({ userId: ctx.userId, accountId: ctx.accountId, companyId, artifactId }, {});
-  if (r === 'forbidden') return { status: 'forbidden' };
+  // MUTATION M-ARTIFACT-1 — DO NOT MERGE. The `forbidden` check is gone, so the literal string 'forbidden'
+  // falls through and is served AS THE ARTIFACT. The cast is what a real lapse would need too: without the
+  // check the type no longer narrows, and forcing it is exactly how someone would "fix" the compile error.
+  // TWO tests claim to cover this — a unit test and the HTTP-level §2.1a test. Which of them fires is the
+  // point of this run: if only one does, the other is weaker than its comment says.
   if (r === 'not_found') return { status: 'not_found' };
-  return { status: 'artifact', artifact: r };
+  return { status: 'artifact', artifact: r as Exclude<typeof r, string> };
 }
 
 /**
