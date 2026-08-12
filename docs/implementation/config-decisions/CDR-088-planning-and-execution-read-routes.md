@@ -11,9 +11,35 @@ on `ec192bd`: 278 files / 4125 tests, **zero skips** — every matrix ran agains
 
 **WHAT IS NOT PROVEN, AND MUST NOT BE READ INTO THE GREEN RUN.** This section exists because "4125
 passed, zero skips" invites exactly the wrong inference:
-- **No mutation testing on ANY of the ~29 slice-2 guards.** Under the standing rule none is *proven*.
-  Slice 1 recorded a mutation that reddened six tests and killed nothing, so a green matrix is not
-  equivalent to a killed mutant.
+- **Mutation testing STARTED 2026-08-13. Three guards resolved, ~26 still unattempted.** Under the
+  standing rule the unattempted ones remain *unproven* — a green matrix is not equivalent to a killed
+  mutant, and slice 1 recorded a mutation that reddened six tests while killing nothing.
+
+  | Guard | Result | Run |
+  |---|---|---|
+  | Approvals **allowlist** | **KILLED — proven** | [`31638284349`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31638284349) |
+  | Artifact **refusal-string** (unit + HTTP, both) | **KILLED — proven** | [`31641866863`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31641866863) |
+  | **G-oracle(b)** task granularity | **SURVIVED — unmeasurable, DEMONSTRATED** | [`31643354339`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31643354339) |
+
+  - **The allowlist kill was 1 failure out of 4125**, and it was the cited test. Mutating
+    `approvalRequestId: row.id` → `row.account_id` reddened exactly the guard that asserts no internal
+    column is published, and nothing else.
+  - **The refusal-string kill fired BOTH claimed guards.** Two tests claimed to cover it — the unit test
+    at the adapter and the §2.1a test at the HTTP boundary — and the informative question was whether the
+    second was redundant. It is not: removing the `r === 'forbidden'` check reddened both, plus `G-cross`
+    (a cross-company request then returns 200 carrying `'forbidden'` AS the artifact). The HTTP duplicate
+    earns its place and would still catch a route rewired to bypass the adapter.
+  - **G-oracle(b) SURVIVED a mutation designed to survive, and that is the evidence.** Collapsing the
+    task-level `not_found` into `forbidden` at `task-controls.ts:80` reddened two real-PG core suites and
+    left G-oracle(b) GREEN. `findLive` runs against `scope.db`, so a foreign task and an unknown task id
+    are **both `undefined` before that line executes** — nothing there can separate them. This upgrades
+    the identical slice-1 claim about CDR-087 G7(a)/G7(b) from *asserted by reading* to *demonstrated by
+    run id*: a guard whose property is enforced by ABSENT INFORMATION rather than by a decision cannot be
+    mutation-proven, and that is a category, not an excuse.
+  - **A prediction I got half wrong, recorded because it is instructive:** I expected the request-layer
+    unit test asserting `not_found` stays distinct from `forbidden` to redden too. It did not — that test
+    uses a FAKE runtime, so a mutation inside `@acbp/core` never reaches it. Fake-runtime unit tests
+    cannot witness core mutations; only the real-PG suites did.
 - **Four routes were built implementation-first** — the three artifact reads and the approvals inbox.
   Their unit tests were written after the code and never watched to fail, which is weaker evidence
   than the watched-RED cycles behind roadmap read, task board, task detail and roadmap edit.

@@ -91,8 +91,28 @@ ticket without a DONE line above it is genuinely in flight._
        publish the next column added to the table. `data` (raw tool payload), tenant ids, `run_id` and the
        policy pins are excluded; the unit test feeds a sentinel in every excluded column and asserts exactly
        eleven keys.
-  - **NOT PROVEN — do not read this into the green run.** No mutation testing on ANY of the ~29 slice-2
-    guards, so none is *proven* under the standing rule. Four routes (three artifacts + approvals) were built
+  - **MUTATION TESTING STARTED 2026-08-13 — three guards resolved, ~26 unattempted.** Branches kept as
+    evidence (`p8-mut-approvals-allowlist`, `p8-mut-artifact-refusal`, `p8-mut-oracle-b`).
+    - **PROVEN — approvals allowlist**, run
+      [`31638284349`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31638284349):
+      wiring `row.account_id` into a published field reddened **exactly one test of 4125**, the cited one.
+    - **PROVEN — artifact refusal-string**, run
+      [`31641866863`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31641866863):
+      removing the `r === 'forbidden'` check reddened BOTH claimed guards (the adapter unit test AND the
+      HTTP-level §2.1a test) plus `G-cross`. The HTTP duplicate is therefore NOT redundant — it would
+      still catch a route rewired to bypass the adapter.
+    - **UNMEASURABLE, DEMONSTRATED — G-oracle(b)**, run
+      [`31643354339`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31643354339):
+      a mutation *designed to survive* (collapsing task-level `not_found` into `forbidden` at
+      `task-controls.ts:80`) reddened two real-PG core suites and left the guard GREEN. `findLive` runs
+      against `scope.db`, so a foreign task and an unknown one are **both `undefined` before that line
+      runs**. **This upgrades the identical CDR-087 G7(a)/G7(b) claim from asserted-by-reading to
+      demonstrated-by-run-id.**
+    - **METHOD NOTE, learned the hard way:** a FAKE-runtime unit test cannot witness a mutation inside
+      `@acbp/core`. I predicted the request-layer distinctness test would redden and it did not; only the
+      real-PG suites saw it. Choose the mutation's layer to match the test you intend to kill.
+  - **STILL NOT PROVEN — do not read this into the green run.** ~26 slice-2 guards have no mutation
+    attempt, so none of those is *proven* under the standing rule. Four routes (three artifacts + approvals) were built
     implementation-first, their tests never watched to fail. The roadmap, artifact and approvals matrices
     prove refusal at COMPANY SCOPE only, not data-invisibility — only the task matrices seed real rows and
     only the roadmap-edit matrix asserts from the database. The approvals raw-column tripwire passes
