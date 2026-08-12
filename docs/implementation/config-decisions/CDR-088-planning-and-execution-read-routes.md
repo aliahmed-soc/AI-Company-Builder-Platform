@@ -1,7 +1,28 @@
 # CDR-088 — HTTP routes for planning and execution reads
 
-**Status:** proposed · **Ticket:** ACBP-API-002 (slice 2 of the missing-route programme) ·
+**Status:** accepted, implemented and merged as squash `6faa91c` (PR #98) ·
+**Ticket:** ACBP-API-002 (slice 2 of the missing-route programme) ·
 **Base:** `main` at `3cbfc89` · **Predecessor:** CDR-087 (slice 1, merged `d1d4ae8`).
+
+**EIGHT routes shipped**, each with a §4 matrix: roadmap read, roadmap edit, task board, task detail,
+artifact, artifact lineage, run-artifacts, approvals inbox. Exact-head CI
+[`31613369311`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31613369311)
+on `ec192bd`: 278 files / 4125 tests, **zero skips** — every matrix ran against real PostgreSQL.
+
+**WHAT IS NOT PROVEN, AND MUST NOT BE READ INTO THE GREEN RUN.** This section exists because "4125
+passed, zero skips" invites exactly the wrong inference:
+- **No mutation testing on ANY of the ~29 slice-2 guards.** Under the standing rule none is *proven*.
+  Slice 1 recorded a mutation that reddened six tests and killed nothing, so a green matrix is not
+  equivalent to a killed mutant.
+- **Four routes were built implementation-first** — the three artifact reads and the approvals inbox.
+  Their unit tests were written after the code and never watched to fail, which is weaker evidence
+  than the watched-RED cycles behind roadmap read, task board, task detail and roadmap edit.
+- **The roadmap, artifact and approvals matrices prove refusal at COMPANY SCOPE only**, not
+  data-invisibility: those tables need seeding chains (`roadmaps.decision_id`, `artifacts.run_id`,
+  `approval_requests.run_id` are all NOT NULL with FKs). Only the task matrices seed real rows; only
+  the roadmap-edit matrix asserts from the database.
+- **The approvals raw-column tripwire passes VACUOUSLY** while the inbox is empty. The allowlist is
+  proven by the unit test that feeds sentinels, not by that HTTP check.
 
 **Number:** 088, not 086. CDR-086 is claimed by ACBP-P3-006 on the unmerged branch
 `p3-006-strategy-eval-area`; 087 is slice 1. `git ls-remote` shows no competing branch. This check

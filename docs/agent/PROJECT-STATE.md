@@ -67,6 +67,39 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — ACBP-API-002 planning and execution HTTP routes (slice 2 of the missing-route programme).**
+  Squash **`6faa91c`**, PR **#98**, branch `p8-api-slice2-planning-reads`, CDR-088, **no migration**.
+  Exact-head CI [`31613369311`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31613369311)
+  on `ec192bd`: **278 files / 4125 tests, zero skips**. EIGHT routes, each with a §4 adversarial matrix:
+  roadmap read, roadmap edit, task board, task detail, artifact, artifact lineage, run-artifacts, approvals
+  inbox. `check:rate-limit-coverage` 25 → **33** handlers and `check:csrf-origin-gate` 19 → **20**
+  state-changing of 34 modules — those deltas are how the guards are known to have been JOINED rather than
+  skipped. **Outside the P1–P7 numbering, so its absence from `BACKLOG.csv` is not drift.**
+  - **THREE FINDINGS THAT CHANGED THE WORK**, not decoration:
+    1. **There is no run-read use case in core.** `runs/` exposes only lifecycle writes; a repo-wide search
+       for `getRun`/`listRuns`/`getRunDetail`/`listCompanyRuns`/`getRunStatus` returns nothing. The approved
+       "runs + artifacts" pair was half-available. By owner decision the runs read became **ACBP-API-003**
+       rather than being authored under a ticket described as pure exposure. `runs/{runId}/artifacts` uses
+       the id as a SELECTOR only and says so in the route comment.
+    2. **Two artifact use cases return BARE unions carrying string literals** (`ArtifactDTO | 'forbidden' |
+       'not_found'`), not the tagged shape everything else uses. Adapted at the request layer by owner
+       decision (CDR-088 §2.1a). **The hazard is that a refusal is a string**: a lapse in the adapter would
+       serialize `'forbidden'` into a 200 body AS the artifact — no type error, no crash. Guarded by a unit
+       test AND an HTTP-level test, so the guard survives a route being rewired to bypass the adapter.
+    3. **`listApprovalInbox` returns a RAW DATABASE ROW** (`Selectable<ApprovalRequestsTable>`). Mapped to an
+       **allowlist** — not a redaction — by owner decision: spreading and deleting keys would silently
+       publish the next column added to the table. `data` (raw tool payload), tenant ids, `run_id` and the
+       policy pins are excluded; the unit test feeds a sentinel in every excluded column and asserts exactly
+       eleven keys.
+  - **NOT PROVEN — do not read this into the green run.** No mutation testing on ANY of the ~29 slice-2
+    guards, so none is *proven* under the standing rule. Four routes (three artifacts + approvals) were built
+    implementation-first, their tests never watched to fail. The roadmap, artifact and approvals matrices
+    prove refusal at COMPANY SCOPE only, not data-invisibility — only the task matrices seed real rows and
+    only the roadmap-edit matrix asserts from the database. The approvals raw-column tripwire passes
+    VACUOUSLY while the inbox is empty.
+  - Open low-severity finding, carried from slice 1 and deliberately not fixed: `getStrategyForRequest`
+    threads no `correlationId`.
+
 - **DONE — ACBP-API-001 strategy read + decision-recording HTTP routes (slice 1 of the missing-route programme).**
   Squash **`d1d4ae8`**, PR **#96**, branch `p8-api-strategy-decide`, CDR-087, **no migration**. Exact-head CI
   [`31545009499`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31545009499) on
