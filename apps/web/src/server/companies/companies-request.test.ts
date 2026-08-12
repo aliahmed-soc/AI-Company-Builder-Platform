@@ -11,6 +11,7 @@ import {
   getCompanyActivityForRequest,
   getDecisionRoomForRequest,
   getStrategyForRequest,
+  getRoadmapForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -49,6 +50,9 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
   return {
     // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-082 section 2).
     checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
+    // CDR-088 G3.1: the default REJECTS WITH THE METHOD NAME, so a test that reaches this path without stubbing
+    // it fails saying which method it forgot, rather than passing on a silent undefined.
+    getLatestRoadmap: () => Promise.reject(new Error('getLatestRoadmap was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -439,6 +443,40 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * success case uses a SENTINEL object and asserts IDENTITY (`toBe`), which proves the request layer passed the
  * domain's value through untouched rather than rebuilding a lookalike.
  */
+/**
+ * CDR-088 — the roadmap read. `LatestRoadmapResult` has the SAME two-arm shape as the strategy read:
+ * `{ ok, roadmap: RoadmapDTO | null } | { forbidden }`. There is no `not_found` arm, so there is nothing here to
+ * keep distinct from `forbidden` — the sub-resource granularity that CDR-087 §5.1 G8 cares about does not arise.
+ */
+describe('CDR-088 — roadmap read (request layer)', () => {
+  const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
+
+  test('an existing roadmap is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'ok', roadmap: ROADMAP }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap');
+    if (r.status !== 'roadmap') return;
+    expect(r.roadmap).toBe(ROADMAP);
+  });
+
+  test('NO roadmap yet is a SUCCESS carrying null, never a not-found (CDR-088 §5)', async () => {
+    // Same reasoning as the strategy read's G9: the company exists and the caller may read it, there is simply
+    // nothing planned yet. A 404 here is how a UI shows an error page on a normal first visit.
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'ok', roadmap: null }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap');
+    if (r.status !== 'roadmap') return;
+    expect(r.roadmap).toBeNull();
+  });
+
+  test('a refusal maps to forbidden and carries no payload', async () => {
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'forbidden' }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+    expect(Object.keys(r)).toEqual(['status']);
+  });
+});
+
 describe('CDR-087 — strategy read and decision recording (request layer)', () => {
   const GENERATION = { sentinel: 'generation' } as unknown as never;
   const SELECTION = { sentinel: 'selection' } as unknown as never;

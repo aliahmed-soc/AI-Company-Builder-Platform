@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -48,6 +48,9 @@ export type CompaniesRequestResult =
    * not-found: the company exists and the caller may read it, there is simply nothing generated yet (G9).
    */
   | { readonly status: 'strategy'; readonly generation: Extract<LatestStrategyResult, { status: 'ok' }>['generation'] }
+  // CDR-088. Payload type DERIVED from core's result, never copied — a hand-written shape drifts the first time
+  // core changes and nothing catches it.
+  | { readonly status: 'roadmap'; readonly roadmap: Extract<LatestRoadmapResult, { status: 'ok' }>['roadmap'] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -89,6 +92,9 @@ export interface CompanyRuntime {
   // CDR-087 — strategy read and decision recording. REQUIRED, never optional, for the reason recorded on
   // `checkRequestLimit`: a fake runtime must declare every surface, so none is admitted by being forgotten.
   getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
+  // REQUIRED, not optional (CDR-088 §2.1): an optional method lets a runtime that never implements it ship
+  // silently. Missing it must be a compile error.
+  getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -531,6 +537,32 @@ export async function getStrategyForRequest(companyId: string, deps: CompaniesRe
     case 'ok':
       // `generation` may be null. That is G9: an absent generation is a success carrying null.
       return { status: 'strategy', generation: r.generation };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * The company's current roadmap (CDR-088; `roadmap:read`, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1, inherited verbatim from CDR-087 §1. Core decides from the company
+ * role; a second authority answering the same question is the defect ACBP-P6-002 paid to remove.
+ *
+ * `LatestRoadmapResult` has TWO arms and a NULLABLE payload, exactly like the strategy read. An absent roadmap is
+ * a success carrying null, never a not-found: the company exists and the caller may read it, there is simply
+ * nothing planned yet. Mapping that to 404 is how a UI shows an error page on a normal first visit.
+ *
+ * A correlationId IS threaded here (CDR-088 §6). The strategy read omits one, which makes it less traceable in
+ * the logs than the writes beside it — that is the open slice-1 finding, and it is not repeated.
+ */
+export async function getRoadmapForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getLatestRoadmap({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'roadmap', roadmap: r.roadmap };
     case 'forbidden':
       return { status: 'forbidden' };
   }

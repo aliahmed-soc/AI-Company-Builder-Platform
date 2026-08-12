@@ -121,6 +121,10 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     // caller may read it; there is simply nothing generated yet, which is the honest first-visit empty state.
     case 'strategy':
       return jsonResponse(200, { generation: result.generation });
+    // CDR-088 §5 — same rule as G9 above: `roadmap` may be null and that is a 200, not a 404. The company exists
+    // and the caller may read it; there is simply nothing planned yet.
+    case 'roadmap':
+      return jsonResponse(200, { roadmap: result.roadmap });
     // 200, not 201. Neither call creates a resource at a new URL the client can then GET — the selection and the
     // decision are read back through the company's strategy surface — so 201 would promise a Location that does
     // not exist. Recorded here rather than defaulted (CDR-087 §5).
