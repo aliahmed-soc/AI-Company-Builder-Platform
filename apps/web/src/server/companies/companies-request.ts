@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -54,6 +54,7 @@ export type CompaniesRequestResult =
   // CDR-088. `board` is NOT nullable — an empty board is still a board, so there is no absent-carrying-null
   // case here and none is invented for symmetry with the roadmap read above.
   | { readonly status: 'tasks'; readonly board: Extract<GetTaskBoardResult, { status: 'ok' }>['board'] }
+  | { readonly status: 'task'; readonly task: Extract<GetTaskDetailResult, { status: 'ok' }>['task'] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -99,6 +100,7 @@ export interface CompanyRuntime {
   // silently. Missing it must be a compile error.
   getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
   getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
+  getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -590,6 +592,32 @@ export async function getTaskBoardForRequest(companyId: string, deps: CompaniesR
       return { status: 'tasks', board: r.board };
     case 'forbidden':
       return { status: 'forbidden' };
+  }
+}
+
+/**
+ * One task's detail (CDR-088; `task:read`, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1.
+ *
+ * THREE arms, and `not_found` stays DISTINCT from `forbidden` (§5). They answer at different granularities:
+ * `forbidden` is the company-level refusal, where a foreign and an unknown company are indistinguishable;
+ * `not_found` is the task-level one, where a foreign and an unknown task id are equally indistinguishable because
+ * RLS makes another company's row invisible rather than denied. Collapsing the two would discard the difference
+ * between "not yours" and "not there", which the client legitimately needs.
+ */
+export async function getTaskDetailForRequest(companyId: string, taskId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getTaskDetail({ userId: ctx.userId, accountId: ctx.accountId, companyId, taskId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'task', task: r.task };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
   }
 }
 

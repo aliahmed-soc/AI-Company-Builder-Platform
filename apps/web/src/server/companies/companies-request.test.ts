@@ -13,6 +13,7 @@ import {
   getStrategyForRequest,
   getRoadmapForRequest,
   getTaskBoardForRequest,
+  getTaskDetailForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -55,6 +56,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     // it fails saying which method it forgot, rather than passing on a silent undefined.
     getLatestRoadmap: () => Promise.reject(new Error('getLatestRoadmap was called without being stubbed')),
     getTaskBoard: () => Promise.reject(new Error('getTaskBoard was called without being stubbed')),
+    getTaskDetail: () => Promise.reject(new Error('getTaskDetail was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -455,6 +457,40 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * `GetTaskBoardResult` carries a `TaskBoardDTO`, never null. An empty board is still a board, so the
  * absent-carrying-null case the roadmap read has does not arise here and is not invented for symmetry.
  */
+/**
+ * CDR-088 — task detail. THE FIRST SLICE-2 ROUTE WITH THREE ARMS: `GetTaskDetailResult` adds `not_found`, which
+ * the roadmap and board reads do not have. That arm must stay DISTINCT from `forbidden` (§5): they answer at
+ * different granularities — `forbidden` is the company-level refusal, `not_found` is the task-level one — and
+ * collapsing them would throw away information the client needs to tell "not yours" from "not there".
+ */
+describe('CDR-088 — task detail (request layer)', () => {
+  const TASK = { sentinel: 'task' } as unknown as never;
+
+  test('the task is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'ok', task: TASK }) });
+    const r = await getTaskDetailForRequest('co_1', 'task_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('task');
+    if (r.status !== 'task') return;
+    expect(r.task).toBe(TASK);
+  });
+
+  test('not_found stays DISTINCT from forbidden — they are not the same answer', async () => {
+    const missing = await getTaskDetailForRequest('co_1', 'task_1', { runtime: fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'not_found' }) }), identity: identityDeps() });
+    const denied = await getTaskDetailForRequest('co_1', 'task_1', { runtime: fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(missing.status).toBe('not_found');
+    expect(denied.status).toBe('forbidden');
+    expect(missing.status).not.toBe(denied.status);
+  });
+
+  test('the taskId is forwarded, not dropped', async () => {
+    // A boundary that silently discarded the selector would still return 200 with SOMEONE's task.
+    let seen: unknown;
+    const runtime = fakeRuntime({ getTaskDetail: (p) => { seen = p; return Promise.resolve({ status: 'ok', task: TASK }); } });
+    await getTaskDetailForRequest('co_1', 'task_42', { runtime, identity: identityDeps() });
+    expect((seen as { taskId?: string } | undefined)?.taskId).toBe('task_42');
+  });
+});
+
 describe('CDR-088 — task board read (request layer)', () => {
   const BOARD = { sentinel: 'board' } as unknown as never;
 

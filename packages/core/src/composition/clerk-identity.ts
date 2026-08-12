@@ -67,6 +67,10 @@ import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, delet
 import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
 import { getLatestRoadmap, type RoadmapReadParams, type RoadmapGenerationOptions, type LatestRoadmapResult } from '../planning/roadmap-generation.js';
 import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
+// `TaskOptions` lives in task-management.ts, NOT task-controls.ts — task-controls declares a local alias that is
+// not exported, so importing it from there fails to compile rather than silently binding the wrong type.
+import { getTaskDetail, type GetTaskDetailParams, type GetTaskDetailResult } from '../tasks/task-controls.js';
+import type { TaskOptions } from '../tasks/task-management.js';
 import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
 import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
 import type { AccountContextResolution } from '@acbp/contracts';
@@ -210,6 +214,7 @@ export interface ClerkIdentityRuntime {
   getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
   getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
   getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
+  getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -329,6 +334,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getTaskBoard(params, options) {
       return getTaskBoard(client, params, options ?? {});
+    },
+    getTaskDetail(params, options) {
+      return getTaskDetail(client, params, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});
