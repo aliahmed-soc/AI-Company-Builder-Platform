@@ -430,6 +430,69 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the roadmap read joins this matrix.
+   *
+   * WHAT THESE TESTS PROVE, AND WHAT THEY DO NOT. **No roadmap is seeded.** `roadmaps.decision_id` is NOT NULL,
+   * so a real roadmap requires the whole chain — understanding document, generation, selection, decision — and
+   * every link carries its own CHECK constraints. These tests therefore prove that the route REFUSES AT COMPANY
+   * SCOPE, before any roadmap is read, and that its refusals carry no oracle. They do NOT prove that an existing
+   * foreign roadmap stays invisible, because none exists here.
+   *
+   * That distinction is deliberate and is the slice-1 lesson applied: three CDR-087 tests once passed against
+   * generations that had been truncated away, and only the one test that INSERTED noticed. A test whose name
+   * implies data-invisibility while seeding no data is the same failure wearing a better name. When the seeded
+   * variant is added, it belongs in a nested `beforeEach` (§4.1) and should assert the row exists on the OWNER
+   * connection first.
+   *
+   * There is also NO sub-resource granularity to test: `LatestRoadmapResult` has two arms and no `not_found`,
+   * so the CDR-087 G7(b) selection-level oracle has no analogue here.
+   */
+  describe('CDR-088 — roadmap read', () => {
+    let roadmapRoute: ParamRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      roadmapRoute = await import('../../app/api/companies/[companyId]/roadmap/route.js');
+    });
+
+    const getRoadmap = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await roadmapRoute.GET(new Request(`https://app.test/api/companies/${companyId}/roadmap`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot read company B, and the refusal is not a 200', async () => {
+      await signInAs(w.aOwner);
+      expect((await getRoadmap(w.companyB1)).status, 'read into B').not.toBe(200);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getRoadmap(w.companyB1);
+      const unknown = await getRoadmap(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getRoadmap(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmap_', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${forbidden}'`).not.toContain(String(forbidden).toLowerCase());
+        }
+      }
+    });
+
+    test('an unknown query parameter is REFUSED, not ignored', async () => {
+      // A caller must never believe a filter was applied when it was silently dropped.
+      await signInAs(w.aOwner);
+      const res = await roadmapRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/roadmap?version=2`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  /**
    * CDR-087 §4 — the three strategy/decision routes join this matrix.
    *
    * G7 IS THE REASON THIS BLOCK LOOKS UNUSUAL. Every other route here proves the oracle at ONE granularity: a
