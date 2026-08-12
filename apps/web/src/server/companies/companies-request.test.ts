@@ -12,6 +12,7 @@ import {
   getDecisionRoomForRequest,
   getStrategyForRequest,
   getRoadmapForRequest,
+  getTaskBoardForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -53,6 +54,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     // CDR-088 G3.1: the default REJECTS WITH THE METHOD NAME, so a test that reaches this path without stubbing
     // it fails saying which method it forgot, rather than passing on a silent undefined.
     getLatestRoadmap: () => Promise.reject(new Error('getLatestRoadmap was called without being stubbed')),
+    getTaskBoard: () => Promise.reject(new Error('getTaskBoard was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -448,6 +450,30 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * `{ ok, roadmap: RoadmapDTO | null } | { forbidden }`. There is no `not_found` arm, so there is nothing here to
  * keep distinct from `forbidden` — the sub-resource granularity that CDR-087 §5.1 G8 cares about does not arise.
  */
+/**
+ * CDR-088 — the task board read. Two arms like the roadmap read, but the payload is NOT nullable:
+ * `GetTaskBoardResult` carries a `TaskBoardDTO`, never null. An empty board is still a board, so the
+ * absent-carrying-null case the roadmap read has does not arise here and is not invented for symmetry.
+ */
+describe('CDR-088 — task board read (request layer)', () => {
+  const BOARD = { sentinel: 'board' } as unknown as never;
+
+  test('the board is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getTaskBoard: () => Promise.resolve({ status: 'ok', board: BOARD }) });
+    const r = await getTaskBoardForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('tasks');
+    if (r.status !== 'tasks') return;
+    expect(r.board).toBe(BOARD);
+  });
+
+  test('a refusal maps to forbidden and carries no payload', async () => {
+    const runtime = fakeRuntime({ getTaskBoard: () => Promise.resolve({ status: 'forbidden' }) });
+    const r = await getTaskBoardForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+    expect(Object.keys(r)).toEqual(['status']);
+  });
+});
+
 describe('CDR-088 — roadmap read (request layer)', () => {
   const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
 

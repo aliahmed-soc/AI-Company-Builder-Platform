@@ -125,6 +125,8 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     // and the caller may read it; there is simply nothing planned yet.
     case 'roadmap':
       return jsonResponse(200, { roadmap: result.roadmap });
+    case 'tasks':
+      return jsonResponse(200, { board: result.board });
     // 200, not 201. Neither call creates a resource at a new URL the client can then GET — the selection and the
     // decision are read back through the company's strategy surface — so 201 would promise a Location that does
     // not exist. Recorded here rather than defaulted (CDR-087 §5).
