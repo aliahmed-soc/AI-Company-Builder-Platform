@@ -27,10 +27,16 @@ Discovery of `packages/core/src/runs/` found **only lifecycle writes**: `startRu
 it requires authoring a new core read (repository query, authz action, result union, real-PG tests),
 which is a domain addition beyond this ticket's stated scope.
 
-**DECISION: the runs read is DEFERRED and this ticket ships without it.** The artifacts half proceeds.
-Adding a core read use case is a scope expansion the owner has not authorized; inventing one silently
-under a ticket described as "pure exposure" is exactly the kind of unrequested widening the operating
-rules forbid. **This is flagged for an owner decision, not decided here.**
+**OWNER DECISION (2026-08-12): the runs read becomes its OWN TICKET — ACBP-API-003.** It is out of
+scope for ACBP-API-002, which ships the artifacts half and the rest of the table below.
+
+That ticket is a DOMAIN addition, not an exposure, and must be built as one: a repository query, a
+`run:read` authorization action, a result union, real-PostgreSQL integration tests, and its own CDR.
+It does not inherit this CDR's "no new domain logic" framing — §0 does not apply to it.
+
+**Nothing in ACBP-API-002 may scaffold toward it**: no run-read result variant, no runtime method, no
+placeholder route. `runs/{runId}/artifacts` below uses the run id ONLY as a selector for an artifact
+query that already exists; it neither reads a run nor implies one can be read.
 
 ## §1 — Authorization: core decides, this layer maps
 Inherited verbatim from CDR-087 §1. No route and no request-layer function re-checks a role. A second
