@@ -430,6 +430,86 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the roadmap edit joins this matrix. THE ONLY SLICE-2 ROUTE THAT WRITES.
+   *
+   * That changes what the matrix must assert. For the six read routes, a status code is the whole surface: there
+   * is nothing to persist, so "it refused" and "it changed nothing" are the same claim. Here they are NOT. A
+   * refusal that still wrote a roadmap row would satisfy every status assertion below and be exactly the defect
+   * worth catching, so the negative is taken FROM THE DATABASE.
+   *
+   * AND IT WORKS WITHOUT SEEDING, which is why this block makes a stronger claim than the roadmap READ block
+   * despite the same inability to seed a roadmap (the decision chain). The assertion is that the set of roadmap
+   * ids is IDENTICAL before and after the refused writes. A cross-company edit that leaked through would have to
+   * create a row to succeed, and a created row changes that set. An empty table is a perfectly good baseline for
+   * "nothing was created".
+   */
+  describe('CDR-088 — roadmap edit (the only slice-2 write)', () => {
+    let editRoute: ParamPostRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      editRoute = await import('../../app/api/companies/[companyId]/roadmap/edit/route.js');
+    });
+
+    const postEdit = async (companyId: string, expectedRoadmapId: string): Promise<{ status: number; body: string }> => {
+      const res = await editRoute.POST(
+        new Request(`https://app.test/api/companies/${companyId}/roadmap/edit`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ expectedRoadmapId, plan: '{"goals":[]}', reason: 'adversarial probe' }),
+        }),
+        { params: Promise.resolve({ companyId }) },
+      );
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot edit company B, and NO ROADMAP ROW MOVES', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).map((r) => r.id).sort();
+
+      expect((await postEdit(w.companyB1, UNKNOWN_UUID)).status, 'edit into B').not.toBe(200);
+      expect((await postEdit(UNKNOWN_UUID, UNKNOWN_UUID)).status, 'edit into an unknown company').not.toBe(200);
+
+      // THE DATABASE IS THE ASSERTION. A refusal that still wrote would pass both checks above; only this one
+      // distinguishes "refused" from "refused, but changed something anyway".
+      const after = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).map((r) => r.id).sort();
+      expect(after, 'no roadmap row may be created by a refused edit').toEqual(before);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await postEdit(w.companyB1, UNKNOWN_UUID);
+      const unknown = await postEdit(UNKNOWN_UUID, UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed company id never succeeds, never leaks, and writes nothing', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).length;
+      for (const bad of MALFORMED) {
+        const res = await postEdit(bad, UNKNOWN_UUID);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmaps_', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+      expect((await owner.kysely.selectFrom('roadmaps').select('id').execute()).length, 'a malformed edit writes nothing').toBe(before);
+    });
+
+    test('a malformed BODY is refused before the domain, and writes nothing', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).length;
+      const res = await editRoute.POST(
+        new Request(`https://app.test/api/companies/${w.companyA1}/roadmap/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json at all' }),
+        { params: Promise.resolve({ companyId: w.companyA1 }) },
+      );
+      expect(res.status).toBe(400);
+      expect((await owner.kysely.selectFrom('roadmaps').select('id').execute()).length, 'an unparseable body writes nothing').toBe(before);
+    });
+  });
+
+  /**
    * CDR-088 §4 — the approvals inbox joins this matrix.
    *
    * NO APPROVAL REQUEST IS SEEDED. `approval_requests.run_id` is NOT NULL with an FK to `runs`, so a real row
