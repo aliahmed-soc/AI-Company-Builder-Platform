@@ -430,6 +430,67 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the approvals inbox joins this matrix.
+   *
+   * NO APPROVAL REQUEST IS SEEDED. `approval_requests.run_id` is NOT NULL with an FK to `runs`, so a real row
+   * needs the run chain. These tests prove refusal at company scope and that refusals carry no oracle.
+   *
+   * WHERE THE ALLOWLIST IS ACTUALLY PROVEN: in the UNIT test, which feeds a row carrying a sentinel in every
+   * excluded column and asserts the item has exactly the eleven allowlisted keys. THAT is the real control. The
+   * raw-column-name check below is a WEAKER, SECOND line of defence and is VACUOUS while the inbox is empty —
+   * said plainly here so nobody later reads a green run as proof the mapper works. It earns its place only if
+   * this block ever seeds, and it is written now so the assertion exists when it does.
+   */
+  describe('CDR-088 — approvals inbox', () => {
+    let approvalsRoute: ParamRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      approvalsRoute = await import('../../app/api/companies/[companyId]/approvals/route.js');
+    });
+
+    const getApprovals = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await approvalsRoute.GET(new Request(`https://app.test/api/companies/${companyId}/approvals`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot read company B\'s inbox', async () => {
+      await signInAs(w.aOwner);
+      expect((await getApprovals(w.companyB1)).status, 'read into B').not.toBe(200);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getApprovals(w.companyB1);
+      const unknown = await getApprovals(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getApprovals(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'approval_requests', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+    });
+
+    test('no RAW COLUMN NAME ever appears in a served inbox (see the caveat above)', async () => {
+      await signInAs(w.aOwner);
+      const own = await getApprovals(w.companyA1);
+      expect(own.status, "A reading its own inbox").toBe(200);
+      // snake_case column names are the signature of a raw row escaping the mapper. With an empty inbox this
+      // passes trivially — it is a tripwire for the day rows exist, NOT evidence that the mapper redacts.
+      for (const column of ['account_id', 'company_id', 'run_id', 'policy_id', 'policy_version', '"data"']) {
+        expect(own.body, `raw column '${column}' must never be served`).not.toContain(column);
+      }
+    });
+  });
+
+  /**
    * CDR-088 §4 — the three artifact reads join this matrix.
    *
    * NO ARTIFACT IS SEEDED, and the claims are scoped to match. `artifacts.run_id` is NOT NULL with an FK to
