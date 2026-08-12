@@ -67,6 +67,31 @@ Each use case gets a **required** method on `CompanyRuntime`. A runtime missing 
 compile. Optional methods let an unimplemented runtime ship silently. The fake runtime's defaults
 **reject with the method name**, so an unstubbed call names itself in the failure.
 
+### §2.1a — OWNER DECISION (2026-08-12): the artifact reads are ADAPTED AT THE REQUEST LAYER
+`getArtifact` and `listRunArtifacts` do NOT follow the tagged-result convention every other use case here
+uses. Verified by reading `packages/core/src/artifacts/persist.ts`:
+
+```ts
+getArtifact(...):      Promise<ArtifactDTO | 'forbidden' | 'not_found'>
+listRunArtifacts(...): Promise<readonly ArtifactDTO[] | 'forbidden'>
+readArtifactLineage(...): Promise<ReadLineageResult>   // tagged, like the rest
+```
+
+**Decision: adapt at the request layer; do NOT normalize core.** Normalizing would be a core change, which
+is out of scope for ACBP-API-002 on the same reasoning that made the runs read its own ticket (§0.2).
+
+**Consequences that MUST be honoured by the implementation:**
+1. **§2.2's `Extract<R, {status:'ok'}>` derivation DOES NOT APPLY to these two.** Discriminate with
+   `typeof r === 'string'` and derive the payload as `Exclude<Awaited<ReturnType<...>>, string>`. Do not
+   hand-copy `ArtifactDTO`.
+2. **A REFUSAL IS A STRING, AND THAT IS THE DANGER.** If a mapping fails to check, `'forbidden'`
+   serializes into a 200 body *as though it were the artifact*. That is a data-leak-shaped defect the
+   tagged convention makes impossible elsewhere, and here only the adapter prevents it. **A unit test
+   MUST assert that each refusal string maps to a refusal and never appears in a 200 body.**
+3. **`listRunArtifacts` HAS NO `not_found` ARM.** An unknown run id and a run with zero artifacts are
+   indistinguishable — an empty array either way. That is oracle-safe by construction, but it means the
+   route CANNOT honestly 404 an unknown run, and must not pretend to. Say so in the route comment.
+
 ### §2.2 — G4: derive payload types, never copy them
 Every result payload is `Extract<CoreResult, { status: 'ok' }>['field']`. A hand-copied interface
 drifts from core the first time core changes and nothing catches it.
