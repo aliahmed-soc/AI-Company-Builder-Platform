@@ -77,7 +77,12 @@ export async function getTaskDetail(client: DatabaseClient, params: GetTaskDetai
     async (scope, role): Promise<GetTaskDetailResult> => {
       if (checkAuthorization(role, 'task:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') return { status: 'forbidden' };
       const row = await new TaskRepository(scope.db).findLive(params.taskId);
-      if (row === undefined) return { status: 'not_found' };
+      // MUTATION M-ORACLE-B (DO NOT MERGE) — DESIGNED TO SURVIVE, NOT TO KILL. Collapses the task-level
+      // not_found into forbidden. G-oracle(b) asserts a FOREIGN task id and an UNKNOWN one are byte-identical;
+      // this seam cannot separate them, because RLS already made both `undefined` before this line runs. So
+      // G-oracle(b) is expected to stay GREEN while the not_found-vs-forbidden distinctness test goes RED.
+      // A survival here is the EVIDENCE that the guard is structurally unmeasurable rather than merely unrun.
+      if (row === undefined) return { status: 'forbidden' };
       // TASK-006: the failure a founder needs to see belongs to the RUN, and this is where they look for it.
       return { status: 'ok', task: toTaskDetailDTO(row, await latestFailureFor(scope.db, params.taskId, row.state)) };
     },
