@@ -11,6 +11,14 @@ import {
   getCompanyActivityForRequest,
   getDecisionRoomForRequest,
   getStrategyForRequest,
+  getRoadmapForRequest,
+  getTaskBoardForRequest,
+  getTaskDetailForRequest,
+  getArtifactForRequest,
+  listRunArtifactsForRequest,
+  readArtifactLineageForRequest,
+  listApprovalInboxForRequest,
+  editRoadmapForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -49,6 +57,16 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
   return {
     // ACBP-P7-013: REQUIRED on the runtime, so a fake cannot be admitted by omission (CDR-082 section 2).
     checkRequestLimit: () => Promise.resolve({ kind: 'allowed' } as const),
+    // CDR-088 G3.1: the default REJECTS WITH THE METHOD NAME, so a test that reaches this path without stubbing
+    // it fails saying which method it forgot, rather than passing on a silent undefined.
+    getLatestRoadmap: () => Promise.reject(new Error('getLatestRoadmap was called without being stubbed')),
+    getTaskBoard: () => Promise.reject(new Error('getTaskBoard was called without being stubbed')),
+    getTaskDetail: () => Promise.reject(new Error('getTaskDetail was called without being stubbed')),
+    getArtifact: () => Promise.reject(new Error('getArtifact was called without being stubbed')),
+    listRunArtifacts: () => Promise.reject(new Error('listRunArtifacts was called without being stubbed')),
+    readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
+    listApprovalInbox: () => Promise.reject(new Error('listApprovalInbox was called without being stubbed')),
+    editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -439,6 +457,235 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * success case uses a SENTINEL object and asserts IDENTITY (`toBe`), which proves the request layer passed the
  * domain's value through untouched rather than rebuilding a lookalike.
  */
+/**
+ * CDR-088 — the roadmap read. `LatestRoadmapResult` has the SAME two-arm shape as the strategy read:
+ * `{ ok, roadmap: RoadmapDTO | null } | { forbidden }`. There is no `not_found` arm, so there is nothing here to
+ * keep distinct from `forbidden` — the sub-resource granularity that CDR-087 §5.1 G8 cares about does not arise.
+ */
+/**
+ * CDR-088 — the task board read. Two arms like the roadmap read, but the payload is NOT nullable:
+ * `GetTaskBoardResult` carries a `TaskBoardDTO`, never null. An empty board is still a board, so the
+ * absent-carrying-null case the roadmap read has does not arise here and is not invented for symmetry.
+ */
+/**
+ * CDR-088 — task detail. THE FIRST SLICE-2 ROUTE WITH THREE ARMS: `GetTaskDetailResult` adds `not_found`, which
+ * the roadmap and board reads do not have. That arm must stay DISTINCT from `forbidden` (§5): they answer at
+ * different granularities — `forbidden` is the company-level refusal, `not_found` is the task-level one — and
+ * collapsing them would throw away information the client needs to tell "not yours" from "not there".
+ */
+/**
+ * CDR-088 §2.1a — the artifact reads, whose core use cases return BARE unions carrying string literals rather
+ * than the tagged shape everything else here uses.
+ *
+ * THE FIRST TEST BELOW IS THE WHOLE SAFETY ARGUMENT FOR ADAPTING AT THIS LAYER. If the adapter ever stops
+ * checking, `'forbidden'` is a perfectly good JSON value and would be serialized into a 200 body AS THE
+ * ARTIFACT. No type error, no crash — a refusal rendered as content. Nothing else in this file needs a test
+ * like this, because every other use case makes that state unrepresentable.
+ */
+/**
+ * CDR-088 — the approvals inbox, the only slice-2 route whose core result carries a RAW DATABASE ROW
+ * (`ApprovalRequestRow = Selectable<ApprovalRequestsTable>`) rather than a DTO. The request layer maps it to an
+ * allowlisted `ApprovalInboxItem`, and the first test below is what makes that mapping trustworthy.
+ */
+/**
+ * CDR-088 — the roadmap edit, the ONLY state-changing route in slice 2 and the only one with six result arms.
+ * Three of them are refusals that must NOT collapse into one another: the caller's next move differs.
+ */
+describe('CDR-088 — roadmap edit (request layer)', () => {
+  const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
+  const body = { expectedRoadmapId: 'rm_1', plan: '{"goals":[]}', reason: 'because' };
+
+  test('flaggedTaskCount travels WITH the roadmap — the consequence is not dropped', async () => {
+    // ROAD-002 flags the tasks an edit invalidated. A client shown the new plan without the count would
+    // under-report the effect of the owner's own edit.
+    const runtime = fakeRuntime({ editRoadmap: () => Promise.resolve({ status: 'ok', roadmap: ROADMAP, flaggedTaskCount: 3 }) });
+    const r = await editRoadmapForRequest('co_1', body, { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap_edited');
+    if (r.status !== 'roadmap_edited') return;
+    expect(r.roadmap).toBe(ROADMAP);
+    expect(r.flaggedTaskCount).toBe(3);
+  });
+
+  test('stale_version, decision_rejected, not_found and forbidden stay FOUR distinct answers', async () => {
+    // Collapsing these would destroy what the caller does next: re-read and retry (stale), change the strategy
+    // decision first (rejected), or stop (forbidden / not_found).
+    const seen: string[] = [];
+    for (const arm of ['stale_version', 'decision_rejected', 'not_found', 'forbidden'] as const) {
+      const r = await editRoadmapForRequest('co_1', body, { runtime: fakeRuntime({ editRoadmap: () => Promise.resolve({ status: arm }) }), identity: identityDeps() });
+      seen.push(r.status);
+    }
+    expect(seen).toEqual(['stale_version', 'decision_rejected', 'not_found', 'forbidden']);
+    expect(new Set(seen).size, 'all four must remain distinguishable').toBe(4);
+  });
+
+  test('an invalid edit is a validation refusal that echoes no field of the submitted plan', async () => {
+    const r = await editRoadmapForRequest('co_1', { ...body, plan: 'SENSITIVE-PLAN-CONTENT' }, { runtime: fakeRuntime({ editRoadmap: () => Promise.resolve({ status: 'invalid' }) }), identity: identityDeps() });
+    expect(r.status).toBe('validation');
+    expect(JSON.stringify(r), 'the submitted plan must not be echoed back').not.toContain('SENSITIVE-PLAN-CONTENT');
+  });
+});
+
+describe('CDR-088 — approvals inbox (request layer)', () => {
+  // A row carrying every column the real table has, plus a sentinel in each field that must NOT be published.
+  const ROW = {
+    id: 'apr_1',
+    account_id: 'acc_SECRET',
+    company_id: 'co_SECRET',
+    run_id: 'run_SECRET',
+    policy_id: 'pol_SECRET',
+    policy_version: 7,
+    data: { secretPayload: 'SHOULD-NEVER-BE-SERVED' },
+    tool_id: 'tool_1',
+    tool_version: 2,
+    action: 'send_email',
+    reason: 'because',
+    expected_result: 'an email',
+    preview: 'To: someone',
+    estimated_cost_credits: 5,
+    risk_class: 'high',
+    reversibility: 'irreversible',
+    scope: 'once',
+  } as unknown as never;
+
+  test('the wire shape is an ALLOWLIST: no internal column of the row is ever published', async () => {
+    const r = await listApprovalInboxForRequest('co_1', { runtime: fakeRuntime({ listApprovalInbox: () => Promise.resolve({ status: 'ok', requests: [ROW] }) }), identity: identityDeps() });
+    expect(r.status).toBe('approvals');
+    if (r.status !== 'approvals') return;
+
+    const serialized = JSON.stringify(r);
+    // The raw tool payload is the highest-risk column on this table and must never appear in any form.
+    expect(serialized, 'the raw `data` payload must never be served').not.toContain('SHOULD-NEVER-BE-SERVED');
+    for (const secret of ['acc_SECRET', 'co_SECRET', 'run_SECRET', 'pol_SECRET']) {
+      expect(serialized, `${secret} is internal and must not be published`).not.toContain(secret);
+    }
+    // And positively: the item carries EXACTLY the allowlisted keys, so a new column cannot arrive unnoticed.
+    expect(Object.keys(r.approvals[0] ?? {}).sort()).toEqual(
+      ['action', 'approvalRequestId', 'estimatedCostCredits', 'expectedResult', 'preview', 'reason', 'reversibility', 'riskClass', 'scope', 'toolId', 'toolVersion'],
+    );
+  });
+
+  test('a refusal carries no payload', async () => {
+    const r = await listApprovalInboxForRequest('co_1', { runtime: fakeRuntime({ listApprovalInbox: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+    expect(Object.keys(r)).toEqual(['status']);
+  });
+});
+
+describe('CDR-088 — artifact reads (request layer)', () => {
+  const ARTIFACT = { sentinel: 'artifact' } as unknown as never;
+
+  test('EVERY refusal STRING maps to a refusal and never reaches a success payload', async () => {
+    for (const refusal of ['forbidden', 'not_found'] as const) {
+      const r = await getArtifactForRequest('co_1', 'art_1', { runtime: fakeRuntime({ getArtifact: () => Promise.resolve(refusal) }), identity: identityDeps() });
+      expect(r.status, `${refusal} must map to a refusal`).toBe(refusal);
+      expect(JSON.stringify(r), `${refusal} must not appear as an artifact payload`).not.toContain('"artifact"');
+    }
+    const listed = await listRunArtifactsForRequest('co_1', 'run_1', { runtime: fakeRuntime({ listRunArtifacts: () => Promise.resolve('forbidden') }), identity: identityDeps() });
+    expect(listed.status).toBe('forbidden');
+    expect(JSON.stringify(listed)).not.toContain('"artifacts"');
+  });
+
+  test('an artifact is passed through by IDENTITY, not rebuilt', async () => {
+    const r = await getArtifactForRequest('co_1', 'art_1', { runtime: fakeRuntime({ getArtifact: () => Promise.resolve(ARTIFACT) }), identity: identityDeps() });
+    expect(r.status).toBe('artifact');
+    if (r.status !== 'artifact') return;
+    expect(r.artifact).toBe(ARTIFACT);
+  });
+
+  test('an EMPTY artifact list is a success, not a not-found — an unknown run and an empty run agree', async () => {
+    // §2.1a: listRunArtifacts has no not_found arm, so this layer must not invent one.
+    const r = await listRunArtifactsForRequest('co_1', 'run_1', { runtime: fakeRuntime({ listRunArtifacts: () => Promise.resolve([]) }), identity: identityDeps() });
+    expect(r.status).toBe('artifacts');
+    if (r.status !== 'artifacts') return;
+    expect(r.artifacts).toEqual([]);
+  });
+
+  test('lineage is tagged, so not_found stays distinct from forbidden', async () => {
+    // Core names this arm `artifact_not_found`; the boundary normalizes it to `not_found`. Asserting the CORE
+    // name here is deliberate — it fails if that mapping is ever dropped.
+    const missing = await readArtifactLineageForRequest('co_1', 'art_1', { runtime: fakeRuntime({ readArtifactLineage: () => Promise.resolve({ status: 'artifact_not_found' }) }), identity: identityDeps() });
+    const denied = await readArtifactLineageForRequest('co_1', 'art_1', { runtime: fakeRuntime({ readArtifactLineage: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(missing.status).toBe('not_found');
+    expect(denied.status).toBe('forbidden');
+  });
+});
+
+describe('CDR-088 — task detail (request layer)', () => {
+  const TASK = { sentinel: 'task' } as unknown as never;
+
+  test('the task is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'ok', task: TASK }) });
+    const r = await getTaskDetailForRequest('co_1', 'task_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('task');
+    if (r.status !== 'task') return;
+    expect(r.task).toBe(TASK);
+  });
+
+  test('not_found stays DISTINCT from forbidden — they are not the same answer', async () => {
+    const missing = await getTaskDetailForRequest('co_1', 'task_1', { runtime: fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'not_found' }) }), identity: identityDeps() });
+    const denied = await getTaskDetailForRequest('co_1', 'task_1', { runtime: fakeRuntime({ getTaskDetail: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(missing.status).toBe('not_found');
+    expect(denied.status).toBe('forbidden');
+    expect(missing.status).not.toBe(denied.status);
+  });
+
+  test('the taskId is forwarded, not dropped', async () => {
+    // A boundary that silently discarded the selector would still return 200 with SOMEONE's task.
+    let seen: unknown;
+    const runtime = fakeRuntime({ getTaskDetail: (p) => { seen = p; return Promise.resolve({ status: 'ok', task: TASK }); } });
+    await getTaskDetailForRequest('co_1', 'task_42', { runtime, identity: identityDeps() });
+    expect((seen as { taskId?: string } | undefined)?.taskId).toBe('task_42');
+  });
+});
+
+describe('CDR-088 — task board read (request layer)', () => {
+  const BOARD = { sentinel: 'board' } as unknown as never;
+
+  test('the board is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getTaskBoard: () => Promise.resolve({ status: 'ok', board: BOARD }) });
+    const r = await getTaskBoardForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('tasks');
+    if (r.status !== 'tasks') return;
+    expect(r.board).toBe(BOARD);
+  });
+
+  test('a refusal maps to forbidden and carries no payload', async () => {
+    const runtime = fakeRuntime({ getTaskBoard: () => Promise.resolve({ status: 'forbidden' }) });
+    const r = await getTaskBoardForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+    expect(Object.keys(r)).toEqual(['status']);
+  });
+});
+
+describe('CDR-088 — roadmap read (request layer)', () => {
+  const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
+
+  test('an existing roadmap is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'ok', roadmap: ROADMAP }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap');
+    if (r.status !== 'roadmap') return;
+    expect(r.roadmap).toBe(ROADMAP);
+  });
+
+  test('NO roadmap yet is a SUCCESS carrying null, never a not-found (CDR-088 §5)', async () => {
+    // Same reasoning as the strategy read's G9: the company exists and the caller may read it, there is simply
+    // nothing planned yet. A 404 here is how a UI shows an error page on a normal first visit.
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'ok', roadmap: null }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap');
+    if (r.status !== 'roadmap') return;
+    expect(r.roadmap).toBeNull();
+  });
+
+  test('a refusal maps to forbidden and carries no payload', async () => {
+    const runtime = fakeRuntime({ getLatestRoadmap: () => Promise.resolve({ status: 'forbidden' }) });
+    const r = await getRoadmapForRequest('co_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+    expect(Object.keys(r)).toEqual(['status']);
+  });
+});
+
 describe('CDR-087 — strategy read and decision recording (request layer)', () => {
   const GENERATION = { sentinel: 'generation' } as unknown as never;
   const SELECTION = { sentinel: 'selection' } as unknown as never;

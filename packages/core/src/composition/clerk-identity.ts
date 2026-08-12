@@ -65,6 +65,16 @@ import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, delet
 // CDR-087 — strategy read and decision recording, exposed over HTTP by apps/web. Composition only: the
 // authorization for each lives inside the use case, not here and not at the route (CDR-087 §1).
 import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
+import { getLatestRoadmap, type RoadmapReadParams, type RoadmapGenerationOptions, type LatestRoadmapResult } from '../planning/roadmap-generation.js';
+import { editRoadmap, type EditRoadmapParams, type RoadmapEditOptions, type EditRoadmapResult } from '../planning/roadmap-edit.js';
+import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
+// `TaskOptions` lives in task-management.ts, NOT task-controls.ts — task-controls declares a local alias that is
+// not exported, so importing it from there fails to compile rather than silently binding the wrong type.
+import { getTaskDetail, type GetTaskDetailParams, type GetTaskDetailResult } from '../tasks/task-controls.js';
+import type { TaskOptions } from '../tasks/task-management.js';
+import { getArtifact, listRunArtifacts, type ArtifactDTO, type PersistArtifactOptions } from '../artifacts/persist.js';
+import { readArtifactLineage, type ReadLineageParams, type ReadLineageOptions, type ReadLineageResult } from '../artifacts/lineage.js';
+import { listApprovalInbox, type ListApprovalInboxParams, type ListApprovalInboxResult, type ApprovalServiceOptions } from '../approvals/approval-service.js';
 import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
 import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
 import type { AccountContextResolution } from '@acbp/contracts';
@@ -206,6 +216,14 @@ export interface ClerkIdentityRuntime {
 
   // CDR-087 slice 1. Required members, matching every other domain surface on this runtime.
   getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
+  getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
+  getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
+  getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
+  getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
+  listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
+  readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
+  listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
+  editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -317,6 +335,35 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     getLatestStrategy(params, options) {
       return getLatestStrategyGeneration(client, params, options ?? {});
+    },
+    // CDR-088. THREE positional args and no `deps` slot — the arity differs per use case (recordStrategyDecision
+    // below takes four), which is why each signature is read rather than assumed.
+    getLatestRoadmap(params, options) {
+      return getLatestRoadmap(client, params, options ?? {});
+    },
+    getTaskBoard(params, options) {
+      return getTaskBoard(client, params, options ?? {});
+    },
+    getTaskDetail(params, options) {
+      return getTaskDetail(client, params, options ?? {});
+    },
+    getArtifact(params, options) {
+      return getArtifact(client, params, options ?? {});
+    },
+    listRunArtifacts(params, options) {
+      return listRunArtifacts(client, params, options ?? {});
+    },
+    readArtifactLineage(params, options) {
+      return readArtifactLineage(client, params, options ?? {});
+    },
+    listApprovalInbox(params, options) {
+      return listApprovalInbox(client, params, options ?? {});
+    },
+    // FOUR positional args — `editRoadmap(client, params, deps, options)`. The deps slot is easy to miss because
+    // its two neighbours here take three; passing options into the deps position would compile if both were
+    // loose, so the slot is spelled out rather than defaulted.
+    editRoadmap(params, options) {
+      return editRoadmap(client, params, {}, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});

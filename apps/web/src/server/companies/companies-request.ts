@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -48,6 +48,30 @@ export type CompaniesRequestResult =
    * not-found: the company exists and the caller may read it, there is simply nothing generated yet (G9).
    */
   | { readonly status: 'strategy'; readonly generation: Extract<LatestStrategyResult, { status: 'ok' }>['generation'] }
+  // CDR-088. Payload type DERIVED from core's result, never copied — a hand-written shape drifts the first time
+  // core changes and nothing catches it.
+  | { readonly status: 'roadmap'; readonly roadmap: Extract<LatestRoadmapResult, { status: 'ok' }>['roadmap'] }
+  // CDR-088. `board` is NOT nullable — an empty board is still a board, so there is no absent-carrying-null
+  // case here and none is invented for symmetry with the roadmap read above.
+  | { readonly status: 'tasks'; readonly board: Extract<GetTaskBoardResult, { status: 'ok' }>['board'] }
+  | { readonly status: 'task'; readonly task: Extract<GetTaskDetailResult, { status: 'ok' }>['task'] }
+  // CDR-088 §2.1a. `getArtifact` and `listRunArtifacts` return BARE unions carrying string literals, not the
+  // tagged shape everything else here uses, so the payload types are derived with `Exclude<…, string>` rather
+  // than `Extract<…, {status:'ok'}>`. Hand-copying ArtifactDTO would drift the moment core changes.
+  | { readonly status: 'artifact'; readonly artifact: Exclude<Awaited<ReturnType<CompanyRuntime['getArtifact']>>, string> }
+  | { readonly status: 'artifacts'; readonly artifacts: Exclude<Awaited<ReturnType<CompanyRuntime['listRunArtifacts']>>, string> }
+  | { readonly status: 'lineage'; readonly lineage: Extract<ReadLineageResult, { status: 'ok' }> }
+  | { readonly status: 'approvals'; readonly approvals: readonly ApprovalInboxItem[] }
+  // CDR-088. `flaggedTaskCount` travels WITH the roadmap deliberately: ROAD-002 flags tasks the edit invalidated,
+  // and a client that saw the new plan without learning how many tasks it disturbed would under-report the
+  // consequence of the owner's own edit.
+  | {
+      readonly status: 'roadmap_edited';
+      readonly roadmap: Extract<EditRoadmapResult, { status: 'ok' }>['roadmap'];
+      readonly flaggedTaskCount: number;
+    }
+  | { readonly status: 'stale_version' }
+  | { readonly status: 'decision_rejected' }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -89,6 +113,16 @@ export interface CompanyRuntime {
   // CDR-087 — strategy read and decision recording. REQUIRED, never optional, for the reason recorded on
   // `checkRequestLimit`: a fake runtime must declare every surface, so none is admitted by being forgotten.
   getLatestStrategy(params: StrategyReadParams, options?: StrategyGenerationOptions): Promise<LatestStrategyResult>;
+  // REQUIRED, not optional (CDR-088 §2.1): an optional method lets a runtime that never implements it ship
+  // silently. Missing it must be a compile error.
+  getLatestRoadmap(params: RoadmapReadParams, options?: RoadmapGenerationOptions): Promise<LatestRoadmapResult>;
+  getTaskBoard(params: GetTaskBoardParams, options?: TaskBoardOptions): Promise<GetTaskBoardResult>;
+  getTaskDetail(params: GetTaskDetailParams, options?: TaskOptions): Promise<GetTaskDetailResult>;
+  getArtifact(params: { userId: string; accountId: string; companyId: string; artifactId: string }, options?: PersistArtifactOptions): Promise<ArtifactDTO | 'forbidden' | 'not_found'>;
+  listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
+  readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
+  listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
+  editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -533,6 +567,248 @@ export async function getStrategyForRequest(companyId: string, deps: CompaniesRe
       return { status: 'strategy', generation: r.generation };
     case 'forbidden':
       return { status: 'forbidden' };
+  }
+}
+
+/**
+ * The company's current roadmap (CDR-088; `roadmap:read`, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1, inherited verbatim from CDR-087 §1. Core decides from the company
+ * role; a second authority answering the same question is the defect ACBP-P6-002 paid to remove.
+ *
+ * `LatestRoadmapResult` has TWO arms and a NULLABLE payload, exactly like the strategy read. An absent roadmap is
+ * a success carrying null, never a not-found: the company exists and the caller may read it, there is simply
+ * nothing planned yet. Mapping that to 404 is how a UI shows an error page on a normal first visit.
+ *
+ * A correlationId IS threaded here (CDR-088 §6). The strategy read omits one, which makes it less traceable in
+ * the logs than the writes beside it — that is the open slice-1 finding, and it is not repeated.
+ */
+export async function getRoadmapForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getLatestRoadmap({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'roadmap', roadmap: r.roadmap };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * The company's task board (CDR-088; `task:read`, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1. Core decides from the company role.
+ *
+ * `GetTaskBoardResult` has two arms and a NON-nullable payload: an empty board is still a board, so unlike the
+ * roadmap read there is no absent-carrying-null case, and none is invented for symmetry.
+ */
+export async function getTaskBoardForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getTaskBoard({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'tasks', board: r.board };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * One task's detail (CDR-088; `task:read`, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1.
+ *
+ * THREE arms, and `not_found` stays DISTINCT from `forbidden` (§5). They answer at different granularities:
+ * `forbidden` is the company-level refusal, where a foreign and an unknown company are indistinguishable;
+ * `not_found` is the task-level one, where a foreign and an unknown task id are equally indistinguishable because
+ * RLS makes another company's row invisible rather than denied. Collapsing the two would discard the difference
+ * between "not yours" and "not there", which the client legitimately needs.
+ */
+export async function getTaskDetailForRequest(companyId: string, taskId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getTaskDetail({ userId: ctx.userId, accountId: ctx.accountId, companyId, taskId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'task', task: r.task };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+  }
+}
+
+/**
+ * Revise the company's current roadmap (CDR-088; ROAD-002; owner-only, enforced in `@acbp/core`).
+ *
+ * THE ONLY STATE-CHANGING ROUTE IN SLICE 2, and the only one with SIX result arms. Three of them are refusals
+ * that are NOT interchangeable, and mapping them to one status would destroy information the caller acts on:
+ *
+ * - `stale_version` — the owner edited a view that is no longer current. Nothing was written; the fix is
+ *   re-read and retry. A client shown a generic error would have no way to know retrying is the right move.
+ * - `decision_rejected` — the company's latest decision REJECTED the strategy, and an edit authors the new
+ *   current plan, so it is gated exactly like generation (CDR-039 §7-G1). Otherwise a rejection could be
+ *   side-stepped by editing. Retrying will never help; the strategy decision has to change first.
+ * - `not_found` — no such roadmap, at the sub-resource granularity.
+ *
+ * The body is PARSED, NOT VALIDATED here: `plan` is a string the domain's deny-by-default parser judges, and
+ * `reason` is typed `unknown` in the contract precisely so the domain rules on it. Re-checking either here would
+ * create the second authority §1 forbids.
+ */
+export async function editRoadmapForRequest(
+  companyId: string,
+  body: { readonly expectedRoadmapId: string; readonly plan: string; readonly reason: unknown },
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.editRoadmap(
+    { userId: ctx.userId, accountId: ctx.accountId, companyId, expectedRoadmapId: body.expectedRoadmapId, plan: body.plan, reason: body.reason },
+    {},
+  );
+  switch (r.status) {
+    case 'ok':
+      return { status: 'roadmap_edited', roadmap: r.roadmap, flaggedTaskCount: r.flaggedTaskCount };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'stale_version':
+      return { status: 'stale_version' };
+    case 'decision_rejected':
+      return { status: 'decision_rejected' };
+    case 'invalid':
+      // The domain validated and refused; nothing was persisted, and no field is echoed back.
+      return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The roadmap edit was rejected.', retryable: false } };
+  }
+}
+
+/**
+ * What an approval request looks like ON THE WIRE.
+ *
+ * WRITTEN AS AN ALLOWLIST, NOT A REDACTION, AND THAT IS THE POINT. `listApprovalInbox` returns
+ * `ApprovalRequestRow`, which is `Selectable<ApprovalRequestsTable>` — every column of the table, including any
+ * column added to it in future. Spreading a row and deleting the unwanted keys would silently publish the next
+ * column somebody adds. Naming the fields means a new column is invisible here until a human adds it.
+ *
+ * DELIBERATELY ABSENT, each for a reason:
+ * - `data` — `ColumnType<unknown, …>`, the raw tool payload. Arbitrary content, the single highest leak risk on
+ *   this table, and nothing an inbox list needs to render.
+ * - `account_id`, `company_id` — internal scoping. The caller already knows which company they asked about, and
+ *   echoing tenant ids back is how they end up in client logs and URLs.
+ * - `run_id` — an internal execution id the caller cannot read anyway; there is no run-read route (ACBP-API-003).
+ * - `policy_id`, `policy_version` — evaluation-point machinery, not a decision the approver makes.
+ */
+export interface ApprovalInboxItem {
+  readonly approvalRequestId: string;
+  readonly action: string;
+  readonly reason: string;
+  readonly expectedResult: string;
+  readonly preview: string;
+  readonly riskClass: string;
+  readonly reversibility: string;
+  readonly scope: string;
+  readonly estimatedCostCredits: number;
+  readonly toolId: string;
+  readonly toolVersion: number;
+}
+
+/**
+ * The approvals awaiting a human in this company (CDR-088; enforced in `@acbp/core`).
+ *
+ * The mapper below is the ONLY thing standing between a raw database row and the wire — see `ApprovalInboxItem`.
+ */
+export async function listApprovalInboxForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listApprovalInbox({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return {
+        status: 'approvals',
+        approvals: r.requests.map((row) => ({
+          approvalRequestId: row.id,
+          action: row.action,
+          reason: row.reason,
+          expectedResult: row.expected_result,
+          preview: row.preview,
+          riskClass: row.risk_class,
+          reversibility: row.reversibility,
+          scope: row.scope,
+          estimatedCostCredits: row.estimated_cost_credits,
+          toolId: row.tool_id,
+          toolVersion: row.tool_version,
+        })),
+      };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * One artifact (CDR-088 §2.1a; `artifact:read`, enforced in `@acbp/core`).
+ *
+ * THE REFUSAL IS A BARE STRING, NOT A TAGGED ARM, AND THAT IS THE WHOLE RISK HERE. `getArtifact` resolves to
+ * `ArtifactDTO | 'forbidden' | 'not_found'`. If this adapter failed to check, `'forbidden'` would be serialized
+ * into a 200 body AS THOUGH IT WERE THE ARTIFACT — a defect the tagged convention makes impossible on every
+ * other route in this programme, and which only this function prevents. The string check therefore comes FIRST,
+ * before anything touches the value as a DTO.
+ */
+export async function getArtifactForRequest(companyId: string, artifactId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getArtifact({ userId: ctx.userId, accountId: ctx.accountId, companyId, artifactId }, {});
+  if (r === 'forbidden') return { status: 'forbidden' };
+  if (r === 'not_found') return { status: 'not_found' };
+  return { status: 'artifact', artifact: r };
+}
+
+/**
+ * Every artifact produced by one run (CDR-088 §2.1a).
+ *
+ * `listRunArtifacts` resolves to `readonly ArtifactDTO[] | 'forbidden'` and has NO `not_found` arm. An unknown
+ * run id and a real run with zero artifacts are therefore INDISTINGUISHABLE — both are an empty array. That is
+ * oracle-safe by construction, but it means this route cannot honestly 404 an unknown run, and it does not
+ * pretend to. Distinguishing them would need a run read, which is ACBP-API-003.
+ */
+export async function listRunArtifactsForRequest(companyId: string, runId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listRunArtifacts({ userId: ctx.userId, accountId: ctx.accountId, companyId, runId }, {});
+  if (r === 'forbidden') return { status: 'forbidden' };
+  return { status: 'artifacts', artifacts: r };
+}
+
+/**
+ * An artifact's lineage — what it was revised from, and what revised it (CDR-088).
+ *
+ * `readArtifactLineage` IS tagged, unlike its two neighbours, so it is mapped by `status` like every other route.
+ * The inconsistency is core's, not this layer's; §2.1a records the decision to adapt rather than normalize.
+ */
+export async function readArtifactLineageForRequest(companyId: string, artifactId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.readArtifactLineage({ userId: ctx.userId, accountId: ctx.accountId, companyId, artifactId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'lineage', lineage: r };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    // Core names this arm `artifact_not_found`, not `not_found` — a THIRD naming divergence in the artifacts
+    // area, after the two bare unions. It is normalized to the boundary's `not_found` here so the HTTP surface
+    // stays uniform; the compiler caught the wrong guess rather than letting it through.
+    case 'artifact_not_found':
+      return { status: 'not_found' };
   }
 }
 

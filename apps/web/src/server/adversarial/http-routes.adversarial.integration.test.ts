@@ -430,6 +430,467 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the roadmap edit joins this matrix. THE ONLY SLICE-2 ROUTE THAT WRITES.
+   *
+   * That changes what the matrix must assert. For the six read routes, a status code is the whole surface: there
+   * is nothing to persist, so "it refused" and "it changed nothing" are the same claim. Here they are NOT. A
+   * refusal that still wrote a roadmap row would satisfy every status assertion below and be exactly the defect
+   * worth catching, so the negative is taken FROM THE DATABASE.
+   *
+   * AND IT WORKS WITHOUT SEEDING, which is why this block makes a stronger claim than the roadmap READ block
+   * despite the same inability to seed a roadmap (the decision chain). The assertion is that the set of roadmap
+   * ids is IDENTICAL before and after the refused writes. A cross-company edit that leaked through would have to
+   * create a row to succeed, and a created row changes that set. An empty table is a perfectly good baseline for
+   * "nothing was created".
+   */
+  describe('CDR-088 — roadmap edit (the only slice-2 write)', () => {
+    let editRoute: ParamPostRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      editRoute = await import('../../app/api/companies/[companyId]/roadmap/edit/route.js');
+    });
+
+    const postEdit = async (companyId: string, expectedRoadmapId: string): Promise<{ status: number; body: string }> => {
+      const res = await editRoute.POST(
+        new Request(`https://app.test/api/companies/${companyId}/roadmap/edit`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ expectedRoadmapId, plan: '{"goals":[]}', reason: 'adversarial probe' }),
+        }),
+        { params: Promise.resolve({ companyId }) },
+      );
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot edit company B, and NO ROADMAP ROW MOVES', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).map((r) => r.id).sort();
+
+      expect((await postEdit(w.companyB1, UNKNOWN_UUID)).status, 'edit into B').not.toBe(200);
+      expect((await postEdit(UNKNOWN_UUID, UNKNOWN_UUID)).status, 'edit into an unknown company').not.toBe(200);
+
+      // THE DATABASE IS THE ASSERTION. A refusal that still wrote would pass both checks above; only this one
+      // distinguishes "refused" from "refused, but changed something anyway".
+      const after = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).map((r) => r.id).sort();
+      expect(after, 'no roadmap row may be created by a refused edit').toEqual(before);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await postEdit(w.companyB1, UNKNOWN_UUID);
+      const unknown = await postEdit(UNKNOWN_UUID, UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed company id never succeeds, never leaks, and writes nothing', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).length;
+      for (const bad of MALFORMED) {
+        const res = await postEdit(bad, UNKNOWN_UUID);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmaps_', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+      expect((await owner.kysely.selectFrom('roadmaps').select('id').execute()).length, 'a malformed edit writes nothing').toBe(before);
+    });
+
+    test('a malformed BODY is refused before the domain, and writes nothing', async () => {
+      await signInAs(w.aOwner);
+      const before = (await owner.kysely.selectFrom('roadmaps').select('id').execute()).length;
+      const res = await editRoute.POST(
+        new Request(`https://app.test/api/companies/${w.companyA1}/roadmap/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'not json at all' }),
+        { params: Promise.resolve({ companyId: w.companyA1 }) },
+      );
+      expect(res.status).toBe(400);
+      expect((await owner.kysely.selectFrom('roadmaps').select('id').execute()).length, 'an unparseable body writes nothing').toBe(before);
+    });
+  });
+
+  /**
+   * CDR-088 §4 — the approvals inbox joins this matrix.
+   *
+   * NO APPROVAL REQUEST IS SEEDED. `approval_requests.run_id` is NOT NULL with an FK to `runs`, so a real row
+   * needs the run chain. These tests prove refusal at company scope and that refusals carry no oracle.
+   *
+   * WHERE THE ALLOWLIST IS ACTUALLY PROVEN: in the UNIT test, which feeds a row carrying a sentinel in every
+   * excluded column and asserts the item has exactly the eleven allowlisted keys. THAT is the real control. The
+   * raw-column-name check below is a WEAKER, SECOND line of defence and is VACUOUS while the inbox is empty —
+   * said plainly here so nobody later reads a green run as proof the mapper works. It earns its place only if
+   * this block ever seeds, and it is written now so the assertion exists when it does.
+   */
+  describe('CDR-088 — approvals inbox', () => {
+    let approvalsRoute: ParamRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      approvalsRoute = await import('../../app/api/companies/[companyId]/approvals/route.js');
+    });
+
+    const getApprovals = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await approvalsRoute.GET(new Request(`https://app.test/api/companies/${companyId}/approvals`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot read company B\'s inbox', async () => {
+      await signInAs(w.aOwner);
+      expect((await getApprovals(w.companyB1)).status, 'read into B').not.toBe(200);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getApprovals(w.companyB1);
+      const unknown = await getApprovals(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getApprovals(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'approval_requests', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+    });
+
+    test('no RAW COLUMN NAME ever appears in a served inbox (see the caveat above)', async () => {
+      await signInAs(w.aOwner);
+      const own = await getApprovals(w.companyA1);
+      expect(own.status, "A reading its own inbox").toBe(200);
+      // snake_case column names are the signature of a raw row escaping the mapper. With an empty inbox this
+      // passes trivially — it is a tripwire for the day rows exist, NOT evidence that the mapper redacts.
+      for (const column of ['account_id', 'company_id', 'run_id', 'policy_id', 'policy_version', '"data"']) {
+        expect(own.body, `raw column '${column}' must never be served`).not.toContain(column);
+      }
+    });
+  });
+
+  /**
+   * CDR-088 §4 — the three artifact reads join this matrix.
+   *
+   * NO ARTIFACT IS SEEDED, and the claims are scoped to match. `artifacts.run_id` is NOT NULL with an FK to
+   * `runs`, so a real artifact needs the run chain — the same reason the roadmap block seeds nothing. These
+   * tests prove refusal AT COMPANY SCOPE, before any artifact is read, and that the refusals carry no oracle.
+   * They do NOT prove an existing foreign artifact stays invisible.
+   *
+   * THE LAST TEST IS THE ONE THAT MATTERS MOST HERE, and it exists at the HTTP level rather than only in the
+   * unit tests because of §2.1a: `getArtifact` returns `ArtifactDTO | 'forbidden' | 'not_found'`, so a lapse in
+   * the adapter would put the literal string `forbidden` into a 200 body AS the artifact. That is a leak-shaped
+   * defect no other route in this file can have, and a unit test alone would not catch it if the ROUTE were
+   * rewired to bypass the adapter.
+   */
+  describe('CDR-088 — artifact reads', () => {
+    let artifactRoute: ParamRoute<{ companyId: string; artifactId: string }>;
+    let lineageRoute: ParamRoute<{ companyId: string; artifactId: string }>;
+    let runArtifactsRoute: ParamRoute<{ companyId: string; runId: string }>;
+
+    beforeAll(async () => {
+      artifactRoute = await import('../../app/api/companies/[companyId]/artifacts/[artifactId]/route.js');
+      lineageRoute = await import('../../app/api/companies/[companyId]/artifacts/[artifactId]/lineage/route.js');
+      runArtifactsRoute = await import('../../app/api/companies/[companyId]/runs/[runId]/artifacts/route.js');
+    });
+
+    const callAll = async (companyId: string, id: string): Promise<ReadonlyArray<{ name: string; status: number; body: string }>> => {
+      const out: Array<{ name: string; status: number; body: string }> = [];
+      for (const [name, route, key] of [
+        ['artifact', artifactRoute, 'artifactId'],
+        ['lineage', lineageRoute, 'artifactId'],
+        ['runArtifacts', runArtifactsRoute, 'runId'],
+      ] as const) {
+        const url = key === 'runId' ? `https://app.test/api/companies/${companyId}/runs/${id}/artifacts` : `https://app.test/api/companies/${companyId}/artifacts/${id}`;
+        const res = await (route as ParamRoute<Record<string, string>>).GET(new Request(url), { params: Promise.resolve({ companyId, [key]: id }) });
+        out.push({ name, status: res.status, body: await res.text() });
+      }
+      return out;
+    };
+
+    test('G-cross — a member of A cannot reach company B through any of the three', async () => {
+      await signInAs(w.aOwner);
+      for (const r of await callAll(w.companyB1, UNKNOWN_UUID)) {
+        expect(r.status, `${r.name}: read into B`).not.toBe(200);
+      }
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical on all three', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await callAll(w.companyB1, UNKNOWN_UUID);
+      const unknown = await callAll(UNKNOWN_UUID, UNKNOWN_UUID);
+      for (let i = 0; i < foreign.length; i += 1) {
+        expect(foreign[i]?.status, `${foreign[i]?.name}: identical status`).toBe(unknown[i]?.status);
+        expect(foreign[i]?.body, `${foreign[i]?.name}: identical body`).toBe(unknown[i]?.body);
+      }
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const r of await callAll(w.companyA1, bad)) {
+          expect(r.status, `${r.name} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(r.body) as Record<string, unknown>), `${r.name} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'artifacts_', w.companyB1]) {
+            expect(r.body.toLowerCase(), `${r.name} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+          }
+        }
+      }
+    });
+
+    test('§2.1a — a REFUSAL STRING is never served as a 200 payload', async () => {
+      // The defect this guards: `getArtifact` resolving to the literal 'forbidden' and that string being
+      // serialized as the artifact. Any 200 here whose payload IS one of those words means the adapter was
+      // bypassed. Asserted over every refusal path the matrix can reach.
+      await signInAs(w.aOwner);
+      const responses = [...(await callAll(w.companyB1, UNKNOWN_UUID)), ...(await callAll(UNKNOWN_UUID, UNKNOWN_UUID)), ...(await callAll(w.companyA1, UNKNOWN_UUID))];
+      for (const r of responses) {
+        if (r.status !== 200) continue;
+        const parsed = JSON.parse(r.body) as Record<string, unknown>;
+        for (const key of ['artifact', 'artifacts', 'lineage']) {
+          expect(parsed[key], `${r.name}: '${key}' must never be the literal refusal string`).not.toBe('forbidden');
+          expect(parsed[key], `${r.name}: '${key}' must never be the literal refusal string`).not.toBe('not_found');
+        }
+      }
+    });
+  });
+
+  /**
+   * CDR-088 §4 — task detail joins this matrix, and it is the FIRST slice-2 route needing TWO granularities.
+   *
+   * The roadmap and board reads take only a companyId, so one oracle check covers them. This route takes a
+   * SUB-RESOURCE id, and `GetTaskDetailResult` carries a `not_found` arm the other two do not have. So the oracle
+   * is asserted TWICE — at company level and at TASK level — because a refusal that is uniform at one level and
+   * revealing at the other is still an oracle. This is the CDR-087 G7(b) lesson reaching its first slice-2 case.
+   *
+   * Both fixtures are seeded on the OWNER connection in a NESTED `beforeEach` (§4.1) and their existence is
+   * ASSERTED, so the negatives cannot pass vacuously against an empty table.
+   */
+  describe('CDR-088 — task detail', () => {
+    let detailRoute: ParamRoute<{ companyId: string; taskId: string }>;
+    let taskInA = '';
+    let taskInB = '';
+
+    beforeAll(async () => {
+      detailRoute = await import('../../app/api/companies/[companyId]/tasks/[taskId]/route.js');
+    });
+
+    beforeEach(async () => {
+      const a = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountA, company_id: w.companyA1, title: 'TASK-IN-A', created_by_user_id: w.aOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      const b = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: 'TASK-IN-B-DO-NOT-LEAK', created_by_user_id: w.bOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      taskInA = a.id;
+      taskInB = b.id;
+      expect(taskInA, 'fixture guard: task in A must exist').toBeTruthy();
+      expect(taskInB, 'fixture guard: task in B must exist').toBeTruthy();
+    });
+
+    const getDetail = async (companyId: string, taskId: string): Promise<{ status: number; body: string }> => {
+      const res = await detailRoute.GET(new Request(`https://app.test/api/companies/${companyId}/tasks/${taskId}`), { params: Promise.resolve({ companyId, taskId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('the caller CAN read a task in their own company — the positive that makes the negatives meaningful', async () => {
+      // Without this, every assertion below would also pass against a route that refused unconditionally.
+      await signInAs(w.aOwner);
+      const own = await getDetail(w.companyA1, taskInA);
+      expect(own.status, 'A reading its own task').toBe(200);
+      expect(own.body).toContain('TASK-IN-A');
+    });
+
+    test('G-cross — A cannot read B\'s task through B\'s company, nor by citing B\'s task id inside A', async () => {
+      await signInAs(w.aOwner);
+      const viaB = await getDetail(w.companyB1, taskInB);
+      expect(viaB.status, 'read into B').not.toBe(200);
+      expect(viaB.body, 'must not leak the foreign title').not.toContain('TASK-IN-B-DO-NOT-LEAK');
+      // The sub-resource attack: a company the caller DOES hold, but a task id belonging to another one.
+      const smuggled = await getDetail(w.companyA1, taskInB);
+      expect(smuggled.status, "B's task id smuggled into A's company").not.toBe(200);
+      expect(smuggled.body, 'must not leak the foreign title').not.toContain('TASK-IN-B-DO-NOT-LEAK');
+    });
+
+    test('G-oracle(a) — COMPANY granularity: a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getDetail(w.companyB1, taskInB);
+      const unknown = await getDetail(UNKNOWN_UUID, taskInB);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-oracle(b) — TASK granularity: a FOREIGN task id and an UNKNOWN one are byte-identical', async () => {
+      // Inside company A, which this caller legitimately holds, so the ONLY variable is the sub-resource id.
+      // THIS is the granularity the roadmap and board reads have no analogue for.
+      await signInAs(w.aOwner);
+      const foreign = await getDetail(w.companyA1, taskInB);
+      const unknown = await getDetail(w.companyA1, UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id in EITHER position never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const [where, res] of [
+          ['companyId', await getDetail(bad, taskInA)],
+          ['taskId', await getDetail(w.companyA1, bad)],
+        ] as const) {
+          expect(res.status, `${where} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `${where} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'tasks_', 'TASK-IN-B-DO-NOT-LEAK', w.companyB1, taskInB]) {
+            expect(res.body.toLowerCase(), `${where} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+          }
+        }
+      }
+    });
+  });
+
+  /**
+   * CDR-088 §4 — the task board read joins this matrix.
+   *
+   * THIS BLOCK SEEDS REAL DATA, AND THAT MAKES IT STRICTLY STRONGER THAN THE ROADMAP BLOCK BELOW. `tasks` needs
+   * only account_id, company_id, title and created_by_user_id — `milestone_id` is nullable and `state` defaults —
+   * so a task can be seeded WITHOUT the decision chain a roadmap requires. That means this matrix can prove the
+   * property the roadmap block explicitly cannot: a foreign task PROVABLY EXISTS and is still invisible.
+   *
+   * The fixture is seeded on the OWNER connection and its existence is ASSERTED before the negative runs. A
+   * negative that would pass just as well against an empty table proves nothing, which is the trap three CDR-087
+   * tests fell into when the parent `beforeEach` truncated their fixtures away.
+   *
+   * Seeded in a NESTED `beforeEach` (§4.1) for that same reason — the parent truncates before every test.
+   */
+  describe('CDR-088 — task board read', () => {
+    let tasksRoute: ParamRoute<{ companyId: string }>;
+    let foreignTaskTitle = '';
+
+    beforeAll(async () => {
+      tasksRoute = await import('../../app/api/companies/[companyId]/tasks/route.js');
+    });
+
+    beforeEach(async () => {
+      foreignTaskTitle = 'FOREIGN-TASK-DO-NOT-LEAK';
+      await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: foreignTaskTitle, created_by_user_id: w.bOwner })
+        .execute();
+      // The fixture must EXIST for the negative below to mean anything. If this ever returns zero the test must
+      // fail here, loudly, rather than pass vacuously downstream.
+      const seeded = await owner.kysely.selectFrom('tasks').select('id').where('company_id', '=', w.companyB1).execute();
+      expect(seeded.length, 'fixture guard: the foreign task must exist before the negative runs').toBeGreaterThan(0);
+    });
+
+    const getTasks = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await tasksRoute.GET(new Request(`https://app.test/api/companies/${companyId}/tasks`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot reach company B, and B\'s task NEVER appears in any response', async () => {
+      await signInAs(w.aOwner);
+      expect((await getTasks(w.companyB1)).status, 'read into B').not.toBe(200);
+      // The board A legitimately CAN read must not contain B's task either — the stronger claim, and the whole
+      // reason this block seeds.
+      const own = await getTasks(w.companyA1);
+      expect(own.body, "A's own board must not contain B's task").not.toContain(foreignTaskTitle);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getTasks(w.companyB1);
+      const unknown = await getTasks(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getTasks(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'tasks_', foreignTaskTitle, w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+        }
+      }
+    });
+
+    test('an unknown query parameter is REFUSED, not ignored', async () => {
+      await signInAs(w.aOwner);
+      const res = await tasksRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/tasks?state=done`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  /**
+   * CDR-088 §4 — the roadmap read joins this matrix.
+   *
+   * WHAT THESE TESTS PROVE, AND WHAT THEY DO NOT. **No roadmap is seeded.** `roadmaps.decision_id` is NOT NULL,
+   * so a real roadmap requires the whole chain — understanding document, generation, selection, decision — and
+   * every link carries its own CHECK constraints. These tests therefore prove that the route REFUSES AT COMPANY
+   * SCOPE, before any roadmap is read, and that its refusals carry no oracle. They do NOT prove that an existing
+   * foreign roadmap stays invisible, because none exists here.
+   *
+   * That distinction is deliberate and is the slice-1 lesson applied: three CDR-087 tests once passed against
+   * generations that had been truncated away, and only the one test that INSERTED noticed. A test whose name
+   * implies data-invisibility while seeding no data is the same failure wearing a better name. When the seeded
+   * variant is added, it belongs in a nested `beforeEach` (§4.1) and should assert the row exists on the OWNER
+   * connection first.
+   *
+   * There is also NO sub-resource granularity to test: `LatestRoadmapResult` has two arms and no `not_found`,
+   * so the CDR-087 G7(b) selection-level oracle has no analogue here.
+   */
+  describe('CDR-088 — roadmap read', () => {
+    let roadmapRoute: ParamRoute<{ companyId: string }>;
+
+    beforeAll(async () => {
+      roadmapRoute = await import('../../app/api/companies/[companyId]/roadmap/route.js');
+    });
+
+    const getRoadmap = async (companyId: string): Promise<{ status: number; body: string }> => {
+      const res = await roadmapRoute.GET(new Request(`https://app.test/api/companies/${companyId}/roadmap`), { params: Promise.resolve({ companyId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — a member of A cannot read company B, and the refusal is not a 200', async () => {
+      await signInAs(w.aOwner);
+      expect((await getRoadmap(w.companyB1)).status, 'read into B').not.toBe(200);
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getRoadmap(w.companyB1);
+      const unknown = await getRoadmap(UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        const res = await getRoadmap(bad);
+        expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
+        expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
+        for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmap_', w.companyB1]) {
+          expect(res.body.toLowerCase(), `'${bad}' must not leak '${forbidden}'`).not.toContain(String(forbidden).toLowerCase());
+        }
+      }
+    });
+
+    test('an unknown query parameter is REFUSED, not ignored', async () => {
+      // A caller must never believe a filter was applied when it was silently dropped.
+      await signInAs(w.aOwner);
+      const res = await roadmapRoute.GET(new Request(`https://app.test/api/companies/${w.companyA1}/roadmap?version=2`), { params: Promise.resolve({ companyId: w.companyA1 }) });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  /**
    * CDR-087 §4 — the three strategy/decision routes join this matrix.
    *
    * G7 IS THE REASON THIS BLOCK LOOKS UNUSUAL. Every other route here proves the oracle at ONE granularity: a
