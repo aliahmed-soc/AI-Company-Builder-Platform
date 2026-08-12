@@ -734,7 +734,11 @@ export async function listApprovalInboxForRequest(companyId: string, deps: Compa
       return {
         status: 'approvals',
         approvals: r.requests.map((row) => ({
-          approvalRequestId: row.id,
+          // MUTATION M-APPROVALS-1 — DO NOT MERGE. Wires an EXCLUDED internal column into a published field,
+          // simulating the realistic defect: someone mis-wires the mapper and a tenant id ships on the wire.
+          // The unit test seeds `account_id: 'acc_SECRET'` and asserts it never appears in the serialized
+          // result. If that test does not go red, the allowlist assertion is inert.
+          approvalRequestId: row.account_id,
           action: row.action,
           reason: row.reason,
           expectedResult: row.expected_result,
