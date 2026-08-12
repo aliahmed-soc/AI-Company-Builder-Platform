@@ -430,6 +430,102 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — task detail joins this matrix, and it is the FIRST slice-2 route needing TWO granularities.
+   *
+   * The roadmap and board reads take only a companyId, so one oracle check covers them. This route takes a
+   * SUB-RESOURCE id, and `GetTaskDetailResult` carries a `not_found` arm the other two do not have. So the oracle
+   * is asserted TWICE — at company level and at TASK level — because a refusal that is uniform at one level and
+   * revealing at the other is still an oracle. This is the CDR-087 G7(b) lesson reaching its first slice-2 case.
+   *
+   * Both fixtures are seeded on the OWNER connection in a NESTED `beforeEach` (§4.1) and their existence is
+   * ASSERTED, so the negatives cannot pass vacuously against an empty table.
+   */
+  describe('CDR-088 — task detail', () => {
+    let detailRoute: ParamRoute<{ companyId: string; taskId: string }>;
+    let taskInA = '';
+    let taskInB = '';
+
+    beforeAll(async () => {
+      detailRoute = await import('../../app/api/companies/[companyId]/tasks/[taskId]/route.js');
+    });
+
+    beforeEach(async () => {
+      const a = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountA, company_id: w.companyA1, title: 'TASK-IN-A', created_by_user_id: w.aOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      const b = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: 'TASK-IN-B-DO-NOT-LEAK', created_by_user_id: w.bOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      taskInA = a.id;
+      taskInB = b.id;
+      expect(taskInA, 'fixture guard: task in A must exist').toBeTruthy();
+      expect(taskInB, 'fixture guard: task in B must exist').toBeTruthy();
+    });
+
+    const getDetail = async (companyId: string, taskId: string): Promise<{ status: number; body: string }> => {
+      const res = await detailRoute.GET(new Request(`https://app.test/api/companies/${companyId}/tasks/${taskId}`), { params: Promise.resolve({ companyId, taskId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('the caller CAN read a task in their own company — the positive that makes the negatives meaningful', async () => {
+      // Without this, every assertion below would also pass against a route that refused unconditionally.
+      await signInAs(w.aOwner);
+      const own = await getDetail(w.companyA1, taskInA);
+      expect(own.status, 'A reading its own task').toBe(200);
+      expect(own.body).toContain('TASK-IN-A');
+    });
+
+    test('G-cross — A cannot read B\'s task through B\'s company, nor by citing B\'s task id inside A', async () => {
+      await signInAs(w.aOwner);
+      const viaB = await getDetail(w.companyB1, taskInB);
+      expect(viaB.status, 'read into B').not.toBe(200);
+      expect(viaB.body, 'must not leak the foreign title').not.toContain('TASK-IN-B-DO-NOT-LEAK');
+      // The sub-resource attack: a company the caller DOES hold, but a task id belonging to another one.
+      const smuggled = await getDetail(w.companyA1, taskInB);
+      expect(smuggled.status, "B's task id smuggled into A's company").not.toBe(200);
+      expect(smuggled.body, 'must not leak the foreign title').not.toContain('TASK-IN-B-DO-NOT-LEAK');
+    });
+
+    test('G-oracle(a) — COMPANY granularity: a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await getDetail(w.companyB1, taskInB);
+      const unknown = await getDetail(UNKNOWN_UUID, taskInB);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-oracle(b) — TASK granularity: a FOREIGN task id and an UNKNOWN one are byte-identical', async () => {
+      // Inside company A, which this caller legitimately holds, so the ONLY variable is the sub-resource id.
+      // THIS is the granularity the roadmap and board reads have no analogue for.
+      await signInAs(w.aOwner);
+      const foreign = await getDetail(w.companyA1, taskInB);
+      const unknown = await getDetail(w.companyA1, UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id in EITHER position never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const [where, res] of [
+          ['companyId', await getDetail(bad, taskInA)],
+          ['taskId', await getDetail(w.companyA1, bad)],
+        ] as const) {
+          expect(res.status, `${where} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `${where} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'tasks_', 'TASK-IN-B-DO-NOT-LEAK', w.companyB1, taskInB]) {
+            expect(res.body.toLowerCase(), `${where} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+          }
+        }
+      }
+    });
+  });
+
+  /**
    * CDR-088 §4 — the task board read joins this matrix.
    *
    * THIS BLOCK SEEDS REAL DATA, AND THAT MAKES IT STRICTLY STRONGER THAN THE ROADMAP BLOCK BELOW. `tasks` needs
