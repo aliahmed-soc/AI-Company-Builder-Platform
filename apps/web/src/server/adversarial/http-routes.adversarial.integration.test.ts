@@ -430,6 +430,92 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-088 §4 — the three artifact reads join this matrix.
+   *
+   * NO ARTIFACT IS SEEDED, and the claims are scoped to match. `artifacts.run_id` is NOT NULL with an FK to
+   * `runs`, so a real artifact needs the run chain — the same reason the roadmap block seeds nothing. These
+   * tests prove refusal AT COMPANY SCOPE, before any artifact is read, and that the refusals carry no oracle.
+   * They do NOT prove an existing foreign artifact stays invisible.
+   *
+   * THE LAST TEST IS THE ONE THAT MATTERS MOST HERE, and it exists at the HTTP level rather than only in the
+   * unit tests because of §2.1a: `getArtifact` returns `ArtifactDTO | 'forbidden' | 'not_found'`, so a lapse in
+   * the adapter would put the literal string `forbidden` into a 200 body AS the artifact. That is a leak-shaped
+   * defect no other route in this file can have, and a unit test alone would not catch it if the ROUTE were
+   * rewired to bypass the adapter.
+   */
+  describe('CDR-088 — artifact reads', () => {
+    let artifactRoute: ParamRoute<{ companyId: string; artifactId: string }>;
+    let lineageRoute: ParamRoute<{ companyId: string; artifactId: string }>;
+    let runArtifactsRoute: ParamRoute<{ companyId: string; runId: string }>;
+
+    beforeAll(async () => {
+      artifactRoute = await import('../../app/api/companies/[companyId]/artifacts/[artifactId]/route.js');
+      lineageRoute = await import('../../app/api/companies/[companyId]/artifacts/[artifactId]/lineage/route.js');
+      runArtifactsRoute = await import('../../app/api/companies/[companyId]/runs/[runId]/artifacts/route.js');
+    });
+
+    const callAll = async (companyId: string, id: string): Promise<ReadonlyArray<{ name: string; status: number; body: string }>> => {
+      const out: Array<{ name: string; status: number; body: string }> = [];
+      for (const [name, route, key] of [
+        ['artifact', artifactRoute, 'artifactId'],
+        ['lineage', lineageRoute, 'artifactId'],
+        ['runArtifacts', runArtifactsRoute, 'runId'],
+      ] as const) {
+        const url = key === 'runId' ? `https://app.test/api/companies/${companyId}/runs/${id}/artifacts` : `https://app.test/api/companies/${companyId}/artifacts/${id}`;
+        const res = await (route as ParamRoute<Record<string, string>>).GET(new Request(url), { params: Promise.resolve({ companyId, [key]: id }) });
+        out.push({ name, status: res.status, body: await res.text() });
+      }
+      return out;
+    };
+
+    test('G-cross — a member of A cannot reach company B through any of the three', async () => {
+      await signInAs(w.aOwner);
+      for (const r of await callAll(w.companyB1, UNKNOWN_UUID)) {
+        expect(r.status, `${r.name}: read into B`).not.toBe(200);
+      }
+    });
+
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical on all three', async () => {
+      await signInAs(w.aOwner);
+      const foreign = await callAll(w.companyB1, UNKNOWN_UUID);
+      const unknown = await callAll(UNKNOWN_UUID, UNKNOWN_UUID);
+      for (let i = 0; i < foreign.length; i += 1) {
+        expect(foreign[i]?.status, `${foreign[i]?.name}: identical status`).toBe(unknown[i]?.status);
+        expect(foreign[i]?.body, `${foreign[i]?.name}: identical body`).toBe(unknown[i]?.body);
+      }
+    });
+
+    test('G-malformed — a malformed id never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const r of await callAll(w.companyA1, bad)) {
+          expect(r.status, `${r.name} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(r.body) as Record<string, unknown>), `${r.name} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'artifacts_', w.companyB1]) {
+            expect(r.body.toLowerCase(), `${r.name} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+          }
+        }
+      }
+    });
+
+    test('§2.1a — a REFUSAL STRING is never served as a 200 payload', async () => {
+      // The defect this guards: `getArtifact` resolving to the literal 'forbidden' and that string being
+      // serialized as the artifact. Any 200 here whose payload IS one of those words means the adapter was
+      // bypassed. Asserted over every refusal path the matrix can reach.
+      await signInAs(w.aOwner);
+      const responses = [...(await callAll(w.companyB1, UNKNOWN_UUID)), ...(await callAll(UNKNOWN_UUID, UNKNOWN_UUID)), ...(await callAll(w.companyA1, UNKNOWN_UUID))];
+      for (const r of responses) {
+        if (r.status !== 200) continue;
+        const parsed = JSON.parse(r.body) as Record<string, unknown>;
+        for (const key of ['artifact', 'artifacts', 'lineage']) {
+          expect(parsed[key], `${r.name}: '${key}' must never be the literal refusal string`).not.toBe('forbidden');
+          expect(parsed[key], `${r.name}: '${key}' must never be the literal refusal string`).not.toBe('not_found');
+        }
+      }
+    });
+  });
+
+  /**
    * CDR-088 §4 — task detail joins this matrix, and it is the FIRST slice-2 route needing TWO granularities.
    *
    * The roadmap and board reads take only a companyId, so one oracle check covers them. This route takes a
