@@ -66,6 +66,7 @@ import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, delet
 // authorization for each lives inside the use case, not here and not at the route (CDR-087 §1).
 import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
 import { getLatestRoadmap, type RoadmapReadParams, type RoadmapGenerationOptions, type LatestRoadmapResult } from '../planning/roadmap-generation.js';
+import { editRoadmap, type EditRoadmapParams, type RoadmapEditOptions, type EditRoadmapResult } from '../planning/roadmap-edit.js';
 import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
 // `TaskOptions` lives in task-management.ts, NOT task-controls.ts — task-controls declares a local alias that is
 // not exported, so importing it from there fails to compile rather than silently binding the wrong type.
@@ -222,6 +223,7 @@ export interface ClerkIdentityRuntime {
   listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
+  editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -356,6 +358,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     listApprovalInbox(params, options) {
       return listApprovalInbox(client, params, options ?? {});
+    },
+    // FOUR positional args — `editRoadmap(client, params, deps, options)`. The deps slot is easy to miss because
+    // its two neighbours here take three; passing options into the deps position would compile if both were
+    // loose, so the slot is spelled out rather than defaulted.
+    editRoadmap(params, options) {
+      return editRoadmap(client, params, {}, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});

@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -62,6 +62,16 @@ export type CompaniesRequestResult =
   | { readonly status: 'artifacts'; readonly artifacts: Exclude<Awaited<ReturnType<CompanyRuntime['listRunArtifacts']>>, string> }
   | { readonly status: 'lineage'; readonly lineage: Extract<ReadLineageResult, { status: 'ok' }> }
   | { readonly status: 'approvals'; readonly approvals: readonly ApprovalInboxItem[] }
+  // CDR-088. `flaggedTaskCount` travels WITH the roadmap deliberately: ROAD-002 flags tasks the edit invalidated,
+  // and a client that saw the new plan without learning how many tasks it disturbed would under-report the
+  // consequence of the owner's own edit.
+  | {
+      readonly status: 'roadmap_edited';
+      readonly roadmap: Extract<EditRoadmapResult, { status: 'ok' }>['roadmap'];
+      readonly flaggedTaskCount: number;
+    }
+  | { readonly status: 'stale_version' }
+  | { readonly status: 'decision_rejected' }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -112,6 +122,7 @@ export interface CompanyRuntime {
   listRunArtifacts(params: { userId: string; accountId: string; companyId: string; runId: string }, options?: PersistArtifactOptions): Promise<readonly ArtifactDTO[] | 'forbidden'>;
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
+  editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -629,6 +640,52 @@ export async function getTaskDetailForRequest(companyId: string, taskId: string,
       return { status: 'forbidden' };
     case 'not_found':
       return { status: 'not_found' };
+  }
+}
+
+/**
+ * Revise the company's current roadmap (CDR-088; ROAD-002; owner-only, enforced in `@acbp/core`).
+ *
+ * THE ONLY STATE-CHANGING ROUTE IN SLICE 2, and the only one with SIX result arms. Three of them are refusals
+ * that are NOT interchangeable, and mapping them to one status would destroy information the caller acts on:
+ *
+ * - `stale_version` — the owner edited a view that is no longer current. Nothing was written; the fix is
+ *   re-read and retry. A client shown a generic error would have no way to know retrying is the right move.
+ * - `decision_rejected` — the company's latest decision REJECTED the strategy, and an edit authors the new
+ *   current plan, so it is gated exactly like generation (CDR-039 §7-G1). Otherwise a rejection could be
+ *   side-stepped by editing. Retrying will never help; the strategy decision has to change first.
+ * - `not_found` — no such roadmap, at the sub-resource granularity.
+ *
+ * The body is PARSED, NOT VALIDATED here: `plan` is a string the domain's deny-by-default parser judges, and
+ * `reason` is typed `unknown` in the contract precisely so the domain rules on it. Re-checking either here would
+ * create the second authority §1 forbids.
+ */
+export async function editRoadmapForRequest(
+  companyId: string,
+  body: { readonly expectedRoadmapId: string; readonly plan: string; readonly reason: unknown },
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.editRoadmap(
+    { userId: ctx.userId, accountId: ctx.accountId, companyId, expectedRoadmapId: body.expectedRoadmapId, plan: body.plan, reason: body.reason },
+    {},
+  );
+  switch (r.status) {
+    case 'ok':
+      return { status: 'roadmap_edited', roadmap: r.roadmap, flaggedTaskCount: r.flaggedTaskCount };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'stale_version':
+      return { status: 'stale_version' };
+    case 'decision_rejected':
+      return { status: 'decision_rejected' };
+    case 'invalid':
+      // The domain validated and refused; nothing was persisted, and no field is echoed back.
+      return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The roadmap edit was rejected.', retryable: false } };
   }
 }
 

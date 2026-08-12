@@ -139,6 +139,17 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { lineage: result.lineage });
     case 'approvals':
       return jsonResponse(200, { approvals: result.approvals });
+    // 200, not 201: the edit revises the company's current roadmap in place from the client's perspective — it
+    // is read back through the same GET, so there is no new URL a 201 could point at.
+    case 'roadmap_edited':
+      return jsonResponse(200, { roadmap: result.roadmap, flaggedTaskCount: result.flaggedTaskCount });
+    // Both are 409 — the request was well-formed and authorized, but conflicts with server state — and both keep
+    // their OWN code, because the client's next move differs: `stale_version` means re-read and retry, while
+    // `decision_rejected` means retrying is futile until the strategy decision changes.
+    case 'stale_version':
+      return jsonResponse(409, { error: 'stale_version' });
+    case 'decision_rejected':
+      return jsonResponse(409, { error: 'decision_rejected' });
     // 200, not 201. Neither call creates a resource at a new URL the client can then GET — the selection and the
     // decision are read back through the company's strategy surface — so 201 would promise a Location that does
     // not exist. Recorded here rather than defaulted (CDR-087 §5).

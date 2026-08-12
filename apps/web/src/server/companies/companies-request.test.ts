@@ -18,6 +18,7 @@ import {
   listRunArtifactsForRequest,
   readArtifactLineageForRequest,
   listApprovalInboxForRequest,
+  editRoadmapForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -65,6 +66,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     listRunArtifacts: () => Promise.reject(new Error('listRunArtifacts was called without being stubbed')),
     readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
     listApprovalInbox: () => Promise.reject(new Error('listApprovalInbox was called without being stubbed')),
+    editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -485,6 +487,44 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * (`ApprovalRequestRow = Selectable<ApprovalRequestsTable>`) rather than a DTO. The request layer maps it to an
  * allowlisted `ApprovalInboxItem`, and the first test below is what makes that mapping trustworthy.
  */
+/**
+ * CDR-088 — the roadmap edit, the ONLY state-changing route in slice 2 and the only one with six result arms.
+ * Three of them are refusals that must NOT collapse into one another: the caller's next move differs.
+ */
+describe('CDR-088 — roadmap edit (request layer)', () => {
+  const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
+  const body = { expectedRoadmapId: 'rm_1', plan: '{"goals":[]}', reason: 'because' };
+
+  test('flaggedTaskCount travels WITH the roadmap — the consequence is not dropped', async () => {
+    // ROAD-002 flags the tasks an edit invalidated. A client shown the new plan without the count would
+    // under-report the effect of the owner's own edit.
+    const runtime = fakeRuntime({ editRoadmap: () => Promise.resolve({ status: 'ok', roadmap: ROADMAP, flaggedTaskCount: 3 }) });
+    const r = await editRoadmapForRequest('co_1', body, { runtime, identity: identityDeps() });
+    expect(r.status).toBe('roadmap_edited');
+    if (r.status !== 'roadmap_edited') return;
+    expect(r.roadmap).toBe(ROADMAP);
+    expect(r.flaggedTaskCount).toBe(3);
+  });
+
+  test('stale_version, decision_rejected, not_found and forbidden stay FOUR distinct answers', async () => {
+    // Collapsing these would destroy what the caller does next: re-read and retry (stale), change the strategy
+    // decision first (rejected), or stop (forbidden / not_found).
+    const seen: string[] = [];
+    for (const arm of ['stale_version', 'decision_rejected', 'not_found', 'forbidden'] as const) {
+      const r = await editRoadmapForRequest('co_1', body, { runtime: fakeRuntime({ editRoadmap: () => Promise.resolve({ status: arm }) }), identity: identityDeps() });
+      seen.push(r.status);
+    }
+    expect(seen).toEqual(['stale_version', 'decision_rejected', 'not_found', 'forbidden']);
+    expect(new Set(seen).size, 'all four must remain distinguishable').toBe(4);
+  });
+
+  test('an invalid edit is a validation refusal that echoes no field of the submitted plan', async () => {
+    const r = await editRoadmapForRequest('co_1', { ...body, plan: 'SENSITIVE-PLAN-CONTENT' }, { runtime: fakeRuntime({ editRoadmap: () => Promise.resolve({ status: 'invalid' }) }), identity: identityDeps() });
+    expect(r.status).toBe('validation');
+    expect(JSON.stringify(r), 'the submitted plan must not be echoed back').not.toContain('SENSITIVE-PLAN-CONTENT');
+  });
+});
+
 describe('CDR-088 — approvals inbox (request layer)', () => {
   // A row carrying every column the real table has, plus a sentinel in each field that must NOT be published.
   const ROW = {
