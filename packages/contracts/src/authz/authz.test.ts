@@ -55,6 +55,10 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   'task:read': ['owner', 'viewer'],
   // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create — canon says company-scoped, not owner-only.
   'task:delete': ['owner', 'viewer'],
+  // Task-run reads (ACBP-API-003; CDR-089 §1): owner|viewer, matching task:read. Restated here INDEPENDENTLY of
+  // the matrix — this file deliberately does not import it, so a new action cannot be granted without a second,
+  // separate decision. That is why adding `run:read` broke collection until this line was written.
+  'run:read': ['owner', 'viewer'],
   // Strategy option generation (ACBP-P3-001; CDR-034): generate/request-another + read = any active company member.
   'strategy:generate': ['owner', 'viewer'],
   'strategy:read': ['owner', 'viewer'],
