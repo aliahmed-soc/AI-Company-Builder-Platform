@@ -11,7 +11,7 @@ on `ec192bd`: 278 files / 4125 tests, **zero skips** — every matrix ran agains
 
 **WHAT IS NOT PROVEN, AND MUST NOT BE READ INTO THE GREEN RUN.** This section exists because "4125
 passed, zero skips" invites exactly the wrong inference:
-- **Mutation testing STARTED 2026-08-13. Three guards resolved, ~26 still unattempted.** Under the
+- **Mutation testing STARTED 2026-08-13. FIVE guards resolved, ~24 still unattempted.** Under the
   standing rule the unattempted ones remain *unproven* — a green matrix is not equivalent to a killed
   mutant, and slice 1 recorded a mutation that reddened six tests while killing nothing.
 
@@ -19,7 +19,9 @@ passed, zero skips" invites exactly the wrong inference:
   |---|---|---|
   | Approvals **allowlist** | **KILLED — proven** | [`31638284349`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31638284349) |
   | Artifact **refusal-string** (unit + HTTP, both) | **KILLED — proven** | [`31641866863`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31641866863) |
+  | Roadmap-edit **refusal distinctness** | **KILLED — proven** | [`31645938426`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31645938426) |
   | **G-oracle(b)** task granularity | **SURVIVED — unmeasurable, DEMONSTRATED** | [`31643354339`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31643354339) |
+  | Task-board **G-cross** | **unmeasurable — NOT RUN, deliberately** | — |
 
   - **The allowlist kill was 1 failure out of 4125**, and it was the cited test. Mutating
     `approvalRequestId: row.id` → `row.account_id` reddened exactly the guard that asserts no internal
@@ -36,6 +38,28 @@ passed, zero skips" invites exactly the wrong inference:
     the identical slice-1 claim about CDR-087 G7(a)/G7(b) from *asserted by reading* to *demonstrated by
     run id*: a guard whose property is enforced by ABSENT INFORMATION rather than by a decision cannot be
     mutation-proven, and that is a category, not an excuse.
+  - **The distinctness kill was 1 failure out of 4125, and the prediction held in BOTH directions.**
+    Collapsing `stale_version` into `forbidden` reddened exactly the guard asserting the four refusals stay
+    distinguishable, and **no integration suite moved** — that arm is only reachable with a stale roadmap
+    id, which no matrix seeds. It was placed at the REQUEST layer on purpose, applying the M-ORACLE-B
+    lesson that a fake-runtime unit test cannot witness a mutation inside `@acbp/core`. Matching the
+    mutation's layer to the test being killed is the method, not an accident.
+  - **Task-board G-cross is the same class as G-oracle(b), and was NOT RUN — deliberately.**
+    `listBoardPage` takes **no companyId at all**; the board's tenant isolation is RLS alone, so there is
+    no code-level filter to remove and no mutation that could fail the test. Running one anyway would have
+    produced a red-or-green result carrying no information, which is the false-CONFIRMED failure already on
+    record for trust-critical row 12. **An unrun mutation with a stated reason is worth more than a run one
+    that cannot fail.**
+
+  **THE PARTITION, which is the real result of this exercise.** Every remaining guard falls on one side:
+  - **Guards over an APPLICATION DECISION are mutation-provable, and three of three were killed.**
+  - **TENANT-ISOLATION guards are enforced by ROW-LEVEL SECURITY, not by application code, and are
+    therefore unmeasurable by app-code mutation. That is the same fact as their strength** — app code
+    cannot bypass a decision it never gets to make. Testing that class needs a MIGRATION-level mutation
+    (dropping an RLS predicate), which is what the P1-014 suite already does and is a different exercise.
+
+    Grinding through the remaining ~24 individually would re-derive this partition rather than add to it.
+
   - **A prediction I got half wrong, recorded because it is instructive:** I expected the request-layer
     unit test asserting `not_found` stays distinct from `forbidden` to redden too. It did not — that test
     uses a FAKE runtime, so a mutation inside `@acbp/core` never reaches it. Fake-runtime unit tests
