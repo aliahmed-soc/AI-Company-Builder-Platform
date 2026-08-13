@@ -139,6 +139,12 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { lineage: result.lineage });
     case 'approvals':
       return jsonResponse(200, { approvals: result.approvals });
+    case 'run':
+      return jsonResponse(200, { run: result.run });
+    // An empty list is a 200 — CDR-089 §3. There is no not_found arm to map, and this layer must not invent a
+    // distinction core deliberately does not make.
+    case 'runs':
+      return jsonResponse(200, { runs: result.runs });
     // 200, not 201: the edit revises the company's current roadmap in place from the client's perspective — it
     // is read back through the same GET, so there is no new URL a 201 could point at.
     case 'roadmap_edited':

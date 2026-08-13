@@ -19,6 +19,8 @@ import {
   readArtifactLineageForRequest,
   listApprovalInboxForRequest,
   editRoadmapForRequest,
+  getTaskRunForRequest,
+  listTaskRunsForRequest,
   recordStrategySelectionForRequest,
   recordDecisionForRequest,
   getPortfolioForRequest,
@@ -67,6 +69,8 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
     listApprovalInbox: () => Promise.reject(new Error('listApprovalInbox was called without being stubbed')),
     editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
+    getTaskRun: () => Promise.reject(new Error('getTaskRun was called without being stubbed')),
+    listTaskRuns: () => Promise.reject(new Error('listTaskRuns was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -491,6 +495,47 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * CDR-088 — the roadmap edit, the ONLY state-changing route in slice 2 and the only one with six result arms.
  * Three of them are refusals that must NOT collapse into one another: the caller's next move differs.
  */
+/**
+ * CDR-089 — the run read (ACBP-API-003). The FIRST route in this programme backed by a use case this programme
+ * itself authored, rather than one that already existed: §0 of that CDR states the "no new domain logic" framing
+ * of its two predecessors does NOT apply here.
+ */
+describe('CDR-089 — run read (request layer)', () => {
+  const RUN = { sentinel: 'run' } as unknown as never;
+
+  test('the run is passed through by IDENTITY, not rebuilt', async () => {
+    const runtime = fakeRuntime({ getTaskRun: () => Promise.resolve({ status: 'ok', run: RUN }) });
+    const r = await getTaskRunForRequest('co_1', 'run_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('run');
+    if (r.status !== 'run') return;
+    expect(r.run).toBe(RUN);
+  });
+
+  test('not_found stays DISTINCT from forbidden', async () => {
+    const missing = await getTaskRunForRequest('co_1', 'run_1', { runtime: fakeRuntime({ getTaskRun: () => Promise.resolve({ status: 'not_found' }) }), identity: identityDeps() });
+    const denied = await getTaskRunForRequest('co_1', 'run_1', { runtime: fakeRuntime({ getTaskRun: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
+    expect(missing.status).toBe('not_found');
+    expect(denied.status).toBe('forbidden');
+  });
+
+  test('the runId is FORWARDED, not dropped', async () => {
+    // A boundary that discarded the selector would still answer 200 with SOMEONE's run.
+    let seen: unknown;
+    const runtime = fakeRuntime({ getTaskRun: (p) => { seen = p; return Promise.resolve({ status: 'ok', run: RUN }); } });
+    await getTaskRunForRequest('co_1', 'run_42', { runtime, identity: identityDeps() });
+    expect((seen as { runId?: string } | undefined)?.runId).toBe('run_42');
+  });
+
+  test('an EMPTY run list is a success — CDR-089 §3 forbids inventing a not_found here', async () => {
+    // `listForTask` cannot tell an unknown task from a task with no runs, so this layer must not pretend it can.
+    const runtime = fakeRuntime({ listTaskRuns: () => Promise.resolve({ status: 'ok', runs: [] }) });
+    const r = await listTaskRunsForRequest('co_1', 'task_1', { runtime, identity: identityDeps() });
+    expect(r.status).toBe('runs');
+    if (r.status !== 'runs') return;
+    expect(r.runs).toEqual([]);
+  });
+});
+
 describe('CDR-088 — roadmap edit (request layer)', () => {
   const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
   const body = { expectedRoadmapId: 'rm_1', plan: '{"goals":[]}', reason: 'because' };
