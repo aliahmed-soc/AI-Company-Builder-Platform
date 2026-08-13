@@ -91,8 +91,25 @@ ticket without a DONE line above it is genuinely in flight._
        publish the next column added to the table. `data` (raw tool payload), tenant ids, `run_id` and the
        policy pins are excluded; the unit test feeds a sentinel in every excluded column and asserts exactly
        eleven keys.
-  - **MUTATION TESTING STARTED 2026-08-13 — three guards resolved, ~26 unattempted.** Branches kept as
-    evidence (`p8-mut-approvals-allowlist`, `p8-mut-artifact-refusal`, `p8-mut-oracle-b`).
+  - **MUTATION TESTING STARTED 2026-08-13 — FIVE guards resolved, ~24 unattempted.** Branches kept as
+    evidence (`p8-mut-approvals-allowlist`, `p8-mut-artifact-refusal`, `p8-mut-oracle-b`,
+    `p8-mut-refusal-distinctness`).
+    - **PROVEN — roadmap-edit refusal distinctness**, run
+      [`31645938426`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31645938426):
+      collapsing `stale_version` into `forbidden` reddened **1 test of 4125**, the cited guard, and **no
+      integration suite moved** — the prediction held in both directions. Placed at the REQUEST layer on
+      purpose: M-ORACLE-B showed a fake-runtime unit test cannot witness a mutation inside `@acbp/core`,
+      so the mutation's layer is matched to the test being killed.
+    - **UNMEASURABLE, NOT RUN — task-board G-cross.** `listBoardPage` takes **no companyId**; the board's
+      tenant isolation is RLS alone, so no code-level mutation can fail that test. Running one anyway would
+      yield a result carrying no information — the false-CONFIRMED failure already on record for
+      trust-critical row 12. **An unrun mutation with a stated reason beats a run one that cannot fail.**
+    - **THE PARTITION — the real result.** Guards over an APPLICATION DECISION are mutation-provable
+      (3 of 3 killed). TENANT-ISOLATION guards are enforced by ROW-LEVEL SECURITY, not application code,
+      so they are unmeasurable by app-code mutation — **which is the same fact as their strength**: app
+      code cannot bypass a decision it never makes. Testing that class needs a MIGRATION-level mutation
+      (dropping an RLS predicate), which is what P1-014 already does. The remaining ~24 all fall on one
+      side of this line, so grinding through them re-derives the partition rather than adding to it.
     - **PROVEN — approvals allowlist**, run
       [`31638284349`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31638284349):
       wiring `row.account_id` into a published field reddened **exactly one test of 4125**, the cited one.
