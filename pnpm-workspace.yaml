@@ -33,4 +33,10 @@ overrides:
   # THIS RANGE IS A CARET, NOT `>=`, AND THAT IS DELIBERATE: nanoid 4 and later are ESM-only, while
   # postcss asks for `^3.3.11` and requires it from CommonJS. `>=3.3.17` would resolve to the 6.x line
   # and break postcss at runtime, so the override must stay inside the patched 3.x line.
-  nanoid: "^3.3.17"
+  # RE-BUMPED 2026-08-14 (ACBP-API-003): the SAME advisory was re-scored and its patched floor moved from
+  # 3.3.17 to 3.3.18, so the previous caret went red on a commit that changed no dependency at all. That is
+  # the SECOND time this one advisory has reddened a clean branch, and it is worth stating plainly: this gate
+  # reports the advisory database's state on the day it runs, not the state of the change under test. A red
+  # here is a fact about the world, not about the diff — diagnose it before assuming the branch broke.
+  # The CARET reasoning above is unchanged and still load-bearing.
+  nanoid: "^3.3.18"
