@@ -19,6 +19,7 @@ import {
   readArtifactLineageForRequest,
   listApprovalInboxForRequest,
   editRoadmapForRequest,
+  deleteTaskForRequest,
   getTaskRunForRequest,
   listTaskRunsForRequest,
   recordStrategySelectionForRequest,
@@ -69,6 +70,7 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
     listApprovalInbox: () => Promise.reject(new Error('listApprovalInbox was called without being stubbed')),
     editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
+    deleteTask: () => Promise.reject(new Error('deleteTask was called without being stubbed')),
     getTaskRun: () => Promise.reject(new Error('getTaskRun was called without being stubbed')),
     listTaskRuns: () => Promise.reject(new Error('listTaskRuns was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
@@ -500,6 +502,46 @@ describe('typed memory requests (ACBP-P2-006)', () => {
  * itself authored, rather than one that already existed: §0 of that CDR states the "no new domain logic" framing
  * of its two predecessors does NOT apply here.
  */
+/**
+ * ACBP-API-005 — task delete. Owner-only after the ACBP-API-004 narrowing, and the ONE genuinely pure-exposure
+ * route in the held group: `deleteTask` takes no `deps` slot and makes no model call, unlike the four
+ * metered-generation use cases held back for a CDR.
+ */
+describe('ACBP-API-005 — task delete (request layer)', () => {
+  const base = { confirmed: true, reason: null };
+
+  test('an UNCONFIRMED delete is refused, and the refusal is its OWN answer', async () => {
+    // CDR-043 §4-G3 encodes "requires confirmation" as a required acknowledgement rather than a UI convention,
+    // so it must survive the boundary as a distinct status — collapsing it into `validation` would let a client
+    // retry blindly instead of asking the human.
+    const runtime = fakeRuntime({ deleteTask: () => Promise.resolve({ status: 'confirmation_required' }) });
+    const r = await deleteTaskForRequest('co_1', 'task_1', { confirmed: false, reason: null }, { runtime, identity: identityDeps() });
+    expect(r.status).toBe('confirmation_required');
+  });
+
+  test('a successful delete reports the state it was in when deleted', async () => {
+    const runtime = fakeRuntime({ deleteTask: () => Promise.resolve({ status: 'ok', taskId: 'task_1', stateAtDelete: 'planned' }) });
+    const r = await deleteTaskForRequest('co_1', 'task_1', base, { runtime, identity: identityDeps() });
+    expect(r.status).toBe('task_deleted');
+    if (r.status !== 'task_deleted') return;
+    expect(r.stateAtDelete).toBe('planned');
+  });
+
+  test('a mid-flight refusal carries its CLOSED reason, not a free-text message', async () => {
+    const runtime = fakeRuntime({ deleteTask: () => Promise.resolve({ status: 'unavailable', reason: 'cancel_first' }) });
+    const r = await deleteTaskForRequest('co_1', 'task_1', base, { runtime, identity: identityDeps() });
+    expect(r.status).toBe('control_unavailable');
+    if (r.status !== 'control_unavailable') return;
+    expect(r.reason).toBe('cancel_first');
+  });
+
+  test('the owner reason is NEVER echoed back', async () => {
+    const runtime = fakeRuntime({ deleteTask: () => Promise.resolve({ status: 'invalid' }) });
+    const r = await deleteTaskForRequest('co_1', 'task_1', { confirmed: true, reason: 'SENSITIVE-OWNER-NOTE' }, { runtime, identity: identityDeps() });
+    expect(JSON.stringify(r), 'the owner note must not come back in a refusal').not.toContain('SENSITIVE-OWNER-NOTE');
+  });
+});
+
 describe('CDR-089 — run read (request layer)', () => {
   const RUN = { sentinel: 'run' } as unknown as never;
 

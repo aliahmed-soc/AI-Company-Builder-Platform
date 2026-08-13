@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, DeleteTaskParams, DeleteTaskResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -75,6 +75,14 @@ export type CompaniesRequestResult =
   // CDR-089. The run DTO is an ALLOWLIST built in core, so this layer forwards it rather than re-shaping it —
   // re-mapping here would create a second field list to keep in step with `task_runs`, which is exactly the
   // drift the allowlist exists to prevent.
+  // ACBP-API-005. `stateAtDelete` travels with the id deliberately: TASK-008's record is that a task was
+  // withdrawn FROM somewhere, and a client shown only "deleted" cannot tell a discarded draft from cancelled
+  // work in flight.
+  | { readonly status: 'task_deleted'; readonly taskId: string; readonly stateAtDelete: Extract<DeleteTaskResult, { status: 'ok' }>['stateAtDelete'] }
+  // The CLOSED reason travels too — CDR-043 chose a closed union over a free-text message precisely so a caller
+  // can switch exhaustively on "why not", and flattening it here would undo that.
+  | { readonly status: 'control_unavailable'; readonly reason: Extract<DeleteTaskResult, { status: 'unavailable' }>['reason'] }
+  | { readonly status: 'confirmation_required' }
   | { readonly status: 'run'; readonly run: Extract<GetTaskRunResult, { status: 'ok' }>['run'] }
   | { readonly status: 'runs'; readonly runs: Extract<ListTaskRunsResult, { status: 'ok' }>['runs'] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
@@ -128,6 +136,7 @@ export interface CompanyRuntime {
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
+  deleteTask(params: DeleteTaskParams, options?: TaskOptions): Promise<DeleteTaskResult>;
   getTaskRun(params: GetTaskRunParams, options?: RunReadOptions): Promise<GetTaskRunResult>;
   listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
@@ -693,6 +702,54 @@ export async function editRoadmapForRequest(
     case 'invalid':
       // The domain validated and refused; nothing was persisted, and no field is echoed back.
       return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The roadmap edit was rejected.', retryable: false } };
+  }
+}
+
+/**
+ * Delete a task (ACBP-API-005; `task:delete` → OWNER ONLY since the ACBP-API-004 narrowing, enforced in core).
+ *
+ * NO AUTHORIZATION CHECK HERE (CDR-088 §1). The narrowing is a one-line change in the authz matrix precisely so
+ * that this layer never has to know it happened.
+ *
+ * SIX ARMS, AND THREE OF THE REFUSALS ARE NOT INTERCHANGEABLE:
+ * - `confirmation_required` — CDR-043 §4-G3 encodes TASK-008's "with confirmation" as a required acknowledgement
+ *   rather than a UI convention. It must survive as its own status: collapsing it into `validation` would let a
+ *   client retry blindly instead of asking the human, which is the one thing the acknowledgement exists to stop.
+ * - `unavailable` + CLOSED reason — a mid-flight task refuses with `cancel_first`. The reason is forwarded, not
+ *   flattened to a message, because CDR-043 chose a closed union so a caller can switch on "why not".
+ * - `not_found` — sub-resource granularity, distinct from `forbidden`.
+ *
+ * THE OWNER'S `reason` IS NEVER ECHOED. It goes to the append-only deletion record, not back over the wire, and
+ * not into an audit payload (CDR-043). A refusal that quoted it would publish the note the owner wrote privately.
+ */
+export async function deleteTaskForRequest(
+  companyId: string,
+  taskId: string,
+  body: { readonly confirmed: boolean; readonly reason?: string | null },
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.deleteTask(
+    { userId: ctx.userId, accountId: ctx.accountId, companyId, taskId, confirmed: body.confirmed, ...(body.reason !== undefined ? { reason: body.reason } : {}) },
+    {},
+  );
+  switch (r.status) {
+    case 'ok':
+      return { status: 'task_deleted', taskId: r.taskId, stateAtDelete: r.stateAtDelete };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'confirmation_required':
+      return { status: 'confirmation_required' };
+    case 'unavailable':
+      return { status: 'control_unavailable', reason: r.reason };
+    case 'invalid':
+      // The domain refused; nothing was deleted, and NO field of the request is echoed back — notably not the
+      // owner's reason, which the test above pins.
+      return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The deletion was rejected.', retryable: false } };
   }
 }
 
