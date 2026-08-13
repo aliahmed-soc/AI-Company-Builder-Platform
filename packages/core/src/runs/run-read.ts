@@ -45,7 +45,12 @@ const iso = (d: Date | null): string | null => (d === null ? null : d.toISOStrin
 
 export function toTaskRunDTO(row: TaskRunRow): TaskRunDTO {
   return {
-    runId: row.id,
+    // MUTATION M-RUN-ALLOWLIST — DO NOT MERGE. Wires an EXCLUDED tenant column into a published field, the same
+    // shape as M-APPROVALS-1 (run 31638284349) which killed cleanly at one level. THREE tests claim to cover this
+    // allowlist: the unit test on a literal row, the core integration test on a REAL row, and the HTTP matrix at
+    // the wire. WHICH OF THE THREE FIRE IS THE POINT — a level that stays green is a level whose comment claims
+    // more than it checks.
+    runId: row.account_id,
     taskId: row.task_id,
     attempt: row.attempt,
     state: row.state,
