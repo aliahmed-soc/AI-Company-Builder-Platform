@@ -314,12 +314,26 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create. Canon scopes TASK-008 to "Company-scoped"
   // and says nothing about role, so restricting it to the owner would invent a requirement — and a member who may
   // create work should be able to withdraw it. The deletion is append-only and audited, so nothing is destroyed.
-  'task:delete': ['owner', 'viewer'],
-  // Strategy generation is a member action (like understanding:generate); owner-only selection is P3-004's action.
-  'strategy:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004) — NARROWED from owner|viewer to OWNER ONLY, together with the four
+  // metered-generation actions below. REVERSIBLE IN ONE LINE each: restore `['owner', 'viewer']`.
+  //
+  // THE REASONING: a viewer READS. Spending account budget and destroying planning work are owner actions.
+  // Every one of these was granted to viewers when it had no HTTP route in front of it — the grant was
+  // theoretical, exercised only through core. Putting routes in front of them is the moment the distinction
+  // becomes real, and the honest time to decide is BEFORE the route exists rather than after a viewer has used
+  // one. The earlier comments' reasoning (a member who creates work may withdraw it; generation is a member
+  // action like understanding:generate) was sound for a core-only surface and is superseded here, not refuted.
+  //
+  // `task:delete` specifically: the previous comment argued canon says company-scoped, not owner-only, so
+  // restricting it would invent a requirement. That reading stands as a reading — this is a PM ruling choosing
+  // the narrower of two defensible options, recorded as a choice rather than dressed up as a discovered
+  // requirement.
+  'task:delete': ['owner'],
+  // Metered generation: each call spends account budget against CDR-008's ceilings.
+  'strategy:generate': ['owner'],
+  // READ stays owner|viewer — narrowing generation does not narrow seeing what was generated.
   'strategy:read': ['owner', 'viewer'],
-  // Advisory recommendation is a member action (like strategy:generate); owner-only selection is P3-004's action.
-  'strategy:recommend': ['owner', 'viewer'],
+  'strategy:recommend': ['owner'],
   // The owner-only strategy decision gate (STRAT-003 "owner-only selection"); the understanding:confirm precedent.
   'strategy:select': ['owner'],
   // The owner-only immutable decision-record write (STRAT-006; J-08 "Actor: owner") — the strategy:select precedent.
@@ -328,13 +342,17 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // explicitly - "Member (read), owner (revise)" - so unlike `task:delete` this is not a case where canon is silent
   // and restricting would invent a requirement. It also spends a credit, which is the strategy:select precedent.
   'artifact:revise': ['owner'],
-  // Roadmap generation/read are member actions (like understanding:generate / strategy:generate).
-  'roadmap:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004) — NARROWED to OWNER ONLY: metered generation spends account budget.
+  // Reversible in one line: restore `['owner', 'viewer']`. See the ruling note at `task:delete` above.
+  'roadmap:generate': ['owner'],
+  // READ stays owner|viewer — a viewer may see the plan, just not commission a new one.
   'roadmap:read': ['owner', 'viewer'],
   // The versioned roadmap EDIT is owner-only (API-CONTRACTS "Owner (edit)"; ROAD-002 records author + reason).
   'roadmap:edit': ['owner'],
-  // Task planning is a member action (the generate-class precedent); the tasks it mints are DRAFTS, not board work.
-  'task:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004) — NARROWED to OWNER ONLY. The "they are only DRAFTS" argument was the
+  // strongest of the four for keeping viewers, and it still loses: drafts cost the same metered generation call
+  // as anything else. Reversible in one line: restore `['owner', 'viewer']`.
+  'task:generate': ['owner'],
   // Durable job enqueue (ACBP-P5-001a; CDR-049 §4) is OWNER-ONLY, deliberately the tighter of the two readings.
   // Canon does not settle the role for P5-001 the way it settles STRAT-003, so this picks the SAFER REVERSIBLE
   // interpretation the charter calls for: widening later is additive and breaks nothing, whereas discovering that
