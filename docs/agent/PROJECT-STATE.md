@@ -67,6 +67,83 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — ACBP-API-005 task delete route (the one pure-exposure route of the held group).** Squash
+  **`cf769bc`**, PR **#104**, CDR-less by owner ruling (reduced bar), **no migration**. Exact-head CI
+  [`31763791529`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31763791529)
+  on `6aa3396`: **280 files / 4153 tests, zero skips**; exact-main
+  [`31764387951`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31764387951)
+  on `cf769bc`: identical. `check:csrf-origin-gate` 20 → **21** state-changing of 37; `check:rate-limit-coverage`
+  35 → **36**.
+  - **FIRST TICKET UNDER THE REDUCED BAR** (owner ruling 2026-08-14): one scope-and-security review pass,
+    no CDR, no mutation testing, for PURE-EXPOSURE routes only. The full bar — two passes, mutation
+    testing, CDR — is retained for anything touching authz, money, approvals, stops or tenant isolation.
+  - **POST, not HTTP DELETE**, because TASK-008's confirmation is a required acknowledgement in the body
+    (CDR-043 §4-G3) and DELETE with a semantically required body is poorly supported. A confirmation that
+    can be dropped in transit is not a confirmation. `confirmed` must be a REAL boolean — the string
+    `"false"` is truthy, and accepting it would turn a client bug into an unconfirmed deletion.
+  - Three refusals kept distinct (`confirmation_required` 409, `control_unavailable` 409 + the CLOSED
+    reason forwarded, `not_found`); the owner's `reason` is NEVER echoed back.
+  - **A LOCAL RED THAT WAS NOT THE ROUTE:** `secret-egress` (trust-critical #15) failed a local full run,
+    passed in isolation AND in the green hosted run. The known contention flake, **still open**. Recorded
+    because "probably the flake" is a dangerous habit on a trust-critical guard.
+  - Branch was CHERRY-PICKED onto main, not rebased: the original carried ACBP-API-003's commits, already
+    squashed, so a rebase conflicted.
+
+- **DONE — ACBP-API-004 narrow five grants to owner only (PM ruling).** Squash **`2446e0d`**, PR **#103**,
+  **no migration**. Exact-head CI
+  [`31762075198`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31762075198)
+  on `28f5525`: **280 files / 4149 tests, zero skips**; exact-main
+  [`31762923558`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31762923558)
+  on `2446e0d`: identical.
+  - **PM RULING 2026-08-14**, each reversible in one line by restoring `['owner', 'viewer']`:
+    `strategy:generate`, `strategy:recommend`, `roadmap:generate`, `task:generate`, `task:delete` are now
+    **owner only**. A viewer READS; spending account budget on metered model calls and destroying planning
+    work are owner actions. **The timing was the argument** — each was granted to viewers while it had NO
+    HTTP route in front of it, so the grant was theoretical. Deciding before the route exists is cheaper
+    than deciding after a viewer has used one.
+  - **READS AND REPEAT ARE UNTOUCHED**: `strategy:read`, `roadmap:read` stay `owner|viewer`, and task
+    REPEAT stays a member action. Both splits are pinned INSIDE the tests that assert the narrowing, so a
+    future widening has to argue with itself in one place.
+  - **A WRONG CLAIM OF MINE, CORRECTED IN THE SECOND COMMIT AND RECORDED HERE.** I claimed the narrowing
+    "broke NO behavioural test — no test asserted a viewer CAN generate or delete." **Four real-PostgreSQL
+    authz tests assert exactly that**, and hosted CI failed on all four. I had read a LOCAL run where those
+    suites are `skipIf`-gated and skipped, and treated silence as absence. **Skipped is not green** — the
+    lesson already on record here, applied to myself one commit late. Worse, the false claim was used as
+    SUPPORT for the ruling ("exercised by nothing, so narrowing is cheap"); that argument is **withdrawn**,
+    the ruling stands on its own merits. The four assertions were then inverted as DECISIONS, each citing
+    the ruling in place, so a reader sees a choice rather than a test bent to make red go green.
+
+- **DONE — ACBP-API-003 the run read.** Squash **`21c7ba1`**, PR **#102**, branch `p8-api-003-run-read`,
+  CDR-089, **no migration**. Exact-head CI
+  [`31760897788`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31760897788)
+  on `462194c`: **280 files / 4149 tests, zero skips**; exact-main
+  [`31761460803`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31761460803)
+  on `21c7ba1`: identical.
+  - **A DOMAIN ADDITION, NOT AN EXPOSURE.** CDR-087 and CDR-088 both shipped under a "no new domain logic"
+    framing; CDR-089 §0 states that framing does NOT carry here. New: the `run:read` authz action
+    (owner+viewer), `getTaskRun` / `listTaskRuns`, and an ALLOWLIST DTO over `TaskRunRow`.
+  - **The directory name misled me.** I proposed this from `packages/core/src/runs/`; the table is
+    `task_runs` and a run is always a run OF A TASK. Reading the schema BEFORE writing the CDR is what
+    stopped the route table coming from a directory name. A run IS addressable on its own (`findById`),
+    which makes the already-shipped `runs/{runId}/artifacts` route coherent rather than anomalous.
+  - `listTaskRuns` has NO `not_found`: `listForTask` cannot distinguish an unknown task from a task with no
+    runs, so inventing a 404 would claim a distinction the query does not make. Asserted at BOTH the
+    use-case and HTTP levels.
+  - **The compiler caught a schema fact:** `failure_category` has insert type `never` — a run cannot be
+    BORN failed, it has to fail. **A named-export barrel caught the wiring**, and named exports were added
+    rather than switching to `export *` — slice 2 hit the INVERSE failure, where `export *` hid the
+    artifact use cases and produced a wrong claim that they did not exist.
+  - **MUTATION EVIDENCE.** The DTO allowlist is **PROVEN AT THREE LEVELS** — run
+    [`31751618706`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31751618706)
+    wired a tenant column into a published field and reddened the unit test, the core integration test AND
+    the HTTP matrix, each named; the prediction that all three would fire was recorded before the run. The
+    cross-company guards are **NOT proven and are not a gap**: RLS-enforced, so a foreign run and an
+    unknown id are both `undefined` before any decision exists — demonstrated by run
+    [`31643354339`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31643354339).
+  - Also carries the nanoid audit re-bump (a re-scored advisory reddened a clean branch for the SECOND
+    time — that gate reports the advisory database's state on the day it runs, not the state of the diff)
+    and `PROPOSAL-ci-production-build.md`, **proposal only, no CI file changed**.
+
 - **DONE — ACBP-API-002 planning and execution HTTP routes (slice 2 of the missing-route programme).**
   Squash **`6faa91c`**, PR **#98**, branch `p8-api-slice2-planning-reads`, CDR-088, **no migration**.
   Exact-head CI [`31613369311`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31613369311)
