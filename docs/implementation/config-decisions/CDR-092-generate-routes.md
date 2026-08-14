@@ -30,19 +30,29 @@ exact-main CI green with zero skips.
 
 ---
 
-## §1 — The domain surface has to open first, and that is a boundary change
+## §1 — ~~The domain surface has to open first~~ → **RETRACTED: it is already open**
 
-**None of the four use cases is exported from `@acbp/core`'s barrel.** Nor is `createAnthropicGateway`. They live
-at `strategy/strategy-generation.ts`, `strategy/strategy-recommendation.ts`, `planning/roadmap-generation.ts`,
-`planning/task-generation.ts` and `composition/anthropic-gateway.ts`, and today nothing outside core imports them.
+> **This section originally claimed none of the four use cases was exported from `@acbp/core`, and that wiring
+> the routes would require widening the public surface. That was wrong, and no code change is needed here.**
+>
+> All four functions, their params/deps/options/result types, and `createAnthropicGateway` are exported today:
+> `strategy/index.ts` and `planning/index.ts` export the use cases, `composition/index.ts` exports the gateway,
+> and `packages/core/src/index.ts` re-exports all three with `export * from './<dir>/index.js'`.
+>
+> **How the error was made, because the shape recurs.** The claim came from grepping `index.ts` for the function
+> names. With `export *`, those names are never written in that file — so the grep could only ever report "not
+> found", whatever the truth was. It was a measurement that could not have come out differently, which is the
+> same defect as reading a `skipIf`-skipped suite as proof nothing broke, and as running the wrong build command
+> twice and calling it corroboration. All three passed unnoticed because the output *looked* like evidence.
+>
+> **The correction is pinned by a test, not by this paragraph.** `composition/generate-surface.test.ts` imports
+> from the package root and asserts each symbol resolves — an anchor that fails if a future refactor drops one
+> from a sub-barrel, where a name-grep would keep passing. That test is the deliverable of this slice; the CDR
+> text is just the record.
 
-`apps/web` may import the domain **only** through `@acbp/core` (enforced by `tools/check-boundaries.mjs`), so
-wiring these routes requires adding them to the barrel. That is a deliberate widening of the public surface and
-is called out here rather than done quietly: each export is a commitment, and the four generate functions take a
-`DatabaseClient` plus a deps object, so the barrel must also export the deps types.
-
-**What must NOT leak out with them:** the provider, the SDK client, or anything from `@acbp/adapters`. The route
-receives a composed gateway from core's composition layer; it never constructs one.
+What still holds, and is worth keeping: `apps/web` may reach the domain **only** through `@acbp/core`
+(`tools/check-boundaries.mjs`), and **the provider, the SDK client, and anything from `@acbp/adapters` must not
+leak out with them.** The route receives a composed gateway from core's composition layer; it never builds one.
 
 ---
 
