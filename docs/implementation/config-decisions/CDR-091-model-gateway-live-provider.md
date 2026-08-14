@@ -250,6 +250,27 @@ mismatch — it reports `"API key is invalid."`**, which reads as "wrong key" an
 rather than at the credential class. Second, the differing message under `Bearer` is what identified the token as
 revoked; a single-scheme probe would have left both facts ambiguous.
 
+### ⛔ OWNER RULING 2026-08-14 — OAuth-shaped credentials are OUT OF SCOPE for production use
+
+**Anthropic's own policy restricts OAuth credentials to Claude Code and Claude.ai.** They are therefore not a
+sanctioned credential for this product, and this repository will not route them in production regardless of
+whether the mechanism works. A production credential here is a Console API key (`sk-ant-api03-…`).
+
+This is a **policy** boundary, not a technical one — the plumbing described below functions as far as it was
+ever verified. That distinction matters when reading the rest of this section: the code exists and is tested,
+and the ruling says not to rely on it. No further support for routing OAuth credentials is to be built.
+
+**Open question for the owner, raised rather than decided.** The `authToken` branch below now has no sanctioned
+use. Two honest options, and this CDR does not pick one:
+1. **Keep it as defensive routing.** The classification still prevents an OAuth token being silently sent as
+   `x-api-key`, which produces the actively misleading `"API key is invalid."` (measured below).
+2. **Convert it to a typed refusal** — reject an `sk-ant-oat…` credential at construction with a message naming
+   the policy. This is arguably the better fit for a fail-closed repository: it stops the call rather than
+   attempting one the credential's issuer restricts, and it cannot rot into an unmaintained live path.
+
+Option 2 is the stronger reading of the ruling, but it deletes behaviour built one turn earlier at the owner's
+request, so it is not taken unilaterally.
+
 ### The OAuth branch — BUILT, and what "built" does and does not mean here
 
 `AnthropicModelProvider` now routes on credential shape: `classifyCredential` returns `oauth` for `sk-ant-oat…`
