@@ -11,15 +11,46 @@
 //     rules that no layer above the gateway may retry.
 //
 // Run:  node tools/demo/live-generation.mjs
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME } from '@acbp/adapters';
 import { Secret } from '@acbp/config';
 import { toModelId } from '@acbp/contracts';
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
-if (apiKey === undefined || apiKey.trim() === '') {
-  console.error('ANTHROPIC_API_KEY is not set. Refusing to run — this script makes a REAL, paid model call.');
+// Node does NOT auto-load `.env.local`; without this the script would refuse even with the key correctly placed,
+// which is exactly what happened on the first attempt. Searched in order and the FIRST hit wins. Only the one
+// variable is read — nothing else in the file is imported into the process, and the value is never printed.
+function keyFromEnvFiles() {
+  const roots = [process.cwd(), path.resolve(process.cwd(), '..'), 'E:/AI-Company-Builder-Platform'];
+  for (const root of roots) {
+    for (const name of ['.env.local', '.env']) {
+      const file = path.join(root, name);
+      if (!existsSync(file)) continue;
+      for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+        const m = /^\s*(?:export\s+)?ANTHROPIC_API_KEY\s*=\s*(.*)$/.exec(line);
+        if (m === null) continue;
+        // Strip surrounding quotes and any trailing comment a hand-edited file may carry.
+        const value = m[1].trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+        if (value !== '') return { value, source: file };
+      }
+    }
+  }
+  return undefined;
+}
+
+const fromEnv = process.env.ANTHROPIC_API_KEY?.trim();
+const fromFile = fromEnv === undefined || fromEnv === '' ? keyFromEnvFiles() : undefined;
+const apiKey = fromEnv !== undefined && fromEnv !== '' ? fromEnv : fromFile?.value;
+
+if (apiKey === undefined || apiKey === '') {
+  console.error('ANTHROPIC_API_KEY not found. Refusing to run — this script makes a REAL, paid model call.');
+  console.error('Looked in: the process environment, then .env.local / .env in the working directory, its parent,');
+  console.error('and E:/AI-Company-Builder-Platform. Add a line `ANTHROPIC_API_KEY=...` to one of those.');
   process.exit(1);
 }
+// Say WHERE the key came from but never WHAT it is — a run that silently used a stale key from an unexpected
+// file is the kind of thing that wastes an afternoon.
+console.log(`key source : ${fromEnv !== undefined && fromEnv !== '' ? 'process environment' : (fromFile?.source ?? 'unknown')}`);
 
 const modelId = process.env.ANTHROPIC_MODEL_ID ?? 'claude-opus-5';
 
