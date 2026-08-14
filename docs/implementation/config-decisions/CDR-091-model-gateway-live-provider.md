@@ -35,6 +35,22 @@ has simply never had a provider that costs money. This CDR adds `AnthropicModelP
 
 ## §2 — The four PM defaults (owner-ruled, reversible in one line)
 
+> ### ⚠️ VALIDATION STATUS: §2.1 and §2.2 ARE UNMEASURED ESTIMATES
+>
+> **No live model call has ever been made from this repository.** The 60s provider timeout and the 90s route
+> `maxDuration` below are estimates, not observations — nobody has seen how long a real generation takes.
+>
+> Three attempts were made on 2026-08-14 and all three failed before reaching the model: no key present; then a
+> key the loader could not read (UTF-16 BOM); then an OAuth token the API reported as **revoked**
+> (`"OAuth access token has been revoked."`), which is also the wrong credential class for the `x-api-key` path
+> this provider uses (see §5).
+>
+> **Do not wire the routes to these numbers until one real generation is measured.** Concretely, if the observed
+> p95 for a 16-field strategy generation lands near 60s, the inner/outer split is too tight and both numbers move;
+> if it lands at 10–15s, 60s is generous and 90s may fit deployment edges that it currently rules out. Either way
+> the answer is an hour's measurement, not an argument — and this box comes out in the same commit that records
+> the number.
+
 ### §2.1 — Request timeout: **60s** *(resolves CDR-090 §3.1)*
 
 Generation calls (strategy, roadmap, tasks) are slower than simple completions; 60s gives real headroom
@@ -208,3 +224,43 @@ Recorded so a future ticket does not re-derive it. All three, not any one:
   is validated when the runtime is built, not on the first paid call.
 - **The API key is a `Secret`** from `@acbp/config`, never logged, never returned, never in an error. The
   trust-critical #15 secret-egress sweep covers every route and would catch a leak of it.
+
+---
+
+## §5 — Credential classes: which token actually works, measured
+
+Anthropic issues more than one kind of credential and they are **not interchangeable**. This cost a round trip
+on ACBP-API-006 and is recorded so the next person spends none.
+
+| Credential | Shape | Auth header | Works with this provider? |
+|---|---|---|---|
+| **API key** (Console) | `sk-ant-api03-…` | `x-api-key` | **Yes** — this is what `AnthropicModelProvider` sends |
+| OAuth / environment token (`ant auth login`, `ant auth print-credentials`) | `sk-ant-oat01-…` | `Authorization: Bearer` **plus** `anthropic-beta: oauth-2025-04-20` | **No** — not implemented |
+
+Measured directly against `/v1/messages` with one token, three schemes:
+
+```
+x-api-key            -> 401  {"type":"authentication_error","message":"API key is invalid."}
+Bearer + oauth beta  -> 401  {"type":"authentication_error","message":"OAuth access token has been revoked."}
+Bearer (no beta hdr) -> 401  {"type":"authentication_error","message":"OAuth access token has been revoked."}
+```
+
+Two separate lessons in one result. First, **an OAuth token presented as an API key does not report an auth-type
+mismatch — it reports `"API key is invalid."`**, which reads as "wrong key" and sends you looking for a typo
+rather than at the credential class. Second, the differing message under `Bearer` is what identified the token as
+revoked; a single-scheme probe would have left both facts ambiguous.
+
+**If the OAuth path is ever wanted** (no long-lived secret on disk), it is a contained change: an `authToken`
+branch in `AnthropicModelProvider` setting `Authorization: Bearer` and the beta header, plus a test pinning that
+an `sk-ant-oat…` value is NEVER sent as `x-api-key`. Deliberately not built on speculation — it cannot be
+verified without a live token, and an unverifiable auth path is the kind of thing that looks finished and is not.
+
+### Operator note — writing the key on Windows
+
+`.env.local` is gitignored (`.gitignore:3`, `.env.*`) and is the right home for it. Do **not** create it with
+PowerShell's `>>` or `Out-File`: PowerShell 5.1 defaults to **UTF-16 LE**, and a `.env` written that way begins
+`FF FE` with a NUL after every character. The demo loader now decodes by BOM, but other tooling will not. Prefer:
+
+```
+node -e "require('fs').appendFileSync('.env.local','\nANTHROPIC_API_KEY=sk-ant-api03-…\n')"
+```
