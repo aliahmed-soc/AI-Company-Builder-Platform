@@ -129,7 +129,22 @@ Reusing 429 for both would make an automated client retry a request that cannot 
 ## §6 — Guards to mutation-test (not optional; these are the money guards)
 
 1. **Owner-only** — a viewer reaching any of the four must be refused, and the refusal must be indistinguishable
-   from a non-member's. Mutate: widen the grant to `member`. The suite must fail.
+   from a non-member's. Mutate: widen the grant. The suite must fail.
+
+   **✅ PRECONDITION VERIFIED (2026-08-15), and it was checked rather than assumed.** The question asked was not
+   "is there a test file" but "would a broken authz check actually be killed" — the same question that exposed
+   Slice 2's missing `RequestLimitService` test, where a guard looked covered and was not.
+   `packages/contracts/src/authz/authz.test.ts` iterates every action × every role and asserts against its own
+   `EXPECTED` matrix, which **independently restates** the grants rather than importing them — so widening a
+   grant requires two deliberate edits, and doing only one fails the suite. Confirmed by mutation, both applied
+   on disk before the result was trusted:
+   - **M-AZ1** — `strategy:generate` widened to admit `viewer` → **KILLED**
+   - **M-AZ2** — `task:generate` widened to admit `viewer` → **KILLED**
+
+   So the *matrix* is guarded today. What is **not** yet guarded is the route layer: that each of the four routes
+   actually consults that matrix. A route that never calls `checkAuthorization` would leave both mutations above
+   still passing, because they test the matrix rather than its use. **That is the guard Slice 3 must add**, and
+   it is the same shape as §6.2 below — the difference between a control existing and a control being consulted.
 2. **Rate-limit enforcement** — mutate the limiter call away, and mutate `throttled` to fall through as allowed.
    Both must fail the suite. A limiter that is called but whose result is ignored is the exact shape of
    ACBP-P6-010's shipped-but-unread spend ceiling.
