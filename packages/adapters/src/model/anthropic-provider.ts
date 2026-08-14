@@ -36,13 +36,20 @@ export const ANTHROPIC_PROVIDER_NAME = 'anthropic';
 export const ANTHROPIC_CLIENT_TIMEOUT_MS = 60_000;
 
 /**
- * The beta header an OAuth-authenticated request must carry (CDR-091 §5).
+ * Thrown at construction when the configured credential is one this product will not use.
  *
- * Not optional: `/v1/messages` rejects a Bearer token without it. It is endpoint-dependent — a few endpoints
- * happen to work without it — so it is sent unconditionally on the OAuth branch rather than per-call, so nothing
- * breaks when a different endpoint is reached later.
+ * A distinct type rather than a bare `Error` so callers and tests can identify the condition without matching on
+ * message text — the message is written for a human operator and should stay free to improve.
  */
-export const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
+export class UnsupportedCredentialError extends Error {
+  readonly credentialKind: CredentialKind;
+
+  constructor(credentialKind: CredentialKind, message: string) {
+    super(message);
+    this.name = 'UnsupportedCredentialError';
+    this.credentialKind = credentialKind;
+  }
+}
 
 /** The two credential classes Anthropic issues. They authenticate differently and are NOT interchangeable. */
 export type CredentialKind = 'api_key' | 'oauth';
@@ -160,6 +167,29 @@ export class AnthropicModelProvider implements ModelProvider {
   constructor(options: AnthropicProviderOptions) {
     this.#timeoutMs = options.timeoutMs ?? ANTHROPIC_CLIENT_TIMEOUT_MS;
 
+    // ── THE CREDENTIAL GATE (CDR-091 §5; owner ruling 2026-08-14) ────────────────────────────────────────────
+    // OAuth-shaped credentials are REFUSED, not routed. Anthropic restricts them to Claude Code and Claude.ai,
+    // so they are not a sanctioned credential for this product — and a branch that is merely unused invites the
+    // next reader who discovers it works to switch it back on. Failing closed at construction removes that door.
+    //
+    // THIS RUNS FIRST, ABOVE THE INJECTED-CLIENT SHORTCUT, and the position is the point. The first version sat
+    // below it, so passing a `client` — a test seam having nothing to do with credentials — silently skipped the
+    // check. A gate an unrelated option can step around is not a gate. It also means the rule holds for every
+    // construction path there is, not merely the one that reaches the SDK.
+    //
+    // Nothing is allocated for a credential we will not use, and a startup failure is far cheaper to diagnose
+    // than a per-request one. The thrown message carries the credential's CLASS, never its value.
+    const credential = options.apiKey.reveal();
+    const kind = classifyCredential(credential);
+    if (kind === 'oauth') {
+      throw new UnsupportedCredentialError(
+        kind,
+        'Refusing an OAuth-shaped credential (sk-ant-oat…). Anthropic restricts OAuth credentials to Claude Code ' +
+          'and Claude.ai, so they are out of scope for this product — see CDR-091 §5. Configure a Console API ' +
+          'key (sk-ant-api…) in ANTHROPIC_API_KEY instead.',
+      );
+    }
+
     if (options.client !== undefined) {
       this.#client = options.client;
       return;
@@ -171,15 +201,8 @@ export class AnthropicModelProvider implements ModelProvider {
     // usage event carrying only the final attempt's tokens while the provider billed every attempt, and the two
     // layers would multiply: 3 SDK attempts x 3 gateway attempts = up to NINE paid calls for one generation.
     // The gateway's bounded retry is the only retry layer in this system. Enforced by test, not by this comment.
-    // The credential decides the auth scheme (CDR-091 §5). EXACTLY ONE of `apiKey`/`authToken` is ever set:
-    // the SDK sends a header for each it holds, and a request carrying two auth schemes is rejected outright.
-    // The OAuth branch is unverified against a live endpoint — see the class doc comment.
-    const credential = options.apiKey.reveal();
-    const scheme = classifyCredential(credential);
     const clientOptions: Record<string, unknown> = {
-      ...(scheme === 'oauth'
-        ? { authToken: credential, defaultHeaders: { 'anthropic-beta': OAUTH_BETA_HEADER } }
-        : { apiKey: credential }),
+      apiKey: credential,
       maxRetries: 0,
       timeout: this.#timeoutMs,
     };

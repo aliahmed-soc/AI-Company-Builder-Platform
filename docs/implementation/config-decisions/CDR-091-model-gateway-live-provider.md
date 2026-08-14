@@ -260,38 +260,44 @@ This is a **policy** boundary, not a technical one — the plumbing described be
 ever verified. That distinction matters when reading the rest of this section: the code exists and is tested,
 and the ruling says not to rely on it. No further support for routing OAuth credentials is to be built.
 
-**Open question for the owner, raised rather than decided.** The `authToken` branch below now has no sanctioned
-use. Two honest options, and this CDR does not pick one:
-1. **Keep it as defensive routing.** The classification still prevents an OAuth token being silently sent as
-   `x-api-key`, which produces the actively misleading `"API key is invalid."` (measured below).
-2. **Convert it to a typed refusal** — reject an `sk-ant-oat…` credential at construction with a message naming
-   the policy. This is arguably the better fit for a fail-closed repository: it stops the call rather than
-   attempting one the credential's issuer restricts, and it cannot rot into an unmaintained live path.
+**RESOLVED — option 2, owner's decision.** The `authToken` branch is **deleted** and replaced by a typed refusal:
+`AnthropicModelProvider` throws `UnsupportedCredentialError` at construction when the configured credential is
+`sk-ant-oat…`, with a message naming the policy, citing this section, and saying what IS accepted. Fail closed,
+not dead-but-functional — a branch that merely goes unused invites the next reader who discovers it works to
+switch it back on.
 
-Option 2 is the stronger reading of the ruling, but it deletes behaviour built one turn earlier at the owner's
-request, so it is not taken unilaterally.
+**The gate runs FIRST, above the injected-client shortcut, and the position is load-bearing.** The first version
+sat below it, so passing a `client` — a test seam with nothing to do with credentials — silently skipped the
+check. A gate an unrelated option can step around is not a gate. Pinned by mutation M-AP9: moving it back below
+that shortcut fails the suite.
 
-### The OAuth branch — BUILT, and what "built" does and does not mean here
+Mutation-proven: removing the refusal (M-AP8, killed by 4 tests), moving the gate below the injected-client
+shortcut (M-AP9), and leaking the credential into the error message (M-AP10, killed by the security test — the
+error carries the credential's CLASS, never its value).
 
-`AnthropicModelProvider` now routes on credential shape: `classifyCredential` returns `oauth` for `sk-ant-oat…`
-and `api_key` for everything else, and the client is constructed with **exactly one** of `authToken` (plus
-`anthropic-beta: oauth-2025-04-20`) or `apiKey`. Never both — the SDK sends a header for each credential it
-holds, and a request carrying two auth schemes is rejected outright.
+> **A note on how M-AP9 was scored, because it nearly went the other way.** Its first run reported SURVIVED with
+> 20/20 green. The mutation had not applied — a here-string that failed to match left the file unchanged, and an
+> unmutated file trivially passes. The re-run asserts the gate's index moves from before to after the shortcut
+> and that the file's contents actually differ, and only then runs the suite. **A mutation result is worthless
+> unless you can show the mutation landed**; a green run from an unapplied mutation looks exactly like a real
+> survival and would have been recorded as a coverage gap that does not exist.
 
-Routing on shape rather than on a config flag is deliberate: a declared class is one more thing to get wrong, and
-the failure it produces is the misleading `"API key is invalid."` above. The token already carries the answer.
-An unrecognised prefix falls back to `api_key`, which is the only default that survives Anthropic introducing a
-new API-key shape; defaulting to `oauth` would break every real key on a rename.
+### How the credential is handled now
 
-**⚠️ THE SUCCESS PATH IS UNVERIFIED.** No credential of either class has ever completed a call from this
-repository. What is evidence-backed is the **routing**, and only its negative half — the measured 401s in the
-table above establish that an OAuth token must not go to `x-api-key`. That an OAuth token *does* succeed under
-`Bearer` + this beta header is taken from documentation, not observation.
+`classifyCredential` still decides by shape, but its `oauth` result now leads to a refusal rather than to a
+second auth path. `api_key` is the only class the provider will build a client for, and it builds that client
+with `apiKey` alone — `authToken` is never set on any accepted credential, pinned by test so that a future edit
+reintroducing it is not silent.
 
-Mutation-proven guards (raising any of these must fail the suite): routing an `sk-ant-oat…` token to `apiKey`
-(M-AP5), setting both credentials at once (M-AP6), and dropping the beta header (M-AP7). Those prove the code
-does what it claims — they do not prove Anthropic accepts the result. **Treat the first live OAuth call as a
-test, not as a regression check.**
+An unrecognised prefix falls back to `api_key`: the only default that survives Anthropic introducing a new
+API-key shape, where defaulting to `oauth` would refuse every real key on a rename.
+
+**⚠️ THE SUCCESS PATH REMAINS UNVERIFIED.** No credential of any class has ever completed a call from this
+repository. The refusal and the classification are evidence-backed — the measured 401s above — but that a
+Console API key *succeeds* is expectation, not observation. The ruling does not resolve this: refusing OAuth
+narrows what still needs verifying, it does not verify what remains. See the §2 validation block.
+
+(Mutations M-AP5/6/7, which pinned the deleted routing branch, are superseded by M-AP8/9/10 above.)
 
 ### Operator note — writing the key on Windows
 

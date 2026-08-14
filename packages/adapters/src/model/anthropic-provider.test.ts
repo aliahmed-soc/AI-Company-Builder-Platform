@@ -16,7 +16,7 @@ import {
   AnthropicModelProvider,
   ANTHROPIC_PROVIDER_NAME,
   ANTHROPIC_CLIENT_TIMEOUT_MS,
-  OAUTH_BETA_HEADER,
+  UnsupportedCredentialError,
   classifyCredential,
 } from './anthropic-provider.js';
 
@@ -71,8 +71,8 @@ function okReply(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function provider(client: unknown) {
-  return new AnthropicModelProvider({ apiKey: FAKE_KEY, client: client as never });
+function provider(client: unknown, apiKey: Secret = FAKE_KEY) {
+  return new AnthropicModelProvider({ apiKey, client: client as never });
 }
 
 describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
@@ -119,17 +119,51 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       expect(classifyCredential('some-other-shape')).toBe('api_key');
     });
 
-    test('THE GUARD: an sk-ant-oat token is NEVER sent as x-api-key', () => {
-      const o = optionsFor(new Secret(synthetic('oat01')));
-      // The whole point. `apiKey` must be absent or null — never carrying the OAuth value.
-      expect(o['apiKey'] ?? null).toBeNull();
-      expect(o['authToken']).toBe(synthetic('oat01'));
+    // ── THE REFUSAL (CDR-091 §5, owner ruling 2026-08-14) ────────────────────────────────────────────────────
+    // OAuth credentials are restricted by Anthropic to Claude Code and Claude.ai, so they are not a sanctioned
+    // credential for this product. The provider REFUSES them rather than routing them: a dead-but-functional
+    // branch invites a later reader who discovers it works to switch it on.
+    test('THE GUARD: construction REFUSES an sk-ant-oat credential', () => {
+      expect(() => provider(stubClient(okReply()), new Secret(synthetic('oat01')))).toThrow(
+        UnsupportedCredentialError,
+      );
     });
 
-    test('an OAuth credential carries the oauth beta header', () => {
-      const headers = optionsFor(new Secret(synthetic('oat01')))['defaultHeaders'] as Record<string, string>;
-      expect(headers['anthropic-beta']).toBe(OAUTH_BETA_HEADER);
-      expect(OAUTH_BETA_HEADER).toBe('oauth-2025-04-20');
+    test('the refusal fires BEFORE any client is built — nothing is allocated for a credential we will not use', () => {
+      const factory = vi.fn(() => ({ messages: { create: () => Promise.resolve(okReply()) } }));
+      expect(
+        () => new AnthropicModelProvider({ apiKey: new Secret(synthetic('oat01')), clientFactory: factory }),
+      ).toThrow(UnsupportedCredentialError);
+      expect(factory).not.toHaveBeenCalled();
+    });
+
+    test('the refusal names the credential class and cites the ruling, so the operator knows what to do', () => {
+      let caught: unknown;
+      try {
+        new AnthropicModelProvider({ apiKey: new Secret(synthetic('oat01')) });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(UnsupportedCredentialError);
+      const message = (caught as Error).message;
+      expect(message).toContain('OAuth');
+      expect(message).toContain('CDR-091');
+      // Actionable, not merely negative: it must say what IS accepted.
+      expect(message).toContain('sk-ant-api');
+      expect((caught as UnsupportedCredentialError).credentialKind).toBe('oauth');
+    });
+
+    test('SECURITY: the refusal never carries the credential value', () => {
+      const token = synthetic('oat01', 'MUST-NOT-APPEAR-IN-ANY-ERROR');
+      let caught: unknown;
+      try {
+        new AnthropicModelProvider({ apiKey: new Secret(token) });
+      } catch (error) {
+        caught = error;
+      }
+      const surface = `${(caught as Error).message}\n${(caught as Error).stack ?? ''}`;
+      expect(surface).not.toContain(token);
+      expect(surface).not.toContain('MUST-NOT-APPEAR-IN-ANY-ERROR');
     });
 
     test('an API key goes to apiKey, sets NO authToken, and carries no oauth beta header', () => {
@@ -140,16 +174,13 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       expect(headers['anthropic-beta']).toBeUndefined();
     });
 
-    test('NEVER both credentials at once — the API rejects a request carrying two auth schemes', () => {
-      for (const secret of [new Secret(synthetic('oat01','x')), new Secret(synthetic('api03','x'))]) {
-        const o = optionsFor(secret);
-        const both = (o['apiKey'] ?? null) !== null && (o['authToken'] ?? null) !== null;
-        expect(both).toBe(false);
-      }
-    });
-
-    test('maxRetries 0 holds on the OAuth branch too — the money guard is not scheme-specific', () => {
-      expect(optionsFor(new Secret(synthetic('oat01','x')))['maxRetries']).toBe(0);
+    test('authToken is NEVER set on any accepted credential — one auth scheme reaches the SDK, never two', () => {
+      // With the OAuth branch refused rather than routed, `authToken` should now be unreachable. Asserted rather
+      // than assumed: a future edit that reintroduces it would otherwise be silent, and the API rejects a
+      // request carrying two auth schemes.
+      const o = optionsFor(new Secret(synthetic('api03', 'x')));
+      expect(o['authToken'] ?? null).toBeNull();
+      expect(o['apiKey']).toBe(synthetic('api03', 'x'));
     });
   });
 
