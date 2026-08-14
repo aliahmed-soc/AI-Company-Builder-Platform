@@ -2194,3 +2194,73 @@ uncompletable while the evidence said all was well.
   Left stale deliberately and flagged instead: **`## Next executable action` still describes beginning Phase 2** —
   ~30 tickets out of date. Rewriting it means declaring what comes next, which is the owner's call.
   C: 52.8 GB free.
+
+---
+
+## 2026-08-14 — BACKEND COMPLETE (marker entry, appended at the owner's instruction)
+
+**This is the end of the un-gated engineering work.** Everything remaining is an owner gate. The
+interesting part of this window was not the volume of tickets but two false claims I made and had to
+retract, which turned out to share one mistake.
+
+### What shipped
+
+Fourteen HTTP routes across five tickets, all merged, each pinned to its squash SHA rather than to a status
+word: **API-001 `d1d4ae8`**, **API-002 `6faa91c`**, **API-003 `21c7ba1`**, **API-004 `2446e0d`**,
+**API-005 `cf769bc`**, plus docs merges `3cbfc89`, `f1136f7`, `bbf9f43`, `4c7a346`. Then **ACBP-API-007**
+(PR #106, DRAFT, awaiting the owner): the secret-egress root cause and the CI production build.
+
+### The two retractions, kept because they are the transferable part
+
+**1. "The build is broken on `main`."** It was not. I ran `pnpm exec next build`, bypassing the project
+script and its `--webpack` pin; Next 16 then defaulted to Turbopack, which cannot resolve this repo's
+workspace barrel re-exports. I "confirmed" the finding by running the same wrong command again on a clean
+checkout. **Running the wrong command twice is not corroboration.** Retracted in full, together with the
+derived claim that eleven routes had shipped against a broken build. The gap it accidentally exposed was
+real and is closed by the CI step in this PR.
+
+**2. "Narrowing the five grants broke no behavioural test."** Read off a local run in which the four
+relevant real-PG authz suites are `skipIf`-gated and had **skipped**. Four tests asserted exactly what I
+said none did. Worse, the false claim had been used as *support* for the ruling; that argument was
+withdrawn.
+
+**Both are one failure: drawing a conclusion from a measurement that could not have come out
+differently.** A skipped suite cannot report a break; a Turbopack build cannot succeed here. Neither
+result carried information, and I treated both as evidence.
+
+### The secret-egress diagnosis, since a trust-critical guard was involved
+
+The owner's framing was that a trust-critical suite where red sometimes means nothing is worse than no
+suite — the ambiguity being the defect, whichever way the diagnosis landed.
+
+Measured rather than reasoned about: the sweep imported every route module *inside the test body*, charging
+~88% of a 10s `testTimeout` to module loading (2153 ms warm, 6245 ms cold) while the behaviour under test
+cost 303 ms. Route growth 25 → 37 in one session pushed that fixed cost up ~44% against a fixed ceiling;
+the observed red was a timeout at 10027 ms.
+
+**There was no race.** No shared resource, no ordering assumption — the suite opens no connection, binds no
+port, writes no file. And the hypothesis I carried in ("passes in isolation ⇒ contention") was itself
+wrong: the first isolated run *failed* at 10011 ms with nothing else running, and the two that followed
+passed only because the caches were by then warm. **Isolation was never the variable** — the same error
+shape as the two retractions.
+
+Fixed by hoisting the imports into `beforeAll` (~30× margin, was 1.6×), mutation-tested three ways, with
+the flake-vs-leak discriminator written into the file so no future session re-derives it. **M-EG3 is the
+one worth carrying:** I wrote a factual claim into a comment, verified it instead of trusting it, and it
+was **false** — a failing `beforeAll` reports `Tests 6 skipped`, not 6 failed. The habit that caught it is
+the same one that should have prevented both retractions.
+
+### Evidence
+
+Hosted CI on the exact head `6509e0e`: run **31803210130**, all 11 steps green, **4153 passed (4153), zero
+skips**. The same suite locally is 2484 passed / 1669 skipped, PostgreSQL being unreachable here — which is
+precisely why the hosted run is the only evidence that counts. The new production-build step ran in ~33s
+and emitted its full route table.
+
+### Standing, all owner-gated — do not start
+
+ACBP-API-006 (blocked on **P2-011**), **P7-006**, everything in `OWNER-ACTION-PACK.md`, PRs **#86** and
+**#10**, and all frontend/UI work under the FRONTEND/UI standing instruction at the top of this file.
+PR **#106** is draft and awaits the owner. Branch `p8-api-006-cdr` carries CDR-090 (partial) and has no PR.
+
+C: 38.9 GB free.

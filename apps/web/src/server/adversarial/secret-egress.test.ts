@@ -94,7 +94,49 @@ function sentinelsIn(surface: string): string[] {
   return SENTINELS.filter((s) => surface.includes(s.canary)).map((s) => s.id);
 }
 
-beforeAll(() => {
+/**
+ * Every route module, imported ONCE in `beforeAll` and swept from here by the test below.
+ *
+ * WHY THE IMPORTS ARE NOT IN THE TEST BODY — ACBP-API-007, and this is a fix for a measured defect rather than a
+ * tidying. The sweep used to `await import()` each route module inside the test, which charged the resolution,
+ * transform and evaluation of EVERY route module and its whole dependency graph against vitest's 10s
+ * `testTimeout`. Measured 2026-08-14 (a dated snapshot, not a live invariant — the counts move as routes are
+ * added, which is itself half the point) across 37 route modules exporting 45 handlers:
+ *
+ *     module loading   2153 ms warm / 6245 ms cold        ← was inside the budget
+ *     the actual sweep  303 ms for all 45 handlers        ← the behaviour under test
+ *
+ * So ~88% of the budget was spent on work this suite does not assert anything about, and that work is the part
+ * whose cost depends on machine state (OS page cache, vite transform cache, CPU contention from parallel
+ * workers). The observed failure was worse than the cold figure above — a timeout at 10027 ms, i.e. the loading
+ * cost had roughly quadrupled against its warm baseline under load. It is also the part that GROWS: the route
+ * count went 25 → 37 in one session, moving a fixed cost up ~44% against a fixed 10s ceiling. That is the whole
+ * mechanism behind the intermittent red — a budget sized for one workload, silently spent on another. There was
+ * never a shared resource, a race or an ordering assumption involved; this suite opens no database connection,
+ * binds no port and writes no file, so there is nothing here to contend over.
+ *
+ * Hoisting it here puts module loading under the hook's own timeout (below, where a hang is the only failure it
+ * can report) and leaves the test body ~300 ms against 10s — roughly a 30× margin instead of 1.6×. The sweep
+ * itself is unchanged: same modules, same handlers, same assertions.
+ *
+ * TELLING A FLAKE FROM A LEAK, recorded so no future session re-derives it. Three distinguishable reds:
+ *
+ *   1. A LEAK names its handler. The failure is `expect(leaks)` and reads `METHOD file → status carrying:
+ *      <sentinel id>`. Deterministic, reproduces in isolation, and is the only one of the three that means a
+ *      secret reached an HTTP surface. Treat it as an incident.
+ *   2. A TIMEOUT with no assertion output — no handler named, nothing swept — was the historical flake, and this
+ *      change is what removed its cause. It is no longer an expected outcome under any load: the body now runs
+ *      in ~300 ms against 10s, so a timeout would mean a ~30× regression, i.e. a genuine hang. Diagnose, do not
+ *      dismiss.
+ *   3. A FAILED SUITE with six SKIPPED tests is the harness, not the product — an import or config failure in
+ *      the hook below. See the note there; the banner names the module and line.
+ *
+ * The short form: red that names a handler is always a leak; red that names none never is, and which of the
+ * other two it is can be read off whether any test ran at all.
+ */
+const ROUTE_MODULES = new Map<string, Record<string, unknown>>();
+
+beforeAll(async () => {
   // Loaded BEFORE any route module is imported: the config composition is a lazily-built singleton, so a value
   // set after the first import would never be read and this suite would pass by accident.
   process.env['APP_ENV'] = 'test';
@@ -107,7 +149,35 @@ beforeAll(() => {
   process.env['CLERK_WEBHOOK_SIGNING_SECRET'] = canaryFor('webhookSigningSecret');
   process.env['CLERK_WEBHOOK_INSTANCE_ID'] = 'ins_egress_probe';
   process.env['INFISICAL_CLIENT_SECRET'] = canaryFor('infisicalClientSecret');
-});
+
+  // ONLY NOW are the route modules loaded — in this same hook, after the assignments above, so the ordering the
+  // comment at the top of this hook depends on is enforced by statement order rather than by hook-declaration
+  // order.
+  //
+  // ONE HONEST COST OF THE HOIST, MEASURED RATHER THAN ASSUMED — the first version of this comment said an
+  // import failure "fails the suite outright, exactly as before", and that was simply false. What actually
+  // happens when an import here throws (verified by pointing this path at a non-existent directory):
+  //
+  //     Test Files  1 failed (1)          ← the run IS red, and `pnpm run check` fails with it
+  //     Tests       6 skipped (6)         ← NOT 6 failed. Every test in the block reports as SKIPPED.
+  //     exit code 1, under a "Failed Suites 1" banner naming the module and this line.
+  //
+  // Before the hoist an import failure was ONE FAILED TEST. It is now a failed FILE with six skipped tests, and
+  // in this repository that distinction is load-bearing: "skipped is not green" is a lesson already paid for
+  // more than once, and anything reading a per-TEST failure count rather than the file result would see zero
+  // failures here. Accepted rather than worked around, because the exit code and the banner are unambiguous and
+  // an unexplained jump of six skips is itself a signal worth chasing. Written down so the next reader does not
+  // have to rediscover it mid-incident.
+  for (const file of discoverRouteFiles()) {
+    ROUTE_MODULES.set(
+      file,
+      (await import(/* @vite-ignore */ `../../app/${file.replace(/\.ts$/, '.js')}`)) as Record<string, unknown>,
+    );
+  }
+  // A generous, EXPLICIT budget: this hook does bounded I/O whose duration is a property of the machine, and the
+  // only failure worth reporting here is a true hang. It is not a mask for the old timeout — the assertion budget
+  // it was masking is now ~300 ms of real work, and that one keeps vitest's default.
+}, 120_000);
 
 describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser response (ACBP-P7-007; CDR-080)', () => {
   // ── THE ANTI-VACUITY CONTROL ───────────────────────────────────────────────────────────────────────────────
@@ -142,6 +212,13 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
   test('every exported HTTP method of every route module answers WITHOUT emitting a secret', async () => {
     const files = discoverRouteFiles();
     expect(files.length, 'no route modules were discovered — the walk is broken, not the tree').toBeGreaterThan(0);
+    // Hoisting the imports into `beforeAll` opened a NEW way for this sweep to cover less than the tree: a map
+    // populated only partially would still let every loop below pass. Nothing in the loop can notice that, so pin
+    // the loaded set to the discovered set here. This assertion exists because of the hoist, not despite it.
+    expect(
+      [...ROUTE_MODULES.keys()].sort(),
+      'beforeAll loaded a different set of route modules than the walk discovered — the sweep is incomplete',
+    ).toEqual([...files].sort());
 
     const leaks: string[] = [];
     const exercised: string[] = [];
@@ -150,11 +227,7 @@ describe('TRUST-CRITICAL #15 — no Secret-wrapped value reaches a browser respo
     const answered: string[] = [];
     const threw: string[] = [];
 
-    for (const file of files) {
-      const mod = (await import(/* @vite-ignore */ `../../app/${file.replace(/\.ts$/, '.js')}`)) as Record<
-        string,
-        unknown
-      >;
+    for (const [file, mod] of ROUTE_MODULES) {
       for (const method of HTTP_METHODS) {
         const handler = mod[method];
         if (typeof handler !== 'function') continue;
