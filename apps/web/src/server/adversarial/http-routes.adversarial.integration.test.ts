@@ -430,6 +430,136 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   });
 
   /**
+   * CDR-089 §4 — the two run reads join this matrix (ACBP-API-003).
+   *
+   * THIS BLOCK SEEDS, AND SO IT MAKES THE STRONGER CLAIM. `task_runs` seeds from a task and tasks seed
+   * standalone, so a foreign run PROVABLY EXISTS here and is still invisible. The roadmap, artifact and
+   * approvals blocks could only prove refusal at company scope — their tables need decision/run chains — and
+   * they say so. This one has no such excuse, which is exactly why CDR-089 §4 committed it to the stronger form
+   * before any of it was written.
+   *
+   * `failure_category` is applied by UPDATE, never at insert: its insert type is `never`, because a run cannot
+   * be BORN failed — it has to fail. The compiler caught that in the core suite and the same rule holds here.
+   */
+  describe('CDR-089 — run reads', () => {
+    let runRoute: ParamRoute<{ companyId: string; runId: string }>;
+    let taskRunsRoute: ParamRoute<{ companyId: string; taskId: string }>;
+    let taskInA = '';
+    let runInB = '';
+
+    beforeAll(async () => {
+      runRoute = await import('../../app/api/companies/[companyId]/runs/[runId]/route.js');
+      taskRunsRoute = await import('../../app/api/companies/[companyId]/tasks/[taskId]/runs/route.js');
+    });
+
+    beforeEach(async () => {
+      // Nested, because the parent suite truncates before EVERY test (§4.1). A run seeded in `beforeAll` would
+      // be gone before the first assertion — the trap that cost slice 1 three CI cycles.
+      const a = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountA, company_id: w.companyA1, title: 'A task', created_by_user_id: w.aOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      taskInA = a.id;
+      const bTask = await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: 'B task', created_by_user_id: w.bOwner })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      const bRun = await owner.kysely
+        .insertInto('task_runs')
+        .values({ account_id: w.accountB, company_id: w.companyB1, task_id: bTask.id, attempt: 1, state: 'failed' })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      runInB = bRun.id;
+      expect(runInB, 'fixture guard: the foreign run must exist before any negative runs').toBeTruthy();
+    });
+
+    const getRun = async (companyId: string, runId: string): Promise<{ status: number; body: string }> => {
+      const res = await runRoute.GET(new Request(`https://app.test/api/companies/${companyId}/runs/${runId}`), { params: Promise.resolve({ companyId, runId }) });
+      return { status: res.status, body: await res.text() };
+    };
+    const listRuns = async (companyId: string, taskId: string): Promise<{ status: number; body: string }> => {
+      const res = await taskRunsRoute.GET(new Request(`https://app.test/api/companies/${companyId}/tasks/${taskId}/runs`), { params: Promise.resolve({ companyId, taskId }) });
+      return { status: res.status, body: await res.text() };
+    };
+
+    test('G-cross — B\'s run is unreachable via B AND when its id is smuggled into A', async () => {
+      await signInAs(w.aOwner);
+      expect((await getRun(w.companyB1, runInB)).status, 'read into B').not.toBe(200);
+      // The sub-resource attack: a company the caller DOES hold, but a run id belonging to another one.
+      const smuggled = await getRun(w.companyA1, runInB);
+      expect(smuggled.status, "B's run id smuggled into A").not.toBe(200);
+      expect(smuggled.body, 'must not leak the foreign run id').not.toContain(runInB);
+    });
+
+    test('G-oracle(a) — COMPANY granularity: foreign vs unknown, byte-identical on both routes', async () => {
+      await signInAs(w.aOwner);
+      for (const [name, call] of [
+        ['run detail', (id: string) => getRun(id, runInB)],
+        ['task runs', (id: string) => listRuns(id, taskInA)],
+      ] as const) {
+        const foreign = await call(w.companyB1);
+        const unknown = await call(UNKNOWN_UUID);
+        expect(foreign.status, `${name}: identical status`).toBe(unknown.status);
+        expect(foreign.body, `${name}: identical body`).toBe(unknown.body);
+      }
+    });
+
+    test('G-oracle(b) — RUN granularity: a FOREIGN run id and an UNKNOWN one are byte-identical', async () => {
+      // Inside company A, which this caller legitimately holds, so the only variable is the sub-resource id.
+      await signInAs(w.aOwner);
+      const foreign = await getRun(w.companyA1, runInB);
+      const unknown = await getRun(w.companyA1, UNKNOWN_UUID);
+      expect(foreign.status, 'identical status').toBe(unknown.status);
+      expect(foreign.body, 'identical body').toBe(unknown.body);
+    });
+
+    test('CDR-089 §3 — an UNKNOWN task and a task with NO RUNS agree, at the HTTP boundary too', async () => {
+      // The core suite pins this at the use-case level; this pins it at the wire, where a future route edit could
+      // reintroduce a 404 without touching core. Both must stay 200 with an empty list.
+      await signInAs(w.aOwner);
+      const empty = await listRuns(w.companyA1, taskInA);
+      const unknown = await listRuns(w.companyA1, UNKNOWN_UUID);
+      expect(empty.status).toBe(200);
+      expect(empty.body).toBe(unknown.body);
+    });
+
+    test('G-malformed — a malformed id in EITHER position never succeeds and never leaks', async () => {
+      await signInAs(w.aOwner);
+      for (const bad of MALFORMED) {
+        for (const [name, res] of [
+          ['runId', await getRun(w.companyA1, bad)],
+          ['companyId (run)', await getRun(bad, runInB)],
+          ['taskId', await listRuns(w.companyA1, bad)],
+        ] as const) {
+          expect(res.status, `${name} '${bad}' must not succeed`).not.toBe(200);
+          expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `${name} '${bad}' bounded envelope`).toEqual(['error']);
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'task_runs', w.companyB1, runInB]) {
+            expect(res.body.toLowerCase(), `${name} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
+          }
+        }
+      }
+    });
+
+    test('the DTO ALLOWLIST holds at the wire: no tenant id reaches a served run', async () => {
+      // The unit test proves the mapper on a literal row; the core suite proves it on a real row. This proves it
+      // through the ROUTE, so a future edit that bypassed the mapper would still be caught here.
+      await signInAs(w.aOwner);
+      const own = await owner.kysely
+        .insertInto('task_runs')
+        .values({ account_id: w.accountA, company_id: w.companyA1, task_id: taskInA, attempt: 1, state: 'succeeded' })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      const res = await getRun(w.companyA1, own.id);
+      expect(res.status, 'the caller can read their own run').toBe(200);
+      for (const secret of [w.accountA, w.companyA1]) {
+        expect(res.body, `${secret} is internal scoping and must not reach the wire`).not.toContain(secret);
+      }
+    });
+  });
+
+  /**
    * CDR-088 §4 — the roadmap edit joins this matrix. THE ONLY SLICE-2 ROUTE THAT WRITES.
    *
    * That changes what the matrix must assert. For the six read routes, a status code is the whole surface: there

@@ -104,6 +104,15 @@ export const AUTHZ_ACTIONS = [
   // tightening a one-line policy change instead of a refactor. REPEAT is deliberately NOT here: it mints a task,
   // which is exactly what `task:create` already authorizes (the `task:depend` folding precedent).
   'task:delete',
+  // Task-run reads (ACBP-API-003; CDR-089 §1). Its own action rather than folded into `task:read`, because a RUN
+  // carries execution detail a task does not — worker identity, attempt counts, failure categories, stop requests.
+  // Folding it in would make a future decision to restrict execution internals (to owners, or to operators) a
+  // refactor of every task read instead of a policy edit, which is the same argument `task:delete` makes above.
+  //
+  // THE CONDITION UNDER WHICH THIS SHOULD BE REVERSED IS STATED SO IT CAN BE CHECKED: if review finds no case in
+  // which `run:read` and `task:read` could ever be granted differently, a separate action that can never differ is
+  // ceremony, and this one should be folded. The burden is on this action to earn its name.
+  'run:read',
   // Strategy option generation (ACBP-P3-001; CDR-034 §4; STRAT-001/002). `strategy:generate` covers generation +
   // request-another; `strategy:read` lists the options. Both owner|viewer (any active member drives the flow, like
   // understanding:generate). The owner-only SELECTION gate is STRAT-003/P3-004's separate action.
@@ -298,6 +307,10 @@ const POLICY: Record<AuthzAction, readonly AuthzRole[]> = {
   // RUN trigger (planned→queued) is a later ticket's separate action.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
+  // Task-run reads (ACBP-API-003; CDR-089 §1): owner|viewer, MATCHING task:read until a reason to narrow appears.
+  // Granting it more narrowly today would invent a requirement canon does not state — a member who can see the
+  // task can see how it ran. The action exists separately so that narrowing stays a one-line policy edit.
+  'run:read': ['owner', 'viewer'],
   // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create. Canon scopes TASK-008 to "Company-scoped"
   // and says nothing about role, so restricting it to the owner would invent a requirement — and a member who may
   // create work should be able to withdraw it. The deletion is append-only and audited, so nothing is destroyed.

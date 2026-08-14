@@ -67,6 +67,7 @@ import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, delet
 import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
 import { getLatestRoadmap, type RoadmapReadParams, type RoadmapGenerationOptions, type LatestRoadmapResult } from '../planning/roadmap-generation.js';
 import { editRoadmap, type EditRoadmapParams, type RoadmapEditOptions, type EditRoadmapResult } from '../planning/roadmap-edit.js';
+import { getTaskRun, listTaskRuns, type GetTaskRunParams, type GetTaskRunResult, type ListTaskRunsParams, type ListTaskRunsResult, type RunReadOptions } from '../runs/run-read.js';
 import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
 // `TaskOptions` lives in task-management.ts, NOT task-controls.ts — task-controls declares a local alias that is
 // not exported, so importing it from there fails to compile rather than silently binding the wrong type.
@@ -224,6 +225,8 @@ export interface ClerkIdentityRuntime {
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
+  getTaskRun(params: GetTaskRunParams, options?: RunReadOptions): Promise<GetTaskRunResult>;
+  listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   /** Close the owned database client (no-op when a client was injected). */
@@ -364,6 +367,12 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     // loose, so the slot is spelled out rather than defaulted.
     editRoadmap(params, options) {
       return editRoadmap(client, params, {}, options ?? {});
+    },
+    getTaskRun(params, options) {
+      return getTaskRun(client, params, options ?? {});
+    },
+    listTaskRuns(params, options) {
+      return listTaskRuns(client, params, options ?? {});
     },
     recordStrategySelection(params, options) {
       return recordStrategyDecision(client, params, options ?? {});

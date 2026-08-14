@@ -11,7 +11,7 @@ import { createLogger, createRootContext, type Logger } from '@acbp/observabilit
 import type { RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -72,6 +72,11 @@ export type CompaniesRequestResult =
     }
   | { readonly status: 'stale_version' }
   | { readonly status: 'decision_rejected' }
+  // CDR-089. The run DTO is an ALLOWLIST built in core, so this layer forwards it rather than re-shaping it —
+  // re-mapping here would create a second field list to keep in step with `task_runs`, which is exactly the
+  // drift the allowlist exists to prevent.
+  | { readonly status: 'run'; readonly run: Extract<GetTaskRunResult, { status: 'ok' }>['run'] }
+  | { readonly status: 'runs'; readonly runs: Extract<ListTaskRunsResult, { status: 'ok' }>['runs'] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
   | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
 
@@ -123,6 +128,8 @@ export interface CompanyRuntime {
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
+  getTaskRun(params: GetTaskRunParams, options?: RunReadOptions): Promise<GetTaskRunResult>;
+  listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
 }
@@ -686,6 +693,50 @@ export async function editRoadmapForRequest(
     case 'invalid':
       // The domain validated and refused; nothing was persisted, and no field is echoed back.
       return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The roadmap edit was rejected.', retryable: false } };
+  }
+}
+
+/**
+ * One run's detail (CDR-089; `run:read` → owner + viewer, enforced in `@acbp/core`).
+ *
+ * NO AUTHORIZATION CHECK HERE — CDR-088 §1, which CDR-089 inherits. Core decides from the company role.
+ *
+ * `not_found` stays DISTINCT from `forbidden`: company-level refusal versus run-level. Within each granularity a
+ * foreign id and an unknown one are indistinguishable, enforced by RLS rather than by a decision in this layer —
+ * which is why CDR-089 §5 spends no mutation runs on it.
+ */
+export async function getTaskRunForRequest(companyId: string, runId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.getTaskRun({ userId: ctx.userId, accountId: ctx.accountId, companyId, runId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'run', run: r.run };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+  }
+}
+
+/**
+ * Every run of one task, newest first (CDR-089; `run:read`).
+ *
+ * TWO arms only — there is NO `not_found`, and that is CDR-089 §3 rather than an omission. `listForTask` cannot
+ * distinguish an unknown task from a task with no runs; both are an empty list. Inventing a 404 here would claim
+ * a distinction the query does not make. A caller needing that difference reads the task, which has its own.
+ */
+export async function listTaskRunsForRequest(companyId: string, taskId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.listTaskRuns({ userId: ctx.userId, accountId: ctx.accountId, companyId, taskId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'runs', runs: r.runs };
+    case 'forbidden':
+      return { status: 'forbidden' };
   }
 }
 
