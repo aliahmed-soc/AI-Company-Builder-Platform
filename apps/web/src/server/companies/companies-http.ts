@@ -139,6 +139,16 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { lineage: result.lineage });
     case 'approvals':
       return jsonResponse(200, { approvals: result.approvals });
+    case 'task_deleted':
+      return jsonResponse(200, { taskId: result.taskId, stateAtDelete: result.stateAtDelete });
+    // 409, not 400: the request was well-formed and authorized, but conflicts with the task's current state.
+    // Its own code, because "cancel it first" is a different instruction from "confirm it first".
+    case 'control_unavailable':
+      return jsonResponse(409, { error: 'control_unavailable', reason: result.reason });
+    // 409 as well, and DELIBERATELY not 400: the caller did not send a malformed request, they sent an
+    // unconfirmed one. A 400 would invite a retry with the same body; this names what is missing.
+    case 'confirmation_required':
+      return jsonResponse(409, { error: 'confirmation_required' });
     case 'run':
       return jsonResponse(200, { run: result.run });
     // An empty list is a 200 — CDR-089 §3. There is no not_found arm to map, and this layer must not invent a

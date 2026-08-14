@@ -71,7 +71,7 @@ import { getTaskRun, listTaskRuns, type GetTaskRunParams, type GetTaskRunResult,
 import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
 // `TaskOptions` lives in task-management.ts, NOT task-controls.ts — task-controls declares a local alias that is
 // not exported, so importing it from there fails to compile rather than silently binding the wrong type.
-import { getTaskDetail, type GetTaskDetailParams, type GetTaskDetailResult } from '../tasks/task-controls.js';
+import { getTaskDetail, deleteTask, type GetTaskDetailParams, type GetTaskDetailResult, type DeleteTaskParams, type DeleteTaskResult } from '../tasks/task-controls.js';
 import type { TaskOptions } from '../tasks/task-management.js';
 import { getArtifact, listRunArtifacts, type ArtifactDTO, type PersistArtifactOptions } from '../artifacts/persist.js';
 import { readArtifactLineage, type ReadLineageParams, type ReadLineageOptions, type ReadLineageResult } from '../artifacts/lineage.js';
@@ -225,6 +225,7 @@ export interface ClerkIdentityRuntime {
   readArtifactLineage(params: ReadLineageParams, options?: ReadLineageOptions): Promise<ReadLineageResult>;
   listApprovalInbox(params: ListApprovalInboxParams, options?: ApprovalServiceOptions): Promise<ListApprovalInboxResult>;
   editRoadmap(params: EditRoadmapParams, options?: RoadmapEditOptions): Promise<EditRoadmapResult>;
+  deleteTask(params: DeleteTaskParams, options?: TaskOptions): Promise<DeleteTaskResult>;
   getTaskRun(params: GetTaskRunParams, options?: RunReadOptions): Promise<GetTaskRunResult>;
   listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
@@ -367,6 +368,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     // loose, so the slot is spelled out rather than defaulted.
     editRoadmap(params, options) {
       return editRoadmap(client, params, {}, options ?? {});
+    },
+    deleteTask(params, options) {
+      return deleteTask(client, params, options ?? {});
     },
     getTaskRun(params, options) {
       return getTaskRun(client, params, options ?? {});
