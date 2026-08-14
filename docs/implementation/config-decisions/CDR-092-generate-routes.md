@@ -153,6 +153,58 @@ Reusing 429 for both would make an automated client retry a request that cannot 
 
 ---
 
+## §7.5 — Implementation map (traced 2026-08-15; slice 3 starts here)
+
+Recorded because tracing it was most of the work, and because it revealed a layer §1 did not anticipate.
+
+**The routes do not call the use cases directly.** Every existing route follows one shape
+(`apps/web/src/server/companies/companies-request.ts`):
+
+```
+const runtime = await runtimeOf(deps);              // memoized ClerkIdentityRuntime
+const ctx = await resolveActorWithAccount(deps, runtime);
+if ('kind' in ctx) return ctx.result;               // unauthenticated / rate_limited / …
+const r = await runtime.editRoadmap({ userId, accountId, companyId, … }, {});
+switch (r.status) { … }                             // domain result → CompaniesRequestResult
+```
+
+So the four generate use cases must first be **bound onto the runtime** in
+`packages/core/src/composition/clerk-identity.ts`, each with a gateway from `createAnthropicGateway`. **That
+binding is the money-touching step**, not the route files: it is where the paid provider is attached to a use
+case, and it is the first place in this repository where that has ever happened. It deserves its own review
+attention, separately from the HTTP plumbing above it.
+
+**What already exists and does NOT need building:**
+- `rate_limited` is already in the `CompaniesRequestResult` union and already maps to **429 + `Retry-After`**
+  (`companies-http.ts:262`, via `rateLimitedResponse`, which floors the header at 1 second).
+- `resolveActorWithAccount` already returns the throttle outcome, so the per-SESSION ceiling already applies.
+
+**What is genuinely new:**
+1. A `budget_exhausted` arm on the result union → **402, and deliberately no `Retry-After`** (§4). This is the
+   whole of §6.4's distinguishability: same envelope, different status, and the *presence or absence* of
+   `Retry-After` is the second signal a caller can branch on without parsing a body.
+2. The **company** limiter call — distinct from the session one already in `resolveActorWithAccount` — whose
+   `throttled` outcome must return before the use case is invoked.
+3. Four request-layer functions and four route files.
+4. The coverage checker (§6, and see below).
+
+### The checker, and the vacuity trap it has to avoid
+
+Model on `tools/check-rate-limit-coverage.mjs`, which already walks route imports transitively to prove every
+handler reaches `verified-identity.ts`. The generate-route analogue must prove each reaches **both**
+`checkAuthorization` and the company limiter.
+
+**It must not be written before the routes exist.** A checker that discovers zero generate routes and reports
+success is the exact artefact the standing rule in `AUTONOMOUS-RUN-LOG.md` warns about — a check that could not
+have told you otherwise. It therefore lands in the same commit as the routes, and it needs a floor assertion
+(`expect(discovered.length).toBeGreaterThanOrEqual(4)`) so an empty walk fails loudly, exactly as the
+secret-egress SOURCE GUARD does.
+
+**Reachability is necessary but not sufficient**, and this is the subtle half: a route that *imports* the limiter
+and ignores its result passes a transitive-import walk. Proving the result is *consulted* needs either an AST
+check (the call's result must reach a branch) or a behavioural test per route. Decide which before building —
+the import walk alone would reproduce P6-010's shipped-but-unread ceiling while appearing to guard against it.
+
 ## §7 — ⚠️ The PROVISIONAL markers, and where they live
 
 The owner's instruction: the estimates must be impossible to forget. They are marked in **three** places, and a
