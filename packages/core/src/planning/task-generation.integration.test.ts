@@ -240,9 +240,11 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
     expect(await tasksFor()).toHaveLength(0);
   });
 
-  test('authz: a viewer MAY plan; a non-member is forbidden', async () => {
+  test('authz: a viewer is REFUSED (PM ruling 2026-08-14); a non-member is forbidden', async () => {
+    // NARROWED by ACBP-API-004: `task:generate` is owner-only. "They are only DRAFTS" was the strongest argument
+    // for keeping viewers here, and it still loses — a draft costs the same metered model call as anything else.
     await seedChain('whole_plan');
-    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('ok');
+    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
     expect((await generateTasks(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
   });
 

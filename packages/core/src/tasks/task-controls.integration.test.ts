@@ -284,11 +284,15 @@ describe.skipIf(!hasTestDatabase)('task detail + controls (real PostgreSQL, rest
   });
 
   // ── authorization + isolation ──────────────────────────────────────────────────────────────────────────
-  test('a VIEWER may repeat and delete; a non-member is forbidden and learns nothing', async () => {
+  test('a VIEWER may repeat but is REFUSED delete (PM ruling 2026-08-14); a non-member is forbidden and learns nothing', async () => {
+    // NARROWED by ACBP-API-004: `task:delete` is owner-only. REPEAT is NOT narrowed and stays a member action —
+    // it mints a task, which is what `task:create` already authorizes, and minting work is not destroying it.
+    // Keeping both in one test pins the SPLIT: a future change that narrows repeat, or widens delete, has to
+    // edit a line that states the distinction rather than quietly flipping a boolean.
     const forViewer = await taskInState('failed');
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
-    expect((await repeatTask(product, { ...viewer, taskId: forViewer })).status).toBe('ok');
-    expect((await deleteTask(product, { ...viewer, taskId: forViewer, confirmed: true })).status).toBe('ok');
+    expect((await repeatTask(product, { ...viewer, taskId: forViewer })).status, 'repeat mints work — still a member action').toBe('ok');
+    expect((await deleteTask(product, { ...viewer, taskId: forViewer, confirmed: true })).status, 'delete destroys planning work — owner only').toBe('forbidden');
 
     const outsider = { userId: w.outsider, accountId: w.accountA, companyId: w.companyA1 };
     const target = await taskInState('failed');

@@ -103,9 +103,18 @@ describe.skipIf(!hasTestDatabase)('strategy recommendation (real PostgreSQL, res
     expect((await recommendStrategy(product, { ...base(), generationId: foreign }, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('not_found');
   });
 
-  test('authz: a viewer MAY recommend; a non-member is forbidden', async () => {
+  test('authz: a viewer is REFUSED (PM ruling 2026-08-14); a non-member is forbidden', async () => {
+    // NARROWED by the ACBP-API-004 PM ruling: `strategy:recommend` is owner-only. A viewer READS; commissioning a
+    // recommendation spends account budget on a model call, and that is an owner action.
+    //
+    // THIS ASSERTION WAS INVERTED DELIBERATELY, not bent to make a red build green. It previously asserted the
+    // viewer MAY recommend, which was correct under the old grant. The ruling changed the intended behaviour, so
+    // the test changes with it — and this comment exists so a later reader sees a decision rather than a fix.
+    //
+    // It is also the test that corrected me: I claimed the narrowing broke nothing, having read a LOCAL run where
+    // this suite is skipIf-gated and skipped. Hosted CI ran it and disagreed. Skipped is not green.
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
-    expect((await recommendStrategy(product, viewer, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('ok');
+    expect((await recommendStrategy(product, viewer, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
     expect((await recommendStrategy(product, nonMember, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
   });

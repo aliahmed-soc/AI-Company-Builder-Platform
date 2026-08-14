@@ -53,17 +53,19 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Task model (ACBP-P4-002; CDR-033): create/plan + read = any active company member.
   'task:create': ['owner', 'viewer'],
   'task:read': ['owner', 'viewer'],
-  // Task deletion (ACBP-P4-005; CDR-043): owner|viewer, matching create — canon says company-scoped, not owner-only.
-  'task:delete': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004): NARROWED to owner-only. A viewer reads; destroying planning work is an
+  // owner action. Restated here as a SECOND decision — this file does not import the matrix, so narrowing five
+  // grants required changing them in two places deliberately. That is the property, not friction.
+  'task:delete': ['owner'],
   // Task-run reads (ACBP-API-003; CDR-089 §1): owner|viewer, matching task:read. Restated here INDEPENDENTLY of
   // the matrix — this file deliberately does not import it, so a new action cannot be granted without a second,
   // separate decision. That is why adding `run:read` broke collection until this line was written.
   'run:read': ['owner', 'viewer'],
-  // Strategy option generation (ACBP-P3-001; CDR-034): generate/request-another + read = any active company member.
-  'strategy:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004): metered GENERATION is owner-only — each call spends account budget.
+  // READ stays owner|viewer: narrowing who may commission work does not narrow who may see it.
+  'strategy:generate': ['owner'],
   'strategy:read': ['owner', 'viewer'],
-  // Advisory AI recommendation (ACBP-P3-003; CDR-036): owner|viewer (advisory; owner-only selection is P3-004).
-  'strategy:recommend': ['owner', 'viewer'],
+  'strategy:recommend': ['owner'],
   // Owner strategy decision (ACBP-P3-004; CDR-037): owner-only.
   'strategy:select': ['owner'],
   // Immutable decision record (ACBP-P3-005; CDR-038; STRAT-006): owner-only.
@@ -71,11 +73,13 @@ const EXPECTED: Record<AuthzAction, readonly AuthzRole[]> = {
   // Revision requests (ACBP-P5-012; CDR-064 G5): owner-only, per API-CONTRACTS.md:55 "Member (read), owner (revise)".
   'artifact:revise': ['owner'],
   // Planning (ACBP-P4-001; CDR-039; ROAD-001/002): generate/read are member actions; the versioned EDIT is owner-only.
-  'roadmap:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004): roadmap GENERATION narrowed to owner-only; read and edit unchanged.
+  'roadmap:generate': ['owner'],
   'roadmap:read': ['owner', 'viewer'],
   'roadmap:edit': ['owner'],
-  // Task planning (ACBP-P4-003; CDR-040; PLAN-001/002): generate-class member action; drafts are not board work.
-  'task:generate': ['owner', 'viewer'],
+  // PM RULING 2026-08-14 (ACBP-API-004): narrowed to owner-only. "They are only drafts" was the strongest case
+  // for keeping viewers here, and it still loses — a draft costs the same metered generation call.
+  'task:generate': ['owner'],
   // Durable job enqueue (ACBP-P5-001a; CDR-049): OWNER-only, the deliberately tighter of the two readings.
   'job:enqueue': ['owner'],
   // Step execution (ACBP-P5-001b; CDR-050): owner-only, same reading as enqueue.
