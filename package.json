@@ -12,6 +12,7 @@
   "scripts": {
     "typecheck": "pnpm -r exec tsc --noEmit",
     "lint": "eslint .",
+    "build": "pnpm --filter @acbp/web build",
     "check:secrets": "node tools/check-secrets.mjs",
     "check:encoding": "node tools/check-encoding.mjs",
     "check:boundaries": "node tools/check-boundaries.mjs",

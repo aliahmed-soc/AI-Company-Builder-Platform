@@ -97,6 +97,30 @@ jobs:
         run: pnpm run check:secrets
       - name: Aggregate gate (typecheck, lint, secret scan, boundaries + regression, contracts, unit, real-PostgreSQL integration + migrations)
         run: pnpm run check
+      # ACBP-API-007 — THE PRODUCTION BUILD. Until this step existed, `apps/web` was the one deliverable this
+      # pipeline never constructed: every gate above could be green against a web app that does not build.
+      #
+      # IT RUNS THE PROJECT'S OWN SCRIPT, NEVER `next build`. That is the entire point rather than a style
+      # preference. `apps/web` pins `next build --webpack`, and Next 16 defaults to Turbopack, which cannot
+      # resolve this repository's workspace barrel re-exports (`next.config.ts:31`). During ACBP-API-003 I ran
+      # `pnpm exec next build`, bypassed the pin, and reported a broken build on `main` that was not broken —
+      # then "confirmed" it by repeating the same wrong command. A step that invokes the script cannot make that
+      # mistake, and a root `build` script exists so there is one canonical entry point to invoke.
+      #
+      # WHY HERE AND NOT EARLIER. The proposal asked for it after typecheck and lint, because a type error reads
+      # more clearly than the bundler failure it would also cause. Those two live INSIDE the aggregate gate above
+      # alongside the test suite, so "after typecheck, before the tests" is not a position this workflow has
+      # without splitting that step. Placed after it instead — the ordering the proposal wanted, at the cost of
+      # waiting out the tests. Noted rather than silently reinterpreted.
+      #
+      # IT NEEDS NO SECRETS AND NO DATABASE. Verified before adding: the build completes on a bare environment
+      # with neither Clerk key and no `DATABASE_APP_URL` (exit 0, ~24s locally). So this step preserves the
+      # header's claim that the workflow uses no repository secrets.
+      #
+      # A RED HERE REPORTS THE STATE OF THE DIFF, not the state of the world — the opposite of the advisory gate
+      # below, which has twice reddened branches that changed no dependency. Do not treat the two the same way.
+      - name: Production build (apps/web; the project's --webpack-pinned script, never bare `next build`)
+        run: pnpm run build
       # ACBP-P1-015 acceptance criterion ("Demo script passes E2E incl. live denial") and its verification
       # procedure ("Run demo script"). The journey is shared with the CI suite, but running the SCRIPT is what
       # proves the artifact the backlog names is actually executable — a demo that only ever ran on someone's
