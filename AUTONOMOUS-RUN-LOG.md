@@ -2264,3 +2264,44 @@ ACBP-API-006 (blocked on **P2-011**), **P7-006**, everything in `OWNER-ACTION-PA
 PR **#106** is draft and awaits the owner. Branch `p8-api-006-cdr` carries CDR-090 (partial) and has no PR.
 
 C: 38.9 GB free.
+
+---
+
+## STANDING RULE (adopted 2026-08-15, ACBP-API-008) — ask whether the check could have told you otherwise
+
+**Before treating any green result as evidence, ask one question: could a wrong implementation have produced
+this same green?** If the answer is no — if the check would have passed whatever the truth was — it is not
+evidence, and neither is anything you concluded from it.
+
+This is not a general exhortation to be careful. It is the single failure mode behind **five** separate wrong
+conclusions in one session, each of which looked exactly like a passing check:
+
+| The check | Why it could not have failed |
+| --- | --- |
+| "Narrowing those grants broke no behavioural test" | The four relevant suites are `skipIf`-gated and had **skipped**. A skipped suite cannot report a break. |
+| "The build is broken on `main`" | `pnpm exec next build` bypasses the `--webpack` pin, so Turbopack could never succeed here. Running it twice was not corroboration. |
+| "M-AP9 survived — the guard has a coverage gap" | The mutation never applied; a here-string failed to match. An **unmutated file passes trivially**. |
+| "None of the generate use cases is exported" | Grepping `index.ts` for names that `export *` never writes. The grep could only ever say "not found". |
+| "The fail-closed guard is mutation-proven" | There was **no unit test for that service at all**. Nothing existed that a mutation could kill. |
+
+Two of these were caught only because something else forced a second look; the others were caught by asking this
+question deliberately. The pattern is that a green result and a meaningless result are visually identical — the
+transcript looks the same either way, which is why "I checked" is not the same as "I have evidence".
+
+**How to apply it, concretely:**
+
+- **Mutation testing:** never trust a survival without proving the mutation landed. Assert the file differs on
+  disk *and* contains the replacement, then run. `scratchpad/mutate.ps1` in this ticket does exactly this and
+  refuses to report a verdict otherwise. A survival is a claim about your tests; an unapplied mutation is a claim
+  about nothing.
+- **Absence claims** ("X is not exported", "nothing uses Y", "no test covers Z"): verify with an anchor that
+  *fails when the claim is false* — resolve the import, run the call, delete the thing and watch something break.
+  A name-grep is the weakest possible instrument for an absence claim, because indirection defeats it silently.
+- **Suites that can skip:** `skipped` is not `passed`. Read the totals, not the exit code. This repository's
+  real-PG suites skip whenever local PostgreSQL is unreachable, which is nearly always.
+- **Any command with a project script:** run the script, not your reconstruction of it. A wrapper usually exists
+  because a bare invocation is wrong.
+- **Before writing a guard is "proven":** confirm a test exists that fails without it. If you cannot name the
+  test, it is not proven — it is merely present.
+
+The rule generalises past testing: it applies to any claim of the form "I checked and it was fine."
