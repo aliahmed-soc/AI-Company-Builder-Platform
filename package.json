@@ -59,7 +59,8 @@
     "check:static": "pnpm run typecheck && pnpm run lint && pnpm run check:secrets && pnpm run check:encoding && pnpm run check:boundaries && pnpm run check:reset-lists && pnpm run check:conflict-targets && pnpm run check:approval-port && pnpm run check:stop-port && pnpm run check:usage-kind-predicate && pnpm run check:migration-drain-loops && pnpm run check:trust-critical-index && pnpm run check:csv-shape && pnpm run check:duplicate-exports && pnpm run check:failure-scenario-index && pnpm run check:scenario-evidence && pnpm run check:csrf-origin-gate && pnpm run check:rate-limit-coverage && pnpm run test:boundaries",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm run check:static && pnpm run test"
+    "check": "pnpm run check:static && pnpm run test",
+    "demo:live-generation": "tsx tools/demo/live-generation.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
