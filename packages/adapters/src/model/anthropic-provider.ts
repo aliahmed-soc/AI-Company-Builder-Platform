@@ -35,6 +35,33 @@ export const ANTHROPIC_PROVIDER_NAME = 'anthropic';
  */
 export const ANTHROPIC_CLIENT_TIMEOUT_MS = 60_000;
 
+/**
+ * The beta header an OAuth-authenticated request must carry (CDR-091 §5).
+ *
+ * Not optional: `/v1/messages` rejects a Bearer token without it. It is endpoint-dependent — a few endpoints
+ * happen to work without it — so it is sent unconditionally on the OAuth branch rather than per-call, so nothing
+ * breaks when a different endpoint is reached later.
+ */
+export const OAUTH_BETA_HEADER = 'oauth-2025-04-20';
+
+/** The two credential classes Anthropic issues. They authenticate differently and are NOT interchangeable. */
+export type CredentialKind = 'api_key' | 'oauth';
+
+/**
+ * Which auth scheme a credential wants, decided by shape.
+ *
+ * WHY SHAPE AND NOT CONFIGURATION: making the operator declare the class is one more thing to get wrong, and the
+ * failure it produces is actively misleading — an OAuth token sent as `x-api-key` returns `"API key is invalid."`,
+ * which reads as a typo rather than a scheme mismatch (measured; CDR-091 §5). The token itself already carries
+ * the answer unambiguously.
+ *
+ * UNRECOGNISED SHAPES ARE TREATED AS AN API KEY. That is the historical behaviour and the only default that keeps
+ * working if Anthropic introduces a new API-key prefix; guessing `oauth` would break every real key on a rename.
+ */
+export function classifyCredential(credential: string): CredentialKind {
+  return credential.startsWith('sk-ant-oat') ? 'oauth' : 'api_key';
+}
+
 /** The narrow slice of the SDK this adapter uses. Declared structurally so tests can inject a stub. */
 export interface AnthropicMessagesClient {
   readonly messages: {
@@ -116,6 +143,16 @@ function normalizeSdkError(err: unknown): PlatformError {
   return new PlatformError('internal', { internalMessage, ...cause });
 }
 
+/**
+ * The live Anthropic provider.
+ *
+ * ⚠️ THE OAUTH BRANCH IS UNVERIFIED AGAINST A LIVE ENDPOINT. The API-key path has never made a successful call
+ * either — no credential has been available — but the OAuth path carries the extra risk that its shape was
+ * derived from documentation rather than observed. What IS measured (CDR-091 §5) is the negative: an
+ * `sk-ant-oat…` token sent as `x-api-key` returns `"API key is invalid."`, and the same token under `Bearer`
+ * returns a different, accurate error. So the ROUTING is grounded in evidence; the success path is not.
+ * Treat a first live OAuth call as a test, not as a regression check.
+ */
 export class AnthropicModelProvider implements ModelProvider {
   readonly #client: AnthropicMessagesClient;
   readonly #timeoutMs: number;
@@ -134,8 +171,15 @@ export class AnthropicModelProvider implements ModelProvider {
     // usage event carrying only the final attempt's tokens while the provider billed every attempt, and the two
     // layers would multiply: 3 SDK attempts x 3 gateway attempts = up to NINE paid calls for one generation.
     // The gateway's bounded retry is the only retry layer in this system. Enforced by test, not by this comment.
+    // The credential decides the auth scheme (CDR-091 §5). EXACTLY ONE of `apiKey`/`authToken` is ever set:
+    // the SDK sends a header for each it holds, and a request carrying two auth schemes is rejected outright.
+    // The OAuth branch is unverified against a live endpoint — see the class doc comment.
+    const credential = options.apiKey.reveal();
+    const scheme = classifyCredential(credential);
     const clientOptions: Record<string, unknown> = {
-      apiKey: options.apiKey.reveal(),
+      ...(scheme === 'oauth'
+        ? { authToken: credential, defaultHeaders: { 'anthropic-beta': OAUTH_BETA_HEADER } }
+        : { apiKey: credential }),
       maxRetries: 0,
       timeout: this.#timeoutMs,
     };

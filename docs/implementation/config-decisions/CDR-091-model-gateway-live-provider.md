@@ -250,10 +250,27 @@ mismatch — it reports `"API key is invalid."`**, which reads as "wrong key" an
 rather than at the credential class. Second, the differing message under `Bearer` is what identified the token as
 revoked; a single-scheme probe would have left both facts ambiguous.
 
-**If the OAuth path is ever wanted** (no long-lived secret on disk), it is a contained change: an `authToken`
-branch in `AnthropicModelProvider` setting `Authorization: Bearer` and the beta header, plus a test pinning that
-an `sk-ant-oat…` value is NEVER sent as `x-api-key`. Deliberately not built on speculation — it cannot be
-verified without a live token, and an unverifiable auth path is the kind of thing that looks finished and is not.
+### The OAuth branch — BUILT, and what "built" does and does not mean here
+
+`AnthropicModelProvider` now routes on credential shape: `classifyCredential` returns `oauth` for `sk-ant-oat…`
+and `api_key` for everything else, and the client is constructed with **exactly one** of `authToken` (plus
+`anthropic-beta: oauth-2025-04-20`) or `apiKey`. Never both — the SDK sends a header for each credential it
+holds, and a request carrying two auth schemes is rejected outright.
+
+Routing on shape rather than on a config flag is deliberate: a declared class is one more thing to get wrong, and
+the failure it produces is the misleading `"API key is invalid."` above. The token already carries the answer.
+An unrecognised prefix falls back to `api_key`, which is the only default that survives Anthropic introducing a
+new API-key shape; defaulting to `oauth` would break every real key on a rename.
+
+**⚠️ THE SUCCESS PATH IS UNVERIFIED.** No credential of either class has ever completed a call from this
+repository. What is evidence-backed is the **routing**, and only its negative half — the measured 401s in the
+table above establish that an OAuth token must not go to `x-api-key`. That an OAuth token *does* succeed under
+`Bearer` + this beta header is taken from documentation, not observation.
+
+Mutation-proven guards (raising any of these must fail the suite): routing an `sk-ant-oat…` token to `apiKey`
+(M-AP5), setting both credentials at once (M-AP6), and dropping the beta header (M-AP7). Those prove the code
+does what it claims — they do not prove Anthropic accepts the result. **Treat the first live OAuth call as a
+test, not as a regression check.**
 
 ### Operator note — writing the key on Windows
 

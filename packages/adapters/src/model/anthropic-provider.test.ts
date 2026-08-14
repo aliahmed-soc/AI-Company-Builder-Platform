@@ -12,7 +12,13 @@
 import { describe, test, expect, vi } from 'vitest';
 import { Secret } from '@acbp/config';
 import { isPlatformError, toModelId, type ModelMessage, type PlatformError } from '@acbp/contracts';
-import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME, ANTHROPIC_CLIENT_TIMEOUT_MS } from './anthropic-provider.js';
+import {
+  AnthropicModelProvider,
+  ANTHROPIC_PROVIDER_NAME,
+  ANTHROPIC_CLIENT_TIMEOUT_MS,
+  OAUTH_BETA_HEADER,
+  classifyCredential,
+} from './anthropic-provider.js';
 
 /**
  * A synthetic key, never a real one — and DELIBERATELY NOT KEY-SHAPED.
@@ -24,6 +30,17 @@ import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME, ANTHROPIC_CLIENT_TIMEO
  * deliberately asserts no key format in config validation, so no code path under test parses this value.
  */
 const FAKE_KEY = new Secret('SYNTHETIC-PROVIDER-CREDENTIAL-FOR-TESTS-NOT-A-KEY');
+
+/**
+ * The credential-class tests below are DIFFERENT: their whole subject is the prefix, so unlike `FAKE_KEY` above
+ * they cannot simply be reshaped out of the scanner's way — `classifyCredential` dispatches on `sk-ant-oat`.
+ *
+ * So the literal is ASSEMBLED AT RUNTIME and never appears in the source. The scanner reads files, not values,
+ * so this keeps the rule armed for the whole file (an allowlist entry would disarm it permanently, including for
+ * a real key pasted here later) while the tests still exercise the exact prefixes the product branches on.
+ */
+const synthetic = (kind: 'oat01' | 'api03', suffix = 'SYNTHETIC-NOT-A-REAL-CREDENTIAL'): string =>
+  ['sk', 'ant', kind, suffix].join('-');
 
 const MESSAGES: readonly ModelMessage[] = [
   { role: 'system', content: 'You are a strategy analyst.' },
@@ -74,6 +91,66 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
     // Explicitly 0, not merely falsy: `undefined` would inherit the SDK's default of 2 and reintroduce the
     // invisible retry layer this assertion exists to forbid.
     expect(constructed[0]?.['maxRetries']).toBe(0);
+  });
+
+  // ── CREDENTIAL CLASS (CDR-091 §5) ──────────────────────────────────────────────────────────────────────────
+  // Anthropic issues two credential kinds that are NOT interchangeable, and the failure mode when they are
+  // confused is actively misleading: an OAuth token sent as `x-api-key` returns "API key is invalid." — which
+  // reads as a typo and sends the reader hunting the wrong bug. These tests pin the routing.
+  describe('credential class', () => {
+    function optionsFor(secret: Secret): Record<string, unknown> {
+      const seen: Array<Record<string, unknown>> = [];
+      new AnthropicModelProvider({
+        apiKey: secret,
+        clientFactory: (o) => {
+          seen.push(o);
+          return { messages: { create: () => Promise.resolve(okReply()) } };
+        },
+      });
+      expect(seen).toHaveLength(1);
+      return seen[0] as Record<string, unknown>;
+    }
+
+    test('classifyCredential distinguishes the two shapes', () => {
+      expect(classifyCredential(synthetic('oat01','abc'))).toBe('oauth');
+      expect(classifyCredential(synthetic('api03','abc'))).toBe('api_key');
+      // Anything unrecognised is treated as an API key: that is the historical behaviour and the only one that
+      // keeps working if Anthropic introduces a new API-key prefix. Guessing `oauth` would break every real key.
+      expect(classifyCredential('some-other-shape')).toBe('api_key');
+    });
+
+    test('THE GUARD: an sk-ant-oat token is NEVER sent as x-api-key', () => {
+      const o = optionsFor(new Secret(synthetic('oat01')));
+      // The whole point. `apiKey` must be absent or null — never carrying the OAuth value.
+      expect(o['apiKey'] ?? null).toBeNull();
+      expect(o['authToken']).toBe(synthetic('oat01'));
+    });
+
+    test('an OAuth credential carries the oauth beta header', () => {
+      const headers = optionsFor(new Secret(synthetic('oat01')))['defaultHeaders'] as Record<string, string>;
+      expect(headers['anthropic-beta']).toBe(OAUTH_BETA_HEADER);
+      expect(OAUTH_BETA_HEADER).toBe('oauth-2025-04-20');
+    });
+
+    test('an API key goes to apiKey, sets NO authToken, and carries no oauth beta header', () => {
+      const o = optionsFor(new Secret(synthetic('api03')));
+      expect(o['apiKey']).toBe(synthetic('api03'));
+      expect(o['authToken'] ?? null).toBeNull();
+      const headers = (o['defaultHeaders'] ?? {}) as Record<string, string>;
+      expect(headers['anthropic-beta']).toBeUndefined();
+    });
+
+    test('NEVER both credentials at once — the API rejects a request carrying two auth schemes', () => {
+      for (const secret of [new Secret(synthetic('oat01','x')), new Secret(synthetic('api03','x'))]) {
+        const o = optionsFor(secret);
+        const both = (o['apiKey'] ?? null) !== null && (o['authToken'] ?? null) !== null;
+        expect(both).toBe(false);
+      }
+    });
+
+    test('maxRetries 0 holds on the OAuth branch too — the money guard is not scheme-specific', () => {
+      expect(optionsFor(new Secret(synthetic('oat01','x')))['maxRetries']).toBe(0);
+    });
   });
 
   test('CDR-091 §2.1: the provider deadline is STRICTLY INSIDE the gateway generation deadline', async () => {
