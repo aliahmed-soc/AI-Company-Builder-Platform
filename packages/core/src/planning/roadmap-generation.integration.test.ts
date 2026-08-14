@@ -199,11 +199,14 @@ describe.skipIf(!hasTestDatabase)('roadmap generation (real PostgreSQL, restrict
     expect((await sql<{ n: number }>`select count(*)::int as n from tasks where company_id = ${w.companyA1}::uuid`.execute(owner.kysely)).rows[0]!.n).toBe(0);
   });
 
-  test('authz: a viewer MAY generate and read; a non-member is forbidden on both', async () => {
+  test('authz: a viewer may READ but is REFUSED generation (PM ruling 2026-08-14); a non-member is forbidden on both', async () => {
+    // NARROWED by ACBP-API-004: `roadmap:generate` is owner-only, `roadmap:read` is NOT. That split is the whole
+    // point of the ruling — narrowing who may COMMISSION a plan does not narrow who may SEE it — so this test now
+    // pins both halves in one place, which is where a future widening would have to argue with itself.
     await seedDecision('select');
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
-    expect((await generateRoadmap(product, viewer, { gateway: okGateway() })).status).toBe('ok');
-    expect((await getLatestRoadmap(product, viewer)).status).toBe('ok');
+    expect((await generateRoadmap(product, viewer, { gateway: okGateway() })).status).toBe('forbidden');
+    expect((await getLatestRoadmap(product, viewer)).status, 'reading the plan is still a member action').toBe('ok');
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };
     expect((await generateRoadmap(product, nonMember, { gateway: okGateway() })).status).toBe('forbidden');
     expect((await getLatestRoadmap(product, nonMember)).status).toBe('forbidden');
