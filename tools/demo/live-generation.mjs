@@ -20,13 +20,34 @@ import { toModelId } from '@acbp/contracts';
 // Node does NOT auto-load `.env.local`; without this the script would refuse even with the key correctly placed,
 // which is exactly what happened on the first attempt. Searched in order and the FIRST hit wins. Only the one
 // variable is read — nothing else in the file is imported into the process, and the value is never printed.
+/**
+ * Read a text file, honouring its BYTE ORDER MARK.
+ *
+ * A `.env` written on Windows is very often NOT UTF-8: PowerShell 5.1's `>>` and `Out-File` default to UTF-16 LE,
+ * so the file begins `FF FE` and every character is followed by a NUL byte. Decoded as UTF-8 that is unmatchable
+ * garbage — the key is present, the loader reports "not found", and the two facts flatly contradict each other.
+ * This cost a round trip on ACBP-API-006, from a command this repo's own docs handed the operator.
+ */
+function decodeTextFile(file) {
+  const raw = readFileSync(file);
+  if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) return raw.subarray(2).toString('utf16le');
+  if (raw.length >= 2 && raw[0] === 0xfe && raw[1] === 0xff) {
+    // UTF-16 BE: Node has no decoder, so byte-swap into LE rather than fail on a file that is perfectly readable.
+    const swapped = Buffer.from(raw.subarray(2));
+    swapped.swap16();
+    return swapped.toString('utf16le');
+  }
+  if (raw.length >= 3 && raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf) return raw.subarray(3).toString('utf8');
+  return raw.toString('utf8');
+}
+
 function keyFromEnvFiles() {
   const roots = [process.cwd(), path.resolve(process.cwd(), '..'), 'E:/AI-Company-Builder-Platform'];
   for (const root of roots) {
     for (const name of ['.env.local', '.env']) {
       const file = path.join(root, name);
       if (!existsSync(file)) continue;
-      for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+      for (const line of decodeTextFile(file).split(/\r?\n/)) {
         const m = /^\s*(?:export\s+)?ANTHROPIC_API_KEY\s*=\s*(.*)$/.exec(line);
         if (m === null) continue;
         // Strip surrounding quotes and any trailing comment a hand-edited file may carry.
