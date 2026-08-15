@@ -2,16 +2,21 @@
 
 Read this in full before touching anything. This file is **process**, not
 status. For what's actually true right now, read
-`docs/agent/PROJECT-STATE.md`, `docs/agent/AUTONOMOUS-RUN-LOG.md`, and
-`BACKLOG.csv` — those are the living record. This file doesn't get
-rewritten every session; it gets rewritten when a rule genuinely changes.
+`docs/agent/PROJECT-STATE.md`, `AUTONOMOUS-RUN-LOG.md`, and
+`docs/implementation/BACKLOG.csv` — those are the living record. This file
+doesn't get rewritten every session; it gets rewritten when a rule
+genuinely changes.
 
 This is the canonical standing-rules document. `CLAUDE.md` is a pointer
 to this file and carries no rules of its own — there is exactly one place
 to check, so the two can't drift apart.
 
-The owner's product plan and context live at: `[owner: fill in path]`.
-Read that before your first ticket. It is not repeated here.
+The owner's product plan and context start at
+`product-specification/README.md`. It states what is approved and what is
+still draft, and points to `MASTER-PRD-v1.md` (the plan itself) and
+`REQUIREMENTS.csv` (the canonical requirement registry, and the
+tie-breaker whenever any other presentation of a requirement drifts from
+it). Read those before your first ticket. They are not repeated here.
 
 ---
 
@@ -25,7 +30,7 @@ Read that before your first ticket. It is not repeated here.
   palette, or layout unprompted
 - Entering payment details, creating accounts, or authenticating as the
   owner anywhere
-- Anything listed in `OWNER-ACTION-PACK.md`
+- Anything listed in `docs/implementation/OWNER-ACTION-PACK.md`
 - Widening any permission, scope, or default beyond an existing
   **recorded** ruling — a past ruling only covers what it actually
   decided, never a similar-looking new situation
