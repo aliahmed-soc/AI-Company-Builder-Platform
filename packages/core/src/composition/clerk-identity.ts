@@ -66,6 +66,19 @@ import { createMemoryItem, listMemoryItems, editMemoryItem, getMemoryItem, delet
 // authorization for each lives inside the use case, not here and not at the route (CDR-087 §1).
 import { getLatestStrategyGeneration, type StrategyReadParams, type StrategyGenerationOptions, type LatestStrategyResult } from '../strategy/strategy-generation.js';
 import { getLatestRoadmap, type RoadmapReadParams, type RoadmapGenerationOptions, type LatestRoadmapResult } from '../planning/roadmap-generation.js';
+// ── ACBP-API-008 slice 3a — THE FOUR METERED GENERATE USE CASES ──────────────────────────────────────────────
+// These are the only entries here that cause a PAID provider call. Everything above reads or writes the
+// database; these four spend money, which is why their gateway is built the way it is (see `modelGateway`).
+import { generateStrategyOptions, type GenerateStrategyParams, type GenerateStrategyResult } from '../strategy/strategy-generation.js';
+import { recommendStrategy, type RecommendStrategyParams, type StrategyRecommendationOptions, type RecommendStrategyResult } from '../strategy/strategy-recommendation.js';
+import { generateRoadmap, type GenerateRoadmapParams, type GenerateRoadmapResult } from '../planning/roadmap-generation.js';
+import { generateTasks, type GenerateTasksParams, type TaskPlanningOptions, type GenerateTasksResult } from '../planning/task-generation.js';
+import { createAnthropicGateway } from './anthropic-gateway.js';
+// `ModelGateway` is declared per-module rather than in `@acbp/contracts` — six modules each declare a
+// structurally identical function type. Imported from one of the four consumers here, deliberately, so this
+// binding cannot drift from the shape the use cases actually accept.
+import type { ModelGateway } from '../strategy/strategy-generation.js';
+import type { ModelProviderConfig } from '@acbp/config';
 import { editRoadmap, type EditRoadmapParams, type RoadmapEditOptions, type EditRoadmapResult } from '../planning/roadmap-edit.js';
 import { getTaskRun, listTaskRuns, type GetTaskRunParams, type GetTaskRunResult, type ListTaskRunsParams, type ListTaskRunsResult, type RunReadOptions } from '../runs/run-read.js';
 import { getTaskBoard, type GetTaskBoardParams, type TaskBoardOptions, type GetTaskBoardResult } from '../tasks/task-board.js';
@@ -99,11 +112,34 @@ export interface ClerkIdentityRuntimeConfig {
   readonly clerkConfig: ClerkConfig;
   /** Required expected Clerk instance id: the read-through providerInstanceId (never browser-supplied). */
   readonly expectedInstanceId: string;
+  /**
+   * Model provider configuration for the four metered generate use cases (ACBP-API-008; CDR-092).
+   *
+   * OPTIONAL, AND THE OPTIONALITY IS A DELIBERATE DEPARTURE WORTH READING. `parseModelProviderConfig` throws
+   * when `ANTHROPIC_API_KEY` is absent, and CDR-090 §1-G3 ruled that failure should be STARTUP-VISIBLE rather
+   * than a per-request surprise. Making this field REQUIRED would honour that literally — and would also mean a
+   * deployment with no model key cannot serve ANY route, including the 36 that never touch a model.
+   *
+   * That consequence was not evaluated when §1-G3 was written, because the gateway had nowhere to live yet. So
+   * this takes the safer, reversible reading: absence disables the four metered calls and nothing else. A
+   * composition root that WANTS the strict behaviour still gets it by calling `parseModelProviderConfig` at
+   * boot and passing the result — the startup check remains available, it is simply no longer mandatory.
+   *
+   * ⚠️ FLAGGED FOR AN OWNER RULING (CDR-092 §9). Switching to required is a one-line change if the owner
+   * prefers the strict reading; this is not a settled decision being restated.
+   */
+  readonly modelProviderConfig?: ModelProviderConfig;
 }
 
 export interface ClerkIdentityRuntimeDeps {
   /** Inject a database client (e.g. in tests, or to share one pool); production creates its own. */
   readonly client?: DatabaseClient;
+  /**
+   * Inject a model gateway — the TEST SEAM for the four metered use cases, and the reason no test in this
+   * repository has ever made a paid call. When present it is used verbatim and `modelProviderConfig` is never
+   * consulted, so a fake gateway cannot accidentally fall through to a real provider.
+   */
+  readonly modelGateway?: ModelGateway;
 }
 
 /**
@@ -230,6 +266,14 @@ export interface ClerkIdentityRuntime {
   listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
+  // ── THE METERED FOUR (ACBP-API-008; CDR-092) ────────────────────────────────────────────────────────────────
+  // Each of these spends real money per call — the only four entries on this runtime that do. Each throws
+  // `MODEL_GATEWAY_NOT_CONFIGURED` when no model provider is configured: never a silent no-op, and never a
+  // fabricated result.
+  generateStrategyOptions(params: GenerateStrategyParams, options?: StrategyGenerationOptions): Promise<GenerateStrategyResult>;
+  recommendStrategy(params: RecommendStrategyParams, options?: StrategyRecommendationOptions): Promise<RecommendStrategyResult>;
+  generateRoadmap(params: GenerateRoadmapParams, options?: RoadmapGenerationOptions): Promise<GenerateRoadmapResult>;
+  generateTasks(params: GenerateTasksParams, options?: TaskPlanningOptions): Promise<GenerateTasksResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -237,6 +281,36 @@ export interface ClerkIdentityRuntime {
 export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, deps: ClerkIdentityRuntimeDeps = {}): ClerkIdentityRuntime {
   const ownsClient = deps.client === undefined;
   const client = deps.client ?? createDatabase(config.databaseConfig);
+
+  /**
+   * The gateway for the four metered use cases — built AT MOST ONCE, and only when one of them is called.
+   *
+   * MEMOIZED, so the provider and its client are not rebuilt per request; and LAZY, so composing this runtime
+   * never touches model configuration. An injected `deps.modelGateway` short-circuits entirely, which is how
+   * every test in this repository drives these four without a credential.
+   *
+   * THROWS rather than returning a null gateway. A use case handed `undefined` would fail somewhere deeper,
+   * with a message about a missing method rather than a missing credential — and the four callers all spend
+   * money, so the failure must name its actual cause at the point of the decision.
+   */
+  let gatewayCache: ModelGateway | undefined;
+  function modelGateway(): ModelGateway {
+    if (deps.modelGateway !== undefined) return deps.modelGateway;
+    if (gatewayCache !== undefined) return gatewayCache;
+    if (config.modelProviderConfig === undefined) {
+      // No key material is read, named, or echoed — only the fact of its absence and what to do about it.
+      throw new Error(
+        'MODEL_GATEWAY_NOT_CONFIGURED: this runtime was composed without modelProviderConfig, so the metered ' +
+          'generate use cases cannot run. Pass parseModelProviderConfig(env) when composing, or inject a ' +
+          'modelGateway in tests. Read-only routes are unaffected by this (CDR-092 §9).',
+      );
+    }
+    gatewayCache = createAnthropicGateway(client, {
+      apiKey: config.modelProviderConfig.apiKey,
+      modelId: config.modelProviderConfig.modelId,
+    });
+    return gatewayCache;
+  }
   const verifier = new ClerkIdentityWebhookVerifier({ config: config.clerkWebhookConfig });
   const reader = new ClerkAuthoritativeIdentityReader({ config: config.clerkConfig, expectedInstanceId: config.expectedInstanceId });
   const webhook = createIdentityWebhookService({ verifier, client });
@@ -383,6 +457,23 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     recordDecision(params, options) {
       return recordDecision(client, params, options ?? {});
+    },
+    // ── THE METERED FOUR (ACBP-API-008; CDR-092) ──────────────────────────────────────────────────────────
+    // `modelGateway()` is called INSIDE each method, not hoisted above them. That is the whole point: hoisting
+    // it would build (or fail to build) the gateway while composing the runtime, and this runtime serves every
+    // route in the application — so a deployment without a model key would lose its reads too. Reached only
+    // when a metered call is actually made.
+    async generateStrategyOptions(params, options) {
+      return generateStrategyOptions(client, params, { gateway: modelGateway() }, options ?? {});
+    },
+    async recommendStrategy(params, options) {
+      return recommendStrategy(client, params, { gateway: modelGateway() }, options ?? {});
+    },
+    async generateRoadmap(params, options) {
+      return generateRoadmap(client, params, { gateway: modelGateway() }, options ?? {});
+    },
+    async generateTasks(params, options) {
+      return generateTasks(client, params, { gateway: modelGateway() }, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});
