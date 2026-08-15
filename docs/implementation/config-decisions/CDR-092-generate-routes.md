@@ -220,3 +220,58 @@ The reason for three rather than one: a comment is read only by someone already 
 by someone looking for the decision, and `PROJECT-STATE` is read at the start of a session by someone who does
 not yet know either exists. A number that is wrong in production is wrong regardless of which of the three the
 next person happened to open.
+
+---
+
+## §9 — OWNER RULING 2026-08-15: lazy gateway construction + a non-fatal boot log
+
+**A refinement of CDR-090 §1-G3, explicitly NOT an override.** §1-G3 ruled that a missing model credential should
+fail visibly at startup rather than surprising a founder mid-request. That reasoning stands. What was not in view
+when it was written is the **blast radius**: the gateway's only home is the identity runtime, a single memoized
+object serving every route, so enforcing §1-G3 by construction would mean a deployment without a model key can
+serve **no route at all** — including the 32 that never touch a model.
+
+The ruling therefore keeps both properties instead of trading one for the other:
+
+1. **Serving stays lazy.** The gateway is built on first metered call and memoized. A missing key disables the
+   four metered routes and nothing else; a metered call without configuration rejects with
+   `MODEL_GATEWAY_NOT_CONFIGURED`, naming the cause and carrying no key material.
+2. **Startup stays visible.** The web composition root attempts `parseModelProviderConfig` at boot and logs at
+   **error level** when it is absent or unparseable — then continues. An operator sees the same signal §1-G3
+   wanted, at the same moment, without the availability cost.
+
+The log is deliberately error-level rather than warn: this is a real misconfiguration for any deployment meant
+to generate, and warn-level is where such lines go to be filtered out. It is equally deliberately non-fatal.
+
+---
+
+## §10 — ⚠️ THE 402 BRANCH IS DOCUMENTED BUT UNENFORCED — no code path can trigger it
+
+**Asked directly by the owner, and the honest answer is no.** Nothing in the four generate routes reserves or
+consumes a company's credit. Verified rather than recalled, 2026-08-15:
+
+- `strategy-generation.ts`, `strategy-recommendation.ts`, `roadmap-generation.ts`, `task-generation.ts` contain
+  **zero** references to credit, and zero to policy evaluation.
+- `packages/core/src/billing/credit-service.ts` exports `preflightRun`, `reserveCredit`, `settleRun` and
+  `readCreditLedger`. Its only non-test importers are the migration that created its table and
+  `policy-service.ts` — and `policy-service`'s single match is a **comment** mentioning `preflightRun`, not a
+  call. Every other importer is an integration test or a `test-support` journey.
+
+**Consequence, stated plainly: the 402 status CDR-091 §2.4 committed to has no trigger condition. It is
+unreachable in the shipped system.** The mapping exists and is correct; nothing can reach it, because nothing
+debits a company's balance on a generate call.
+
+This is recorded the way ACBP-P7-008 recorded its two unmeetable scenario rows: as a criterion **disclosed as
+not met**, not quietly dropped and not restated as if satisfied. **402 must not be reported as a functional
+guarantee** in any completion summary for this ticket.
+
+**Why wiring it is NOT in this ticket's scope.** Credit consumption is a preflight → reserve → call → settle
+sequence with idempotency at each step, on the exact path where defect D9 produced a double charge. That is the
+work the credit system's idempotency exists for, and it is a ticket of its own — attaching it to an HTTP-wiring
+slice would give a money path the review attention of a route change. **What §6.4 can honestly claim after
+Slice 3b is narrower: that 429 and 402 are distinguishable by status and by `Retry-After`'s presence.** That the
+402 arm is *reachable* is a separate claim, and it is currently false.
+
+**Follow-on ticket required** before any launch that meters generation: wire `preflightRun`/`reserveCredit`/
+`settleRun` into the four generate use cases, with the double-charge guard mutation-tested the way CDR-091 §3
+demanded of retry.

@@ -5,7 +5,7 @@
 // runtime holds one database client (pool); it is created lazily and reused across requests. Config is
 // loaded from the environment at this trusted server boundary (fails fast on invalid config).
 import { createClerkIdentityRuntime, type ClerkIdentityRuntime } from '@acbp/core';
-import { loadClerkConfig, loadClerkWebhookConfig, loadAppDatabaseConfig } from '@acbp/config';
+import { loadClerkConfig, loadClerkWebhookConfig, loadAppDatabaseConfig, parseModelProviderConfig, type ModelProviderConfig } from '@acbp/config';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
 
 let runtime: ClerkIdentityRuntime | undefined;
@@ -21,7 +21,35 @@ export function getClerkIdentityRuntime(): ClerkIdentityRuntime {
     // The expected instance id (read-through providerInstanceId) comes from configuration only; when
     // absent, the read-through provider call fails safe (unavailable) inside the adapter.
     const expectedInstanceId = clerkWebhookConfig.expectedInstanceId ?? '';
-    runtime = createClerkIdentityRuntime({ databaseConfig, clerkWebhookConfig, clerkConfig, expectedInstanceId });
+    // ── MODEL PROVIDER CONFIG (ACBP-API-008; CDR-092 §9 — owner ruling 2026-08-15) ──────────────────────────
+    // Parsed HERE, at composition, so a missing or unparseable ANTHROPIC_API_KEY is visible at startup — the
+    // property CDR-090 §1-G3 asked for. The failure is NON-FATAL, and that is the refinement: this runtime
+    // serves every route in the application, so a fatal model misconfiguration would take down the 32 routes
+    // that never touch a model along with the 4 that do.
+    //
+    // ERROR level, not warn: for any deployment meant to generate, this is a real misconfiguration, and warn is
+    // where such lines go to be filtered out. The record carries the FACT of absence and its consequence —
+    // never key material, and never the parser's message, which can quote the offending value.
+    let modelProviderConfig: ModelProviderConfig | undefined;
+    try {
+      modelProviderConfig = parseModelProviderConfig(process.env);
+    } catch {
+      createLogger({ component: 'composition', context: createRootContext() }).error('model_provider.not_configured', {
+        metadata: {
+          consequence: 'the four metered generate routes refuse with MODEL_GATEWAY_NOT_CONFIGURED',
+          unaffected: 'every read route',
+        },
+      });
+    }
+    runtime = createClerkIdentityRuntime({
+      databaseConfig,
+      clerkWebhookConfig,
+      clerkConfig,
+      expectedInstanceId,
+      // Spread rather than passing `undefined`: `exactOptionalPropertyTypes` rejects an explicit undefined for
+      // an optional property, and the absence is what the runtime branches on.
+      ...(modelProviderConfig === undefined ? {} : { modelProviderConfig }),
+    });
   }
   return runtime;
 }
