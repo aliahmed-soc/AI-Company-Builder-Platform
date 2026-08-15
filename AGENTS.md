@@ -11,6 +11,10 @@ This is the canonical standing-rules document. `CLAUDE.md` is a pointer
 to this file and carries no rules of its own — there is exactly one place
 to check, so the two can't drift apart.
 
+Model selection and reasoning-level routing are not covered here; they
+live in `.cursor/rules/model-routing.mdc`, which Cursor loads into every
+session automatically.
+
 The owner's product plan and context start at
 `product-specification/README.md`. It states what is approved and what is
 still draft, and points to `MASTER-PRD-v1.md` (the plan itself) and
@@ -283,3 +287,122 @@ message and pushed, the PR body reflects what actually happened, and
 hosted CI is green on the exact head — with zero skips for
 trust-critical database work. The §2 bar is part of this, not an
 alternative to it.
+
+## 18. Specification protection
+
+An approved product or architecture document is a controlled artifact,
+not a draft to reinterpret while implementing. Never:
+
+- change intended behavior without authorization
+- drop an acceptance criterion because it turned out to be difficult
+- weaken an approval or a security requirement
+- replace a server-side control with a frontend-only check, or show a
+  control in the UI that nothing enforces on the server
+- create a fake metric, integration, or success state, or mark
+  placeholder behavior production-ready
+- alter pricing, credit, billing, or usage semantics without an approved
+  decision
+- add an autonomous permission without explicit authorization
+
+When implementation reveals that a requirement is impossible, unsafe,
+contradictory, or disproportionately expensive, report it and propose
+options (§6) rather than quietly reshaping it. The same goes for scope:
+never reduce what was requested without saying so.
+
+## 19. External side effects
+
+Before anything leaves the system, answer all seven: is approval
+required; is the action reversible; does it need an idempotency key;
+could a retry duplicate it; must usage or billing be recorded; is an
+audit event required; must the user be told. A question you can't answer
+is a reason to stop, not a reason to proceed carefully.
+
+These hold throughout implementation, not just at review time: tenant
+isolation, least privilege, server-authoritative authorization,
+payload-bound authorization, auditability, idempotency, approval gates,
+secret redaction, evidence provenance, data ownership, usage accounting,
+safe retries, explicit failure states, and external-action limits.
+
+## 20. Change discipline
+
+- The smallest coherent set of files. Look for an existing pattern or
+  reusable component before adding one.
+- Read the relevant tests before changing behavior.
+- Preserve backward compatibility unless the ticket requires otherwise.
+- No unrelated cleanup, no reformatting files you didn't need to touch,
+  no broad dependency upgrades, and no infrastructure for scale nobody
+  has asked for.
+- A database change ships with a migration, defined rollback or
+  forward-recovery behavior, preserved tenant ownership, the constraints
+  and indexes it needs, and a test against existing data. Destructive
+  changes need explicit approval (§16).
+- An API or event contract change updates producers, consumers, schemas,
+  tests, and documentation together, and states the compatibility
+  consequences.
+
+## 21. Verification breadth
+
+Run the narrowest relevant check first — targeted unit and integration
+tests, typecheck, lint, schema and migration validation, build, browser
+or end-to-end — then expand according to risk and blast radius. Record
+every command and its result; §3 decides whether that result is
+evidence of anything.
+
+Trust-critical work needs negative tests, not only passing ones: another
+tenant cannot reach the resource; an unapproved action cannot execute;
+editing an approved payload invalidates the authorization; replaying a
+webhook does not double-count; retrying a job does not repeat an
+external action; revoking an integration stops execution; exceeding a
+policy limit blocks the action; an emergency stop prevents newly queued
+external actions; and secrets appear in no log, response, or error
+message.
+
+When a check cannot be run, name it, say why, state the uncertainty it
+leaves behind, and do not describe the work as verified (§23).
+
+## 22. Artifacts
+
+Every substantial task leaves something reusable in the repository: a
+specification, an architecture note, a decision record, code, a
+migration, a test suite, a validation report, a README update, a
+traceability entry, a runbook, or a risk-register entry. Never let the
+only important result live in a chat response, and report the exact path
+of everything created or materially changed.
+
+Specification artifacts carry version, status, evidence, assumptions,
+requirement IDs, open questions, and approval state. Implementation work
+references the requirement IDs it implements.
+
+## 23. Status: DONE, PARTIAL, BLOCKED
+
+- **DONE** — all requested scope complete, files created or updated,
+  acceptance criteria satisfied, relevant verification passed, nothing
+  material hidden, and any remaining risk non-blocking and named.
+- **PARTIAL** — useful work landed but some scope or some required
+  verification did not. Say precisely which parts are which.
+- **BLOCKED** — a decision, access, or resource is missing; continuing
+  would be unsafe; or a higher-authority conflict can't be resolved.
+  Name the blocker and the smallest action that clears it.
+
+Never DONE when a test failed, verification was skipped without
+explanation, requested scope is unfinished, placeholders remain in
+requested functionality, a known defect stands, the thing only works
+through hardcoded or faked behavior, or a frontend control exists
+without the backend enforcement behind it.
+
+## 24. The final handoff
+
+Every task ends with: the status (§23); a summary of what was
+accomplished, which requirement IDs it touched, what behavior changed,
+and what was decided; the files, with exact repository paths;
+verification as command, result, any failure or warning, and whether it
+was targeted or repository-wide; risks and assumptions; blockers or
+actions genuinely required from the owner; and a recommended next step
+only when one is actually necessary.
+
+The handoff has to be enough for another engineer or model to continue
+without reconstructing the work. It must not claim unsupported success,
+hide a failed test, omit a changed file or a load-bearing assumption,
+present partial work as complete, describe planned work as implemented,
+describe generated output as an executed action, or expose a secret. It
+is part of the deliverable, not optional reporting.
