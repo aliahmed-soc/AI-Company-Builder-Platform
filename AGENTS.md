@@ -39,11 +39,11 @@ it). Read those before your first ticket. They are not repeated here.
   **recorded** ruling — a past ruling only covers what it actually
   decided, never a similar-looking new situation
 - Even once `ANTHROPIC_API_KEY` exists in the environment, no
-live/paid call to the model may happen without the owner physically
-present and explicitly saying "run it" for that specific call —
-every time, not just the first time. This holds regardless of
-automation level, until the credit-reservation ledger is actually
-wired to the generate routes (tracked separately as ACBP-API-009)
+  live/paid call to the model may happen without the owner physically
+  present and explicitly saying "run it" for that specific call —
+  every time, not just the first time. This holds regardless of
+  automation level, until the credit-reservation ledger is actually
+  wired to the generate routes (tracked separately as ACBP-API-009)
 
 If the next Ready item needs one of these, **stop**. Don't substitute
 easier work silently, don't lower scope to dodge it, don't guess a
