@@ -2264,3 +2264,79 @@ ACBP-API-006 (blocked on **P2-011**), **P7-006**, everything in `OWNER-ACTION-PA
 PR **#106** is draft and awaits the owner. Branch `p8-api-006-cdr` carries CDR-090 (partial) and has no PR.
 
 C: 38.9 GB free.
+
+---
+
+## 2026-08-15 — three rule documents became one, and a cancelled CI run that was not a bug
+
+**Merged:** PR **#108**, squash **`fffd4de`**, 2026-08-15 22:03 UTC, branch `docs-agents-operating-rules`
+— deleted after the merge, and only after its tree was verified identical to the squash commit. Seven
+files: docs plus one new static check. No migration, no runtime code, no behaviour change.
+
+### What the problem actually was
+
+Standing rules lived in three places — `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules/model-routing.mdc`
+(with a second copy of that last one under `tooling/cursor-rules/`). Not three views of one rule set;
+three rule sets, already disagreeing. The clearest case: `.mdc` §2 and AGENTS.md §10 both defined the
+source-of-truth ladder, and they ranked differently, which is the one kind of conflict a reader cannot
+resolve on their own. The owner ruled that **AGENTS.md §10 governs**, and the `.mdc` now defers to it
+rather than restating it.
+
+`AGENTS.md` is now canonical. `CLAUDE.md` was reduced to a pointer after everything it said that
+AGENTS.md did not was folded in — including the no-`Co-Authored-By`-trailer rule, which this session
+had violated an hour earlier and had to amend out of its own commit. The `.mdc` was narrowed to what is
+genuinely Cursor configuration (identity, routing tiers, Codex handoff mechanics); its §§4-11 had become
+a verbatim second copy of AGENTS.md §§18-24 and were deleted, replaced by a subject → section table.
+
+Four stale paths in AGENTS.md were corrected against where the files actually live
+(`docs/agent/PROJECT-STATE.md`, `AUTONOMOUS-RUN-LOG.md`, `docs/implementation/BACKLOG.csv`,
+`docs/implementation/OWNER-ACTION-PACK.md`). The product-plan pointer names
+`product-specification/README.md` by owner choice, not by inference.
+
+### The one piece that is not documentation
+
+The two `.mdc` copies were required to be byte-identical, and nothing checked it — a requirement enforced
+by memory is a requirement that silently lapses. `tools/check-cursor-rules-sync.mjs` now runs inside
+`check:static`, fails on divergence and names the first differing byte offset, and exits **2** rather
+than 0 when it cannot see either directory, so a deleted target is never mistaken for agreement.
+`tools/tests/check-cursor-rules-sync.test.mjs` covers CRLF-vs-LF, BOM, truncation, orphaned copies and
+missing copies, and the comparator self-tests on every invocation.
+
+### Evidence
+
+| | |
+| --- | --- |
+| **Exact-head** | [`31908244769`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31908244769) on `55b2209`, attempt 2 — success |
+| **Exact-main** | [`31911124672`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31911124672) on `fffd4de` — success, all 11 steps green |
+| **Counts, both runs** | main suite **281 files / 4167 tests**; boundary suite **12 files / 267 tests** |
+| **Skips** | **zero** — no `skipped` segment on any Vitest summary line, behind the DB preflight step that fails the job if the real-PostgreSQL suites would not execute |
+| **New check in the gate** | `cursor-rules-sync check passed (1 rule file(s) byte-identical …). Comparator self-test passed.` |
+
+The boundary suite is reported separately because that is where the new check's regression tests live;
+267 is the count with them included.
+
+### The cancelled run, kept because the number is the point
+
+Attempt 1 of `31908244769` was **cancelled**, not failed: the job hit `timeout-minutes: 20` at 20m18s.
+The aggregate gate had already **passed**, at 19m06s — what died was the production-build step behind
+it. Re-running the same SHA with no code change put the gate at 9m32s. So: a ~2x environmental slowdown
+on the database-bound suites, not a regression, and the re-run is what proves it, since the input was
+byte-identical.
+
+**The headroom number: a healthy job is ~10m45s against a 20-minute cap.** Roughly half the budget is
+spare, which sounds comfortable and is not — one slow machine draw consumes all of it, and the failure
+mode is a *cancellation with a green gate inside it*, which reads like a real failure to anyone who
+does not open the step timings. Nothing was changed in response; the cap was left alone deliberately,
+because raising it hides the variance instead of measuring it. Recorded so the next occurrence is
+diagnosed in a minute rather than debugged for an hour.
+
+### Flagged, not fixed
+
+**ACBP-API-007 (`0d57144`, PR #106) has no DONE line in `PROJECT-STATE.md`, and the entry above this
+one still describes it as "DRAFT, awaiting the owner".** It merged. This is the same class of docs lag
+that a previous window had to correct for P6-007, and by `PROJECT-STATE.md`'s own rule — only the
+topmost ticket without a DONE line above it is in flight — a merged ticket is currently the one reading
+as open. Not fixed here: recording it needs its own exact-main run ID and counts, and this branch's
+approved scope is the #108 merge. It is a five-minute job for whoever picks it up next.
+
+C: 40.1 GB free.

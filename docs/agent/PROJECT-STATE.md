@@ -67,6 +67,39 @@ kept as historical detail (what was built, which commits, which gates). **The DO
 a "CORE DONE / FINALIZING" block below a DONE line for the same ticket is history, not an open item. Only the topmost
 ticket without a DONE line above it is genuinely in flight._
 
+- **DONE — AGENTS.md is the canonical standing-rules document, and the two Cursor rule copies are now guarded by a
+  check instead of by good intentions.** Squash **`fffd4de`**, PR **#108**, branch `docs-agents-operating-rules`
+  (deleted after merge; its tree was verified identical to the squash commit first). Docs plus one new static
+  check — **no migration, no runtime code, no behaviour change**. Exact-head CI
+  [`31908244769`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31908244769) on
+  `55b2209` (attempt 2, see the cancellation note below) and exact-main
+  [`31911124672`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31911124672) on
+  `fffd4de` report the same thing: main suite **281 files / 4167 tests**, boundary suite **12 files / 267 tests**,
+  **zero skips in either** — no `skipped` segment on any Vitest summary line, behind the DB preflight step that
+  fails the job if the real-PostgreSQL suites would silently skip.
+  - **`CLAUDE.md` no longer carries rules; it points here.** Everything in it that AGENTS.md did not already say
+    was folded in first — the no-`Co-Authored-By`-trailer rule among it — and the file now says only where the
+    rules live, so there is one document to check rather than two that can drift.
+  - **`.cursor/rules/model-routing.mdc` was narrowed to model and tool configuration** (identity, routing tiers,
+    Codex handoff mechanics). Its §§4-11 had become a second copy of AGENTS.md §§18-24 and were deleted, and its
+    source-of-truth ladder — which **contradicted** AGENTS.md §10 — now defers to §10 by owner ruling
+    (2026-08-15). A subject → AGENTS.md-section table replaces the removed prose.
+  - **The byte-identical requirement between `.cursor/rules/` and `tooling/cursor-rules/` is now enforced.**
+    `tools/check-cursor-rules-sync.mjs` runs inside `check:static`, fails on any divergence and names the first
+    differing byte offset; it exits `2` rather than `0` when it cannot see either directory, so a vanished target
+    is not read as agreement. `tools/tests/check-cursor-rules-sync.test.mjs` covers CRLF-vs-LF, BOM, truncation,
+    orphaned and missing copies, and the comparator self-tests on every run.
+  - Four stale paths in AGENTS.md were corrected to where the files actually live (`docs/agent/PROJECT-STATE.md`,
+    `AUTONOMOUS-RUN-LOG.md`, `docs/implementation/BACKLOG.csv`, `docs/implementation/OWNER-ACTION-PACK.md`), and
+    the product-plan pointer now names `product-specification/README.md` by owner choice.
+  - **A CI CANCELLATION THAT WAS NOT A DEFECT — and the headroom it exposed.** Attempt 1 of `31908244769` was
+    killed by the job's `timeout-minutes: 20` at 20m18s. **The aggregate gate itself PASSED**, at 19m06s; what
+    got cancelled was the production build behind it. Re-running the SAME SHA with no code change put the gate at
+    9m32s, so this was a ~2x environmental slowdown on database-bound tests, not a regression. The number worth
+    keeping: **a healthy job is ~10m45s against a 20-minute cap, so about half the budget is spare and one bad
+    machine draw eats all of it.** Nothing was changed in response — recorded so the next cancellation of this
+    shape is diagnosed rather than debugged.
+
 - **DONE — ACBP-API-005 task delete route (the one pure-exposure route of the held group).** Squash
   **`cf769bc`**, PR **#104**, CDR-less by owner ruling (reduced bar), **no migration**. Exact-head CI
   [`31763791529`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31763791529)
