@@ -25,8 +25,18 @@ export function isInterviewSessionState(value: unknown): value is InterviewSessi
   return typeof value === 'string' && (INTERVIEW_SESSION_STATES as readonly string[]).includes(value);
 }
 
-/** The state a newly-created session is minted with (server-selected). `startInterviewSession` then performs the
- *  real `not_started → in_progress` transition — a session is never inserted directly into `in_progress`. */
+/**
+ * The contract-level name for the `interview_sessions.state` column default (migration 0012) — the state a row
+ * takes when an INSERT omits `state`. It is NOT the state a started session is persisted in:
+ * `insertStartedIfAbsent`, the only writer that creates a session, applies the `not_started → in_progress` entry
+ * ATOMICALLY AT CREATION — it inserts `state: 'in_progress'` with `started_at = now()` rather than writing a
+ * `not_started` row and then issuing a separate UPDATE nothing would observe (CDR-022 §2).
+ *
+ * So `not_started` is a state the schema PERMITS but no production insert produces, and a reader should not treat
+ * `phase: 'not_started'` or `startedAt: null` as a case a screen will encounter. It remains a legal, guarded
+ * member of the transition map — and a permitted column value, admitted by the 0012 default and the
+ * `interview_sessions_started_shape` CHECK — held for a future auto-provisioning-on-activation trigger (CDR-022 §2).
+ */
 export const INITIAL_INTERVIEW_SESSION_STATE: InterviewSessionState = 'not_started';
 
 /**
@@ -104,7 +114,8 @@ export interface InterviewSessionDTO {
   readonly state: InterviewSessionState;
   /** Honest display phase derived from `state`. */
   readonly phase: InterviewDisplayPhase;
-  /** Set when the session first entered `in_progress`; null while still `not_started`. */
+  /** Set when the session first entered `in_progress`. Null only on a `not_started` row — which no production
+   *  insert produces, so this is not a case a screen will meet (see {@link INITIAL_INTERVIEW_SESSION_STATE}). */
   readonly startedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
