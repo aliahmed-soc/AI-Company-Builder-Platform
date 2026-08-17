@@ -1,0 +1,613 @@
+/*
+ * ACBP-FE-001 / FE-002 — console design tokens + shell styles.
+ *
+ * VISUAL LANGUAGE: Berry (CodedThemes), rebuilt natively. Berry is an MUI template; this repository adopts no
+ * CSS framework (ADR-023) and no component library, so nothing is imported from it — the language is rebuilt in
+ * plain CSS on this repo's own conventions. What is borrowed is the LOOK: deep indigo ground, raised cards with
+ * generous radius and soft shadows, a saturated primary, and restrained accent colours.
+ *
+ * DARK-FIRST, PER THE OWNER RULING 2026-08-15. Every colour is a token on :root, and :root is the dark theme —
+ * not a `.dark` override bolted onto a light base. Adding light later means redefining these same tokens inside
+ * one selector; no component rule needs to change, because no component rule names a colour literal.
+ *
+ * NOTE: ACBP-FE-001's backlog row carries the exclusion "No dark theme". The owner ruling supersedes it (owner
+ * decisions outrank the backlog in this repo's source priority) and the row is updated in the same commit rather
+ * than left contradicting the code.
+ */
+
+:root {
+  /* ── Ground and surfaces ─────────────────────────────────────────────────────────────────────────────── */
+  --c-bg: #0e1220;
+  --c-surface: #131a2e;
+  --c-surface-2: #1a2340;
+  --c-surface-3: #212c4e;
+  --c-border: #263154;
+  --c-border-soft: #1e2743;
+
+  /* ── Text ────────────────────────────────────────────────────────────────────────────────────────────── */
+  --c-text: #e6ebf7;
+  --c-text-dim: #9aa7c7;
+  --c-text-faint: #6c7999;
+
+  /* ── Brand + accents (Berry's saturated presets, tuned for a dark ground) ─────────────────────────────── */
+  --c-primary: #4c8dff;
+  --c-primary-soft: rgba(76, 141, 255, 0.14);
+  --c-secondary: #9575ff;
+  --c-secondary-soft: rgba(149, 117, 255, 0.14);
+  --c-success: #24d19b;
+  --c-success-soft: rgba(36, 209, 155, 0.14);
+  --c-warning: #ffc14d;
+  --c-warning-soft: rgba(255, 193, 77, 0.14);
+  --c-danger: #ff5c72;
+  --c-danger-soft: rgba(255, 92, 114, 0.14);
+
+  /* ── Shape and depth ─────────────────────────────────────────────────────────────────────────────────── */
+  --r-card: 14px;
+  --r-control: 10px;
+  --r-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.3), 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+
+  /* ── Rhythm ──────────────────────────────────────────────────────────────────────────────────────────── */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --sidebar-w: 254px;
+  --topbar-h: 64px;
+
+  /* Motion. Every duration flows through these, so the reduced-motion block below can zero them all at once. */
+  --t-fast: 140ms;
+  --t-base: 240ms;
+  --t-slow: 460ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── ACCESSIBILITY: honour prefers-reduced-motion globally ───────────────────────────────────────────────
+ * Not per-animation. Zeroing the duration tokens and disabling the entrance animations here means a component
+ * added later cannot forget to opt in — the default is already correct for a reader who asked for stillness. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+    --t-slow: 0ms;
+  }
+  .cs-rise,
+  .cs-stat {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── box-sizing ───────────────────────────────────────────────────────────────────────────────────────────
+ * THIS APP SHIPS NO CSS RESET, so `box-sizing` is the CSS default `content-box` and padding is ADDED to a
+ * declared width. Every `width: 100%` element with padding therefore overflowed its parent by exactly its
+ * horizontal padding — measured at 48px on desktop (2 × --s-5) and 32px at narrow widths (2 × --s-4). The
+ * page scrolled sideways and the right edge of every card was cut off, which reads as a bad screenshot crop
+ * rather than as a bug, so it survived several visual passes before a scrollWidth assertion named it.
+ *
+ * Scoped to the console subtree rather than declared on `*`: the root layout and the auth pages are outside
+ * this slice, and silently changing the box model under them would be a change nobody asked for. */
+.cs-root,
+.cs-root *,
+.cs-root *::before,
+.cs-root *::after {
+  box-sizing: border-box;
+}
+
+.cs-root {
+  background: var(--c-bg);
+  color: var(--c-text);
+  min-height: 100vh;
+  /* A soft, off-centre glow — Berry's cards read as "warm" because the ground is not flat black. */
+  background-image:
+    radial-gradient(1100px 520px at 78% -8%, rgba(76, 141, 255, 0.1), transparent 60%),
+    radial-gradient(820px 420px at 8% 4%, rgba(149, 117, 255, 0.08), transparent 62%);
+  background-attachment: fixed;
+}
+
+/* ── Skip link (FE-002 accessibility: skip-to-content) ───────────────────────────────────────────────────── */
+.cs-skip {
+  position: absolute;
+  left: -9999px;
+  top: var(--s-2);
+  z-index: 50;
+  background: var(--c-primary);
+  color: #06122b;
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-control);
+  font-weight: 650;
+}
+.cs-skip:focus {
+  left: var(--s-4);
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 100vh;
+}
+
+.cs-side {
+  border-right: 1px solid var(--c-border-soft);
+  background: linear-gradient(180deg, rgba(19, 26, 46, 0.92), rgba(14, 18, 32, 0.92));
+  padding: var(--s-4) var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.cs-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2) 0;
+}
+.cs-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: #06122b;
+  background: linear-gradient(135deg, var(--c-primary), var(--c-secondary));
+  box-shadow: 0 6px 18px -8px rgba(76, 141, 255, 0.9);
+}
+.cs-brand-name {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cs-brand-sub {
+  color: var(--c-text-faint);
+  font-size: 0.75rem;
+}
+
+/* Wrapper for a labelled group of nav items. It carries a CLASS rather than an inline margin so the
+   narrow-width rules below can flatten the groups into one scrolling strip — an inline style would win
+   over any media query and leave the groups stacked. */
+.cs-navgroup {
+  margin-top: var(--s-4);
+}
+.cs-navgroup-label {
+  color: var(--c-text-faint);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 0 var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.cs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cs-nav a {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.6rem var(--s-3);
+  border-radius: var(--r-control);
+  color: var(--c-text-dim);
+  text-decoration: none;
+  font-size: 0.9rem;
+  /* "Decision Room" must not break across two lines when the nav becomes a horizontal strip. */
+  white-space: nowrap;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.cs-nav a:hover {
+  background: var(--c-surface-2);
+  color: var(--c-text);
+  transform: translateX(2px);
+}
+.cs-nav a[aria-current='page'] {
+  background: var(--c-primary-soft);
+  color: #cfe0ff;
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--c-primary);
+}
+.cs-nav .cs-ico {
+  width: 18px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+/* ── Topbar ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cs-top {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: 0 var(--s-5);
+  border-bottom: 1px solid var(--c-border-soft);
+  background: rgba(14, 18, 32, 0.72);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.cs-company {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-pill);
+  padding: 0.35rem 0.85rem 0.35rem 0.4rem;
+  font-size: 0.88rem;
+  color: var(--c-text);
+}
+.cs-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #06122b;
+  background: linear-gradient(135deg, var(--c-success), var(--c-primary));
+}
+.cs-spacer {
+  flex: 1;
+}
+
+/* ── Content ─────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-content {
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  max-width: 1380px;
+  width: 100%;
+}
+.cs-h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+.cs-sub {
+  margin: var(--s-1) 0 0;
+  color: var(--c-text-dim);
+  font-size: 0.9rem;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-card {
+  background: linear-gradient(180deg, var(--c-surface), var(--c-surface-2));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+}
+.cs-card-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.cs-card-t {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+/* ── Stat cards ──────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: var(--s-4);
+}
+.cs-stat {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--c-surface-2), var(--c-surface));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+  transition: transform var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), border-color var(--t-base) var(--ease);
+  /* Staggered entrance — the per-card delay is set inline via --i so the markup stays declarative. */
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.cs-stat:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lift);
+  border-color: var(--c-border);
+}
+/* The tinted wash that makes a Berry stat card read as "warm" rather than as a plain box. */
+.cs-stat::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(220px 120px at 100% 0%, var(--tint, transparent), transparent 70%);
+  pointer-events: none;
+}
+.cs-stat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.cs-stat-label {
+  color: var(--c-text-dim);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.cs-stat-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  background: var(--ico-bg, var(--c-primary-soft));
+  color: var(--ico-fg, var(--c-primary));
+}
+.cs-stat-value {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.cs-stat-foot {
+  margin-top: var(--s-2);
+  font-size: 0.78rem;
+  color: var(--c-text-faint);
+}
+
+@keyframes cs-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cs-rise {
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+/* ── Two-column region ───────────────────────────────────────────────────────────────────────────────────── */
+.cs-cols {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: var(--s-4);
+  align-items: start;
+}
+
+/* ── Approval list ───────────────────────────────────────────────────────────────────────────────────────── */
+.cs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.cs-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  background: var(--c-surface-2);
+  transition: border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.cs-item:hover {
+  border-color: var(--c-border);
+  background: var(--c-surface-3);
+  transform: translateY(-2px);
+}
+.cs-item-body {
+  min-width: 0;
+  flex: 1;
+}
+.cs-item-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.cs-item-meta {
+  color: var(--c-text-faint);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+/* ── Badges ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0.22rem 0.6rem;
+  border-radius: var(--r-pill);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.cs-badge--primary { background: var(--c-primary-soft); color: #a9c8ff; }
+.cs-badge--success { background: var(--c-success-soft); color: #7ff0cd; }
+.cs-badge--warning { background: var(--c-warning-soft); color: #ffd98a; }
+.cs-badge--danger  { background: var(--c-danger-soft);  color: #ffa3b0; }
+.cs-badge--muted   { background: var(--c-surface-3);    color: var(--c-text-dim); }
+
+/* ── Activity feed (FE-011) ──────────────────────────────────────────────────────────────────────────────── */
+.cs-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+.cs-feed::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--c-border), transparent);
+}
+.cs-feed li {
+  position: relative;
+  padding: 0 0 var(--s-4) 42px;
+}
+.cs-feed li:last-child {
+  padding-bottom: 0;
+}
+.cs-dot {
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2.5px solid var(--c-bg);
+  background: var(--c-text-faint);
+}
+.cs-dot--primary { background: var(--c-primary); }
+.cs-dot--success { background: var(--c-success); }
+.cs-dot--warning { background: var(--c-warning); }
+.cs-dot--danger  { background: var(--c-danger); }
+.cs-feed-text {
+  margin: 0;
+  font-size: 0.88rem;
+}
+.cs-feed-time {
+  color: var(--c-text-faint);
+  font-size: 0.75rem;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--r-control);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface-3);
+  color: var(--c-text);
+  white-space: nowrap;
+  transition: transform var(--t-fast) var(--ease), background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.cs-btn:hover { transform: translateY(-1px); border-color: var(--c-primary); }
+.cs-btn--ghost { background: transparent; }
+.cs-btn--danger {
+  background: var(--c-danger-soft);
+  border-color: rgba(255, 92, 114, 0.42);
+  color: #ffc3cc;
+}
+.cs-btn--danger:hover { border-color: var(--c-danger); }
+
+/* Focus-visible on EVERY FOCUSABLE element (FE-001 accessibility criterion). The list is exactly the
+   focusable set: links, buttons and the skip link. `.cs-item` is deliberately absent — it is an <li> with
+   no tabindex, so a rule for it could never fire and would only imply a control that is not there. */
+.cs-nav a:focus-visible,
+.cs-btn:focus-visible,
+.cs-skip:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+/* ── Mock-data banner: this console shows invented numbers, and says so on screen ─────────────────────────── */
+.cs-mock {
+  /* Block, not flex: the lead-in "Mock data." must reflow INLINE with the sentence when the banner wraps.
+     As a flex row it became a narrow first column with the text crushed beside it on small screens. */
+  display: block;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-control);
+  background: var(--c-warning-soft);
+  border: 1px solid rgba(255, 193, 77, 0.32);
+  color: #ffdc9e;
+  font-size: 0.82rem;
+}
+
+/* ── Responsive: the sidebar becomes a top nav strip under the tablet breakpoint (FE-002) ────────────────────
+ *
+ * The sidebar does NOT simply become `flex-direction: row`. That was tried and is wrong: each labelled group
+ * is its own block, so a row-direction sidebar turned into three stacked half-rows with the later items
+ * clipped at the right edge and no labels to explain the grouping.
+ *
+ * Instead the brand keeps its own row, and every group is flattened into ONE horizontally scrollable strip:
+ * the <nav> becomes the row, the group wrappers lose their stacking margin, and the group labels are dropped
+ * (a bare uppercase word inside a scrolling strip reads as another nav item). Items keep their order, so the
+ * grouping still comes through as clusters. Nothing is hidden — everything remains reachable by scrolling.
+ *
+ * No drawer/hamburger: that needs client state, and this slice deliberately ships exactly one client component. */
+@media (max-width: 960px) {
+  .cs-shell { grid-template-columns: 1fr; }
+  .cs-side {
+    position: static;
+    height: auto;
+    align-items: stretch;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border-soft);
+    overflow: visible;
+  }
+  .cs-brand { padding: 0; }
+  /* `min-width: 0` is LOAD-BEARING, not tidying. A grid item defaults to `min-width: auto`, so the sidebar
+     refused to shrink below the full width of its nav items: the single grid column grew to the widest nav
+     strip and the whole page scrolled sideways, cutting off the right edge of every card. Allowing the item
+     to shrink is what lets the `overflow-x: auto` below actually scroll instead of pushing the layout wider.
+     Pinned by the no-horizontal-overflow assertion in the screenshot harness. */
+  .cs-side { min-width: 0; }
+  .cs-side nav {
+    display: flex;
+    flex-direction: row;
+    gap: var(--s-2);
+    min-width: 0;
+    overflow-x: auto;
+    /* Room for the focus ring and the 2px hover nudge, which would otherwise be cropped by the scroller. */
+    padding-bottom: var(--s-1);
+  }
+  .cs-navgroup { margin-top: 0; }
+  .cs-nav { flex-direction: row; gap: var(--s-2); }
+  .cs-navgroup-label { display: none; }
+  .cs-cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .cs-content { padding: var(--s-4); }
+  .cs-stat-value { font-size: 1.6rem; }
+  /* The topbar gains a second line rather than crushing the company pill against the stop button. The
+     flex spacer is removed with it: once the bar wraps, a 1fr gap would push the avatar onto a line by itself. */
+  .cs-top {
+    height: auto;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+  }
+  .cs-top .cs-spacer { display: none; }
+  /* Let a long approval title take the full width and drop its badge + button to a second line. */
+  .cs-item { flex-wrap: wrap; gap: var(--s-3); }
+  .cs-item-body { flex: 1 1 100%; }
+}
