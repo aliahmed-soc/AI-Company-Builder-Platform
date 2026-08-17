@@ -242,6 +242,29 @@ describe.skipIf(!hasTestDatabase)('company create + resolve (real PostgreSQL, re
     if (active.status === 'ok') expect(active.company.displayStatus).toBe('active');
   });
 
+  test('getCompany returns the CALLER OWN company role — the same company reads differently per caller', async () => {
+    // ACBP-FE-006. The company profile screen must disable an owner-only control for a viewer WITH A REASON,
+    // and a viewer's refusal comes back as a bare `forbidden` that is indistinguishable from "no such company"
+    // — so the reason cannot be recovered after a failed attempt and has to be known before the control
+    // renders. The role is resolved on every one of these calls already (runInCompanyScope hands it to the
+    // callback); this asserts it is now RETURNED, and that it describes the caller rather than the company.
+    const id = await createCompanyFor('Role Bearing');
+    await addCompanyViewer(id);
+
+    const asOwner = await getCompany(app, { userId: ownerId, accountId, companyId: id });
+    if (asOwner.status !== 'ok') throw new Error(`expected ok for the owner, got ${asOwner.status}`);
+    expect(asOwner.company.role).toBe('owner');
+
+    const asViewer = await getCompany(app, { userId: viewerId, accountId, companyId: id });
+    if (asViewer.status !== 'ok') throw new Error(`expected ok for the viewer, got ${asViewer.status}`);
+    expect(asViewer.company.role).toBe('viewer');
+
+    // THE DISCRIMINATING ASSERTION: one company, two callers, and `role` is the ONLY field that differs. A
+    // constant would pass the two checks above; this fails unless the value tracks the caller, and it also
+    // catches any other per-caller leakage appearing in the view.
+    expect({ ...asViewer.company, role: 'owner' }).toEqual(asOwner.company);
+  });
+
   test('renameCompany (owner) inserts a new profile version + company.updated; a company viewer is forbidden', async () => {
     const id = await createCompanyFor('Old Name');
     await addCompanyViewer(id);

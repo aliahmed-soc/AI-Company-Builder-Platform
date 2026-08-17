@@ -59,6 +59,10 @@ const PAGES = [
   // ACBP-FE-004. Without a real session this renders the `unauthenticated` refusal — which is a REAL state of
   // the real page, not a stub, and is exactly what it must show to a signed-out visitor.
   { path: '/console/companies', slug: 'companies', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-006. The id is arbitrary because it is only a SELECTOR — @acbp/core re-validates it against an
+  // active membership, so without a session this renders the `unauthenticated` refusal regardless of what is
+  // in the path. That is the real page in a real state, and it still has to lay out correctly.
+  { path: '/console/companies/cmp_layout_probe', slug: 'company', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

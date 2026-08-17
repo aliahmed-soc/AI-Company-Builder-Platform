@@ -42,7 +42,7 @@ const ROOM: DecisionRoomView = {
 describe('toCompaniesResponse', () => {
   const cases: ReadonlyArray<[CompaniesRequestResult, number]> = [
     [{ status: 'created', companyId: 'co', companyStatus: 'draft', creationMode: 'own_idea' }, 201],
-    [{ status: 'company', company: { companyId: 'co', status: 'active', displayStatus: 'active', name: 'A', description: null, profileVersion: 1 } }, 200],
+    [{ status: 'company', company: { companyId: 'co', status: 'active', displayStatus: 'active', name: 'A', description: null, profileVersion: 1, role: 'owner' } }, 200],
     [{ status: 'renamed', changed: true, version: 2 }, 200],
     [{ status: 'transitioned', companyStatus: 'paused' }, 200],
     [{ status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'x', retryable: false } }, 400],

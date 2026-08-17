@@ -51,6 +51,25 @@ export interface CompanyView {
   readonly name: string | null;
   readonly description: string | null;
   readonly profileVersion: number | null;
+  /**
+   * The CALLER'S OWN company role in this company ('owner' | 'viewer'), from their active membership — the
+   * same value `runInCompanyScope` already resolved to authorize this very read, returned rather than
+   * discarded. It describes the CALLER, not the company: the same company read by two members differs in
+   * exactly this field.
+   *
+   * WHY IT IS RETURNED (ACBP-FE-006). A screen carrying an owner-only control must disable it for a viewer
+   * WITH A TRUTHFUL REASON, and that reason cannot be recovered after the fact: an unauthorized transition
+   * comes back as a bare `forbidden`, deliberately indistinguishable from "no such company". So the caller's
+   * role has to be known BEFORE the control renders. The alternatives were measured and rejected — a second
+   * portfolio read costs another rate-limit charge and silently misses any company past the first page, and
+   * inferring viewer-ness from a derived usage flag would flip to a FALSE ENABLED control the day the authz
+   * matrix widened.
+   *
+   * THIS IS NOT A CONTROL. Authorization stays server-side in @acbp/core on every call; this field only lets
+   * the UI stop lying about which controls will work. A UI that hides a button is decoration, never a gate
+   * (AGENTS.md §18).
+   */
+  readonly role: MemberRole;
 }
 
 export type GetCompanyResult = { readonly status: 'ok'; readonly company: CompanyView } | { readonly status: 'forbidden' } | { readonly status: 'not_found' };
@@ -95,6 +114,9 @@ export async function getCompany(client: DatabaseClient, params: CommonParams, o
           name: profile?.name ?? null,
           description: profile?.description ?? null,
           profileVersion: profile?.version ?? null,
+          // The role `runInCompanyScope` resolved from the caller's ACTIVE membership to authorize this read,
+          // above. Passing it through costs no extra query and cannot drift from the value that gated the call.
+          role,
         },
       };
     },
