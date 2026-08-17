@@ -1,7 +1,9 @@
 # API surface available to a first pass of frontend screens
 
 **Status:** inventory, not a design. **Compiled:** 2026-08-17. **Scope:** every HTTP route under
-`apps/web/src/app/api`, grouped by the screen it would serve.
+`apps/web/src/app/api` that a signed-in user's browser would call, grouped by the screen it would serve. The
+only route deliberately omitted is `POST /api/webhooks/clerk`, which is a provider-to-server webhook and has no
+frontend caller.
 
 This document exists so that frontend work starts from the shapes the server actually returns rather than from
 shapes someone assumed. It is deliberately as clear about what is **missing** as about what is present: three of
@@ -16,10 +18,14 @@ inventory a design conversation would need in front of it.
 
 Every route below shares the same envelope, so it is stated once rather than forty times.
 
-**Every route is `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`.** Every route rejects unknown query
-parameters with `400 {"error":"bad_request"}` rather than ignoring them — an approver who believes a filter is
-applied while seeing everything is a worse failure than an error, and the same reasoning was applied surface by
-surface.
+**Every route is `runtime = 'nodejs'`, `dynamic = 'force-dynamic'`.**
+
+**Most, but not all, routes reject unknown query parameters** with `400 {"error":"bad_request"}` rather than
+ignoring them — an approver who believes a filter is applied while seeing everything is a worse failure than an
+error. Twenty-three of the thirty-five routes carry that gate. The rest never read the query string at all, and
+four of them (`pause`, `resume`, `GET /api/account/members`, `GET /api/account/profile`) are declared without a
+`Request` parameter, so they could not inspect it if they wanted to. Do not rely on an unknown parameter being
+rejected; rely on it being meaningless.
 
 **Failures every authenticated route can return, before its own logic runs:**
 
@@ -33,9 +39,16 @@ surface.
 | 503 | `{"error":"unavailable"}` | A dependency is down. Retryable. |
 | 500 | `{"error":"internal_error"}` | Bounded catch-all. Never carries detail. |
 
-**Write routes additionally return:** `400` with a `PublicErrorEnvelope`
-(`{category, code, message, retryable, correlationId?}`) for domain validation, `413` over 16 KiB, `415` for a
-non-JSON content type.
+**Write routes are of two kinds, and it matters.** The ones that go through the shared parsers in
+`companies-http.ts` (company create and rename, interview answer, memory create and edit, account profile,
+member invite) enforce a 16 KiB body cap with **413** over it and **415** for a non-JSON content type, and
+return domain validation failures as **400** with a `PublicErrorEnvelope` nested at `body.error`
+(`{category, code, message, retryable, correlationId?}`).
+
+The ones with a hand-rolled parser — `decisions`, `roadmap/edit`, `strategy/selection`, `tasks/{id}/delete`, and
+`strategy/recommend` on the branch — call `request.json()` directly. They have **no size cap and no
+content-type check**, and a malformed body is a flat **400** `{"error":"bad_request"}` rather than an envelope.
+This is an inconsistency in the server, not in this document; a client cannot assume one shape.
 
 **Roles.** Every company has `owner` and `viewer` members. Reads are almost all `owner + viewer`; writes are
 almost all `owner`. The per-route role is stated below and comes from the `POLICY` matrix in
@@ -114,14 +127,18 @@ Each board task is `{task:TaskDTO, dependsOnTaskIds[], blocksTaskIds[], dependen
 Task detail adds `rationale`, `repeatedFromTaskId`, `controls[]` and `latestFailure`. **`controls` is the
 button state, already computed** — each entry is `{control:'repeat'|'delete', available, reason}` with reason
 in `cancel_first|not_finished|unknown_state|null`. A frontend should drive affordances from this rather than
-re-deriving them from `state`, because the server will refuse on the same basis. `latestFailure` carries
+re-deriving them from `state`, because the server will refuse on the same basis — with one caveat: `delete` has
+a route behind it and **`repeat` does not**, so a `repeat` verdict of `available:true` currently describes a
+capability with no endpoint. `latestFailure` carries
 `category`, `summary`, `attemptsUsed`, `attemptsAllowed`, `retrySafety`, `nextAttempt` — enough to explain a
 failure without inventing copy.
 
-**Deletion is a confirm-then-act flow.** Body is `{confirmed:boolean, reason?:string|null}` and `confirmed`
-must be a real boolean — the string `"false"` is rejected, not coerced. Without it: **409**
-`confirmation_required`. Against a task in the wrong state: **409**
-`{"error":"control_unavailable","reason":...}`. Those are distinct codes because the next action differs.
+**Deletion is a confirm-then-act flow, with two different refusals.** Body is
+`{confirmed:boolean, reason?:string|null}` and `confirmed` must be a real boolean — the string `"false"` is
+rejected, not coerced. Omitting it, or sending a non-boolean, is a route-level **400** `bad_request`. Sending an
+explicit `confirmed:false` reaches the domain and returns **409** `confirmation_required` — that is the one to
+render as "are you sure?", and it is reachable only by asking. Against a task in the wrong state: **409**
+`{"error":"control_unavailable","reason":...}`, a distinct code because the next action differs.
 
 **The gap.** There is **no route to create, edit, move, start, retry, or cancel a task.** `POST .../tasks/generate`
 creates the whole set from the roadmap in one metered call (§7), and delete removes one. Everything else a board
@@ -158,7 +175,9 @@ product, and it should be a ticket before it is a screen.
 | GET | `/api/companies/{id}/activity?cursor=&limit=` | owner+viewer | **200** paged feed |
 
 `limit` defaults to 25 and caps at 100; an invalid value falls back to the default rather than erroring. A bad
-cursor is **400** `invalid_cursor`.
+cursor is **400** `invalid_cursor`. Note that the portfolio list at `GET /api/companies` does the opposite with
+the same-named parameter — it **rejects** a bad `limit` with **400** `invalid_limit` instead of clamping — so a
+shared paging component cannot assume one behaviour.
 
 The body is `{items, nextCursor, projectionMode, asOf, sourceThrough, lagSeconds}`. The last four are honesty
 metadata and are worth surfacing rather than dropping: `projectionMode` is `'synchronous'` and `lagSeconds` is
@@ -196,8 +215,8 @@ the server supplies only the facts:
 `needs_your_decision`, `recommended_next_actions`, `questions_from_ai`, `options_under_consideration`,
 `approved_and_queued`, `executing`, `results`, `blocked_work`, `failed_work`, `recent_decisions`.
 
-**Each section carries its own `status`** (`ok|restricted|unavailable`), plus `count|null`, `items[]` and
-`truncated`. This is the shape to respect most carefully: a viewer who lacks a sub-permission gets that section
+**Each section carries its own `status`** (`ok|restricted|unavailable`), plus `queue`, `count|null`, `items[]`
+and `truncated`. This is the shape to respect most carefully: a viewer who lacks a sub-permission gets that section
 as `restricted`, not as empty, and a UI that renders `restricted` and `ok` identically is telling a founder that
 a queue is empty when it is merely hidden. `count` is the true total; `items` is capped at 20 per section.
 
@@ -228,7 +247,8 @@ What exists, and where:
 
 - **Database:** `credit_transactions`, `usage_events`, `account_usage_rollups`, `usage_corrections`.
 - **Core use cases:** `readCreditLedger` (`billing:read`), `readAccountUsageRollup` (`usage:read`),
-  `preflightRun`, `reserveCredit`, `settleRun`, `correctUsage`. All real, all tested, none HTTP-reachable.
+  `preflightRun`, `reserveCredit`, `settleRun`, `recordUsageCorrection`. All real, all tested, none
+  HTTP-reachable — a search of `apps/web` for any of those names returns nothing.
 - **The only spend signal on the wire:** the decision room's company-scoped `usage.figures` (owner only, §5),
   and the per-item `estimatedCostCredits` on approvals (§3) — an estimate for one pending action, not a balance.
 
@@ -254,15 +274,20 @@ one (`AGENTS.md` §18).
 | POST | `/api/companies/{id}/roadmap/generate` | **owner** | **200** `{roadmap}` | **no — PR #111** |
 | POST | `/api/companies/{id}/tasks/generate` | **owner** | **200** tasks + partial-plan counters | **no — PR #111** |
 
+PR #111 is stacked on `p8-api-006-model-gateway` (PR #107), not on `main`, so merging #111 alone does not put
+those four routes on `main`.
+
 **`null` is a success.** Both GETs return **200** with a null body field when nothing has been generated yet —
 never a 404. That is the honest first-visit empty state and the UI should treat it as one.
 
 `StrategyGenerationDTO` carries `generationId`, `companyId`, `understandingVersion`, `status`
 (`complete|fewer_than_three`), `optionCount`, `fewerReason|null`, `similarityCheckResult`,
-`modelFlaggedPartial`, `options[]`, `recommendation|null`, `selection|null`, `decision|null`, `createdAt`. Each
-option has an `optionId`, an `ordinal`, and sixteen named text fields (`description`, `customer`, `offer`,
-`business_model`, `scope`, `benefits`, `risks`, `cost_range`, `effort`, `time_to_validate`, `time_to_launch`,
-`required_resources`, `key_assumptions`, `validation_method`, `success_metrics`, `confidence`). Note
+`modelFlaggedPartial`, `options[]`, `recommendation|null`, `selection|null`, `decision|null`, `createdAt`. An
+option is exactly three properties — `optionId`, `ordinal`, and a nested **`fields`** object holding sixteen
+named strings, so it is `option.fields.description`, not `option.description`: `description`, `customer`,
+`offer`, `business_model`, `scope`, `benefits`, `risks`, `cost_range`, `effort`, `time_to_validate`,
+`time_to_launch`, `required_resources`, `key_assumptions`, `validation_method`, `success_metrics`,
+`confidence`. Note
 `fewer_than_three` and `modelFlaggedPartial`: a generation may honestly return less than it intended, and the
 screen has to be able to say so.
 
@@ -276,6 +301,9 @@ company-scoped rate ceiling on top of the usual one, **502** `generation_failed`
 an upstream provider failure (not 500 — this platform is fine, the provider was not), and eight distinct **409**
 preconditions (`no_understanding`, `not_confirmed`, `stale_understanding`, `no_decision`, `stale_decision`,
 `no_roadmap`, `no_milestones_in_scope`, `stale_roadmap`) which each imply a different next step for the founder.
+`roadmap/generate` can also return the pre-existing **409** `decision_rejected`, when the company's latest
+strategy decision was a rejection — a ninth distinct next step, and the one case where retrying is futile until
+the founder revisits the strategy.
 `tasks/generate` also returns partial-plan counters — `partial`, `tasksMissingType`, `milestonesOmitted`,
 `tasksMissingRationale`, `memoryItemsConsidered` — which exist so a UI can disclose that a plan came back
 incomplete instead of presenting it as whole.
@@ -295,7 +323,9 @@ incomplete instead of presenting it as whole.
 
 `AccountProfileView` is `{accountId, displayName|null, locale, email|null, emailVerified}`. `MemberView` is
 `{membershipId, role, status, memberUserId|null, invitedEmail|null, createdAt}` with status in
-`invited|active|revoked`.
+`invited|active|revoked`. **`invitedEmail` is `null` for a viewer on every row** — reading it is gated on an
+owner-only permission — so a member list rendered for a viewer must not present a blank email as "no email on
+file".
 
 Two details that shape the UI. **The raw invite token is returned exactly once**, in the 201 from the invite
 call — it is never readable again, so the screen that creates an invite is the only place it can be shown or
@@ -318,15 +348,21 @@ Neither takes a body. Both are strict transitions — pause requires exactly `ac
 `paused` — and anything else is **409** `{"error":"invalid_transition","from":...}`, which gives the UI the
 current state to re-render from.
 
-**What pause actually does:** it flips the company's lifecycle status and thereby blocks *new* autonomous work
-from being picked up, at run start, tool dispatch and job enqueue. **What it does not do:** activate an
-emergency stop, or halt work already in flight. In-flight runs continue to their stopping point.
+**What pause actually does:** it flips the company's lifecycle status, and four separate gates then refuse
+autonomous work while it is not `active` — run start, tool dispatch, job enqueue, and the job checkpoint. The
+tool-dispatch gate is the one that matters for an in-flight run: a run already executing finishes its current
+tool call and is refused the next one with `company_not_active`. So pause is more than a "no new work" flag; it
+does stop work in progress at the next boundary.
 
-The platform's real emergency stop is a different mechanism — an `emergency_stops` record, with `activateStop`,
-`clearStop` and `readStopState` in core, and a "finish the current tool call, halt before the next" model. It
-has **no HTTP route at all.** So an emergency-stop screen cannot be built today, and labelling the pause button
-as an emergency stop would be exactly the kind of frontend control with nothing behind it that `AGENTS.md` §18
-prohibits.
+**What it is still not:** the emergency stop. That is a separate mechanism — an `emergency_stops` record, with
+`activateStop`, `clearStop` and `readStopState` in core — and the differences are narrower than they sound but
+real: a stop records held work and moves the task to `paused` so an operator can see what was interrupted and
+resume it deliberately, and it can be scoped, where pause is the whole company and leaves no held-work record.
+The stop mechanism has **no HTTP route at all**, so an emergency-stop screen cannot be built today.
+
+Two honest sentences a UI may use: pause halts this company's autonomous work at the next safe boundary; and no
+platform-wide emergency stop is exposed. Labelling the pause button as *the* emergency stop would still be a
+control that promises more than the server records (`AGENTS.md` §18).
 
 ---
 
@@ -338,8 +374,17 @@ prohibits.
 | Task board | **Buildable as a read.** Board, detail, runs and artifacts are complete, and `controls[]` gives button state directly. There is no create/edit/move/start/retry/cancel route — only generate-all and delete-one. |
 | Approvals inbox | **Half.** The list and every field an approver needs are there. Approve and reject do not exist over HTTP. Needs a ticket. |
 | Usage / credits | **Not buildable.** No route. Ledger and rollups exist in core and the database only. `ACBP-API-009` covers the generate-path wiring; a read API is not ticketed. |
-| Emergency stop | **Not buildable.** Pause/resume is a narrower lifecycle control; the stop system has no HTTP surface. |
+| Emergency stop | **Not buildable as named.** Pause/resume does halt this company's autonomous work at the next boundary, and that is worth a button — but the stop system, which records held work and can be scoped, has no HTTP surface. |
 | Activity feed | **Buildable.** Cursor paging, typed events, allowlisted summaries, and honest staleness metadata. |
+
+**How this document was checked, so the next reader knows what it rests on.** The route list, the exported
+methods and the on-`main` column were enumerated from the tree and from `git log origin/main`; response mapping
+was read from the `*-http.ts` mappers; DTO fields were traced into `@acbp/contracts` and `@acbp/core`; roles were
+quoted from the `POLICY` matrix. It was then reviewed adversarially against the code, and that pass found real
+errors which are corrected above — a missing route in the scope statement, two claims stated as universal that
+hold for most routes but not all, a wrong status code on the delete confirmation, a use case named wrongly, a
+flat option shape that is actually nested, and a pause characterization that understated what pause stops.
+Anything still wrong here is wrong in the same way: read the cited file before betting a screen on a sentence.
 
 Two cross-cutting notes for whoever designs against this. Almost every DTO ships an internal `state` alongside a
 display-oriented `phase` or `displayStatus`, and the display value is the one to render — the internal one is
