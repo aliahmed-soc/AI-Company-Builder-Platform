@@ -2339,4 +2339,105 @@ topmost ticket without a DONE line above it is in flight — a merged ticket is 
 as open. Not fixed here: recording it needs its own exact-main run ID and counts, and this branch's
 approved scope is the #108 merge. It is a five-minute job for whoever picks it up next.
 
-C: 40.1 GB free.
+C: 40.1 GB free.---
+
+## 2026-08-17 02:25 UTC — ACBP-API-008 slice 3b finished, and the two things that survived review
+
+Clock checked, not estimated. Same window as the entry above; this branch carries both because the
+session's docs PR is #110.
+
+### What shipped
+
+The four metered generate routes exist, are wired, and are green on their exact head. `strategy/generate`,
+`strategy/recommend`, `roadmap/generate`, `tasks/generate`, each through `resolveMeteredContext` (the
+per-company ceiling on top of session and account) and `callMetered`. Branch `p8-api-008-slice3b`, head
+**`1a1da91`**, PR **#111**, still DRAFT and still stacked on **#107** — merging #111 alone does not land these
+routes on `main`.
+
+| | |
+| --- | --- |
+| **Exact-head CI** | [`31987157294`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31987157294) on `1a1da91` — success |
+| **Counts** | **285 files / 4,285 tests, zero skips**, behind the DB preflight that fails the job if the real-PostgreSQL suites would not execute |
+| **Boundary suite** | 278/278 locally, including 25 checker regression tests |
+| **Local gate** | `check:static`, `test`, `check` all exit 0; `audit --audit-level high` 1 moderate; `diff --check` clean |
+| **Local skips** | 1,673 — PostgreSQL here listens only inside WSL and is unreachable from the Windows host, so hosted CI is the only evidence for those suites |
+
+Twelve mutations across CDR-092 §12–§14: seven on the guards, one hosted **survivor** and its kill, four on the
+checker's hardening plus one exit-code probe. Every edit read back from disk before the suite ran.
+
+### The survivor is the entry worth reading
+
+`generateStrategyOptions` authorizes twice, and the paid provider call sits between the two checks. Weakening
+only the first (`strategy:generate` → `strategy:read`, run `31982475683`) passed the **entire suite with zero
+skips**, because the observable outcome never changes — the second check still returns `forbidden` and nothing
+is written. The account was simply charged for a generation the caller was never allowed to commission.
+
+*"Nothing was persisted"* and *"nothing was spent"* are different claims, and every assertion in those four
+suites proved only the first. All four now count provider invocations. Re-running the identical mutation
+against the fix killed it (`31983747364`).
+
+The first attempt at that mutation deleted the check outright and went red on `'role' is defined but never
+used` — lint, before a single test ran. A red run that never reached the assertion under examination is not a
+kill; it is the §3 trap in its purest form, and rewriting the mutation to compile cleanly is what exposed the
+real gap.
+
+### Then review found the same defect one test further down the file
+
+Two adversarial passes, each briefed to attack a claim and not shown the conclusion. The authorization fix held.
+Its **neighbours** did not: `no_understanding`, `not_confirmed`, `no_decision`, `decision_rejected` and the
+recommend `not_found` still asserted only status and non-persistence, so the paid call could be hoisted above
+any of them with every assertion staying green. Fixed. `not_found` was the worst of the five — the only refusal
+reachable with an invented id.
+
+Review also found `strategy/recommend` reading its body with a bare `request.json()` — no cap, no content-type
+check, on the one metered route that takes input — now on the shared bounded parser; and **six ways past the
+coverage checker**, each demonstrated against a throwaway tree: the ceiling commented out, a metered call
+commented out, the compliant function imported but never called, a compliant `POST` beside an unmetered `PUT`,
+a paid route named outside the `generate`/`recommend` convention, and a blind run exiting 0. All closed, all
+pinned as tests.
+
+The fifth deserves its own sentence, because it is a documentation failure rather than a code one: the comment
+above `METERED_DIR_NAMES` named the naming gap **and named a mitigation that had nothing to do with it** — a
+floor counting only routes matching the convention cannot notice one outside it. Two other comments claimed
+coverage they did not have and were corrected in place rather than deleted quietly: `Retry-After` does leak
+which ceiling refused, and `expect(METERED).toHaveLength(4)` cannot see a fifth route.
+
+**A harness note that is really a §3 note.** The disposable mutation harness failed to restore a file after one
+checker mutation and left it mutated on disk. The next run went red on exactly the right test, which is the only
+reason it was noticed; a different ordering would have produced a "25 passed" from a mutated tree. Hash after
+the **restore**, not only after the mutation. Second time a harness has done this in this ticket — every
+mutation afterwards was applied and reverted by hand.
+
+### Flagged, not fixed — one of these needs an owner ruling
+
+1. **A viewer can drain the owner's company ceiling.** The per-company bucket is consumed *before*
+   authorization, keyed on a raw request selector. The viewer gets 403; the token is spent anyway, so five
+   requests a minute keep the owner throttled from an actor whose own ceiling is sixty times larger. Keying it
+   `${companyId}:${userId}` is one line and looks right, but it is a rate-limiting decision belonging to CDR-082
+   and CDR-008 §8, where the early position was chosen deliberately to bound probing. Three options in
+   CDR-092 §14. **This is the one open judgment call.**
+2. **Three 409s and one 403 arrive after the paid call**, because each use case re-verifies inside the persist
+   transaction — which is what makes the write safe. Recorded so ACBP-API-009 is not built on "4xx means no
+   charge".
+3. **A `recordUsage` throw loses the record of a completed paid call** — generic 500, nothing leaked, no
+   `usage_events` row. ACBP-API-009 inherits it knowingly.
+4. **Credit reservation is still unwired** (ACBP-API-009), so the mapped `402 budget_exhausted` arm is
+   **unreachable** and must not be read as a working budget control. Deliberately out of scope here.
+5. `maxDuration = 90` is still provisional and unmeasured — no live model call has ever completed from this
+   repository.
+
+### Also produced
+
+`docs/implementation/API-SURFACE-FOR-FRONTEND.md` (PR **#113**, DRAFT, based on `main`): every browser-callable
+route a first frontend pass can use, with response shapes, status codes and authz. It was corrected against an
+adversarial read of the code after the first draft got several shapes wrong — body-parser behaviour, the task
+deletion 400-vs-409 split, `StrategyOptionDTO`'s nested `fields`, a ninth 409 on `roadmap/generate` — and the
+document lists what it got wrong, because an inventory trusted by frontend work has to say where it was
+unreliable.
+
+**Observed, not mine:** PRs **#114** and **#115** contain frontend code — Berry console shell, route groups,
+~1,500 added lines, created inside this same window by another session. `AGENTS.md` §1 makes frontend/UI work a
+hard gate where the owner sets direction personally. Recorded here for visibility; this session touched neither
+branch.
+
+C: 39.3 GB free.
