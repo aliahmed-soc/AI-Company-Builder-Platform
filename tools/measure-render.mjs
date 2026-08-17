@@ -56,6 +56,9 @@ mkdirSync(OUT, { recursive: true });
  */
 const PAGES = [
   { path: '/console', slug: 'console', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-004. Without a real session this renders the `unauthenticated` refusal — which is a REAL state of
+  // the real page, not a stub, and is exactly what it must show to a signed-out visitor.
+  { path: '/console/companies', slug: 'companies', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

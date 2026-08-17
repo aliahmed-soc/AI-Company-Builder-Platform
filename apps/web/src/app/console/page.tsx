@@ -5,7 +5,11 @@
  * The stat cards and the approvals list are VISUALS ONLY — FE-016/017/018 remain Blocked-API and are not
  * advanced by this slice; nothing here fetches, mutates, authorizes or persists.
  *
- * Server component. The only client code is the counter, for reasons given in its own file.
+ * Server component. The client code in this console is the counter and the sidebar nav links, each for the
+ * reason given in its own file; this page adds none.
+ *
+ * THIS SCREEN IS STILL ENTIRELY MOCK. `/console/companies` (ACBP-FE-004) is the first console screen that reads
+ * real data — the figures below remain invented, which is why the banner stays.
  */
 import { MOCK_STATS, MOCK_APPROVALS, MOCK_ACTIVITY } from './mock-data';
 import { Counter } from './counter';
