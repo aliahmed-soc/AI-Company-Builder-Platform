@@ -1,6 +1,7 @@
 # CDR-093 — proving a foreign row that EXISTS stays invisible
 
-**Status:** proposed · **Ticket:** ACBP-API-010 · **Base:** `main` at `4a8b377` ·
+**Status:** accepted (owner, 2026-08-17; the number and this record's structure approved together with
+`docs/implementation/API-BACKLOG.csv`) · **Ticket:** ACBP-API-010 · **Base:** `main` at `4a8b377` ·
 **Origin:** an owner ruling. The CDR-088 roadmap block disclosed that it could not prove foreign-roadmap
 invisibility because no roadmap was seeded; the owner ruled that disclosed-as-unproven was the right
 interim state but is not the merge state for a tenant-data read, and ordered the disclosure list taken to
