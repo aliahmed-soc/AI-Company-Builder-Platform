@@ -2864,3 +2864,120 @@ The method note in those cells is load-bearing: a glob over the api route tree *
 because a path segment in square brackets is read as a character class. That produced a confident, empty,
 wrong answer twice before a self-test caught it — the same shape as the `Test-Path` wildcard trap recorded
 earlier in this log, now seen four times.
+
+
+### MERGE MARKER — ACBP-FE-007 is on `main` (appended 2026-08-18)
+
+Pinned to squash SHAs, run ids and quoted assertion text rather than status words.
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-007** — interview session screen | **`41160b3`** | #127 | implementation `32069651328` on `6097130` — 292 files / **4332** tests |
+| | | | review fixes `32072993347` on `7c36db2` — 292 files / **4335** tests |
+
+Both head runs: **12 / 267 boundaries, zero failures, and NO skip tally anywhere in either log.**
+The +3 between them is exactly the three view-mapper cases the review fix brought with it — the guard and
+the tests that fail without it landed in the same commit.
+
+**The merge was the clean case, and it is worth recording that it CAN be.** `main` stood still at `072ccb6`
+from the CI run through to the merge, so the green on `7c36db2` genuinely covered the merged tree, and GitHub
+reported `mergeable: MERGEABLE` / `mergeStateStatus: CLEAN`. No per-file fallback was needed, unlike FE-005
+two commits earlier where `main` moved underneath the run.
+
+### The finding that reshaped the ticket, before any code
+
+**No HTTP route in this repository can cause an interview question to exist.** Five interview routes exist
+(session read, start, qa read, answer write, suspend/resume); `generateAdaptiveBatch`, `evaluateAnswer` and
+`suggestAssumptionForSkip` have **zero references anywhere under `apps/web`**, and `INTERVIEW.md` records the
+orchestration routes as deferred behind the live-provider owner gate. Verified by **enumerating all 36 route
+files**, because a glob over a bracket path silently matches nothing — the trap this log has now recorded
+five times.
+
+So a founder starting an interview gets an empty question list permanently. Two of the row's criteria
+therefore shipped **disclosed-not-met**: "batched questions" (no batch grouping, id or size exists on the
+wire) and "E2E completing an interview" (nothing writes `ready_for_review`, so there is no completion to
+reach, and no DOM harness exists in any `package.json`). Every other consequence is an **absence** — no
+next-question control, no finish control, no batch chrome — because each would have been a control that
+cannot act.
+
+### THE SLICE COMMITTED THE EXACT DEFECT IT WAS BUILT TO PREVENT, AND ONLY THE REVIEW CAUGHT IT
+
+The first commit passed `qa ?? { items: [] }` into the view mapper. A **failed** question-list read therefore
+rendered as a positive server assertion: *"There are no questions in this interview yet. The server has not
+produced any for this session."* The server had said nothing of the kind — the only event was a GET that
+failed.
+
+The screen knew the distinction and stated it correctly one branch above. But that guard tested `qaRefusal`,
+a **prop fixed at mount**, so it could only ever represent a server-component refusal; a client-side failure
+fell straight through to the definite copy. And `describeInterview` announced the same fabricated fact to the
+polite live region — where, unlike the sighted path, **no error banner exists to contradict it**. A refused
+read and a true empty list were byte-identical to a screen-reader user.
+
+Fixed where it cannot recur rather than patched at the call site: `toInterviewView` now takes
+`SessionQADTO | null` and owns a fourth `unknown` state, so a caller **cannot** substitute an empty list for a
+missing read. Mutation-proved — reverting it yields
+`AssertionError: expected 'none_exist' to be 'unknown'` **and**
+`expected 'there are no questions in this interv…' not to contain 'no questions in this interview'`, the
+second catching the announcement lie specifically.
+
+**This is the strongest evidence in this log for why independent review is not optional.** A full local gate,
+two green CI runs at zero skips, 84 passing tests including four mutation checks, and a self-review had all
+passed over it. The defect was in the one place none of them were looking: the difference between what the
+screen knew and what it said.
+
+### The other 20, grouped by what they teach
+
+**A false security comment is worse than none.** The header claimed a native form POST "arrives with
+`Origin: null` and is refused". `decideSameOrigin` consults `Sec-Fetch-Site` **first and exclusively when
+present** and returns allow for `same-origin` — so a same-origin form POST is *allowed*, and the Origin rows
+are never reached. The code was safe; the stated reason was fiction. The real enforcer is the `cross-site`
+row plus the no-provenance row.
+
+**Accessibility failures that a screenshot cannot see.** The answer textarea had **no accessible name** at
+all (a `<legend>` names the group, not the controls, and `aria-describedby` is a description) — while the
+comment beside it justified the id as safe for `aria-describedby`. Three live regions were created in the
+same React commit as their text, the exact failure this file's own comment describes and had guarded in
+precisely one of four places. The visible badge counted `addressed` while the announcement counted
+`answered`, so the two channels reported different numbers the moment anyone skipped. `.cs-help` measured
+**3.98:1** and **3.56:1** against a 4.5:1 AA floor.
+
+**A comment can be invalidated by its own commit.** Three findings, one cause: the five comment lines this
+ticket *added* to the focus-visible block pushed the selectors below it down by exactly five, so a
+`console.css:681-683` citation written in the same commit was **false on arrival**, and a comment asserting
+the textarea is covered "so :541 and :542 both match" ended up pointing at its own prose. Citations into
+files a commit edits now name **selectors and symbols, never line numbers**.
+
+**An assertion that cannot fail is not coverage.** `expect(body).not.toContain('accountId')` was a tautology:
+the arm is typed `SessionQADTO`, which has no such field, so the responder was handed nothing to leak while
+the test name promised a redaction guarantee. Replaced with exact key-set assertions that fail if a field is
+**added** — the direction a real disclosure would take.
+
+Also corrected: "exactly one of pause/resume can ever act" (false in five of seven branches, and the test
+`describe` title repeated it while two tests under it refuted it); "the DTO mirrors those columns exactly"
+(it redacts `account_id` and adds the derived `phase`); "every id in this file is per-question" (two are
+literals); "Revised N times" (off by one — `revisions` includes the original); the pause/resume 404 asserting
+one of its two causes; and a `conflict` refusal arm for a status the read cannot return, which is this
+slice's own no-unreachable-arms rule broken by its author.
+
+### It also repaid a debt from FE-005
+
+`provisioning-progress.tsx` rendered `cs-control-outcome--${kind}` for eight `ResumeOutcome` kinds while only
+`refused` and `error` had CSS rules — so on the already-merged provisioning screen a **success** and five
+distinct refusals rendered identically. All six gaps are closed, and the accent list is now documented as a
+maintained claim like the focus-visible one.
+
+### Evidence limits, stated rather than implied away
+
+The measured render harness reaches only the **signed-out refusal** for this page; without Clerk credentials
+the authenticated view returns 500. The question cards, the fieldset/legend and the live regions are
+therefore **not** covered by it, and the narrow-width case that matters most here — a textarea inside a
+fieldset inside a padded card at 492px — rests on the CSS rules and on review. Real keys remain an owner
+gate, and the harness is deliberately not in CI.
+
+### Still owed
+
+`packages/contracts/src/interview/interview.ts:29` states *"a session is never inserted directly into
+`in_progress`"*, which `packages/database/src/interview-repository.ts:33` does exactly — and whose own comment
+says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
+reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
+ticket rather than edited from a frontend slice.
