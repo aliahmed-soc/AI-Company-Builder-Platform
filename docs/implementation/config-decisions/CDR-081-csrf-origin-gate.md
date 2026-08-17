@@ -110,8 +110,9 @@ than the gap it closes.**
 A token has to be issued to a document and echoed by the client. **No page in this application posts to any
 of the seventeen state-changing methods**, and that — not "there is no UI" — is the load-bearing fact.
 
-`apps/web/src/app` *does* render: `layout.tsx` mounts `ClerkProvider` with `SignInButton`, `SignUpButton`
-and `UserButton`; `page.tsx` is a server component; and there are Clerk's `sign-in`/`sign-up` catch-alls.
+`apps/web/src/app` *does* render: `layout.tsx` mounts `ClerkProvider`; `(site)/layout.tsx` renders
+`SignInButton`, `SignUpButton` and `UserButton`; `(site)/page.tsx` is a server component; there are Clerk's
+`sign-in`/`sign-up` catch-alls under `(site)`; and `console/` renders the application shell against mock data.
 What none of them contains is a `<form>`, a Server Action (`grep "use server"` across `apps/web/src` and
 `packages` returns zero) or a `fetch` to any of those methods. So a token would ship with an issuing
 endpoint, a cookie, a verification path, and **no producer of a valid token anywhere in production** — a
@@ -244,7 +245,7 @@ statement leaves nothing in the database to assert on. §6.3 records what was pl
 | Not delivered | Why |
 |---|---|
 | **HTTP rate limiting** (NFR-010) | The second of CDR-080 §4's three. Different control, different failure mode, needs a store and a limit value nobody has ruled. Its own ticket. |
-| **Security headers / CSP** (NFR-010) | The third. A different control with its own failure modes, whose policy has to be authored against the actual rendered surface — `layout.tsx` mounting Clerk's components today, plus whatever the first real product UI adds. Its own ticket. **Not** deferred because no UI exists: one does (§1), and an earlier draft of this row said otherwise. |
+| **Security headers / CSP** (NFR-010) | The third. A different control with its own failure modes, whose policy has to be authored against the actual rendered surface — `(site)/layout.tsx` mounting Clerk's components, plus the `/console` application shell, which now exists rather than being hypothetical. Its own ticket. **Not** deferred because no UI exists: one does (§1), and an earlier draft of this row said otherwise. |
 | Pen review | External engagement at the General MVP gate (`RELEASE-GATES.md:11`). Untouched by this ticket, and the NFR-010 traceability cells keep saying so. |
 | A CSRF **token** | §1. Rejected on the record, not overlooked — and reversible if a UI ever wants defence in depth. |
 | Any change to `authorizedParties` | §0.2.3 is a real finding and a different control. Widening this ticket to it would be scope this CDR did not rule on. |

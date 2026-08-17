@@ -2264,3 +2264,100 @@ ACBP-API-006 (blocked on **P2-011**), **P7-006**, everything in `OWNER-ACTION-PA
 PR **#106** is draft and awaits the owner. Branch `p8-api-006-cdr` carries CDR-090 (partial) and has no PR.
 
 C: 38.9 GB free.
+
+---
+
+## 2026-08-17 — FRONTEND, under owner direction (FE slice 1 + the root-layout micro-slice)
+
+The FRONTEND/UI standing instruction at the top of this file was **lifted by the owner for a scoped slice**
+(ruling 2026-08-15: Berry visual language, rebuilt natively, dark-first) and then for a second, narrower one
+(the root-layout micro-slice). The gate is otherwise unchanged and still governs everything not named in those
+two rulings. Nothing here was started on my own initiative.
+
+### What shipped
+
+| Work | Head | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **FE slice 1** — console shell + company overview, mock data | `9771880` | #114 (DRAFT) | run **31985116502** — green, **281/281 files, 4167/4167 tests, zero skips**, production build step green with `ƒ /console` in the route table |
+| **Root-layout micro-slice** — app-wide viewport, `(site)` route group | see PR | #115 (DRAFT) | pending at time of writing |
+
+Neither ticket is Done, and no backlog row was set to Done — both are owner gates. FE slice 1 is held at
+`9771880` awaiting the owner's **visual** verdict.
+
+### A NAMED TRAP: headless Chrome reports `prefers-reduced-motion: reduce` BY DEFAULT
+
+Worth naming because it is silent, it looks like success, and it will catch the next person who verifies a
+motion preference the obvious way.
+
+The console honours `prefers-reduced-motion` in two places — CSS duration tokens, and JS, because the counter is
+`requestAnimationFrame`-driven and no CSS token can reach a rAF loop. To prove the JS half worked I captured the
+page twice, once normally and once with `Emulation.setEmulatedMedia` forcing `reduce`, and the two renders came
+back **byte-identical (same sha256)**. That reads as a clean result. It was worthless: **headless Chrome defaults
+to `reduce`**, so the "normal" run was also a reduced run and I had measured one condition twice.
+
+The fix is to set **both** directions explicitly — `no-preference` as well as `reduce` — and then the conditions
+separate cleanly:
+
+| | normal motion | reduced motion |
+| --- | --- | --- |
+| `matchMedia` reduce | `false` | `true` |
+| computed `--t-base` | `240ms` | `0ms` |
+| counter at 250 ms | **10,268** | **48,250** |
+| counter at rest | 48,250 | 48,250 |
+
+The identical-sha256 pair is now real evidence, because the two runs are verifiably in *different* media states.
+Before, it was the same shape as the two retractions in the 2026-08-14 entry: **a measurement that could not have
+come out differently.** Encoded in `tools/measure-render.mjs` with the reason written next to it, so the next
+session inherits the answer rather than the trap.
+
+### The standing rule again, in a new medium: A SCREENSHOT IS A CHECK THAT CANNOT SAY NO
+
+Three defects shipped through FE slice 1's visual review. Every one of them was **in the picture** and none was
+visible *as a defect*, because an image has no failure mode — it renders whatever is there and looks equally
+finished either way. All three were found by asserting a number instead.
+
+1. **No `box-sizing: border-box` anywhere in the app.** This app ships no CSS reset, so padding is added to
+   declared widths; every `width: 100%` element with padding overflowed its parent by exactly its horizontal
+   padding — **48px** at desktop (2 × `--s-5`), **32px** narrow (2 × `--s-4`). The right edge of every card was
+   cut off. In a screenshot that reads as a bad crop, not a bug, and it survived several passes of me looking
+   directly at it. A `scrollWidth > innerWidth` assertion named it in one run — and named it on **all three**
+   captures at once, including the desktop one I had already accepted.
+2. **No viewport meta tag anywhere in the app.** The narrow-width media queries could never have matched on a
+   phone: a mobile browser with no viewport meta lays out at a fallback desktop width. Measured — under mobile
+   emulation at 420px, `window.innerWidth` reported **1395**. A screenshot cannot report this at all; it just
+   shows the desktop layout, which looks correct.
+3. **The animated counter server-rendered `0`.** The credits figure was wrong until hydration and permanently
+   wrong without JavaScript. A number that is only right when an animation runs is not a decoration, it is a
+   false reading.
+
+The lesson is not "take better screenshots". It is that **an artefact that cannot fail is not evidence**, which is
+the same rule as skipped suites, Turbopack builds and `skipIf`-gated authz tests — only wearing a picture.
+`tools/measure-render.mjs` is the response: it asserts overflow, viewport, layout mode, header presence and the
+motion discrimination, and **exits non-zero**. It is deliberately not wired into CI (it drives a real browser
+against a running server, which the gate does not provision) — but it is committed, so a comment can name it as
+an enforcement and a reviewer can re-run it.
+
+**A corollary, self-inflicted:** `console.css` shipped a comment citing "the no-horizontal-overflow assertion in
+the screenshot harness" while no harness existed anywhere in the repo — a comment naming an enforcement nobody
+could locate, which is exactly what the 2026-08-06 rule forbids. Caught by an independent review pass, not by me.
+Committing the harness is what made the sentence true; the alternative was deleting the sentence.
+
+### The micro-slice found one thing that was nobody's screenshot
+
+Removing `auth()` from the root layout is presentational — its only consumer was the signed-in/out ternary, and
+enforcement lives in `proxy.ts` and `resolveVerifiedIdentity()`. But `auth()` reaches `await headers()`, a dynamic
+API, and it was **the only one above `/console`**. Deleting it would have flipped `/console` and `/_not-found` to
+build-time prerendering — harmless today (the page reads `MOCK_` constants only) but it would have deleted an
+app-wide dynamic-rendering guarantee nothing else asserts, and settled **CDR-083 §8 item 9**, the explicitly
+undecided nonce/caching question, by accident and in the wrong direction.
+
+Held deliberately with `export const dynamic = 'force-dynamic'` on the root layout, and **verified by removing
+it**: with the line, every page is `ƒ` and `prerender-manifest.json` lists only `/_global-error`; without it,
+`/console` and `/_not-found` turn `○` and join that manifest. Choosing the render mode on purpose remains the
+owner's call — that line only declines to change it.
+
+### Standing, all owner-gated — unchanged
+
+P2-011, P7-006, everything in `OWNER-ACTION-PACK.md`, PRs **#86** and **#10**. The FRONTEND/UI standing
+instruction still governs every screen not named in the owner's two rulings above. Sibling work on
+`p8-api-008-slice3b` left untouched throughout, as instructed.

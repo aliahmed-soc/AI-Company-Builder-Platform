@@ -130,7 +130,8 @@ It also cannot carry a per-request CSP nonce, which §3 needs.
 ### §2.3 Per-route — REJECTED
 
 Route handlers can set their own headers, but the surfaces that need a CSP most are the **HTML pages**
-(`app/page.tsx`, `app/layout.tsx`, `sign-in`, `sign-up`) — where scripts actually execute — and pages have
+(`app/(site)/page.tsx`, `app/(site)/layout.tsx`, `app/layout.tsx`, `sign-in`, `sign-up`, `console`) — where
+scripts actually execute — and pages have
 no header hook. Per-route would also put the same six-line block in 23 files, where the twenty-fourth is
 the one that forgets.
 
@@ -302,7 +303,7 @@ reference and breaks social sign-in."* An independent review took it apart, and 
 
 **The premise is not establishable in this repository.** `@clerk/clerk-js` — the package that would contain the
 popup logic — **is not installed**; only `@clerk/nextjs` is, and `grep -rn "opener\|window.open"` over its
-`dist/esm/` returns nothing. `sign-in/[[...sign-in]]/page.tsx` renders a bare `<SignIn />` with no `oauthFlow`
+`dist/esm/` returns nothing. `(site)/sign-in/[[...sign-in]]/page.tsx` renders a bare `<SignIn />` with no `oauthFlow`
 prop, and no social provider is configured anywhere in code. Whether a popup is ever opened is a property of a
 Clerk dashboard configuration and a runtime bundle, neither of which exists here.
 

@@ -15,8 +15,12 @@
 
 Clerk provides identity. Integration points:
 
-- `src/app/layout.tsx` — `ClerkProvider` + signed-in/out header (state resolved server-side via `auth()`).
-- `src/app/sign-in/…`, `src/app/sign-up/…` — Clerk-hosted `<SignIn/>` / `<SignUp/>` surfaces.
+- `src/app/layout.tsx` — the root layout: `ClerkProvider`, `<html>`/`<body>`, the global stylesheet and the
+  `metadata` / `viewport` / `dynamic` exports. **No session is read here.**
+- `src/app/(site)/layout.tsx` — the signed-in/out header (state resolved server-side via `auth()`). Scoped to
+  `/`, `/sign-in` and `/sign-up`; `/console` deliberately does not inherit it.
+- `src/app/(site)/sign-in/…`, `src/app/(site)/sign-up/…` — Clerk-hosted `<SignIn/>` / `<SignUp/>` surfaces.
+  The `(site)` route group does not appear in the URL: these still serve `/sign-in` and `/sign-up`.
 - `src/proxy.ts` — mounts `clerkMiddleware()` (Next 16 renamed `middleware.ts` → `proxy.ts`). Because
   this app uses a `src/` directory, the proxy file must live in `src/` (co-located with `app`), not at
   the project root — otherwise Next.js ignores it and `auth()` throws at runtime. It protects nothing
