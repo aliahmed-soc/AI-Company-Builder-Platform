@@ -28,14 +28,17 @@ export function isInterviewSessionState(value: unknown): value is InterviewSessi
 /**
  * The contract-level name for the `interview_sessions.state` column default (migration 0012) — the state a row
  * takes when an INSERT omits `state`. It is NOT the state a started session is persisted in:
- * `insertStartedIfAbsent`, the only writer that creates a session, applies the `not_started → in_progress` entry
- * ATOMICALLY AT CREATION — it inserts `state: 'in_progress'` with `started_at = now()` rather than writing a
- * `not_started` row and then issuing a separate UPDATE nothing would observe (CDR-022 §2).
+ * `insertStartedIfAbsent`, the only PRODUCTION writer that creates a session, applies the
+ * `not_started → in_progress` entry ATOMICALLY AT CREATION — it inserts `state: 'in_progress'` with
+ * `started_at = now()` rather than writing a `not_started` row and then issuing a separate UPDATE nothing would
+ * observe (CDR-022 §2). Integration tests do insert `not_started` rows directly, which is why the paragraph below
+ * is about production paths and not about what is representable.
  *
  * So `not_started` is a state the schema PERMITS but no production insert produces, and a reader should not treat
  * `phase: 'not_started'` or `startedAt: null` as a case a screen will encounter. It remains a legal, guarded
- * member of the transition map — and a permitted column value, admitted by the 0012 default and the
- * `interview_sessions_started_shape` CHECK — held for a future auto-provisioning-on-activation trigger (CDR-022 §2).
+ * member of the transition map, and a permitted column value: the `interview_sessions_state_valid` CHECK lists
+ * it, migration 0012 makes it the column default, and `interview_sessions_started_shape` admits it with a NULL
+ * `started_at`. It is held for a future auto-provisioning-on-activation trigger (CDR-022 §2).
  */
 export const INITIAL_INTERVIEW_SESSION_STATE: InterviewSessionState = 'not_started';
 
