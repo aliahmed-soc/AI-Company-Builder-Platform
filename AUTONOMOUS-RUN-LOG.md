@@ -2682,3 +2682,67 @@ The row went into a new `docs/implementation/API-BACKLOG.csv`, mirroring the pre
 when out-of-backlog frontend work got `FRONTEND-BACKLOG.csv` (PR #95). **It contains this ticket only.**
 `ACBP-API-001` through `009` belong to the concurrent session, are recorded in this log, and were
 deliberately not backfilled — inventing rows for another session's tickets would be worse than the gap.
+
+
+### MERGE MARKER — ACBP-API-010 is on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs, tree hashes and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **ACBP-API-010** — seeded foreign-row invisibility proof for every CDR-088 tenant-data read | **`3ca0971`** | #122 | **`32047608085`** on `dee627d` | **`32048661352`** on `3ca0971` |
+
+Both runs report **`284 passed (284)` test files and `4207 passed (4207)` tests**, plus `12 / 267` for
+`test:boundaries`, with **zero failures and no skip tally anywhere in either log**. The production build ran
+in both. The two runs agreeing exactly is what a byte-identical squash should produce.
+
+**The skip claim was made with a detector that was first shown capable of failing.** An earlier pass through
+the same log reported "zero skip lines" while also failing to find the *tallies* — it was matching nothing at
+all, and a detector that finds nothing because it matches nothing is indistinguishable from a clean result.
+The `^[` in a GitHub log is the literal two-character sequence, not an ESC byte, so an ANSI strip keyed on
+char 27 removes only the BOM. Every "zero skips" figure above was produced by a parser that was fed a
+synthetic `4200 passed | 7 skipped (4207)` line and observed to fire on it.
+
+**Merged, then verified, then deleted — in that order.** Branch-head tree `f0d5a04956aa7a8898e2f180d09b6cf5945d8f50`
+equals the squash tree on `main`, and `git diff api-010-roadmap-isolation-proof origin/main` was empty.
+Ancestry can never pass for a squash, so the tree is the check. `api-010-roadmap-isolation-proof` (was
+`dee627d`) is deleted from the remote and locally; no `api-010` ref remains.
+
+**A deletion instruction arrived one step early and was refused.** "Delete the branch and finalize" came
+while the merge had not happened: PR #122 was still `OPEN` with `mergedAt: null`, `origin/main` was still
+`4a8b377`, and all four commits existed only on the branch. `git merge-base --is-ancestor` said the branch
+was not contained in `main`. Deleting then would have destroyed `622baae` (proof + fixtures), `6db2e72`
+(the two vacuity fixes and the retraction), `4856581` (this log's entry) and `dee627d` (CDR-093 accepted).
+**The tree/ancestry distinction is what made the refusal legible rather than a guess:** ancestry failing is
+normally uninformative after a squash, but here there was no squash commit at all, and `main` was byte-for-byte
+where it had been three hours earlier.
+
+### What is on `main` that was not before
+
+- **`packages/test-support/src/tenancy/isolation-fixtures.ts`** — model-free builders for tenant rows behind
+  a multi-table constraint chain, with a guard that throws rather than returning an id for a row that is not
+  there. Every constraint read out of the migrations, including two NOT NULL columns that exist only as later
+  `ALTER`s (`policies.autonomy_level`, and `approval_requests.payload_hash` / `binding_version` / `expires_at`).
+- **Five CDR-088 blocks now seed** — roadmap read, artifact reads, approvals inbox, task board, roadmap edit —
+  each asserting the foreign row EXISTS on the owner connection first, then proving byte-identical refusal
+  with it present, then proving the caller's own read still serves the caller's own data.
+- **`docs/implementation/API-BACKLOG.csv`** — a new tracking file, because `ACBP-API-*` sits outside the
+  104-row `BACKLOG.csv` whose count `OWNER-ACTION-PACK.md` states. Row `ACBP-API-010` is `Done` as of this
+  marker, on the owner's instruction. `ACBP-API-001`…`009` belong to the concurrent session and are
+  deliberately not backfilled.
+- **CDR-093**, accepted by the owner. 090, 091 and 092 were all claimed on unmerged sibling branches.
+
+### The two findings worth carrying forward
+
+**An unverified premise cost two matrices their proof.** The artifact and approvals blocks each declined to
+seed because `run_id` supposedly had "an FK to `runs`". No `runs` table exists in this schema; the constraints
+are tenant-pinned composites onto `task_runs`, which the CDR-089 block in the same file had been seeding two
+hundred lines above. ACBP-P7-014 established that a control whose justification cannot be checked must not
+ship. This is the inverse and it is quieter: an unchecked premise talked two tenant-data matrices *out of*
+proving isolation, and nothing ever failed, because a disclosure costs nothing to leave in place.
+
+**A positive control is what makes a negative mean anything, and adding one found a bug nobody sought.**
+Company A held no roadmap, artifact or board task, so "A's read does not contain B's data" was satisfied by a
+read returning nothing to anybody. Adding the task-board positive control then exposed a *pre-existing*
+vacuity: `tasks.state` defaults to `'draft'` and drafts are deliberately OFF the board, so the foreign-task
+negative had been asserted about a task that appears on **nobody's** board since the block was written.
