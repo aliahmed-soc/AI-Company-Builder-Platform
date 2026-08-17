@@ -77,7 +77,27 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         <p className="cs-co-id">{company.companyId}</p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 1 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">
+      {/* ACBP-FE-007. A real link, not a disabled placeholder — the interview screen exists. It is reached
+          from here rather than from the sidebar for the same reason the provisioning screen is: the
+          destination is company-scoped, and a global nav entry would have no companyId to resolve.
+
+          The copy promises a session and its questions, and deliberately does NOT promise questions will be
+          there: no route on this build can generate one, and the interview screen says so itself. */}
+      <section className="cs-card cs-rise" style={{ '--i': 1 } as React.CSSProperties} aria-labelledby="cs-interview-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-interview-t">
+            Interview
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">The discovery interview builds the platform’s understanding of this company. Its questions, the reason each was asked, and your answers live on their own screen.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/interview`}>
+            Open the interview
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 2 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
