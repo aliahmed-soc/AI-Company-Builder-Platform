@@ -173,6 +173,66 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { selection: result.selection });
     case 'decision_recorded':
       return jsonResponse(200, { decision: result.decision });
+    // ── ACBP-API-008 slice 3b — the metered generate answers (CDR-092) ────────────────────────────────────────
+    // 200 and not 201, on the same reasoning as the two above: none of these creates a resource at a new URL a
+    // client could then GET. Each is read back through the surface it belongs to — GET strategy, GET roadmap,
+    // GET tasks — so a 201 would promise a Location that does not exist.
+    case 'strategy_generated':
+      return jsonResponse(200, { generation: result.generation });
+    case 'strategy_recommended':
+      return jsonResponse(200, { recommendation: result.recommendation });
+    case 'roadmap_generated':
+      return jsonResponse(200, { roadmap: result.roadmap });
+    // An explicit ALLOWLIST, never `...result`. Spreading would publish `status` today and whatever core's ok
+    // arm gains tomorrow — the exact defect the approvals inbox allowlist exists to prevent (CDR-088 §2.1c).
+    case 'tasks_generated':
+      return jsonResponse(200, {
+        tasks: result.tasks,
+        partial: result.partial,
+        tasksMissingType: result.tasksMissingType,
+        milestonesOmitted: result.milestonesOmitted,
+        tasksMissingRationale: result.tasksMissingRationale,
+        memoryItemsConsidered: result.memoryItemsConsidered,
+      });
+    // The eight state conflicts. All 409 — well-formed, authorized, and refused by the company's current state —
+    // and each keeps its OWN code because the next move differs for every one of them. A single generic 409
+    // would leave a founder guessing which of eight things to do.
+    case 'no_understanding':
+      return jsonResponse(409, { error: 'no_understanding' });
+    case 'not_confirmed':
+      return jsonResponse(409, { error: 'not_confirmed' });
+    case 'stale_understanding':
+      return jsonResponse(409, { error: 'stale_understanding' });
+    case 'no_decision':
+      return jsonResponse(409, { error: 'no_decision' });
+    case 'stale_decision':
+      return jsonResponse(409, { error: 'stale_decision' });
+    case 'no_roadmap':
+      return jsonResponse(409, { error: 'no_roadmap' });
+    case 'no_milestones_in_scope':
+      return jsonResponse(409, { error: 'no_milestones_in_scope' });
+    case 'stale_roadmap':
+      return jsonResponse(409, { error: 'stale_roadmap' });
+    // 502, deliberately not 503 and not 500: an UPSTREAM provider call failed or returned something unusable.
+    // 503 would say this platform is down while it is answering every other route fine; 500 would blame a defect
+    // here. Nothing was persisted either way — no phantom options, no phantom tasks. No provider detail travels.
+    case 'generation_failed':
+      return jsonResponse(502, { error: 'generation_failed' });
+    case 'recommendation_failed':
+      return jsonResponse(502, { error: 'recommendation_failed' });
+    /**
+     * 402, and deliberately WITHOUT `Retry-After` (CDR-092 §4).
+     *
+     * The header's absence is the second signal, readable without parsing a body: 429 says wait and retry, 402
+     * says retrying cannot help until a human tops the account up. An automated client handed 429 for an
+     * exhausted budget would retry forever against a wall.
+     *
+     * ⚠️ CDR-092 §10 — UNREACHABLE TODAY. Nothing on the generate paths debits credit, so no code path returns
+     * this status. The mapping is correct and the trigger does not exist; ACBP-API-009 is the wiring. This must
+     * not be reported as a working budget control.
+     */
+    case 'budget_exhausted':
+      return jsonResponse(402, { error: 'budget_exhausted' });
     case 'renamed':
       return jsonResponse(200, result.version !== undefined ? { changed: result.changed, version: result.version } : { changed: result.changed });
     case 'transitioned':

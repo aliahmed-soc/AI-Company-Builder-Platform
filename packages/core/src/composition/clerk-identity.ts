@@ -278,6 +278,40 @@ export interface ClerkIdentityRuntime {
   close(): Promise<void>;
 }
 
+/**
+ * The one condition a caller of the metered four is expected to recognise: this runtime has no model provider,
+ * so a paid call cannot be made (CDR-092 §9).
+ *
+ * A CODE, not a message match. The delivery layer has to turn this into an HTTP status, and the alternative —
+ * `err.message.startsWith('MODEL_GATEWAY_NOT_CONFIGURED')` in `apps/web` — is a contract that no compiler and no
+ * test enforces: reword the message here and the recogniser two packages away silently stops recognising it,
+ * turning an operator-fixable misconfiguration back into an anonymous 500.
+ */
+export const MODEL_GATEWAY_NOT_CONFIGURED = 'MODEL_GATEWAY_NOT_CONFIGURED';
+
+/** Build the not-configured error. The text names what to do and NEVER any key material (CDR-092 §9). */
+export function modelGatewayNotConfiguredError(): Error & { readonly code: string } {
+  return Object.assign(
+    new Error(
+      'MODEL_GATEWAY_NOT_CONFIGURED: this runtime was composed without modelProviderConfig, so the metered ' +
+        'generate use cases cannot run. Pass parseModelProviderConfig(env) when composing, or inject a ' +
+        'modelGateway in tests. Read-only routes are unaffected by this (CDR-092 §9).',
+    ),
+    { code: MODEL_GATEWAY_NOT_CONFIGURED } as const,
+  );
+}
+
+/**
+ * Is this the not-configured error?
+ *
+ * Deliberately NARROW. A delivery layer uses this to convert one specific condition into a named refusal; every
+ * other throw must stay a throw, because a catch-all that reported genuine defects as "temporarily unavailable"
+ * would hide them behind a status operators are trained to wait out.
+ */
+export function isModelGatewayNotConfigured(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === MODEL_GATEWAY_NOT_CONFIGURED;
+}
+
 export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, deps: ClerkIdentityRuntimeDeps = {}): ClerkIdentityRuntime {
   const ownsClient = deps.client === undefined;
   const client = deps.client ?? createDatabase(config.databaseConfig);
@@ -299,11 +333,7 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     if (gatewayCache !== undefined) return gatewayCache;
     if (config.modelProviderConfig === undefined) {
       // No key material is read, named, or echoed — only the fact of its absence and what to do about it.
-      throw new Error(
-        'MODEL_GATEWAY_NOT_CONFIGURED: this runtime was composed without modelProviderConfig, so the metered ' +
-          'generate use cases cannot run. Pass parseModelProviderConfig(env) when composing, or inject a ' +
-          'modelGateway in tests. Read-only routes are unaffected by this (CDR-092 §9).',
-      );
+      throw modelGatewayNotConfiguredError();
     }
     gatewayCache = createAnthropicGateway(client, {
       apiKey: config.modelProviderConfig.apiKey,
@@ -311,6 +341,22 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     });
     return gatewayCache;
   }
+
+  /**
+   * ACBP-API-008 slice 3b — the gateway is resolved AT CALL TIME, not when the deps object is built.
+   *
+   * Slice 3a passed `{ gateway: modelGateway() }`, which evaluated the factory before the use case ran a single
+   * line — so on a deployment with no model key, a VIEWER hitting a generate route got a thrown configuration
+   * error instead of the 403 the authorization matrix had already decided on. Every non-model refusal behaved
+   * the same way: `no_understanding`, `not_confirmed` and `no_decision` all became a throw, because the credential
+   * was demanded before the precondition that makes the credential unnecessary was checked.
+   *
+   * Deferring one level fixes all of it at once. Each use case checks authorization first (e.g.
+   * `strategy-generation.ts:118`) and only reaches `deps.gateway(...)` afterwards, so an unauthorized or
+   * short-circuited call now never constructs a provider — and the 403 arrives whether or not a key exists,
+   * which also means a viewer cannot use the difference to probe how the deployment is configured.
+   */
+  const lazyGateway: ModelGateway = (request, options) => modelGateway()(request, options);
   const verifier = new ClerkIdentityWebhookVerifier({ config: config.clerkWebhookConfig });
   const reader = new ClerkAuthoritativeIdentityReader({ config: config.clerkConfig, expectedInstanceId: config.expectedInstanceId });
   const webhook = createIdentityWebhookService({ verifier, client });
@@ -464,16 +510,16 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     // route in the application — so a deployment without a model key would lose its reads too. Reached only
     // when a metered call is actually made.
     async generateStrategyOptions(params, options) {
-      return generateStrategyOptions(client, params, { gateway: modelGateway() }, options ?? {});
+      return generateStrategyOptions(client, params, { gateway: lazyGateway }, options ?? {});
     },
     async recommendStrategy(params, options) {
-      return recommendStrategy(client, params, { gateway: modelGateway() }, options ?? {});
+      return recommendStrategy(client, params, { gateway: lazyGateway }, options ?? {});
     },
     async generateRoadmap(params, options) {
-      return generateRoadmap(client, params, { gateway: modelGateway() }, options ?? {});
+      return generateRoadmap(client, params, { gateway: lazyGateway }, options ?? {});
     },
     async generateTasks(params, options) {
-      return generateTasks(client, params, { gateway: modelGateway() }, options ?? {});
+      return generateTasks(client, params, { gateway: lazyGateway }, options ?? {});
     },
     resumeProvisioning(params, options) {
       return resumeProvisioning(client, params, options ?? {});

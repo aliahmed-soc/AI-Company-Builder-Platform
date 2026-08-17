@@ -21,8 +21,28 @@ describe('CDR-092 §1 — the four generate use cases and the live gateway are p
     ['generateRoadmap'],
     ['generateTasks'],
     ['createAnthropicGateway'],
+    // ACBP-API-008 slice 3b: the delivery layer maps ONE throw to a named refusal, and needs both halves of that
+    // contract from the package root. Anchored here for the same reason as the four above — `apps/web` cannot
+    // import the file, so "it is exported" has to be resolved, not grepped.
+    ['modelGatewayNotConfiguredError'],
+    ['isModelGatewayNotConfigured'],
   ])('%s is exported from @acbp/core', (name) => {
     expect(typeof (core as unknown as Record<string, unknown>)[name]).toBe('function');
+  });
+
+  test('the recogniser accepts the factory\u2019s error and rejects everything else', () => {
+    // The two halves are only useful as a PAIR. Testing them apart would let them drift into a state where each
+    // works alone and the delivery layer still stops recognising the condition.
+    expect(core.isModelGatewayNotConfigured(core.modelGatewayNotConfiguredError())).toBe(true);
+    for (const other of [new Error('MODEL_GATEWAY_NOT_CONFIGURED: a lookalike with no code'), new TypeError('x'), null, undefined, 'string', { code: 'OTHER' }]) {
+      expect(core.isModelGatewayNotConfigured(other), 'only the coded error may be recognised').toBe(false);
+    }
+  });
+
+  test('the not-configured error carries no key material', () => {
+    const message = core.modelGatewayNotConfiguredError().message;
+    expect(message).not.toContain('sk-');
+    expect(message, 'naming the variable is fine; carrying its value is not').not.toMatch(/ANTHROPIC_API_KEY\s*=/);
   });
 
   test('the deps types travel with them — a caller cannot construct the call without these', () => {

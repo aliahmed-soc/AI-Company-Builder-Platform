@@ -74,8 +74,20 @@ describe('ACBP-API-008 §3a — metered use cases bound to a gateway', () => {
   });
 
   // ── THE BINDING ────────────────────────────────────────────────────────────────────────────────────────────
-  test.each(METERED)('%s passes the injected gateway in the deps slot', async (name, useCase) => {
-    const gateway = vi.fn();
+  //
+  // SLICE 3B CHANGED WHAT "the injected gateway" MEANS HERE, so these assertions changed with it. 3a passed the
+  // constructed gateway itself; 3b passes a `ModelGateway`-shaped DELEGATE that resolves the real one at call
+  // time (clerk-identity.ts `lazyGateway`), so that an unauthorized caller gets the 403 the matrix already decided
+  // on instead of a configuration error raised before authorization ran.
+  //
+  // Identity (`toBe(gateway)`) can therefore no longer be the anchor — but "it is some function" would be a much
+  // weaker test than the one it replaces, and weakening a money-path assertion to make it pass is exactly what
+  // must not happen. So the anchor is DELEGATION, which is strictly more than 3a proved: the injected gateway is
+  // untouched until the delegate is invoked, and invoking the delegate forwards both arguments and returns the
+  // injected gateway's own result.
+  test.each(METERED)('%s passes a delegate that resolves to the injected gateway, and not before', async (name, useCase) => {
+    const answer = Symbol('the injected gateway answer');
+    const gateway = vi.fn().mockReturnValue(answer);
     const runtime = runtimeWith(gateway);
     await (runtime as unknown as Record<string, (p: unknown) => Promise<unknown>>)[name]!({
       userId: 'u',
@@ -87,7 +99,15 @@ describe('ACBP-API-008 §3a — metered use cases bound to a gateway', () => {
     const deps = useCase.mock.calls[0]?.[2] as { gateway?: unknown } | undefined;
     // The THIRD positional argument is the deps slot. Passing `options` here instead would compile.
     expect(deps, `${name}: nothing was passed in the deps position`).toBeDefined();
-    expect(deps?.gateway, `${name}: the deps slot did not carry the injected gateway`).toBe(gateway);
+    expect(typeof deps?.gateway, `${name}: the deps slot did not carry a callable gateway`).toBe('function');
+    expect(gateway, `${name}: the gateway was resolved BEFORE the use case asked for it`).not.toHaveBeenCalled();
+
+    const request = { prompt: 'p' };
+    const options = { signal: undefined };
+    const returned = (deps?.gateway as (r: unknown, o: unknown) => unknown)(request, options);
+    expect(gateway, `${name}: invoking the delegate did not reach the injected gateway`).toHaveBeenCalledTimes(1);
+    expect(gateway.mock.calls[0], `${name}: the delegate did not forward its arguments verbatim`).toEqual([request, options]);
+    expect(returned, `${name}: the delegate did not return the injected gateway's own result`).toBe(answer);
   });
 
   test('each metered method is bound to its OWN use case — no crossed wires', async () => {
@@ -104,22 +124,41 @@ describe('ACBP-API-008 §3a — metered use cases bound to a gateway', () => {
   });
 
   // ── NOT-CONFIGURED IS A NAMED FAILURE, NOT A SILENT ONE ───────────────────────────────────────────────────
-  test('a metered call with NO model configuration REJECTS naming the cause', async () => {
+  test('a metered call with NO model configuration REJECTS naming the cause, when the gateway is actually needed', async () => {
+    // "Actually needed" is the slice-3b qualifier. The use case asks for the gateway only after its authorization
+    // check and its preconditions pass, so this mock stands in for a call that got that far.
+    generateStrategyOptions.mockImplementation((_client, _params, deps: { gateway: (r: unknown, o: unknown) => unknown }) =>
+      deps.gateway({}, {}),
+    );
     const runtime = runtimeWith(undefined);
     await expect(runtime.generateStrategyOptions({ userId: 'u' } as never)).rejects.toThrow(
       /MODEL_GATEWAY_NOT_CONFIGURED/,
     );
     // Rejects rather than throwing synchronously: the methods are `async` precisely so a caller using `.catch()`
     // rather than try/catch cannot miss it. Asserted, because dropping `async` would silently reintroduce that.
-    expect(generateStrategyOptions, 'the use case must NOT run without a gateway').not.toHaveBeenCalled();
+    expect(generateStrategyOptions, 'the use case must still have RUN — the refusal comes from inside it').toHaveBeenCalledTimes(1);
+  });
+
+  test('a metered call that REFUSES before it needs a model does not raise a configuration error', async () => {
+    // The defect slice 3b fixed, pinned. With the gateway built eagerly, a viewer's 403 and every precondition
+    // refusal (`no_understanding`, `not_confirmed`, `no_decision`) came back as a thrown configuration error on a
+    // deployment without a key — a 500 in place of a decision the authorization matrix had already made, and a
+    // signal an unauthorized caller could use to probe how the deployment is configured.
+    generateStrategyOptions.mockResolvedValue({ status: 'forbidden' });
+    const runtime = runtimeWith(undefined);
+    await expect(runtime.generateStrategyOptions({ userId: 'u' } as never)).resolves.toEqual({ status: 'forbidden' });
   });
 
   test('SECURITY: the not-configured error carries no key material', async () => {
+    generateRoadmap.mockImplementation((_client, _params, deps: { gateway: (r: unknown, o: unknown) => unknown }) =>
+      deps.gateway({}, {}),
+    );
     const runtime = createClerkIdentityRuntime(
       { ...CONFIG, clerkConfig: { secretKey: { reveal: () => 'sk_SENSITIVE_VALUE' } } as never },
       { client: { kysely: {} } as never },
     );
     const error = await runtime.generateRoadmap({ userId: 'u' } as never).catch((e: unknown) => e);
+    expect(error, 'the call resolved instead of failing — the redaction assertions below would be vacuous').toBeInstanceOf(Error);
     const surface = `${(error as Error).message}\n${(error as Error).stack ?? ''}`;
     expect(surface).not.toContain('sk_SENSITIVE_VALUE');
     expect(surface).not.toContain('whsec_');

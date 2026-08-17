@@ -136,3 +136,90 @@ describe('toCompaniesResponse', () => {
     expect(await res.json()).toEqual({ error: 'company_not_active' });
   });
 });
+
+/**
+ * ACBP-API-008 slice 3b — the metered generate arms (CDR-092).
+ *
+ * ⚠️ SCOPE OF WHAT THIS PROVES, stated before the tests rather than after. CDR-092 §10 disclosed that nothing
+ * debits a company's credit on a generate call, so `budget_exhausted` has NO PRODUCER — the 402 is unreachable
+ * end to end, and wiring it is ACBP-API-009. What is proven below is exactly what §10 says can be claimed: the
+ * two refusals are DISTINGUISHABLE, by status and by the presence of `Retry-After`. Read as anything more, this
+ * suite would be the "criterion restated as if satisfied" that §10 exists to prevent.
+ */
+describe('CDR-092 — the generate arms map to distinguishable answers', () => {
+  const TASKS_OK = {
+    status: 'tasks_generated',
+    tasks: [{ taskId: 't1' }],
+    partial: true,
+    tasksMissingType: 1,
+    milestonesOmitted: 2,
+    tasksMissingRationale: 3,
+    memoryItemsConsidered: 4,
+  } as unknown as CompaniesRequestResult;
+
+  const statuses: ReadonlyArray<[CompaniesRequestResult, number]> = [
+    [{ status: 'strategy_generated', generation: { g: 1 } } as unknown as CompaniesRequestResult, 200],
+    [{ status: 'strategy_recommended', recommendation: null } as unknown as CompaniesRequestResult, 200],
+    [{ status: 'roadmap_generated', roadmap: { r: 1 } } as unknown as CompaniesRequestResult, 200],
+    [TASKS_OK, 200],
+    // The state conflicts. Each is a 409 because the request was well-formed and authorized but the company is
+    // not in a state where generating is meaningful — and each keeps its own code, because the founder's next
+    // move differs: finish the interview, confirm the understanding, record a decision, generate a roadmap first.
+    [{ status: 'no_understanding' }, 409],
+    [{ status: 'not_confirmed' }, 409],
+    [{ status: 'stale_understanding' }, 409],
+    [{ status: 'no_decision' }, 409],
+    [{ status: 'stale_decision' }, 409],
+    [{ status: 'no_roadmap' }, 409],
+    [{ status: 'no_milestones_in_scope' }, 409],
+    [{ status: 'stale_roadmap' }, 409],
+    // 502, not 503 and not 500: an UPSTREAM model call returned nothing usable. 503 would claim this platform is
+    // down when it is answering fine, and 500 would claim a defect here when the provider is the one that failed.
+    [{ status: 'generation_failed' }, 502],
+    [{ status: 'recommendation_failed' }, 502],
+    [{ status: 'budget_exhausted' }, 402],
+  ];
+  test.each(statuses)('%o → %i', (result, status) => {
+    expect(toCompaniesResponse(result).status).toBe(status);
+  });
+
+  test('402 and 429 are distinguishable WITHOUT parsing the body — Retry-After is present on one and absent on the other', () => {
+    // CDR-092 §4: they call for opposite actions. An automated client that read 429 for an exhausted budget
+    // would retry forever, and one that read 402 for a throttle would stop when waiting would have worked. The
+    // header is the second signal, so a caller can branch without reading JSON at all.
+    const throttled = toCompaniesResponse({ status: 'rate_limited', retryAfterSeconds: 30 });
+    const exhausted = toCompaniesResponse({ status: 'budget_exhausted' });
+    expect(throttled.status).toBe(429);
+    expect(throttled.headers.get('retry-after')).toBe('30');
+    expect(exhausted.status).toBe(402);
+    expect(exhausted.headers.get('retry-after'), 'retrying a 402 can never help until a human pays').toBeNull();
+  });
+
+  test('the eight state conflicts keep EIGHT distinct codes', async () => {
+    const conflicts = ['no_understanding', 'not_confirmed', 'stale_understanding', 'no_decision', 'stale_decision', 'no_roadmap', 'no_milestones_in_scope', 'stale_roadmap'] as const;
+    const codes: string[] = [];
+    for (const status of conflicts) {
+      const res = toCompaniesResponse({ status });
+      expect(res.status).toBe(409);
+      codes.push(((await res.json()) as { error: string }).error);
+    }
+    expect(new Set(codes).size, 'collapsing any two would tell a founder to do the wrong thing next').toBe(8);
+    expect(codes).toEqual([...conflicts]);
+  });
+
+  test('a generated plan publishes an ALLOWLIST, never a spread of core\u2019s result', async () => {
+    // The approvals inbox (CDR-088 §2.1c) established this: spreading a domain object publishes whatever column
+    // or field is added to it next. The sentinel below stands in for that future field.
+    const withExtra = { ...(TASKS_OK as unknown as Record<string, unknown>), internalPromptText: 'SHOULD-NEVER-BE-SERVED' } as unknown as CompaniesRequestResult;
+    const res = toCompaniesResponse(withExtra);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(['memoryItemsConsidered', 'milestonesOmitted', 'partial', 'tasks', 'tasksMissingRationale', 'tasksMissingType']);
+    expect(JSON.stringify(body)).not.toContain('SHOULD-NEVER-BE-SERVED');
+  });
+
+  test('a generation failure carries no provider detail', async () => {
+    const res = toCompaniesResponse({ status: 'generation_failed' });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'generation_failed' });
+  });
+});

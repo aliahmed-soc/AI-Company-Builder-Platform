@@ -8,10 +8,10 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import type { RequestLimitOutcome } from '@acbp/core';
+import { isModelGatewayNotConfigured, type RequestLimitOutcome } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
-import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, DeleteTaskParams, DeleteTaskResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps } from '@acbp/core';
+import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, DeleteTaskParams, DeleteTaskResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps, GenerateStrategyParams, GenerateStrategyResult, RecommendStrategyParams, RecommendStrategyResult, StrategyRecommendationOptions, GenerateRoadmapParams, GenerateRoadmapResult, GenerateTasksParams, GenerateTasksResult, TaskPlanningOptions } from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -86,7 +86,44 @@ export type CompaniesRequestResult =
   | { readonly status: 'run'; readonly run: Extract<GetTaskRunResult, { status: 'ok' }>['run'] }
   | { readonly status: 'runs'; readonly runs: Extract<ListTaskRunsResult, { status: 'ok' }>['runs'] }
   | { readonly status: 'strategy_selected'; readonly selection: Extract<RecordStrategyDecisionResult, { status: 'ok' }>['selection'] }
-  | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] };
+  | { readonly status: 'decision_recorded'; readonly decision: Extract<RecordDecisionResult, { status: 'ok' }>['decision'] }
+  // ── ACBP-API-008 slice 3b — THE FOUR METERED SURFACES (CDR-092) ──────────────────────────────────────────────
+  // Payload types DERIVED from core's results, as everywhere else here. The HTTP layer still publishes an
+  // explicit allowlist rather than spreading these: derivation keeps the SHAPE honest, an allowlist keeps a
+  // field added to core tomorrow from publishing itself today (CDR-088 §2.1c, the approvals lesson).
+  | { readonly status: 'strategy_generated'; readonly generation: Extract<GenerateStrategyResult, { status: 'ok' }>['generation'] }
+  // Nullable, and null is a SUCCESS: core returns `recommendation: … | null`, and re-reading that as a 404 would
+  // assert the generation does not exist, which is a different and false statement.
+  | { readonly status: 'strategy_recommended'; readonly recommendation: Extract<RecommendStrategyResult, { status: 'ok' }>['recommendation'] }
+  | { readonly status: 'roadmap_generated'; readonly roadmap: Extract<GenerateRoadmapResult, { status: 'ok' }>['roadmap'] }
+  // The four counters travel WITH the tasks for the reason `flaggedTaskCount` does above: PLAN-001 wants a type
+  // on every task and ADR-019 forbids inventing one, so a shortfall is REPORTED. Dropping the counters here
+  // would re-manufacture at the boundary exactly the fabricated completeness the domain refuses to produce.
+  | ({ readonly status: 'tasks_generated' } & Omit<Extract<GenerateTasksResult, { status: 'ok' }>, 'status'>)
+  // The refusals. Each keeps its own arm because the founder's NEXT MOVE differs for every one of them: finish
+  // the interview, confirm the understanding, re-read and retry, record a decision, change a rejected decision,
+  // generate a roadmap first, widen the approved phase. Collapsing any pair would send someone the wrong way.
+  | { readonly status: 'no_understanding' }
+  | { readonly status: 'not_confirmed' }
+  | { readonly status: 'stale_understanding' }
+  | { readonly status: 'no_decision' }
+  | { readonly status: 'stale_decision' }
+  | { readonly status: 'no_roadmap' }
+  | { readonly status: 'no_milestones_in_scope' }
+  | { readonly status: 'stale_roadmap' }
+  // The UPSTREAM failed, or returned something unusable. Distinct from `unavailable` (this platform is down) and
+  // from an unmapped throw (a defect here); nothing is persisted, so there are no phantom options or tasks.
+  | { readonly status: 'generation_failed' }
+  | { readonly status: 'recommendation_failed' }
+  /**
+   * ⚠️ NO PRODUCER TODAY — CDR-092 §10, disclosed rather than quietly dropped.
+   *
+   * The arm and its 402 exist so a client can distinguish "slow down" from "you are out of money", which call
+   * for opposite actions. Nothing on these four paths reserves or consumes credit, so nothing can currently
+   * return it: the mapping is real, the trigger is not. Wiring `preflightRun`/`reserveCredit`/`settleRun` is
+   * ACBP-API-009, kept separate because a money path deserves more review than an HTTP-wiring slice.
+   */
+  | { readonly status: 'budget_exhausted' };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -97,7 +134,7 @@ export interface CompanyRuntime {
    * sessions, which is precisely why section 8 rules two layers rather than one (CDR-082 section 6.4). A fake
    * runtime in a test must declare it, so no surface can be admitted by forgetting it.
    */
-  checkRequestLimit(scopeKind: 'session' | 'account', scopeKey: string): Promise<RequestLimitOutcome>;
+  checkRequestLimit(scopeKind: 'session' | 'account' | 'company', scopeKey: string): Promise<RequestLimitOutcome>;
 
   resolveInternalUser(providerUserId: string): Promise<InternalUserReconciliation>;
   ensurePersonalAccount(userId: string, options?: { correlationId?: string; logger?: Logger }): Promise<ProvisionResult>;
@@ -141,6 +178,13 @@ export interface CompanyRuntime {
   listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
+  // ACBP-API-008 slice 3b — the four that spend real money. REQUIRED, like every surface above: an optional
+  // method is one a runtime can omit and still typecheck, and the omission would only surface as a production
+  // failure on the paths where failure costs the most.
+  generateStrategyOptions(params: GenerateStrategyParams, options?: StrategyGenerationOptions): Promise<GenerateStrategyResult>;
+  recommendStrategy(params: RecommendStrategyParams, options?: StrategyRecommendationOptions): Promise<RecommendStrategyResult>;
+  generateRoadmap(params: GenerateRoadmapParams, options?: RoadmapGenerationOptions): Promise<GenerateRoadmapResult>;
+  generateTasks(params: GenerateTasksParams, options?: TaskPlanningOptions): Promise<GenerateTasksResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -976,5 +1020,182 @@ export async function recordDecisionForRequest(
       return { status: 'not_found' };
     case 'invalid':
       return { status: 'validation', error: { category: 'validation', code: 'VALIDATION_FAILED', message: 'The decision was rejected.', retryable: false } };
+  }
+}
+
+// ══ ACBP-API-008 slice 3b — the four metered generate surfaces (CDR-092) ═══════════════════════════════════════
+//
+// The only routes in this application that cause a PAID provider call. Everything above either reads or writes
+// the database; a defect there returns wrong data, a defect here spends the founder's money.
+//
+// Two things are therefore true of all four, and both are enforced below rather than described:
+//
+//  1. THE COMPANY CEILING IS CONSULTED BEFORE THE CALL, and its refusal returns. `resolveMeteredContext` is the
+//     only way into these functions, so "did we check the limit" is not a per-route question. CDR-092 §6.2 named
+//     the failure this prevents: ACBP-P6-010 shipped a spend ceiling that WAS computed and never read.
+//  2. AUTHORIZATION IS NOT DECIDED HERE (CDR-088 §1). Core checks `strategy:generate` / `strategy:recommend` /
+//     `roadmap:generate` / `task:generate` — owner-only since the ACBP-API-004 narrowing — from the company role
+//     it reads itself. This layer must forward the refusal, never absorb or re-derive it.
+
+/**
+ * Resolve the actor, then consume the per-COMPANY ceiling on top of the session and account ones.
+ *
+ * A THIRD ceiling rather than a replacement: the session one bounds a browser tab, the account one bounds a
+ * user with many sessions, and neither bounds the thing that matters here — how fast money leaves ONE company.
+ * Keyed on `companyId` for the same reason: keyed on the account, a founder's second company would be throttled
+ * because their first one was busy, and two companies could consume each other's budget ceiling.
+ *
+ * The company id is still only a REQUEST SELECTOR at this point — membership has not been verified yet, and is
+ * not this function's job. Metering an unauthorized caller's attempt is the correct order anyway: it is the
+ * cheap check, and it bounds exactly the traffic an attacker would generate probing for a company they cannot
+ * reach.
+ */
+async function resolveMeteredContext(
+  deps: CompaniesRequestDeps,
+  runtime: CompanyRuntime,
+  companyId: string,
+): Promise<{ userId: string; accountId: string } | Early> {
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx;
+  const limit = await runtime.checkRequestLimit('company', companyId);
+  // `throttled` and `unavailable` are NOT the same answer and neither may fall through to the call below. An
+  // unreadable bucket fails CLOSED: the alternative is that a database hiccup silently uncaps paid generation.
+  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };
+  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };
+  return ctx;
+}
+
+/**
+ * Invoke a metered use case, converting the ONE recognised configuration failure into a named refusal.
+ *
+ * Narrow on purpose. `isModelGatewayNotConfigured` matches a code core sets, not a message shape, and everything
+ * else rethrows to the generic bounded 500. A broader catch here would report genuine defects as 503 — a status
+ * operators are trained to wait out, which is the worst possible disguise for a bug that will never clear.
+ */
+async function callMetered<R>(call: () => Promise<R>): Promise<{ readonly ok: true; readonly result: R } | { readonly ok: false; readonly refusal: CompaniesRequestResult }> {
+  try {
+    return { ok: true, result: await call() };
+  } catch (error) {
+    // The thrown message names an environment variable and the fix; it never travels to the client.
+    if (isModelGatewayNotConfigured(error)) return { ok: false, refusal: { status: 'unavailable' } };
+    throw error;
+  }
+}
+
+/** Generate the strategy option set (STRAT-001; `strategy:generate` → OWNER ONLY, enforced in `@acbp/core`). */
+export async function generateStrategyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  if ('kind' in ctx) return ctx.result;
+  const call = await callMetered(() => runtime.generateStrategyOptions({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
+  if (!call.ok) return call.refusal;
+  switch (call.result.status) {
+    case 'ok':
+      return { status: 'strategy_generated', generation: call.result.generation };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    // Three preconditions, three answers. "No understanding yet" means run the interview; "not confirmed" means
+    // the founder still has to accept it; "stale" means it changed under the call and nothing was written.
+    case 'no_understanding':
+      return { status: 'no_understanding' };
+    case 'not_confirmed':
+      return { status: 'not_confirmed' };
+    case 'stale_understanding':
+      return { status: 'stale_understanding' };
+    case 'generation_failed':
+      return { status: 'generation_failed' };
+  }
+}
+
+/** Recommend one option from a generation (STRAT-003; `strategy:recommend` → OWNER ONLY, enforced in core). */
+export async function recommendStrategyForRequest(
+  companyId: string,
+  body: { readonly generationId: string },
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  if ('kind' in ctx) return ctx.result;
+  const call = await callMetered(() => runtime.recommendStrategy({ userId: ctx.userId, accountId: ctx.accountId, companyId, generationId: body.generationId }, {}));
+  if (!call.ok) return call.refusal;
+  switch (call.result.status) {
+    case 'ok':
+      // May be null, and null is a SUCCESS — the model declined to single one out. Mapping that to 404 would
+      // claim the generation is missing, which is a different statement and a false one.
+      return { status: 'strategy_recommended', recommendation: call.result.recommendation };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'recommendation_failed':
+      return { status: 'recommendation_failed' };
+  }
+}
+
+/** Generate the roadmap from the recorded decision (PLAN §; `roadmap:generate` → OWNER ONLY, enforced in core). */
+export async function generateRoadmapForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  if ('kind' in ctx) return ctx.result;
+  const call = await callMetered(() => runtime.generateRoadmap({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
+  if (!call.ok) return call.refusal;
+  switch (call.result.status) {
+    case 'ok':
+      return { status: 'roadmap_generated', roadmap: call.result.roadmap };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'no_decision':
+      return { status: 'no_decision' };
+    // Planning is gated exactly like generation on a REJECTED decision (CDR-039 §7-G1) — otherwise a rejection
+    // could be side-stepped by planning around it.
+    case 'decision_rejected':
+      return { status: 'decision_rejected' };
+    case 'stale_decision':
+      return { status: 'stale_decision' };
+    case 'generation_failed':
+      return { status: 'generation_failed' };
+  }
+}
+
+/** Generate the task plan for the approved phase (PLAN-001; `task:generate` → OWNER ONLY, enforced in core). */
+export async function generateTasksForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  if ('kind' in ctx) return ctx.result;
+  const call = await callMetered(() => runtime.generateTasks({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
+  if (!call.ok) return call.refusal;
+  const r = call.result;
+  switch (r.status) {
+    case 'ok':
+      // Every counter forwarded, explicitly. A partial plan that arrived looking complete is the one outcome
+      // PLAN-001 and ADR-019 jointly refuse to produce, and dropping a field here would produce it anyway.
+      return {
+        status: 'tasks_generated',
+        tasks: r.tasks,
+        partial: r.partial,
+        tasksMissingType: r.tasksMissingType,
+        milestonesOmitted: r.milestonesOmitted,
+        tasksMissingRationale: r.tasksMissingRationale,
+        memoryItemsConsidered: r.memoryItemsConsidered,
+      };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'no_decision':
+      return { status: 'no_decision' };
+    case 'decision_rejected':
+      return { status: 'decision_rejected' };
+    // Two DIFFERENT absences: no roadmap at all, versus a roadmap whose approved phase contains no milestones.
+    // The first means generate one; the second means widen the phase. One answer for both would strand a founder
+    // re-running the step that already succeeded.
+    case 'no_roadmap':
+      return { status: 'no_roadmap' };
+    case 'no_milestones_in_scope':
+      return { status: 'no_milestones_in_scope' };
+    case 'stale_decision':
+      return { status: 'stale_decision' };
+    case 'stale_roadmap':
+      return { status: 'stale_roadmap' };
+    case 'generation_failed':
+      return { status: 'generation_failed' };
   }
 }
