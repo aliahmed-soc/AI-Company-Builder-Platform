@@ -2981,3 +2981,75 @@ gate, and the harness is deliberately not in CI.
 says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
 reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
 ticket rather than edited from a frontend slice.
+
+## 2026-08-17 (23:05 UTC / 2026-08-18 ~02:05 +03) — the contracts comment FE-007 left owed, corrected
+
+Discharges the "Still owed" item immediately above. Branch `docs-contracts-interview-initial-state`, opened as
+a DRAFT PR and **unmerged** at the time of writing — merging is an owner gate. Comment-only: two hunks in one
+file, no executable line changed.
+
+### What was false
+
+`packages/contracts/src/interview/interview.ts:29` said *"a session is never inserted directly into
+`in_progress`"*. `packages/database/src/interview-repository.ts:33` does exactly that — `insertStartedIfAbsent`
+inserts `state: 'in_progress'` with `started_at = now()`, and its own docstring calls it "the
+not_started->in_progress entry applied atomically at creation — CDR-022 §2".
+
+**The sentence is a survivor, not a new defect.** The identical claim was already caught and fixed one layer
+up: `docs/implementation/P2-001-REVIEW-COVERAGE.md` row AR-MEDIUM-1 / SR-2 records CDR-022 §2 making the same
+false statement, and the P2-001 review-fix commit rewrote §2 to describe the atomic mint-and-enter. The
+contract comment is the copy that pass missed. A sweep across the phrasing variants finds no third copy — the
+only remaining hits are this log, that P2-001 review row, and CDR-022's corrected text.
+
+### One correction to the note above, which overstated the case
+
+The "Still owed" paragraph says `phase: 'not_started'` "is not reachable". The accurate claim is narrower:
+**no production insert produces a `not_started` row.** The schema plainly permits one — migration 0012
+declares `state text not null default 'not_started'`, the `interview_sessions_state_valid` CHECK lists it, and
+`interview_sessions_started_shape` accommodates it with a null `started_at`. Three inserts in
+`interview-sessions.integration.test.ts` create such rows deliberately. What keeps the phase out of the
+product is not the schema but the single production writer always supplying `in_progress`. The replacement
+comment says that and names both enforcers, instead of asserting a bare "never" that the schema contradicts.
+
+### `INITIAL_INTERVIEW_SESSION_STATE` is unreferenced — and is being KEPT anyway
+
+Reference count verified three independent ways (the Grep tool's bundled ripgrep, `git grep` over tracked
+files, and a whole-tree scan), each self-tested against a symbol known to be referenced AND against a nonsense
+symbol — because a search that can only ever return "not found" is a failure mode this log has already
+recorded. All three agree: **three occurrences across two files**, its own definition and its own test, where
+the test asserts only that the constant equals the literal it is defined as. Zero production consumers.
+
+It is not being deleted, for three reasons that outrank "nothing imports it":
+
+1. **An accepted CDR names it.** CDR-022 §2 states "The contract mints the initial state `not_started` (the DB
+   column default)". Deleting the constant would make an accepted decision record false — the same class of
+   defect this ticket exists to repair. An accepted CDR outranks a tidiness preference in the canonical source
+   priority.
+2. **It mirrors a live, enforced default.** Migration 0012's column default really is `'not_started'`, so the
+   constant is the contract-level name for real database behaviour, not a fiction.
+3. **It is three-quarters of a pattern, not an outlier.** `@acbp/contracts` declares four `INITIAL_*`
+   constants. Only `INITIAL_COMPANY_STATUS` is consumed by production code (`company-service.ts:141`);
+   `INITIAL_TASK_STATE` and `INITIAL_MEMORY_CONFIRMATION_STATE` are, exactly like this one, imported solely by
+   their own tests. Removing one member of a consistent declarative family is a package-wide convention change,
+   and dropping an export from `@acbp/contracts` is a public-API change — an owner call, not a side effect of a
+   comment fix.
+
+If the owner wants the family retired, that is a CDR amendment covering all three, and this note is the
+evidence base for it.
+
+### Found in passing, NOT fixed — outside this ticket's scope
+
+`packages/core/src/discovery/interview-session.ts:170` maps an unrecognised row state to `'not_started'`:
+`isInterviewSessionState(row.state) ? row.state : 'not_started'`. The DTO's `phase` is computed from the raw
+`row.state` and correctly yields `'unknown'`, so a corrupt row would produce the self-contradicting pair
+`state: 'not_started'` with `phase: 'unknown'` — and `state` would be a fabricated healthy value, which is what
+the "NEVER a fabricated healthy phase" rule a few lines up in the same contract forbids. The
+`interview_sessions_state_valid` CHECK makes it unreachable today, so this is a latent inconsistency in
+defensive code, not a live defect. Recorded rather than fixed: changing a DTO fallback is a behaviour change,
+and this branch is comment-only.
+
+### Ticket class and verification
+
+**No CDR.** This makes no new decision; it aligns a stale comment with CDR-022 §2 as already amended by the
+P2-001 review. No TDD step either — there is no behaviour to test, and the existing contract test still passes
+unchanged. Gate results are recorded with the commit and on the PR.
