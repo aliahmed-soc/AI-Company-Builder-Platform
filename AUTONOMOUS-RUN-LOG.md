@@ -2410,12 +2410,13 @@ mutation afterwards was applied and reverted by hand.
 
 ### Flagged, not fixed — one of these needs an owner ruling
 
-1. **A viewer can drain the owner's company ceiling.** The per-company bucket is consumed *before*
-   authorization, keyed on a raw request selector. The viewer gets 403; the token is spent anyway, so five
-   requests a minute keep the owner throttled from an actor whose own ceiling is sixty times larger. Keying it
-   `${companyId}:${userId}` is one line and looks right, but it is a rate-limiting decision belonging to CDR-082
-   and CDR-008 §8, where the early position was chosen deliberately to bound probing. Three options in
-   CDR-092 §14. **This is the one open judgment call.**
+1. **Any authenticated caller can drain another company's generate ceiling.** An earlier wording called this a
+   viewer-versus-owner problem on the same account. That was too small. The per-company bucket is consumed
+   *before* membership is verified, keyed only on the path segment, so any signed-in user who knows a company id
+   spends that company's tokens and is then refused 403. Five requests a minute keep the owner on 429. No
+   membership, no shared account, no paid call. Keying it `${companyId}:${userId}` is one line and looks right,
+   but it is a rate-limiting decision belonging to CDR-082 and CDR-008 §8. Three options in CDR-092 §14. **This
+   is the one open judgment call.** Corrected after a later security pass restated the blast radius.
 2. **Three 409s and one 403 arrive after the paid call**, because each use case re-verifies inside the persist
    transaction — which is what makes the write safe. Recorded so ACBP-API-009 is not built on "4xx means no
    charge".
@@ -2425,6 +2426,9 @@ mutation afterwards was applied and reverted by hand.
    **unreachable** and must not be read as a working budget control. Deliberately out of scope here.
 5. `maxDuration = 90` is still provisional and unmeasured — no live model call has ever completed from this
    repository.
+6. **No generate-path idempotency.** Duplicate or concurrent POSTs each charge the provider; the gateway can
+   still retry twice on transient failures. Same ticket as the credit wiring (ACBP-API-009), recorded so it is
+   not mistaken for something slice 3b closed.
 
 ### Also produced
 
