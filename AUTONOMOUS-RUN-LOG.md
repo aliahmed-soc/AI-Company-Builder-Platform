@@ -2410,3 +2410,54 @@ from CI — a local pre-PR gate that no claim may cite as coverage.
 **Frontend status after this marker:** the FRONTEND/UI standing instruction at the top of this file is UNCHANGED
 and still governs every screen. Two slices were released by name; nothing else is. The next slice was proposed to
 the owner (ACBP-FE-004, portfolio and company switching) and **awaits confirmation — it is not started.**
+
+
+### ACBP-FE-004 and ACBP-FE-006 — released by name (owner, 2026-08-17)
+
+The FRONTEND/UI standing instruction at the top of this file is **release-by-name**, so the authorization is
+recorded here before the work, not inferred from it afterwards.
+
+- **ACBP-FE-004** — portfolio card grid. Owner ruling: card grid in the Berry language, only the fields the
+  portfolio read returns, empty state stating absence plainly with a disabled labelled create control, all six
+  refusals distinct with the real `retryAfterSeconds`, no Clerk keys, backlog untouched. Shipped as `b2bbf27`,
+  draft PR **#117**, exact-head CI **32023523290** green with zero skips.
+- **ACBP-FE-006** — company profile. Owner ruling: single profile page, pause control on the page only; and
+  after a preflight, two follow-up rulings — surface the caller's role from core, and use `fetch` rather than a
+  Server Action.
+
+Nothing beyond those two names is released. Every other screen remains gated.
+
+### What the FE-006 preflight found, and why it ran before any code
+
+Three questions were checked against the source before building, because two of them could have made the slice
+either dishonest or a security change in disguise.
+
+**1. The company read does not carry the caller's role — and the reason cannot be recovered afterwards.**
+`CompanyView` is six fields and role is not one of them. That matters because an unauthorized transition comes
+back as a bare `forbidden`, *deliberately indistinguishable from "no such company"*, so a viewer's refusal
+cannot be explained after a failed attempt: the reason has to be known before the control renders. Four options
+existed and three were rejected on evidence — a second portfolio read costs another rate-limit charge and
+silently misses any company past the first page; `listMembersForRequest` answers ACCOUNT role, a different
+question; and inferring viewer-ness from a derived usage flag would flip to a FALSE ENABLED control the day the
+authz matrix widened. The owner chose the fourth: return the role core already resolved. It costs no extra
+query and cannot drift from the value that gated the read, because it IS that value.
+
+**2. A pause button falsifies CDR-081's premise — and does not reopen its ruling.** "No page in this
+application posts to any of the seventeen state-changing methods" was still literally true at `da50603`
+(verified: zero `use server`, zero `<form>`, zero page-side `fetch`), and FE-006 is the first slice in the
+repository's history to break it. But that premise is the reason a *token* would have been inert, never the
+reason the *gate* works — the gate rests on `Sec-Fetch-Site`/`Origin` being forbidden header names, and §3 had
+already pre-ruled that a token is "reversible if a UI ever wants defence in depth". So this is a doc
+correction, recorded in CDR-081 §1 with the old sentences rescoped rather than deleted.
+
+**3. The transport was the part that genuinely needed the owner.** A Server Action would have been the tidier
+architecture — no second hop, no second rate-limit charge, matching the FE-004 precedent of calling the request
+function directly. It is also **invisible to both static guards**: `check-csrf-origin-gate.mjs` enumerates
+`route.*` under `api/`, and `check-rate-limit-coverage.mjs` is scoped to `app/api/**`. Both would have stayed
+GREEN while their promises stopped covering the app's only mutating control — CDR-082 §2's "a route added next
+month cannot silently omit it" would have become false in substance with no test failing. The owner ruled
+`fetch` against the existing routes, so both guards keep meaning what they say.
+
+**The rule this leaves behind:** a green checker that has quietly stopped checking is worse than a missing one,
+because its greenness is read as coverage. Before adding a new KIND of entry point, ask which existing guard
+enumerates entry points and whether it can see this one.

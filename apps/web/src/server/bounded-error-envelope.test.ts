@@ -33,7 +33,7 @@ describe('bounded HTTP error envelope — ACBP-P1-014 Class R restoration', () =
   });
 
   test('successful and denial outcomes are untouched by the wrapper', async () => {
-    const ok = await respondToCompaniesRequest(() => Promise.resolve({ status: 'company', company: { companyId: 'co_1', status: 'active', displayStatus: 'active', name: 'A', description: null, profileVersion: 1 } }));
+    const ok = await respondToCompaniesRequest(() => Promise.resolve({ status: 'company', company: { companyId: 'co_1', status: 'active', displayStatus: 'active', name: 'A', description: null, profileVersion: 1, role: 'owner' } }));
     expect(ok.status).toBe(200);
     const denied = await respondToCompaniesRequest(() => Promise.resolve({ status: 'forbidden' }));
     expect(denied.status).toBe(403);

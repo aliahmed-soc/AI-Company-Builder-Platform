@@ -556,12 +556,21 @@
   animation: cs-rise var(--t-slow) var(--ease) backwards;
   animation-delay: calc(var(--i, 0) * 70ms);
 }
-/* A LIFT ON HOVER, BUT NO POINTER CURSOR: these cards are not links (ACBP-FE-006 is unbuilt), and a hand
-   cursor would promise a destination that does not exist. */
+/* The card IS the link now that ACBP-FE-006 exists, so the whole surface is the target rather than a small
+   "open" affordance — and the hover lift finally promises something real. */
+.cs-co {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
 .cs-co:hover {
   transform: translateY(-3px);
   box-shadow: var(--shadow-lift);
-  border-color: var(--c-border);
+  border-color: var(--c-primary);
+}
+.cs-co:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
 }
 .cs-co-top {
   display: flex;
@@ -638,6 +647,39 @@
   color: var(--c-text);
   font-variant-numeric: tabular-nums;
 }
+/* ── Company profile + the pause control (ACBP-FE-006) ─────────────────────────────────────────────────── */
+.cs-co-meta--wide { gap: var(--s-6); flex-wrap: wrap; }
+/* The profile's status pill carries no tone class: `displayStatus` is already the honest founder-facing value
+   (COMP-008 renders an unrecognised state as `unknown`), so it needs no colour-coding to be truthful. */
+.cs-status--tone { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-control { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-3); }
+/* The reason a control is unavailable is TEXT, at readable size — not a tooltip. A disabled button whose
+   explanation only appears on hover is unreachable by touch and by keyboard, which makes the explanation
+   decorative. */
+.cs-control-why {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--c-text-dim);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+.cs-control-outcome {
+  margin: 0;
+  max-width: 62ch;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-control);
+  border: 1px solid var(--c-border-soft);
+  background: var(--c-surface-2);
+  color: var(--c-text-dim);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+.cs-control-outcome--done { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
+.cs-control-outcome--stale { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
+.cs-control-outcome--refused { border-color: rgba(255, 92, 114, 0.42); color: #ffc3cc; }
+.cs-control-outcome--retry { border-color: rgba(149, 117, 255, 0.42); color: #cfc0ff; }
+.cs-control-outcome--error { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
+
 .cs-empty { max-width: 62ch; }
 .cs-empty .cs-card-t { margin-bottom: var(--s-3); }
 .cs-empty .cs-btn { margin-top: var(--s-4); }
