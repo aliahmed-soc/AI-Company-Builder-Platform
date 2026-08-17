@@ -203,12 +203,29 @@ describe.skipIf(!hasTestDatabase)('roadmap generation (real PostgreSQL, restrict
     // NARROWED by ACBP-API-004: `roadmap:generate` is owner-only, `roadmap:read` is NOT. That split is the whole
     // point of the ruling — narrowing who may COMMISSION a plan does not narrow who may SEE it — so this test now
     // pins both halves in one place, which is where a future widening would have to argue with itself.
+    //
+    // THE `forbidden` ON ITS OWN IS NOT ENOUGH (ACBP-API-008). Two authorization checks guard this path — one
+    // before the model call, one inside the persist transaction — so weakening only the first still returns
+    // `forbidden` from the second, with a paid provider call already made in between. The counter is what
+    // distinguishes "refused" from "refused after we paid for it".
     await seedDecision('select');
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof okGateway> => {
+      const inner = okGateway();
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
-    expect((await generateRoadmap(product, viewer, { gateway: okGateway() })).status).toBe('forbidden');
+    expect((await generateRoadmap(product, viewer, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
     expect((await getLatestRoadmap(product, viewer)).status, 'reading the plan is still a member action').toBe('ok');
+
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };
-    expect((await generateRoadmap(product, nonMember, { gateway: okGateway() })).status).toBe('forbidden');
+    expect((await generateRoadmap(product, nonMember, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
     expect((await getLatestRoadmap(product, nonMember)).status).toBe('forbidden');
   });
 

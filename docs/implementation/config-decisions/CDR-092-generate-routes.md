@@ -353,8 +353,47 @@ called. All four failed the check. They are no longer one-off probes: each is pi
 `tools/tests/check-generate-route-coverage.test.mjs`, alongside the ways the check could quietly stop checking
 (a vanished directory, an empty API tree, a route with no `POST`, an unresolvable import).
 
-**What these results are NOT.** They are local. Nothing here is a hosted-CI mutation run, so no row above may
-be recorded as `measured` in `tools/trust-critical-index.mjs` under the rule in that file's header. And the
-authz claim that matters most — a *viewer* being refused by core against real PostgreSQL — cannot be made
-locally at all: PostgreSQL is reachable only inside the WSL distro on this machine and not from the Windows
-host, so 1,672 tests skipped locally. Zero-skip hosted CI is the only place that claim can be made.
+**What these results are NOT.** They are local. Under the rule in the header of
+`tools/trust-critical-index.mjs`, no row above may be recorded as `measured` on local evidence. And the authz
+claim that matters most — a *viewer* being refused by core against real PostgreSQL — cannot be made locally at
+all: PostgreSQL is reachable only inside the WSL distro on this machine and not from the Windows host, so 1,672
+tests skipped locally. Zero-skip hosted CI is the only place that claim can be made. Which is exactly why the
+next section exists.
+
+---
+
+## §13 — The mutation that SURVIVED, and the money it would have cost
+
+`generateStrategyOptions` has **two** authorization checks: one in the pre-read scope
+(`strategy-generation.ts` step 1) and one inside the persist transaction (step 4). The paid provider call sits
+**between them**, at step 2.
+
+Hosted CI run **31982475683** weakened the FIRST one from `strategy:generate` (owner) to `strategy:read`
+(owner|viewer) — one word, compiling and linting cleanly — and **the entire suite passed, with zero skips**.
+
+It passed because the observable outcome did not change. A viewer still received `forbidden`, from the second
+check. Nothing was persisted, and every existing assertion says so. What changed is invisible to all of them:
+**the account was charged for a generation the caller was never allowed to commission.** *"Nothing was
+persisted"* and *"nothing was spent"* are different claims, and only the first had a test.
+
+This is the §3 rule in the standing operating rules, arriving from the direction that rule warns about: every
+green here was real, and none of it was evidence of the property that mattered. Note also that the *route*-layer
+work in this slice could not have caught it either — the request layer forwards `forbidden` faithfully, and it
+is faithful about a refusal that has already cost money.
+
+**The fix, in the four suites where the paid call lives:** a counting gateway, and the assertion that a refused
+caller reached it **zero** times — for a viewer and for a non-member, on all four metered use cases. The
+returned status is now the supporting detail; the counter is the claim.
+
+| Suite | Test |
+|---|---|
+| `strategy-generation.integration.test.ts` | *MONEY: a viewer and a non-member are refused BEFORE the provider is called* (new) |
+| `strategy-recommendation.integration.test.ts` | the existing viewer/non-member test, now counting |
+| `roadmap-generation.integration.test.ts` | the existing viewer/non-member test, now counting |
+| `task-generation.integration.test.ts` | the existing viewer/non-member test, now counting |
+
+**A note on the first attempt, because it is the more instructive failure.** Run **31982262095** deleted the
+check outright instead of misdirecting it, and CI went red — on `'role' is defined but never used`, from lint,
+before a single test executed. A red run that never reached the assertion under examination is not a kill; read
+carelessly it would have "confirmed" a guard that run had not touched. The mutation was rewritten to compile and
+lint cleanly precisely so that its verdict would mean something, and that rewrite is what exposed the gap.

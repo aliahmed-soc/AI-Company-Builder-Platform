@@ -181,6 +181,36 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     expect(await gensFor(w.companyA1)).toHaveLength(0);
   });
 
+  test('MONEY: a viewer and a non-member are refused BEFORE the provider is called, not merely refused', async () => {
+    // ACBP-API-008. This test exists because a mutation survived hosted CI run 31982475683: the FIRST of this use
+    // case's two authorization checks was weakened from `strategy:generate` (owner) to `strategy:read`
+    // (owner|viewer) and the entire suite still passed. Nothing was wrong with the other assertions — a viewer
+    // still received `forbidden`, because the SECOND check, inside the persist transaction, still refused them.
+    // What changed invisibly is that the paid provider call at step 2 now happened first.
+    //
+    // "Nothing was persisted" and "nothing was spent" are different claims, and every existing assertion here
+    // proves only the first. A caller who is refused must never have cost the account money, so the counter is
+    // the assertion and the returned status is the supporting detail, rather than the other way round.
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof gatewayWith> => {
+      const inner = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3)) });
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
+    const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
+    expect((await generateStrategyOptions(product, viewer, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+
+    const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };
+    expect((await generateStrategyOptions(product, nonMember, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
+    expect(await gensFor(w.companyA1)).toHaveLength(0);
+  });
+
   test('reads (owner+viewer): getLatestStrategyGeneration returns the latest generation + options; cross-company isolation', async () => {
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
     const gw = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3)) });

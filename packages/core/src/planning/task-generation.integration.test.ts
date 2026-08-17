@@ -243,9 +243,25 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
   test('authz: a viewer is REFUSED (PM ruling 2026-08-14); a non-member is forbidden', async () => {
     // NARROWED by ACBP-API-004: `task:generate` is owner-only. "They are only DRAFTS" was the strongest argument
     // for keeping viewers here, and it still loses — a draft costs the same metered model call as anything else.
+    //
+    // AND THE `forbidden` ON ITS OWN IS NOT ENOUGH (ACBP-API-008). Two authorization checks guard this path — one
+    // before the model call, one inside the persist transaction — so weakening only the first still returns
+    // `forbidden` from the second, with the paid call already made. "The drafts were not saved" is not the same
+    // statement as "the account was not charged", and only the counter below can tell them apart.
     await seedChain('whole_plan');
-    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
-    expect((await generateTasks(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof okGateway> => {
+      const inner = okGateway();
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
+    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+    expect((await generateTasks(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 }, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
   });
 
   test('repeat planning appends and CONTINUES the rank rather than restating 0 (append-only, CDR-040 §8-G7)', async () => {

@@ -113,10 +113,28 @@ describe.skipIf(!hasTestDatabase)('strategy recommendation (real PostgreSQL, res
     //
     // It is also the test that corrected me: I claimed the narrowing broke nothing, having read a LOCAL run where
     // this suite is skipIf-gated and skipped. Hosted CI ran it and disagreed. Skipped is not green.
+    //
+    // THE `forbidden` ON ITS OWN IS NOT ENOUGH, and this is the ACBP-API-008 addition. There are two
+    // authorization checks on this path: one before the model call and one inside the persist transaction. Weaken
+    // only the FIRST and the caller still receives `forbidden` from the second — while the paid provider call has
+    // already happened in between. Every assertion that reads the returned status alone is satisfied by that
+    // world, so the counter below is the part that can tell the two apart.
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof gatewayWith> => {
+      const inner = gatewayWith({ kind: 'respond', output: recOutput() });
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
-    expect((await recommendStrategy(product, viewer, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
+    expect((await recommendStrategy(product, viewer, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
-    expect((await recommendStrategy(product, nonMember, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
+    expect((await recommendStrategy(product, nonMember, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
   });
 
   test('append-only / latest-wins: a second recommendation is a new row and the read surfaces the latest', async () => {
