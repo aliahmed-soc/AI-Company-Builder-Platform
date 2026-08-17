@@ -72,6 +72,12 @@ const PAGES = [
   // layout is covered by the narrow-width rules and by unit tests over the view, and that limit is stated in
   // the PR rather than implied to be full coverage.
   { path: '/console/companies/cmp_layout_probe/provisioning', slug: 'provisioning', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-007. Signed out this renders the interview refusal, so what is measured here is that refusal's
+  // layout — the question cards themselves need a session and cannot be reached in this environment. The
+  // same limit as the provisioning row above, and it is stated in the PR rather than implied away. The
+  // narrow-width case that MATTERS here (a textarea inside a fieldset inside a padded card at 492) is
+  // therefore covered by the CSS rules and by review, NOT by this harness.
+  { path: '/console/companies/cmp_layout_probe/interview', slug: 'interview', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

@@ -535,7 +535,18 @@
 
    THIS LIST IS A CLAIM THAT HAS TO BE MAINTAINED. It says "every focusable element", so any slice that adds
    a focusable element and does not add it here makes the sentence false and ships a control that can be
-   reached by keyboard with no visible focus. FE-005 added four. */
+   reached by keyboard with no visible focus. FE-005 added four.
+
+   ACBP-FE-007 ADDED NO NEW SELECTOR, AND THAT WAS CHECKED RATHER THAN ASSUMED. Its focusables are the answer
+   textarea (carrying `cs-input cs-textarea`, so the `.cs-input` and `.cs-textarea` rules below both match),
+   the start/pause/resume/save/skip buttons, and the "Open the interview" anchor added to the company screen
+   — all three of the latter carry `.cs-btn`. The interview screen introduces no `<select>`, no checkbox or
+   radio outside `.cs-choice`, and no `tabIndex` focus target, each of which WOULD have needed a new selector.
+
+   CITATIONS HERE NAME SELECTORS, NOT LINE NUMBERS, DELIBERATELY. The first version of this comment cited
+   ":541 and :542" — and the five lines it itself added to this block pushed those selectors down to 546/547,
+   so the citation was false the moment it was written. A line number in a comment in the same file it cites
+   is invalidated by its own edit. */
 .cs-nav a:focus-visible,
 .cs-btn:focus-visible,
 .cs-input:focus-visible,
@@ -699,11 +710,52 @@
   font-size: 0.84rem;
   line-height: 1.6;
 }
-.cs-control-outcome--done { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
-.cs-control-outcome--stale { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
-.cs-control-outcome--refused { border-color: rgba(255, 92, 114, 0.42); color: #ffc3cc; }
-.cs-control-outcome--retry { border-color: rgba(149, 117, 255, 0.42); color: #cfc0ff; }
-.cs-control-outcome--error { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
+/* ONE ACCENT PER OUTCOME KIND, AND THE LIST IS A CLAIM LIKE THE FOCUS ONE ABOVE. Every screen renders
+   `cs-control-outcome--${outcome.kind}` from its own union, so a kind with no rule here falls back to the
+   neutral base and becomes visually identical to every other unaccented kind.
+
+   ACBP-FE-007 FIXED A REAL GAP RATHER THAN ONLY ADDING TO IT. FE-005 shipped `ResumeOutcome` with eight
+   kinds while only `refused` and `error` had rules (provisioning-progress.tsx:213), so on the merged
+   provisioning screen a SUCCESS and five distinct refusals rendered identically — the exact "two refusals
+   must never collapse" failure the interpreters exist to prevent. Those six are closed below.
+
+   COLOUR IS DECORATION ONLY. Every one of these boxes carries the outcome's `detail` sentence as text, so
+   the tone adds emphasis and never carries meaning on its own. Four tones, by what the founder has to do:
+     success — it worked;  danger — refused, or the data did not land;  warning — something is off, retrying
+     is safe;  wait — a ceiling asked for time. */
+
+/* success: the action did what it said */
+.cs-control-outcome--done,
+.cs-control-outcome--ok,
+.cs-control-outcome--saved,
+.cs-control-outcome--unchanged { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
+
+/* danger: refused, or the founder's data is not stored. `overwritten_by_other` is here deliberately — it is
+   a 200, but it means the answer was LOST, and it must not look like the success it arrived as. */
+.cs-control-outcome--refused,
+.cs-control-outcome--forbidden,
+.cs-control-outcome--email_unverified,
+.cs-control-outcome--signed_out,
+.cs-control-outcome--not_found,
+.cs-control-outcome--no_session,
+.cs-control-outcome--no_user_record,
+.cs-control-outcome--invalid,
+.cs-control-outcome--too_large,
+.cs-control-outcome--company_not_active,
+.cs-control-outcome--blocked_transition,
+.cs-control-outcome--conflict,
+.cs-control-outcome--overwritten_by_other { border-color: rgba(255, 92, 114, 0.42); color: #ffc3cc; }
+
+/* warning: a fault or an outage rather than a judgement; retrying is safe */
+.cs-control-outcome--error,
+.cs-control-outcome--stale,
+.cs-control-outcome--malformed,
+.cs-control-outcome--malformed_media,
+.cs-control-outcome--unavailable { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
+
+/* wait: the server asked for time */
+.cs-control-outcome--retry,
+.cs-control-outcome--rate_limited { border-color: rgba(149, 117, 255, 0.42); color: #cfc0ff; }
 
 .cs-empty { max-width: 62ch; }
 .cs-empty .cs-card-t { margin-bottom: var(--s-3); }
@@ -807,7 +859,12 @@
 .cs-form { display: grid; gap: var(--s-4); max-width: 62ch; }
 .cs-field { display: grid; gap: var(--s-1); border: 0; padding: 0; margin: 0; min-width: 0; }
 .cs-label { font-weight: 600; color: var(--c-text); padding: 0; }
-.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-faint); }
+/* `--c-text-dim`, NOT `--c-text-faint`. Measured: faint (#6c7999) at this size gives 3.98:1 on --c-surface
+   and 3.56:1 on --c-surface-2, both under the 4.5:1 WCAG 2.1 AA floor for normal-weight text at 0.82rem —
+   and FE-001's accessibility criterion asserts contrast pairs against AA. ACBP-FE-007 made this rule
+   load-bearing (it carries the character counter and the empty-state explanation), so it is corrected here
+   rather than inherited. `--c-text-faint` remains fine for the larger/decorative uses it was chosen for. */
+.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-dim); }
 .cs-input {
   width: 100%;
   min-width: 0; /* load-bearing in a grid: without it a long value forces horizontal overflow */
@@ -882,4 +939,78 @@
   .cs-step { align-items: flex-start; }
   .cs-step-attempt { margin-left: 0; flex-basis: 100%; }
   .cs-form { max-width: none; }
+}
+
+/* ── Interview session (ACBP-FE-007) ─────────────────────────────────────────────────────────────────────
+ * NOTE WHAT IS ABSENT, and why, on the same principle as the stepper's missing "running" tone: there is no
+ * batch chrome, no pagination, no "question N of M" and no progress bar. The wire carries no batch id, no
+ * batch size and no total, so any of those would be styling for data that does not exist. The only honest
+ * counter is "n of items.length", which is plain text in the card header. */
+
+.cs-questions { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: grid; gap: var(--s-4); }
+.cs-question {
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  padding: var(--s-4);
+  min-width: 0; /* load-bearing in a grid, same reason as .cs-input */
+}
+/* The question a resumed session lands on. A LEFT BORDER PLUS THE "next" TAG in the legend — the tag is the
+   real signal, because a colour alone would be invisible to a founder who cannot distinguish it. */
+.cs-question--next { border-left-color: var(--c-primary); }
+.cs-question-tag { margin-left: var(--s-2); vertical-align: middle; }
+/* A fieldset carries a default border and padding that would double the card's; .cs-field already zeroes
+   them, and this only adds the internal rhythm. */
+.cs-question-set { gap: var(--s-3); }
+/* `<fieldset disabled>` greys NOTHING on its own — the only :disabled rules in this file are for .cs-btn and
+   .cs-input — so a question group disabled mid-submit would otherwise render at full contrast and look
+   interactive while refusing every keystroke. */
+.cs-question-set:disabled { opacity: 0.6; }
+.cs-question-set:disabled .cs-label { color: var(--c-text-dim); }
+
+/* The "why this question" block. Present ONLY when the server sent a rationale. */
+.cs-question-why {
+  margin: 0;
+  max-width: 62ch;
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--c-border);
+  color: var(--c-text-dim);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+.cs-question-why-lead { color: var(--c-text); font-weight: 600; }
+
+/* The static-fallback flag. Warning-toned because it reports a degradation, and carries its own sentence so
+   the tone is not doing the work. */
+.cs-question-degraded {
+  margin: 0;
+  max-width: 62ch;
+  color: #ffdc9e;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.cs-question-answered { display: grid; gap: var(--s-2); }
+/* `overflow-wrap: anywhere` ALONGSIDE `pre-wrap`, and the pairing is the point: pre-wrap preserves the
+   founder's newlines but creates no break opportunity inside a long unbroken token, so a pasted URL or a
+   200-character word would push the page into horizontal overflow. This is founder-supplied content, the
+   same reason `.cs-co-name` and `.cs-co-id` already carry the property — the hazard was understood in this
+   file and simply not carried over here until review said so. */
+.cs-question-text { margin: 0; max-width: 62ch; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A skip reads differently from an answer on purpose: they are different server states. */
+.cs-question-skip { margin: 0; color: var(--c-text-dim); font-style: italic; }
+.cs-question-server-msg { margin: 0 0 var(--s-2); font-weight: 600; color: var(--c-text); }
+.cs-question-stored { margin: var(--s-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Two controls side by side (pause/resume, save/skip), wrapping rather than overflowing on a narrow screen. */
+.cs-control-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-3); }
+
+/* One question per screen on mobile, per the row's responsive criterion: each card takes the full width and
+   they stack, so a founder sees one at a time. Deliberately NOT a pager — a pager implies batch boundaries,
+   and no batch boundary exists on the wire to honour. */
+@media (max-width: 640px) {
+  .cs-question { padding: var(--s-3); }
+  .cs-question-why { max-width: none; }
+  .cs-control-row .cs-btn { flex: 1 1 auto; }
 }

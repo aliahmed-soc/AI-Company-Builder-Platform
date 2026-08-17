@@ -10,6 +10,11 @@
  * is rendered as a non-navigating item with `aria-disabled` — a sidebar full of links that 404 looks finished
  * and is worse than one that admits what is built.
  *
+ * "Interview" STAYS INERT EVEN THOUGH ACBP-FE-007 BUILT THAT SCREEN, and the distinction is not pedantry:
+ * the screen is `/console/companies/{companyId}/interview`, so a GLOBAL nav entry has no company to resolve
+ * and could only ever 404. It is reached from the company page, exactly as the provisioning screen is. The
+ * same will be true of most items below — they are company-scoped destinations, not console-wide ones.
+ *
  * THE EMERGENCY STOP CONTROL IS A VISUAL PLACEHOLDER (see the button's own comment). ACBP-FE-017 is Blocked-API.
  */
 import type { ReactNode } from 'react';
