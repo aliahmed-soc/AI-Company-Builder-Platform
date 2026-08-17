@@ -3009,7 +3009,25 @@ declares `state text not null default 'not_started'`, the `interview_sessions_st
 `interview_sessions_started_shape` accommodates it with a null `started_at`. Three inserts in
 `interview-sessions.integration.test.ts` create such rows deliberately. What keeps the phase out of the
 product is not the schema but the single production writer always supplying `in_progress`. The replacement
-comment says that and names both enforcers, instead of asserting a bare "never" that the schema contradicts.
+comment says that and names each enforcer, instead of asserting a bare "never" that the schema contradicts.
+
+### The review pass found two defects IN THE CORRECTION ITSELF, both prose
+
+Recorded because this log already carries the lesson (P7-002: every HIGH after the first review pass was in
+prose, never code, and the corrections re-created the defects they closed) and this change is nothing *but*
+prose. The first version of the replacement comment, which had passed a green local gate and a **zero-skip
+hosted CI run** on `9ad2726`, contained two false statements of its own:
+
+1. It called `insertStartedIfAbsent` "the only writer that creates a session". Three inserts in
+   `interview-sessions.integration.test.ts` and several more across the core and database suites also create
+   sessions. Only the *production* qualifier makes it true, and that qualifier is the whole point of the
+   paragraph beneath it.
+2. It credited `interview_sessions_started_shape` with admitting `not_started` as "a permitted column value".
+   That is the wrong constraint: `interview_sessions_state_valid` is what permits the VALUE;
+   `interview_sessions_started_shape` constrains the SHAPE, requiring a NULL `started_at` alongside it.
+
+Neither was reachable by any check in the gate — a comment cannot fail a typecheck. Both are fixed in the
+follow-up commit on this branch, which names all three enforcers separately rather than gesturing at "both".
 
 ### `INITIAL_INTERVIEW_SESSION_STATE` is unreferenced — and is being KEPT anyway
 
