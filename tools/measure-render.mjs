@@ -63,6 +63,15 @@ const PAGES = [
   // active membership, so without a session this renders the `unauthenticated` refusal regardless of what is
   // in the path. That is the real page in a real state, and it still has to lay out correctly.
   { path: '/console/companies/cmp_layout_probe', slug: 'company', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-005. The creation form is the FIRST page in this console with text inputs, a textarea and radios,
+  // and inputs are the classic source of horizontal overflow: a `width: 100%` field inside a padded grid track
+  // overflows unless `min-width: 0` and `box-sizing` are both right. Measuring it at 492 is the point.
+  { path: '/console/companies/new', slug: 'newcompany', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-005. Signed out this renders the provisioning refusal — a real state of the real page. The stepper
+  // itself is only reachable with a session, so what this measures is the refusal's layout; the stepper's own
+  // layout is covered by the narrow-width rules and by unit tests over the view, and that limit is stated in
+  // the PR rather than implied to be full coverage.
+  { path: '/console/companies/cmp_layout_probe/provisioning', slug: 'provisioning', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

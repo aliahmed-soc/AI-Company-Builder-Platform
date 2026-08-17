@@ -79,14 +79,14 @@ function Empty(): React.JSX.Element {
         being withheld from you.
       </p>
       {/*
-        DISABLED, not hidden, and not a link. Company creation is ACBP-FE-005 and has no screen yet; the API
-        route exists but nothing here calls it. A live-looking button that did nothing, or a link to a page
-        that 404s, is the failure mode this console keeps refusing.
+        LIVE AS OF ACBP-FE-005, and this replaced a disabled button that said so. It stayed disabled for
+        exactly as long as the claim "not built yet" was true; the destination now exists, so the control is a
+        real link rather than a promise. An anchor, not a button: this navigates, and the form on the other
+        side does the mutating.
       */}
-      <button type="button" className="cs-btn" disabled title="Not built yet — company creation is ACBP-FE-005">
+      <a className="cs-btn cs-btn--primary" href="/console/companies/new">
         Create a company
-      </button>
-      <p className="cs-co-id">Creating a company from the console is not built yet (ACBP-FE-005).</p>
+      </a>
     </section>
   );
 }

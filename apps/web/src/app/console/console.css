@@ -529,10 +529,18 @@
 .cs-btn--danger:hover { border-color: var(--c-danger); }
 
 /* Focus-visible on EVERY FOCUSABLE element (FE-001 accessibility criterion). The list is exactly the
-   focusable set: links, buttons and the skip link. `.cs-item` is deliberately absent — it is an <li> with
-   no tabindex, so a rule for it could never fire and would only imply a control that is not there. */
+   focusable set: links, buttons, the skip link, and — as of ACBP-FE-005 — the creation form's text input,
+   textarea and radios. `.cs-item` is deliberately absent — it is an <li> with no tabindex, so a rule for it
+   could never fire and would only imply a control that is not there.
+
+   THIS LIST IS A CLAIM THAT HAS TO BE MAINTAINED. It says "every focusable element", so any slice that adds
+   a focusable element and does not add it here makes the sentence false and ships a control that can be
+   reached by keyboard with no visible focus. FE-005 added four. */
 .cs-nav a:focus-visible,
 .cs-btn:focus-visible,
+.cs-input:focus-visible,
+.cs-textarea:focus-visible,
+.cs-choice input:focus-visible,
 .cs-skip:focus-visible {
   outline: 2px solid var(--c-primary);
   outline-offset: 2px;
@@ -630,6 +638,23 @@
 .cs-refusal--forbidden { border-left-color: var(--c-danger); }
 .cs-refusal--not_found { border-left-color: var(--c-danger); }
 .cs-refusal--unexpected { border-left-color: var(--c-warning); }
+/* ACBP-FE-005 adds refusal codes the earlier screens could not produce. Each needs its own accent or it
+   silently falls back to the grey default and reads as a lesser event than it is. `invalid` is the founder's
+   own input being refused — warning, not danger, because it is correctable; `malformed`, `malformed_media`
+   and `too_large` are faults in THIS SCREEN and share the secondary accent so they look like what they are:
+   a class of bug, not a user error. */
+.cs-refusal--invalid { border-left-color: var(--c-warning); }
+.cs-refusal--malformed { border-left-color: var(--c-secondary); }
+.cs-refusal--malformed_media { border-left-color: var(--c-secondary); }
+.cs-refusal--too_large { border-left-color: var(--c-secondary); }
+.cs-refusal--signed_out { border-left-color: var(--c-primary); }
+.cs-refusal--no_user_record { border-left-color: var(--c-danger); }
+.cs-refusal--error { border-left-color: var(--c-warning); }
+.cs-refusal-title {
+  margin: 0 0 var(--s-1);
+  font-weight: 600;
+  color: var(--c-text);
+}
 .cs-refusal-detail {
   margin: 0;
   color: var(--c-text-dim);
@@ -764,4 +789,97 @@
   /* Let a long approval title take the full width and drop its badge + button to a second line. */
   .cs-item { flex-wrap: wrap; gap: var(--s-3); }
   .cs-item-body { flex: 1 1 100%; }
+}
+
+/* ── Company creation + provisioning progress (ACBP-FE-005) ──────────────────────────────────────────────── */
+
+/* The primary action. `.cs-btn` alone is the neutral control; this is the one the eye should land on, and it
+   is used for exactly one button per screen. */
+.cs-btn--primary {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #08122b;
+  font-weight: 600;
+}
+.cs-btn--primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* Form. Deliberately plain: this console has had no inputs until now, so these establish the vocabulary. */
+.cs-form { display: grid; gap: var(--s-4); max-width: 62ch; }
+.cs-field { display: grid; gap: var(--s-1); border: 0; padding: 0; margin: 0; min-width: 0; }
+.cs-label { font-weight: 600; color: var(--c-text); padding: 0; }
+.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-faint); }
+.cs-input {
+  width: 100%;
+  min-width: 0; /* load-bearing in a grid: without it a long value forces horizontal overflow */
+  padding: 0.55rem 0.7rem;
+  background: var(--c-surface-2, var(--c-surface));
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  color: var(--c-text);
+  font: inherit;
+}
+.cs-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.cs-textarea { resize: vertical; min-height: 5.5rem; }
+.cs-choices { display: grid; gap: var(--s-2); }
+.cs-choice { display: flex; align-items: center; gap: var(--s-2); cursor: pointer; }
+.cs-choice input { accent-color: var(--c-primary); }
+
+/* The outcome region is always present so the live region exists before it has anything to say — an
+   aria-live container that is added to the DOM at the same moment as its text is frequently not announced. */
+.cs-outcome-region { min-height: 0; }
+
+/* Screen-reader-only: the provisioning announcement is heard, never seen, because the stepper beside it
+   already says the same thing visually. */
+.cs-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The stepper. NOTE what is absent: there is no "in progress" or "running" modifier, because the contract
+   never commits that status (contracts provisioning.ts:22-27). A tone for it would be unreachable styling
+   that implied a state the database refuses to hold. */
+.cs-steps { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-2); }
+.cs-step {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  min-width: 0;
+}
+.cs-step--done { border-left-color: var(--c-success); }
+.cs-step--waiting { border-left-color: var(--c-text-faint); }
+.cs-step--failed { border-left-color: var(--c-danger); }
+.cs-step--unknown { border-left-color: var(--c-warning); }
+.cs-step-order {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3, var(--c-border-soft));
+  color: var(--c-text-dim);
+  font-size: 0.78rem;
+}
+.cs-step-name { font-weight: 600; min-width: 0; }
+.cs-step-status { color: var(--c-text-dim); font-size: 0.86rem; }
+.cs-step-attempt { color: var(--c-text-faint); font-size: 0.8rem; margin-left: auto; }
+
+/* Full-width stepper on mobile, per the backlog row's responsive criterion. */
+@media (max-width: 640px) {
+  .cs-step { align-items: flex-start; }
+  .cs-step-attempt { margin-left: 0; flex-basis: 100%; }
+  .cs-form { max-width: none; }
 }
