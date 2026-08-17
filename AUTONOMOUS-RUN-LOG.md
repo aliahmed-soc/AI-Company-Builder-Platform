@@ -2746,3 +2746,118 @@ Company A held no roadmap, artifact or board task, so "A's read does not contain
 read returning nothing to anybody. Adding the task-board positive control then exposed a *pre-existing*
 vacuity: `tasks.state` defaults to `'draft'` and drafts are deliberately OFF the board, so the foreign-task
 negative had been asserted about a task that appears on **nobody's** board since the block was written.
+
+
+### MERGE MARKER — ACBP-FE-005 and the FE backlog label correction are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs, tree hashes and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **FE backlog label correction** — FE-013/FE-014 stale `Blocked-API` cells | **`2340fa3`** | #125 | **`32060226143`** on `60d413b` — 284 files / 4207 tests |
+| **ACBP-FE-005** — company creation and provisioning progress | **`442c380`** | #124 | **`32058460054`** on `bda5b33` — 288 files / 4248 tests |
+
+Both head runs: **12 / 267 for `test:boundaries`, zero failures, and NO skip tally anywhere in either log.**
+FE-005's +4 files / +41 tests over the 284 / 4207 baseline is exactly its four new suites — 15 create-outcome,
+12 provisioning-view, 6 resume-outcome, 8 contract-alignment.
+
+**Exact-main CI on the combined tree: `32061460475` on `442c380` — 288 files / 4248 tests, 12 / 267
+boundaries, zero failures, no skip tally, production build ran.** It matches FE-005's pre-merge totals
+exactly, so the label correction interacted with nothing — which is what the owner's disjoint-diffs ruling
+was a judgement about, now measured rather than assumed.
+
+Every "zero skips" figure in this marker was produced by a parser that was first fed a synthetic
+`4200 passed | 7 skipped (4207)` line and observed to fire on it. A detector that finds nothing because it
+matches nothing is indistinguishable from a clean result, and this log already records one occasion where
+that cost a round of worthless evidence.
+
+### The deletion check had to change shape, and the difference is the point
+
+For #125 the usual check held: squash tree `07e622a5f3326ea36efd03fee52c0dabc653d0c5` equalled `main`'s, and
+`git diff branch origin/main` was empty.
+
+**For #124 tree-equality FAILED — `1bd505d…` against `63ccbbc…` — and that failure was correct rather than
+alarming.** `main` moved between FE-005's CI and its merge, because #125 landed in between. A tree comparison
+answers "is main byte-identical to this branch", which is the right question only while main stands still.
+
+So the check became: **is every file this branch touched byte-identical on `main`?** All fifteen were, and the
+comparison was self-tested first — fed a file that SHOULD differ, and confirmed to report it — because a
+comparison that silently matches nothing reads exactly like a clean result. The single branch-vs-main
+difference was `FRONTEND-BACKLOG.csv`, which FE-005 never touched: #125's correction, which the branch
+predates.
+
+Recorded because both failure modes were live here: accepting the tree mismatch at face value would have
+blocked a legitimate deletion, and waving it through would have risked deleting unmerged work.
+
+### Merged without a rebase, on an explicit owner ruling
+
+FE-005's green was taken against `main` at `ba7b3e8`; `main` was `2340fa3` by merge time. The owner ruled
+"merge anyway, diffs are disjoint" after the staleness was raised. Supporting evidence: GitHub reported
+`mergeable_state: clean`, and a local `git merge-tree` trial produced **zero conflict markers**. The
+pre-merge green still did not itself cover the combined tree — `32061460475` is the first run that does, and
+it is cited above rather than assumed.
+
+Also noted so it is not rediscovered: the `main` run for `2340fa3` was **cancelled** by #124 landing on top of
+it. A cancelled run is not a failed one, and it is not evidence either.
+
+### What ACBP-FE-005 put on `main`
+
+Two screens — `/console/companies/new` and `/console/companies/{companyId}/provisioning` — three pure
+interpreters, and the portfolio's "Create a company" control turned from a disabled button labelled *not built
+yet* into a real link. That button had been honest for exactly as long as the claim was true.
+
+**Three contract facts shaped it more than any design choice:**
+
+- **`POST /api/companies` BLOCKS on provisioning** (`core company-service.ts:192-211`), so the 201 already
+  carries the verdict. The common render of a "progress" screen is the FINISHED state, and a stall is
+  detectable at create time rather than after the first poll.
+- **There is no `running` step status.** `PROVISIONING_STEP_STATUSES` is `pending | completed | failed` and the
+  contract calls `running` *"intentionally ABSENT: an in-flight step … must never survive a commit"*
+  (`contracts provisioning.ts:22-27`). So there is no stepper spinner and deliberately **no `--running` CSS
+  modifier** — unreachable styling implying a state the database refuses to hold is the same class of lie as a
+  control that cannot act.
+- **The stalled signal is a real field.** `resumable` / `exhausted` / `completed` come from
+  `deriveProvisioningFlags` (`:137-148`), which also makes four arms mutually exclusive: all three false
+  happens IFF the step set is malformed. That arm says an operator must look; it does not imply quiet progress
+  and does not offer a resume the server would refuse with 409 — whose body, note, carries **no
+  discriminator**, so the copy states the server refused without claiming which of five gates applied.
+
+### Three defects the tests caught that reading would not have
+
+- **The screen was discarding the server's own error message.** The 400 validation arm carries a
+  `PublicErrorEnvelope` OBJECT whose `message` names which of three fields is wrong
+  (`companies-http.ts:180-181`, `errors.ts:71/:147`). The first interpreter treated `error` as a string and
+  substituted vaguer copy of its own — the inversion of this console's founding rule — and **its unit tests
+  passed because they asserted the same wrong shape**.
+- **`Number('') === 0`**, so an empty `Retry-After` parsed as "retry immediately": a 429 telling a
+  rate-limited founder to hammer the endpoint.
+- **`create-contract-alignment.test.ts`** drives the REAL `toCompaniesResponse` instead of hand-written bodies,
+  because a hand-written body encodes what the author BELIEVED the server sends. Writing it immediately proved
+  the `created` arm is FLAT — the `{company:{…}}` nesting is built BY the responder — and that an
+  `as CompaniesRequestResult` cast had hidden the wrong shape from the compiler. The cast is gone.
+
+Two more were fixture-shaped: `null ?? 'profile'` in a test helper silently replaced the explicit `null` the
+one null-path case existed to exercise, and a phantom `--r-2` CSS token whose fallback would have hidden it
+while others copied it forward.
+
+### The evidence limit, stated rather than implied away
+
+The measured harness passes `/console/companies/new` **12/12** — no horizontal overflow at 1440 / 900 / 492,
+viewport meta, no auth header, correct shell tracks. It **cannot validate any data-reading console page in
+this environment**: without real Clerk credentials they return 500, so those measurements are of Next's error
+page. That affected the provisioning screen — and equally `/console/companies` and the company profile, which
+are already merged and were previously green on this same harness. **The change did not break them; the absent
+credentials did.** Noticing that the failing pages were ones the slice never touched is what prevented
+"fixing" working code until the harness went green. Real keys are an owner gate.
+
+### Backlog state at this marker
+
+`ACBP-FE-005` remains **`Planned`** — the `Done` gate is the owner's and was not pressed. `FE-013` and
+`FE-014` remain `Blocked-API` deliberately: their cells now name only the three genuinely missing
+model-driven routes (`generateStrategyOptions`, `recommendStrategy`, `generateRoadmap`), and re-scoping either
+row to its read-only half is a planning decision, not a correction.
+
+The method note in those cells is load-bearing: a glob over the api route tree **silently matches nothing**,
+because a path segment in square brackets is read as a character class. That produced a confident, empty,
+wrong answer twice before a self-test caught it — the same shape as the `Test-Path` wildcard trap recorded
+earlier in this log, now seen four times.
