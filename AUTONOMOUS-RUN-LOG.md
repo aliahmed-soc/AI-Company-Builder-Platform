@@ -2375,3 +2375,38 @@ it**: with the line, every page is `ƒ` and `prerender-manifest.json` lists only
 P2-011, P7-006, everything in `OWNER-ACTION-PACK.md`, PRs **#86** and **#10**. The FRONTEND/UI standing
 instruction still governs every screen not named in the owner's two rulings above. Sibling work on
 `p8-api-008-slice3b` left untouched throughout, as instructed.
+
+
+### MERGE MARKER — both frontend slices are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs and run ids rather than to status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **FE slice 1** — console shell + company overview | **`ef3a119`** | #114 | `31985116502` on `9771880` | **`31988034424`** on `ef3a119` |
+| **Root-layout micro-slice** — app-wide viewport + `(site)` route group | **`c4a714c`** | #115 | `31988659637` on `9a5c412` (rebased head) | **`31989248948`** on `c4a714c` |
+
+Every one of those four runs: **all 17 steps green, `281 passed (281)` test files, `4167 passed (4167)` tests, and
+ZERO lines anywhere in the logs reporting a skip count.** The production-build step ran in each and emitted the
+route table; the two later runs show `ƒ /console`, confirming the `force-dynamic` interim hold holds on `main`
+and on CI's machine, not only locally.
+
+**Both merges were tree-identity verified before the branch was deleted** — squash tree equal to branch-head
+tree, and `git diff <branch> origin/main` empty. Ancestry can never pass for a squash, so the tree is the check.
+`fe-slice1-console-shell` (was `9771880`) and `fe-slice2-root-layout` (was `9a5c412`) are both deleted.
+
+**The three page moves survived rebase AND squash as pure renames.** On `main`, `git show --summary` reports
+`rename apps/web/src/app/{ => (site)}/page.tsx (100%)` and the same for both auth catch-alls; their git blob
+hashes are identical to the pre-move blobs. The ACBP-P1-001 auth pages are byte-for-byte unchanged.
+
+**Backlog at this marker:** `ACBP-FE-001`, `ACBP-FE-002`, `ACBP-FE-011` → **Done** (owner gate granted for
+exactly those three rows). `ACBP-FE-019` added as `Planned` — the deferred decision on whether the render
+harness joins CI. `FE-016/017/018` unchanged at `Blocked-API`.
+
+**Owner rulings carried by `c4a714c`:** the `force-dynamic` hold ratified as an explicit INTERIM ruling with
+`/console`'s render mode left open under CDR-083 §8 item 9; and `tools/measure-render.mjs` confirmed UN-WIRED
+from CI — a local pre-PR gate that no claim may cite as coverage.
+
+**Frontend status after this marker:** the FRONTEND/UI standing instruction at the top of this file is UNCHANGED
+and still governs every screen. Two slices were released by name; nothing else is. The next slice was proposed to
+the owner (ACBP-FE-004, portfolio and company switching) and **awaits confirmation — it is not started.**
