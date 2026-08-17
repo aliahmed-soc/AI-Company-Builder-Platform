@@ -3,12 +3,13 @@
  * fetches nothing. That split is what makes every state — including the five refusals a browser cannot reach
  * without a real session — renderable and reviewable rather than theoretical.
  *
- * THE CARDS DO NOT LINK ANYWHERE, AND THAT IS DELIBERATE. Selection is URL-only and non-authoritative by
- * design (CDR-017 §4/§5): a companyId from the portfolio is just a selector for later authorized requests. But
- * the destination it would select — a company screen — is ACBP-FE-006 and does not exist yet. Following the
- * console's existing rule that a link to a page which does not exist looks finished and is worse than none,
- * these cards present data and say plainly that opening a company is not built. The same reasoning is why the
- * top-bar company switcher is deferred rather than shipped inert.
+ * THE CARDS NOW LINK, because the destination exists. Selection is URL-only and non-authoritative by design
+ * (CDR-017 §4/§5): the companyId in the href is only a SELECTOR, and @acbp/core re-validates it against an
+ * active company membership on the next request — following one of these links grants nothing by itself.
+ *
+ * They did not link when this file shipped: ACBP-FE-006 did not exist, and the console's rule is that a link
+ * to a page which does not exist looks finished and is worse than none. FE-006 built it, so the deferral is
+ * closed here rather than left as a permanent apology in the copy.
  */
 import type { PortfolioView, PortfolioCard } from './portfolio-view';
 
@@ -19,7 +20,7 @@ function isoDay(createdAt: string): string {
 
 function Card({ card, index }: { card: PortfolioCard; index: number }): React.JSX.Element {
   return (
-    <article className="cs-co" style={{ '--i': index } as React.CSSProperties}>
+    <a className="cs-co" href={`/console/companies/${encodeURIComponent(card.companyId)}`} style={{ '--i': index } as React.CSSProperties}>
       <div className="cs-co-top">
         <h3 className="cs-co-name">{card.name}</h3>
         {/* The server's own status word. The tone is styling; it never replaces the term. */}
@@ -40,7 +41,7 @@ function Card({ card, index }: { card: PortfolioCard; index: number }): React.JS
       <p className="cs-co-id" title={card.companyId}>
         {card.companyId}
       </p>
-    </article>
+    </a>
   );
 }
 
@@ -119,7 +120,6 @@ export function PortfolioScreen({ view }: { view: PortfolioView }): React.JSX.El
             {view.hasMore
               ? 'The server reported more companies than shown. Paging is not built yet, so this is the first page only.'
               : 'This is every company you belong to.'}
-            {' '}Opening a company is not built yet (ACBP-FE-006), so these cards do not link anywhere.
           </p>
         </>
       ) : null}

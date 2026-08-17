@@ -54,7 +54,7 @@ function identityDeps(opts: { userId?: string | null; email?: string; verified?:
   };
 }
 
-const COMPANY_VIEW = { companyId: 'co_1', status: 'active' as const, displayStatus: 'active' as const, name: 'Acme', description: null, profileVersion: 1 };
+const COMPANY_VIEW = { companyId: 'co_1', status: 'active' as const, displayStatus: 'active' as const, name: 'Acme', description: null, profileVersion: 1, role: 'owner' as const };
 
 function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
   return {
