@@ -2531,3 +2531,154 @@ The FRONTEND/UI standing instruction at the top of this file is UNCHANGED and st
 slices have been released by name; nothing else is. **Populated screenshots for both slices remain pending
 evidence** — they need Clerk credentials this environment does not have, and the committed captures are the real
 pages in their signed-out state plus server-rendered previews of the states a browser cannot reach.
+
+
+### ACBP-API-010 — the CDR-088 disclosure list goes to zero, and two of its three reasons were false
+
+The owner ordered the seeded foreign-roadmap invisibility proof, plus an audit of **every** CDR-088 matrix
+block for the same disclosure: *"One ticket, disclosure list to zero — not shrinking by one."* Three blocks
+carried it; a fourth was found by review. The audit is the part worth keeping.
+
+**Two of the three disclosures were factually wrong, in the same way.** The artifact block and the approvals
+block each justified seeding nothing by saying their `run_id` was *"NOT NULL with an FK to `runs`"*.
+
+**There is no `runs` table in this schema and there never has been.** The tables are `task_runs`,
+`planning_runs` and `worker_runs`. The real constraints are `artifacts_run_fk` and
+`approval_requests_run_fk`, both tenant-pinned composites onto **`task_runs`** — and the CDR-089 block in
+the *same test file*, about two hundred lines above the artifact block, had been seeding that exact chain
+all along. `task_runs` needs four columns; `state` defaults.
+
+So neither matrix was blocked by a hard constraint. Each was blocked by **an unverified sentence about
+one**, and withheld a provable tenant-isolation claim for as long as the sentence stood. The repository
+already had the mirror-image rule from ACBP-P7-014: a control whose justification this repo cannot check
+must not ship. This is that rule inverted — an unchecked premise talked two tenant-data matrices *out of*
+proving isolation, and nothing ever failed, because a disclosure costs nothing to leave in place.
+
+The roadmap block, the one the owner's ruling was actually about, was the **only** one of the three whose
+stated blocker was real: `roadmaps.decision_id` genuinely requires understanding document → generation →
+selection → decision. That chain is now built, in
+`packages/test-support/src/tenancy/isolation-fixtures.ts`. The journey helpers were checked first, as the
+ruling required: `runMvpLoopJourney` does reach a roadmap and an artifact, but only by driving the core use
+cases through a **fake model gateway** with an injected `ops` bundle, and the adversarial HTTP suite has
+neither.
+
+**Two NOT NULL columns exist only as later `ALTER`s** and would have failed a `CREATE TABLE`-only reading:
+`policies.autonomy_level` (0049) and `approval_requests.payload_hash` / `binding_version` / `expires_at`
+(0048). The generated Kysely types encode NOT NULL as a *required insert field*, so `tsc` is a real check on
+the column set — it also caught `strategy_options.fields` typing its insert as `Record<string, string>`
+while `policies.rules` types its own as `string`, two jsonb columns that do not agree.
+
+### THE FIRST MUTATION REPORT WAS WRONG, AND THAT IS THE ENTRY WORTH READING
+
+The ticket was reported complete with: *"planting the three foreign fixtures in the caller's own company
+turned **10 tests red** across all three blocks, including the raw-column tripwire."* **False, and
+retracted.**
+
+Reading the failure TEXT rather than the COUNT shows the mutation moved each foreign fixture into company A
+while the caller's own fixture was already there, putting two version-1 rows in one company:
+
+```
+error: duplicate key value violates unique constraint "understanding_documents_company_version_uq"
+error: duplicate key value violates unique constraint "policies_company_version_uq"
+```
+
+Those threw in `beforeEach`, so **every** test in the roadmap and approvals blocks failed — including
+`an unknown query parameter is REFUSED, not ignored`, which has nothing to do with tenant isolation.
+All-tests-in-a-block-red is the signature of a fixture error, not of a control being exercised. **Eight of
+the ten were fixture errors; two were assertions.**
+
+This log already records *a red exit code is not evidence* (ACBP-P7-013's probe reported 7/7 kills having
+run zero tests). This is its subtler form and it defeated the same author on the same day: the tests really
+did run, really did go red, and the number was still not evidence, because nothing checked WHY. **A mutation
+report must quote the failing assertion messages, not the tally.**
+
+The corrected evidence is two collision-free mutations producing five quoted assertion failures — M1
+(marker collision, rows stay in their own companies so no UNIQUE constraint is touched) fires
+`A's own roadmap read must not contain B's goal title`, `A's own inbox must not contain B's preview` and
+`A's own board must not contain B's task`; M2 (relocation, artifact block, where no UNIQUE constraint
+applies) fires `artifact: B's artifact must not surface inside A` and the artifact-granularity
+`expected 200 to be 404`. Restored byte-for-byte after each run and re-verified green.
+
+### Independent review found six defects AFTER the work was called complete
+
+Five dimensions, two adversarial refuters per finding: 29 reported, **6 survived**. Four were prose that
+this ticket's own change had falsified. Two were live vacuities:
+
+- **The artifact positive control asserted 2 of the 3 routes `callAll` drives.** `lineage` was requested and
+  discarded, so every lineage negative was still satisfied by a lineage route serving nothing to anybody —
+  the exact vacuity the ticket exists to close, left open on one route. The relocation mutation could not
+  reveal it either: `artifact` is index 0, so its assertion throws before lineage is examined. **Partial
+  coverage of a multi-route helper is the failure mode; assert every route the helper drives.**
+- **Adding a task-board positive control exposed a PRE-EXISTING vacuity nobody was looking for.**
+  `tasks.state` defaults to `'draft'`, and drafts are deliberately OFF the board — `getTaskBoard` counts
+  them only in `draftsOffBoard`. The foreign task had always been seeded at that default, so *"B's task
+  never appears in A's board"* was asserted about a task that appears on **nobody's** board, including its
+  own company's. True for a reason unrelated to isolation, and true since the block was written.
+
+A **fifth CDR-088 block the audit never visited** also surfaced: the roadmap EDIT block still claimed an
+"inability to seed a roadmap (the decision chain)" that this ticket had just disproved, and rested its
+no-write negative on an empty table. It now seeds, so the baseline contains a real foreign roadmap the
+refused edit must leave exactly as it found it.
+
+**The pattern, stated plainly: every comparative or absence claim a comment makes about a sibling block goes
+stale silently when the sibling improves.** Three of the four prose defects were exactly that shape. The
+corrections delete the comparison rather than update it.
+
+### Local PostgreSQL is reachable again, and the documented path did not work
+
+`ACBP_TEST_DATABASE_URL` has been unset on this machine for most of this project's history, which is why so
+many real-PG suites in this log were skipped rather than run. The `acbp-local-dev` distro was already
+provisioned and `pnpm local:db:setup` is the sanctioned tool. A full `pnpm run check` now runs **284 files /
+4207 tests at zero skips** locally.
+
+**`docs/LOCAL-DEVELOPMENT.md` claims the database is reachable at `127.0.0.1:5432` via "WSL localhost
+forwarding". That did not hold here** — PostgreSQL accepted connections on WSL's own loopback while Windows
+got `ECONNREFUSED`, with no `.wslconfig` and WSL on defaults. Worked around **locally only** by binding the
+cluster to the WSL interface and allowing the private WSL subnet (never `0.0.0.0/0`). **No repository file
+was changed for this** — one machine's NAT behaviour is not evidence about the documented path, and a doc
+rewritten from a single failure is worse than one with a known caveat.
+
+Three hazards from that work, all handled:
+
+- **`pnpm local:db:setup` OVERWRITES `.env.local` wholesale** (`[IO.File]::WriteAllText`), and this
+  machine's held the owner's `ANTHROPIC_API_KEY`. Backed up first, merged back after. The script's docstring
+  says it writes the file; it does not say it destroys unrelated keys in it.
+- **A vitest error dump printed the generated database password** into the session, because the serialized
+  `pg` error carries `connectionParameters`. Rotated immediately rather than left live.
+- **The WSL VM drops mid-run**, producing `the database system is shutting down` across suites the ticket
+  never touched — 17 red tests, all one dead server. Pinned open with a keepalive. Again: read the failure
+  text, not the count.
+
+The run that mattered took three attempts for reasons unrelated to the code, and the pattern is one this log
+already records: **the connectivity check and the thing being checked kept running in different
+invocations.** A `Test-NetConnection` that succeeded and a vitest run that failed were never in the same
+shell. Putting the precheck and the run in one invocation is what finally produced a readable result.
+
+### A "zero skips" check that could not have said no
+
+The first CI skip check reported "zero skip lines" — and had also failed to find the *tallies*, which meant
+it was not matching the log format at all. A detector that finds nothing because it matches nothing reads
+exactly like a clean result. The ANSI strip then removed 3 bytes (a BOM), because the `^[` in GitHub's log
+is the literal two-character sequence, not an ESC byte. Only after fixing the parse **and feeding it a
+synthetic `4200 passed | 7 skipped (4207)` line to confirm it fires** is "zero skips" evidence rather than
+an absence of evidence.
+
+### Three numbering collisions avoided by checking every remote branch, not `main`
+
+`main` has CDRs up to 089, so 090 looked free. **090, 091 and 092 are all claimed on unmerged sibling
+branches** — 090 by `origin/p8-api-006-cdr`, 091 and 092 by `origin/p8-api-006-model-gateway` (091 also on
+three further branches). This ticket is **CDR-093**. Taking the next number visible on `main` alone would
+have collided three times over. The reliable check enumerates CDR numbers across every remote branch with
+`git ls-tree`, not the working tree.
+
+### A structural judgment call the owner can reverse
+
+The ruling asked for *"backlog row filed for the ticket itself."* `ACBP-API-*` tickets have **no backlog
+anywhere** — they are outside the 104-ticket numbering, and `BACKLOG.csv` is exactly 104 rows, a count
+`OWNER-ACTION-PACK.md` states and `FRONTEND-BACKLOG.csv` leans on in a column named *"backend work NOT in
+the 104-ticket backlog"*. Making it 105 would falsify a structure other documents depend on.
+
+The row went into a new `docs/implementation/API-BACKLOG.csv`, mirroring the precedent the owner approved
+when out-of-backlog frontend work got `FRONTEND-BACKLOG.csv` (PR #95). **It contains this ticket only.**
+`ACBP-API-001` through `009` belong to the concurrent session, are recorded in this log, and were
+deliberately not backfilled — inventing rows for another session's tickets would be worse than the gap.
