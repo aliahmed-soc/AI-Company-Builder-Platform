@@ -35,8 +35,16 @@ import {
   assertRestrictedRole,
   runtimeConnectionRoles,
   configureRouteRuntimeEnv,
+  // ACBP-API-010 — model-free builders for tenant rows behind a multi-table constraint chain, so the three
+  // CDR-088 blocks below can prove a foreign row that PROVABLY EXISTS is still invisible.
+  seedForeignRoadmap,
+  seedForeignArtifact,
+  seedForeignApprovalRequest,
   type TwoTenantWorld,
   type AdversarialDatabaseClient,
+  type SeededRoadmap,
+  type SeededArtifact,
+  type SeededApprovalRequest,
 } from '@acbp/test-support';
 import { provisionPersonalAccount, createCompany, pauseCompany } from '@acbp/core';
 
@@ -642,20 +650,45 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   /**
    * CDR-088 §4 — the approvals inbox joins this matrix.
    *
-   * NO APPROVAL REQUEST IS SEEDED. `approval_requests.run_id` is NOT NULL with an FK to `runs`, so a real row
-   * needs the run chain. These tests prove refusal at company scope and that refusals carry no oracle.
+   * THIS BLOCK NOW SEEDS REAL APPROVAL REQUESTS IN BOTH TENANTS (ACBP-API-010), AND ITS OLD DISCLOSURE CARRIED
+   * THE SAME FACTUAL ERROR THE ARTIFACT BLOCK DID. It used to read: *"NO APPROVAL REQUEST IS SEEDED.
+   * `approval_requests.run_id` is NOT NULL with an FK to `runs`, so a real row needs the run chain."* There is no
+   * `runs` table; `approval_requests_run_fk` is a tenant-pinned composite onto **`task_runs`** (migration 0047).
+   * The comment also omitted the one hop that genuinely is extra here: `approval_requests_policy_fk` is a
+   * three-column composite `(policy_id, policy_version, company_id) → policies`, both policy columns NOT NULL, so
+   * an approval request cannot exist without a policy in the SAME company. `policy_eval_id` is nullable, so no
+   * `policy_evaluations` row is required — four inserts, not five. `seedForeignApprovalRequest` owns them.
    *
-   * WHERE THE ALLOWLIST IS ACTUALLY PROVEN: in the UNIT test, which feeds a row carrying a sentinel in every
-   * excluded column and asserts the item has exactly the eleven allowlisted keys. THAT is the real control. The
-   * raw-column-name check below is a WEAKER, SECOND line of defence and is VACUOUS while the inbox is empty —
-   * said plainly here so nobody later reads a green run as proof the mapper works. It earns its place only if
-   * this block ever seeds, and it is written now so the assertion exists when it does.
+   * WHY BOTH TENANTS ARE SEEDED, AND NOT JUST THE FOREIGN ONE. The old comment was explicit that the raw-column
+   * check at the bottom of this block was *"VACUOUS while the inbox is empty"* and *"earns its place only if this
+   * block ever seeds"*. Seeding only company B would have proven invisibility while leaving that test exactly as
+   * vacuous as it was. A request is therefore planted in company A as well, the caller's own inbox is asserted
+   * NON-EMPTY, and only then is the served body checked for raw column names — so the tripwire is now firing
+   * against a real row rather than against an empty list.
+   *
+   * WHERE THE ALLOWLIST IS STILL ACTUALLY PROVEN: in the UNIT test, which feeds a row carrying a sentinel in
+   * every excluded column and asserts the item has exactly the eleven allowlisted keys. THAT remains the real
+   * control, and this HTTP check remains the weaker second line of defence. What changed is that the second line
+   * is no longer decorative.
    */
   describe('CDR-088 — approvals inbox', () => {
     let approvalsRoute: ParamRoute<{ companyId: string }>;
+    const FOREIGN_APPROVAL_MARKER = 'FOREIGN-APPROVAL-DO-NOT-LEAK';
+    const OWN_APPROVAL_MARKER = 'OWN-APPROVAL-MUST-BE-VISIBLE';
+    let foreignApproval: SeededApprovalRequest;
+    let ownApproval: SeededApprovalRequest;
 
     beforeAll(async () => {
       approvalsRoute = await import('../../app/api/companies/[companyId]/approvals/route.js');
+    });
+
+    beforeEach(async () => {
+      foreignApproval = await seedForeignApprovalRequest(owner, { accountId: w.accountB, companyId: w.companyB1, userId: w.bOwner, marker: FOREIGN_APPROVAL_MARKER });
+      ownApproval = await seedForeignApprovalRequest(owner, { accountId: w.accountA, companyId: w.companyA1, userId: w.aOwner, marker: OWN_APPROVAL_MARKER });
+      // Existence first, on the OWNER connection, pinned to the ids the fixtures claim.
+      const seeded = await owner.kysely.selectFrom('approval_requests').select(['id', 'company_id']).execute();
+      expect(seeded.filter((r) => r.company_id === w.companyB1).map((r) => r.id), "fixture guard: B's approval request must EXIST before any invisibility claim").toContain(foreignApproval.requestId);
+      expect(seeded.filter((r) => r.company_id === w.companyA1).map((r) => r.id), "fixture guard: A's own approval request must EXIST or the raw-column check stays vacuous").toContain(ownApproval.requestId);
     });
 
     const getApprovals = async (companyId: string): Promise<{ status: number; body: string }> => {
@@ -663,9 +696,19 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       return { status: res.status, body: await res.text() };
     };
 
-    test('G-cross — a member of A cannot read company B\'s inbox', async () => {
+    test("G-cross — B's approval request PROVABLY EXISTS and is still invisible to A", async () => {
       await signInAs(w.aOwner);
       expect((await getApprovals(w.companyB1)).status, 'read into B').not.toBe(200);
+
+      // The stronger claim, and the reason this block now seeds: A's OWN inbox is a 200 that must carry A's
+      // request and none of B's. Asserting the own row is present first means a mapper that returned an empty
+      // list for everyone could not pass this test by accident.
+      const own = await getApprovals(w.companyA1);
+      expect(own.status, 'A reading its own inbox').toBe(200);
+      expect(own.body, "A's own inbox must contain A's own request").toContain(OWN_APPROVAL_MARKER);
+      expect(own.body, "A's own inbox must not contain B's preview").not.toContain(FOREIGN_APPROVAL_MARKER);
+      expect(own.body, "A's own inbox must not contain B's request id").not.toContain(foreignApproval.requestId);
+      expect(own.body, "A's own inbox must not contain B's run id").not.toContain(foreignApproval.runId);
     });
 
     test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
@@ -682,18 +725,22 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
         const res = await getApprovals(bad);
         expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
         expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
-        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'approval_requests', w.companyB1]) {
+        for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'approval_requests', w.companyB1, foreignApproval.requestId, FOREIGN_APPROVAL_MARKER]) {
           expect(res.body.toLowerCase(), `'${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
         }
       }
     });
 
-    test('no RAW COLUMN NAME ever appears in a served inbox (see the caveat above)', async () => {
+    test('no RAW COLUMN NAME ever appears in a served inbox — now against a REAL row', async () => {
       await signInAs(w.aOwner);
       const own = await getApprovals(w.companyA1);
-      expect(own.status, "A reading its own inbox").toBe(200);
-      // snake_case column names are the signature of a raw row escaping the mapper. With an empty inbox this
-      // passes trivially — it is a tripwire for the day rows exist, NOT evidence that the mapper redacts.
+      expect(own.status, 'A reading its own inbox').toBe(200);
+      // THE PRECONDITION THAT MAKES THE REST OF THIS TEST MEAN ANYTHING. Until ACBP-API-010 this block seeded
+      // nothing, so the loop below ran against an empty list and passed for a reason that had nothing to do with
+      // the mapper. Asserting the row actually reached the response first is what converts it from a tripwire
+      // into evidence — if the fixture ever stops arriving here, this fails rather than going quietly vacuous.
+      expect(own.body, 'the seeded request must actually reach the served inbox').toContain(OWN_APPROVAL_MARKER);
+      // snake_case column names are the signature of a raw row escaping the mapper.
       for (const column of ['account_id', 'company_id', 'run_id', 'policy_id', 'policy_version', '"data"']) {
         expect(own.body, `raw column '${column}' must never be served`).not.toContain(column);
       }
@@ -703,21 +750,36 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   /**
    * CDR-088 §4 — the three artifact reads join this matrix.
    *
-   * NO ARTIFACT IS SEEDED, and the claims are scoped to match. `artifacts.run_id` is NOT NULL with an FK to
-   * `runs`, so a real artifact needs the run chain — the same reason the roadmap block seeds nothing. These
-   * tests prove refusal AT COMPANY SCOPE, before any artifact is read, and that the refusals carry no oracle.
-   * They do NOT prove an existing foreign artifact stays invisible.
+   * THIS BLOCK NOW SEEDS A REAL FOREIGN ARTIFACT (ACBP-API-010), AND ITS OLD DISCLOSURE WAS WRONG ON THE FACTS.
+   * It used to read: *"NO ARTIFACT IS SEEDED … `artifacts.run_id` is NOT NULL with an FK to `runs`, so a real
+   * artifact needs the run chain — the same reason the roadmap block seeds nothing."* **There is no `runs` table
+   * in this schema and there never has been.** The tables are `task_runs`, `planning_runs` and `worker_runs`; the
+   * actual constraint is `artifacts_run_fk`, a TENANT-PINNED composite `[run_id, company_id] → task_runs[id,
+   * company_id]` (migration 0043). `task_runs` needs four columns because `state` defaults, and the CDR-089 block
+   * roughly two hundred lines above has been seeding exactly that chain all along.
    *
-   * THE LAST TEST IS THE ONE THAT MATTERS MOST HERE, and it exists at the HTTP level rather than only in the
-   * unit tests because of §2.1a: `getArtifact` returns `ArtifactDTO | 'forbidden' | 'not_found'`, so a lapse in
-   * the adapter would put the literal string `forbidden` into a 200 body AS the artifact. That is a leak-shaped
-   * defect no other route in this file can have, and a unit test alone would not catch it if the ROUTE were
-   * rewired to bypass the adapter.
+   * So this matrix was not blocked by a hard constraint. It was blocked by an unverified sentence about one, and
+   * it withheld a provable isolation claim on that basis for as long as the sentence stood. The corrected chain is
+   * three inserts — `tasks → task_runs → artifacts` — and lives in `seedForeignArtifact`.
+   *
+   * SEEDING ALSO UNLOCKS A GRANULARITY THIS BLOCK NEVER HAD. With a real artifact in B, the CDR-087 G7(b) oracle
+   * applies here: inside company A, which the caller legitimately holds, a FOREIGN artifact id and an UNKNOWN one
+   * must be byte-identical. Previously every id in play was unknown, so that distinction could not be posed.
+   *
+   * THE §2.1a TEST REMAINS THE ONE THAT MATTERS MOST, and it exists at the HTTP level rather than only in the
+   * unit tests because `getArtifact` returns `ArtifactDTO | 'forbidden' | 'not_found'`, so a lapse in the adapter
+   * would put the literal string `forbidden` into a 200 body AS the artifact. That is a leak-shaped defect no
+   * other route in this file can have, and a unit test alone would not catch it if the ROUTE were rewired to
+   * bypass the adapter. It now runs with a real artifact present as well.
    */
   describe('CDR-088 — artifact reads', () => {
     let artifactRoute: ParamRoute<{ companyId: string; artifactId: string }>;
     let lineageRoute: ParamRoute<{ companyId: string; artifactId: string }>;
     let runArtifactsRoute: ParamRoute<{ companyId: string; runId: string }>;
+    const ARTIFACT_MARKER = 'FOREIGN-ARTIFACT-DO-NOT-LEAK';
+    const OWN_ARTIFACT_MARKER = 'OWN-ARTIFACT-MUST-BE-VISIBLE';
+    let foreignArtifact: SeededArtifact;
+    let ownArtifact: SeededArtifact;
 
     beforeAll(async () => {
       artifactRoute = await import('../../app/api/companies/[companyId]/artifacts/[artifactId]/route.js');
@@ -725,15 +787,28 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       runArtifactsRoute = await import('../../app/api/companies/[companyId]/runs/[runId]/artifacts/route.js');
     });
 
-    const callAll = async (companyId: string, id: string): Promise<ReadonlyArray<{ name: string; status: number; body: string }>> => {
+    beforeEach(async () => {
+      foreignArtifact = await seedForeignArtifact(owner, { accountId: w.accountB, companyId: w.companyB1, userId: w.bOwner, marker: ARTIFACT_MARKER });
+      // The positive control, for the same reason the roadmap block seeds one: with no artifact anywhere in A,
+      // "B's artifact never appears in A" is satisfied by a read that returns nothing to anyone.
+      ownArtifact = await seedForeignArtifact(owner, { accountId: w.accountA, companyId: w.companyA1, userId: w.aOwner, marker: OWN_ARTIFACT_MARKER });
+      // Existence first, on the OWNER connection, pinned to the ids the fixtures claim — see the roadmap block.
+      const seeded = await owner.kysely.selectFrom('artifacts').select(['id', 'company_id']).execute();
+      expect(seeded.filter((r) => r.company_id === w.companyB1).map((r) => r.id), "fixture guard: B's artifact must EXIST before any invisibility claim").toContain(foreignArtifact.artifactId);
+      expect(seeded.filter((r) => r.company_id === w.companyA1).map((r) => r.id), "fixture guard: A's own artifact must EXIST or the negatives are vacuous").toContain(ownArtifact.artifactId);
+    });
+
+    /** `runId` defaults to `id` so the pre-existing unknown-id calls are unchanged; the seeded cases pass both. */
+    const callAll = async (companyId: string, id: string, runId: string = id): Promise<ReadonlyArray<{ name: string; status: number; body: string }>> => {
       const out: Array<{ name: string; status: number; body: string }> = [];
       for (const [name, route, key] of [
         ['artifact', artifactRoute, 'artifactId'],
         ['lineage', lineageRoute, 'artifactId'],
         ['runArtifacts', runArtifactsRoute, 'runId'],
       ] as const) {
-        const url = key === 'runId' ? `https://app.test/api/companies/${companyId}/runs/${id}/artifacts` : `https://app.test/api/companies/${companyId}/artifacts/${id}`;
-        const res = await (route as ParamRoute<Record<string, string>>).GET(new Request(url), { params: Promise.resolve({ companyId, [key]: id }) });
+        const value = key === 'runId' ? runId : id;
+        const url = key === 'runId' ? `https://app.test/api/companies/${companyId}/runs/${value}/artifacts` : `https://app.test/api/companies/${companyId}/artifacts/${value}`;
+        const res = await (route as ParamRoute<Record<string, string>>).GET(new Request(url), { params: Promise.resolve({ companyId, [key]: value }) });
         out.push({ name, status: res.status, body: await res.text() });
       }
       return out;
@@ -743,6 +818,47 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       await signInAs(w.aOwner);
       for (const r of await callAll(w.companyB1, UNKNOWN_UUID)) {
         expect(r.status, `${r.name}: read into B`).not.toBe(200);
+      }
+    });
+
+    test('the caller CAN read an artifact in their own company — the positive that makes the negatives meaningful', async () => {
+      // Without this, every "B's artifact does not appear" assertion below would be satisfied just as well by
+      // a route that serves no artifact to anybody. This proves the reads work before they are asked to refuse.
+      await signInAs(w.aOwner);
+      const own = await callAll(w.companyA1, ownArtifact.artifactId, ownArtifact.runId);
+      const detail = own.find((r) => r.name === 'artifact');
+      expect(detail?.status, "A reading its OWN artifact").toBe(200);
+      expect(detail?.body, "A's own artifact must actually be served").toContain(ownArtifact.title);
+      const listed = own.find((r) => r.name === 'runArtifacts');
+      expect(listed?.status, "A listing its OWN run's artifacts").toBe(200);
+      expect(listed?.body, "A's own run must list its own artifact").toContain(ownArtifact.title);
+    });
+
+    test("G-cross(seeded) — B's artifact PROVABLY EXISTS and never appears, in B or smuggled into A", async () => {
+      await signInAs(w.aOwner);
+      // Addressed in its own company, by its real ids: still refused.
+      for (const r of await callAll(w.companyB1, foreignArtifact.artifactId, foreignArtifact.runId)) {
+        expect(r.status, `${r.name}: B's real artifact read into B`).not.toBe(200);
+        expect(r.body, `${r.name}: must not leak the artifact title`).not.toContain(foreignArtifact.title);
+      }
+      // The sub-resource attack: a company the caller genuinely holds, carrying another company's ids. The
+      // run-artifacts route answers 200 with an empty list for an unknown run by design (§2.1a), so a status
+      // check alone would not catch a leak here — the body assertion is the one doing the work.
+      for (const r of await callAll(w.companyA1, foreignArtifact.artifactId, foreignArtifact.runId)) {
+        expect(r.body, `${r.name}: B's artifact must not surface inside A`).not.toContain(foreignArtifact.title);
+        expect(r.body, `${r.name}: B's artifact id must not surface inside A`).not.toContain(foreignArtifact.artifactId);
+      }
+    });
+
+    test('G-oracle(b) — ARTIFACT granularity: a FOREIGN artifact id and an UNKNOWN one are byte-identical', async () => {
+      // Inside company A, which this caller legitimately holds, so the ONLY variable is the sub-resource id.
+      // This check is only posable because a foreign artifact now exists to name.
+      await signInAs(w.aOwner);
+      const foreign = await callAll(w.companyA1, foreignArtifact.artifactId, foreignArtifact.runId);
+      const unknown = await callAll(w.companyA1, UNKNOWN_UUID, UNKNOWN_UUID);
+      for (let i = 0; i < foreign.length; i += 1) {
+        expect(foreign[i]?.status, `${foreign[i]?.name}: identical status`).toBe(unknown[i]?.status);
+        expect(foreign[i]?.body, `${foreign[i]?.name}: identical body`).toBe(unknown[i]?.body);
       }
     });
 
@@ -762,7 +878,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
         for (const r of await callAll(w.companyA1, bad)) {
           expect(r.status, `${r.name} '${bad}' must not succeed`).not.toBe(200);
           expect(Object.keys(JSON.parse(r.body) as Record<string, unknown>), `${r.name} '${bad}' bounded envelope`).toEqual(['error']);
-          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'artifacts_', w.companyB1]) {
+          for (const leak of ['select', 'insert', 'constraint', 'pg_', 'stack', 'artifacts_', w.companyB1, foreignArtifact.artifactId, ARTIFACT_MARKER]) {
             expect(r.body.toLowerCase(), `${r.name} '${bad}' must not leak '${leak}'`).not.toContain(String(leak).toLowerCase());
           }
         }
@@ -960,26 +1076,57 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   /**
    * CDR-088 §4 — the roadmap read joins this matrix.
    *
-   * WHAT THESE TESTS PROVE, AND WHAT THEY DO NOT. **No roadmap is seeded.** `roadmaps.decision_id` is NOT NULL,
-   * so a real roadmap requires the whole chain — understanding document, generation, selection, decision — and
-   * every link carries its own CHECK constraints. These tests therefore prove that the route REFUSES AT COMPANY
-   * SCOPE, before any roadmap is read, and that its refusals carry no oracle. They do NOT prove that an existing
-   * foreign roadmap stays invisible, because none exists here.
+   * THIS BLOCK SEEDS A REAL FOREIGN ROADMAP (ACBP-API-010). It previously did not, and said so honestly: the
+   * old comment recorded that `roadmaps.decision_id` is NOT NULL, that a real roadmap therefore needs the whole
+   * understanding → generation → selection → decision chain, and that these tests consequently proved refusal
+   * AT COMPANY SCOPE but **not** that an existing foreign roadmap stays invisible. That disclosure was accurate
+   * — of the three CDR-088 blocks carrying it, this was the only one whose stated blocker was real — and it is
+   * now discharged rather than merely restated.
    *
-   * That distinction is deliberate and is the slice-1 lesson applied: three CDR-087 tests once passed against
-   * generations that had been truncated away, and only the one test that INSERTED noticed. A test whose name
-   * implies data-invisibility while seeding no data is the same failure wearing a better name. When the seeded
-   * variant is added, it belongs in a nested `beforeEach` (§4.1) and should assert the row exists on the OWNER
-   * connection first.
+   * THE CHAIN IS BUILT IN `@acbp/test-support`, NOT HERE. `seedForeignRoadmap` owns the seven inserts and every
+   * CHECK they have to satisfy, for two reasons: the constraint set is not obvious (three of the seven links
+   * carry shape constraints that reject the obvious lazy values), and a chain hand-written inline in one test
+   * file is a chain nobody else can reuse or fix in one place. The existing journey helpers were considered
+   * first, as the ruling required: `runMvpLoopJourney` does reach a roadmap, but only by driving `generateRoadmap`
+   * through a FAKE MODEL GATEWAY with an injected `ops` bundle, neither of which this HTTP suite has.
    *
-   * There is also NO sub-resource granularity to test: `LatestRoadmapResult` has two arms and no `not_found`,
+   * WHAT IS NOW PROVEN, AND WHY THE ORDER OF ASSERTIONS MATTERS. The fixture's existence is asserted on the
+   * OWNER connection FIRST, before any refusal is claimed. A negative that runs against an empty table proves
+   * nothing — that is the trap three CDR-087 tests fell into when the parent `beforeEach` truncated their
+   * fixtures away, and it is why the seeding lives in a NESTED `beforeEach` (§4.1). Only once B's roadmap is
+   * known to exist does its invisibility to A mean anything.
+   *
+   * The byte-identity check is upgraded by the same change. It used to compare two companies that were BOTH
+   * empty, where identical bodies were guaranteed for an uninteresting reason. Now the foreign company holds a
+   * roadmap and the unknown one cannot, so identical bodies mean the presence of data does not move the answer.
+   *
+   * There is still NO sub-resource granularity to test: `LatestRoadmapResult` has two arms and no `not_found`,
    * so the CDR-087 G7(b) selection-level oracle has no analogue here.
    */
   describe('CDR-088 — roadmap read', () => {
     let roadmapRoute: ParamRoute<{ companyId: string }>;
+    const ROADMAP_MARKER = 'FOREIGN-ROADMAP-DO-NOT-LEAK';
+    const OWN_ROADMAP_MARKER = 'OWN-ROADMAP-MUST-BE-VISIBLE';
+    let foreignRoadmap: SeededRoadmap;
+    let ownRoadmap: SeededRoadmap;
 
     beforeAll(async () => {
       roadmapRoute = await import('../../app/api/companies/[companyId]/roadmap/route.js');
+    });
+
+    beforeEach(async () => {
+      foreignRoadmap = await seedForeignRoadmap(owner, { accountId: w.accountB, companyId: w.companyB1, userId: w.bOwner, marker: ROADMAP_MARKER });
+      // A ROADMAP IN THE CALLER'S OWN COMPANY TOO, and it is not decoration. Without it, company A has no
+      // roadmap at all, so "A's read does not contain B's roadmap" is satisfied by a read that returns null to
+      // EVERYONE — a broken route and a correctly isolating one produce the same green. Seeding A gives the
+      // positive control that makes the negative mean something, exactly as the task-detail block does.
+      ownRoadmap = await seedForeignRoadmap(owner, { accountId: w.accountA, companyId: w.companyA1, userId: w.aOwner, marker: OWN_ROADMAP_MARKER });
+      // THE EXISTENCE ASSERTION, AND IT COMES FIRST. Read back through the OWNER connection (which bypasses
+      // RLS and so can see B's data) and pinned to the specific id the fixture claims to have created — a
+      // bare "some roadmap exists" would still pass if the fixture silently planted it in the wrong company.
+      const seeded = await owner.kysely.selectFrom('roadmaps').select(['id', 'company_id']).execute();
+      expect(seeded.filter((r) => r.company_id === w.companyB1).map((r) => r.id), "fixture guard: B's roadmap must EXIST before any invisibility claim").toContain(foreignRoadmap.roadmapId);
+      expect(seeded.filter((r) => r.company_id === w.companyA1).map((r) => r.id), "fixture guard: A's own roadmap must EXIST or the negative below is vacuous").toContain(ownRoadmap.roadmapId);
     });
 
     const getRoadmap = async (companyId: string): Promise<{ status: number; body: string }> => {
@@ -987,12 +1134,22 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       return { status: res.status, body: await res.text() };
     };
 
-    test('G-cross — a member of A cannot read company B, and the refusal is not a 200', async () => {
+    test("G-cross — B's roadmap PROVABLY EXISTS and is still invisible to A", async () => {
       await signInAs(w.aOwner);
       expect((await getRoadmap(w.companyB1)).status, 'read into B').not.toBe(200);
+
+      // THE STRONGER CLAIM, and the whole reason this block now seeds. A's own read genuinely RETURNS A's
+      // roadmap — that is the positive control — and the same successful response carries no trace of B's.
+      const own = await getRoadmap(w.companyA1);
+      expect(own.status, 'A reading its own roadmap').toBe(200);
+      expect(own.body, "positive control: A's own roadmap must actually be served").toContain(ownRoadmap.roadmapId);
+      expect(own.body, "positive control: A's own goal title must actually be served").toContain(ownRoadmap.goalTitle);
+      expect(own.body, "A's own roadmap read must not contain B's roadmap id").not.toContain(foreignRoadmap.roadmapId);
+      expect(own.body, "A's own roadmap read must not contain B's goal title").not.toContain(foreignRoadmap.goalTitle);
+      expect(own.body, "A's own roadmap read must not contain B's decision id").not.toContain(foreignRoadmap.decisionId);
     });
 
-    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical', async () => {
+    test('G-oracle — a FOREIGN company id and an UNKNOWN one are byte-identical, WITH the roadmap present', async () => {
       await signInAs(w.aOwner);
       const foreign = await getRoadmap(w.companyB1);
       const unknown = await getRoadmap(UNKNOWN_UUID);
@@ -1006,7 +1163,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
         const res = await getRoadmap(bad);
         expect(res.status, `'${bad}' must not succeed`).not.toBe(200);
         expect(Object.keys(JSON.parse(res.body) as Record<string, unknown>), `'${bad}' bounded envelope`).toEqual(['error']);
-        for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmap_', w.companyB1]) {
+        for (const forbidden of ['select', 'insert', 'constraint', 'pg_', 'stack', 'roadmap_', w.companyB1, foreignRoadmap.roadmapId, ROADMAP_MARKER]) {
           expect(res.body.toLowerCase(), `'${bad}' must not leak '${forbidden}'`).not.toContain(String(forbidden).toLowerCase());
         }
       }
