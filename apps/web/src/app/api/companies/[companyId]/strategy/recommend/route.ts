@@ -11,42 +11,25 @@
 //
 // A NULL RECOMMENDATION IS A 200. The model may decline to single an option out, and that is an answer, not an
 // absence — mapping it to 404 would tell the caller the generation does not exist, which is false.
+// THE BODY IS READ THROUGH THE SHARED BOUNDED PARSER, not a local `request.json()`. The four sibling write
+// routes each roll their own, with no size cap and no content-type check; there is no global body cap in
+// `apps/web` behind them, so an unauthenticated caller can make the server buffer an arbitrarily large payload.
+// That is a defect to stop repeating rather than a convention to follow, and least of all here, on the one
+// metered route of the four that accepts input at all. `parseRecommendBody` owns the cap, the 415 and the shape.
 import { recommendStrategyForRequest } from '@/server/companies/companies-request';
-import { respondToCompaniesRequest } from '@/server/companies/companies-http';
+import { respondToCompaniesRequest, parseRecommendBody } from '@/server/companies/companies-http';
 import { genericErrorBody } from '@/server/webhooks/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 90;
 
-type Parsed = { readonly ok: true; readonly generationId: string } | { readonly ok: false };
-
-/**
- * Shape-check the one field, and nothing more.
- *
- * A non-empty string is the minimum needed to forward at all. Whether that id names a generation the caller may
- * reach is core's ruling and comes back as `not_found` — re-deciding it here would be the second authority
- * CDR-088 §1 forbids, and would drift from core the first time the lookup changes.
- */
-async function parseBody(request: Request): Promise<Parsed> {
-  let raw: unknown;
-  try {
-    raw = await request.json();
-  } catch {
-    // Unparseable bytes never reach the domain, and nothing is echoed back: the body may contain anything.
-    return { ok: false };
-  }
-  if (typeof raw !== 'object' || raw === null) return { ok: false };
-  const { generationId } = raw as { generationId?: unknown };
-  if (typeof generationId !== 'string' || generationId.trim() === '') return { ok: false };
-  return { ok: true, generationId };
-}
-
 export async function POST(request: Request, context: { params: Promise<{ companyId: string }> }): Promise<Response> {
   const { companyId } = await context.params;
-  const parsed = await parseBody(request);
+  const parsed = await parseRecommendBody(request);
   if (!parsed.ok) {
-    return new Response(JSON.stringify(genericErrorBody(400)), { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' } });
+    // Nothing is echoed back — the body may contain anything, and the status alone says what to fix.
+    return new Response(JSON.stringify(genericErrorBody(parsed.status)), { status: parsed.status, headers: { 'content-type': 'application/json; charset=utf-8' } });
   }
-  return respondToCompaniesRequest(() => recommendStrategyForRequest(companyId, { generationId: parsed.generationId }));
+  return respondToCompaniesRequest(() => recommendStrategyForRequest(companyId, { generationId: parsed.input.generationId }));
 }

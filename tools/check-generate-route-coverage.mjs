@@ -71,6 +71,100 @@ const HELPER_REQUIREMENTS = [
 /** The non-metered resolver. Its presence inside a metered function means the ceiling was skipped. */
 const UNMETERED_HELPER = 'resolveActorWithAccount';
 
+/**
+ * The runtime methods that SPEND MONEY, checked from the other direction.
+ *
+ * Everything above keys on a route directory being named `generate` or `recommend`, which an adversarial review
+ * of this checker broke in one line: a paid route at `brief/compose` was never examined at all, and the
+ * `EXPECTED_MINIMUM` floor did not help — it counts routes matching the convention, so a route outside the
+ * convention neither raises nor lowers it. The mitigation named in the comment above was simply unrelated to the
+ * gap it claimed to mitigate.
+ *
+ * This rule does not care what the route is called. Any request-layer function that invokes one of these methods
+ * must go through the company ceiling, so the naming convention becomes an optimisation rather than the
+ * load-bearing assumption. `steerTaskPlanning` is listed although nothing exposes it yet: it already spends
+ * money through the same gateway, and the point is to catch the route that exposes it.
+ */
+const METERED_RUNTIME_METHODS = ['generateStrategyOptions', 'recommendStrategy', 'generateRoadmap', 'generateTasks', 'steerTaskPlanning'];
+
+/** Every HTTP method Next.js will route. All of them are examined, not just POST. */
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
+/**
+ * Source with comments blanked out, newlines preserved.
+ *
+ * WHY: every check below is `includes(needle)` over source text, and comments are source text. The single most
+ * likely way this guard dies is not a deletion but a TODO — the ceiling commented out with a note to restore it
+ * — and that leaves all three marker strings present in the file. A review demonstrated exactly this: the helper
+ * reduced to comments passed. Comments are removed before matching so that inert text cannot vouch for a guard.
+ *
+ * String and template literals are preserved, because the needles themselves contain quotes
+ * (`checkRequestLimit('company'`), and a `//` inside a string must not start a comment.
+ */
+export function stripComments(source) {
+  let out = '';
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+        // Newlines are kept so that line-based reasoning elsewhere is not shifted by a block comment.
+        if (source[i] === '\n') out += '\n';
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const quote = c;
+      out += c;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') {
+          out += source.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        out += source[i];
+        if (source[i] === quote) {
+          i += 1;
+          break;
+        }
+        // An unterminated single/double quote ends at the newline rather than eating the rest of the file.
+        if (quote !== '`' && source[i] === '\n') {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/** The HTTP methods a route file exports, by either declaration form. */
+export function exportedMethods(source) {
+  return HTTP_METHODS.filter((m) => new RegExp(`export\\s+(?:async\\s+)?function\\s+${m}\\b`).test(source) || new RegExp(`export\\s+const\\s+${m}\\b`).test(source));
+}
+
+/** Every top-level `*ForRequest` function declared in the request module. */
+export function requestFunctionNames(source) {
+  const names = [];
+  const re = /^(?:export\s+)?(?:async\s+)?function\s+(\w+ForRequest)\b/gm;
+  let m;
+  while ((m = re.exec(source)) !== null) names.push(m[1]);
+  return names;
+}
+
 export function listRouteFiles(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir)) {
@@ -136,6 +230,17 @@ function selfTest() {
   }
   if (isMeteredRoute(join('x', 'strategy', 'generate', 'route.ts')) !== true) problems.push('isMeteredRoute missed a generate directory');
   if (isMeteredRoute(join('x', 'strategy', 'route.ts')) !== false) problems.push('isMeteredRoute claimed a plain route was metered');
+  // The comment stripper is now load-bearing for every needle below it: if it stops removing comments, a
+  // commented-out ceiling passes, and if it starts removing string contents, every needle vanishes and the check
+  // fails everything. Both directions are asserted.
+  const commented = stripComments(["// const limit = await runtime.checkRequestLimit('company', id);", "const s = 'http://x//y';", '/* block', "checkRequestLimit('company'", '*/', 'const t = 1;'].join('\n'));
+  if (commented.includes('checkRequestLimit')) problems.push('stripComments left commented-out code behind, so inert text can vouch for a guard');
+  if (!commented.includes("'http://x//y'")) problems.push('stripComments ate a string containing a double slash');
+  if (!commented.includes('const t = 1;')) problems.push('stripComments swallowed live code after a block comment');
+  if (exportedMethods('export async function POST(r) {}\nexport const GET = h;').join(',') !== 'GET,POST') problems.push('exportedMethods missed a declaration form');
+  if (requestFunctionNames('export async function aForRequest() {}\nfunction bForRequest() {}\nfunction c() {}').join(',') !== 'aForRequest,bForRequest') {
+    problems.push('requestFunctionNames did not enumerate the request functions');
+  }
   return problems;
 }
 
@@ -149,7 +254,8 @@ export function check(root = ROOT) {
   if (blind.length > 0) return { code: 2, blind, failures: [], covered: [] };
 
   const failures = [];
-  const requestSource = readFileSync(requestModule, 'utf8');
+  // Comments are stripped BEFORE any matching. See `stripComments`: a commented-out ceiling keeps every needle.
+  const requestSource = stripComments(readFileSync(requestModule, 'utf8'));
 
   // The helper itself, first. Everything below leans on it, so a checker that verified the routes reach a
   // helper that no longer enforces anything would be measuring a pipe with nothing in it.
@@ -162,12 +268,30 @@ export function check(root = ROOT) {
     }
   }
 
+  /**
+   * THE RULE THAT DOES NOT DEPEND ON A DIRECTORY NAME. Every `*ForRequest` function that invokes a paid runtime
+   * method must go through the ceiling — whatever route, if any, sits above it. This is what catches the metered
+   * route named something the convention below has never heard of.
+   */
+  for (const name of requestFunctionNames(requestSource)) {
+    const body = functionBody(requestSource, name);
+    if (body === null) continue;
+    const paid = METERED_RUNTIME_METHODS.filter((m) => body.includes(`.${m}(`));
+    if (paid.length > 0 && !body.includes(`${METERED_HELPER}(`)) {
+      failures.push(
+        `${rel(requestModule)}\n    ${name} calls the paid method(s) ${paid.join(', ')} without going through ${METERED_HELPER}.\n` +
+          `    A money call with no per-company ceiling in front of it, whatever the route above it is named.`,
+      );
+    }
+  }
+
   const routes = listRouteFiles(appDir).filter(isMeteredRoute);
   const covered = [];
   for (const file of routes) {
     const key = rel(file);
-    const src = readFileSync(file, 'utf8');
-    if (!/export\s+(async\s+)?function\s+POST\b/.test(src)) {
+    const src = stripComments(readFileSync(file, 'utf8'));
+    const methods = exportedMethods(src);
+    if (!methods.includes('POST')) {
       failures.push(`${key}\n    is in a metered directory but exports no POST handler — is it a route at all?`);
       continue;
     }
@@ -176,22 +300,50 @@ export function check(root = ROOT) {
       failures.push(`${key}\n    calls no *ForRequest function from companies-request, so nothing here goes through the company ceiling.`);
       continue;
     }
+    const compliant = [];
     for (const name of imported) {
       const body = functionBody(requestSource, name);
       if (body === null) {
         failures.push(`${key}\n    imports ${name}, which is not an exported function in ${rel(requestModule)}.`);
         continue;
       }
+      let ok = true;
       if (!body.includes(`${METERED_HELPER}(`)) {
         failures.push(`${key}\n    ${name} does not call ${METERED_HELPER} — a paid call with no per-company ceiling in front of it.`);
+        ok = false;
       }
       if (body.includes(`${UNMETERED_HELPER}(`)) {
         failures.push(`${key}\n    ${name} calls ${UNMETERED_HELPER}, the UNMETERED resolver — the company ceiling is being skipped.`);
+        ok = false;
       }
       if (!body.includes('callMetered(')) {
         failures.push(`${key}\n    ${name} does not invoke the use case through callMetered, so an unconfigured gateway becomes an anonymous 500.`);
+        ok = false;
       }
+      if (ok) compliant.push(name);
       covered.push(`${key} → ${name}`);
+    }
+
+    /**
+     * IMPORTING IS NOT CALLING, AND POST IS NOT THE ONLY METHOD.
+     *
+     * Both holes were demonstrated against this checker: a handler that imported the compliant function, assigned
+     * it to an unused export to satisfy the linter, and then called the runtime directly; and a compliant POST
+     * sitting beside an unmetered PUT in the same file. Every exported method is now required to actually invoke
+     * one of the verified functions.
+     */
+    for (const method of methods) {
+      const handler = functionBody(src, method);
+      if (handler === null) {
+        failures.push(`${key}\n    its ${method} export could not be read as a top-level function, so it has not been checked — and unchecked is not the same as safe.`);
+        continue;
+      }
+      if (!compliant.some((n) => handler.includes(`${n}(`))) {
+        failures.push(
+          `${key}\n    its ${method} handler never calls any verified metered function (imported: ${imported.join(', ') || 'none'}).\n` +
+            `    Importing one is not calling one: this handler reaches the paid path by some other route.`,
+        );
+      }
     }
   }
 

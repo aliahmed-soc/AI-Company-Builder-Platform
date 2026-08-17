@@ -69,6 +69,31 @@ export async function parseRenameCompanyBody(request: HttpRequest): Promise<Pars
   return { ok: true, input: { name: r.obj['name'], description: r.obj['description'] } };
 }
 
+/**
+ * Parse the recommend body → { generationId } (a non-empty string; core decides whether it names anything).
+ *
+ * ⚠️ THE ONLY BODY ON A METERED ROUTE, which is why it is here and not a local `parseBody` in the route file.
+ * The four routes beside it (`roadmap/edit`, `decisions`, `strategy/selection`, `tasks/{id}/delete`) each read
+ * their body with a bare `request.json()` — no size cap, no content-type check — and `strategy/recommend`
+ * originally followed them. Following a convention is not a reason when the convention is the defect: there is
+ * no global body cap in `apps/web`, so a bare `request.json()` lets an UNAUTHENTICATED caller make the server
+ * buffer and parse an arbitrarily large payload, and this is the one route of the four that spends money.
+ *
+ * `readJsonObject` already owns the 16 KiB cap (rejecting an over-large declared `Content-Length` before reading
+ * a byte, and independently counting streamed bytes) and the 415. This adds only the shape check.
+ *
+ * The blank/non-string refusal is deliberate and is NOT an authorization decision: an id that cannot name a
+ * generation is refused before it consumes a rate-limit token, while whether a well-formed id names a generation
+ * the caller may REACH stays core's ruling and returns `not_found` (CDR-088 §1).
+ */
+export async function parseRecommendBody(request: HttpRequest): Promise<Parsed<{ generationId: string }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  const generationId = r.obj['generationId'];
+  if (typeof generationId !== 'string' || generationId.trim() === '') return { ok: false, status: 400 };
+  return { ok: true, input: { generationId } };
+}
+
 /** Parse an answer-submission body → { status, content } (raw values; the domain validates). */
 export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ status: unknown; content: unknown }>> {
   const r = await readJsonObject(request);
@@ -320,10 +345,15 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'email_unverified':
       return jsonResponse(403, { error: 'email_unverified' });
     case 'rate_limited':
-      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-082). 429 with `Retry-After`, and the body carries the
-      // SAME opaque envelope as every other refusal — no bucket balance, no limit value, no scope name. A
-      // response that told a caller which ceiling they hit and how much of it remains is a measurement tool for
-      // finding the cheapest way to stay just under it.
+      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-082). 429 with `Retry-After`, and the BODY carries the
+      // same opaque envelope as every other refusal — no bucket balance, no limit value, no scope name.
+      //
+      // The HEADER is a different matter, and an earlier version of this comment claimed otherwise. Its value is
+      // computed from the refusing rule's refill rate, so its magnitude differs per scope — roughly 12s for the
+      // company ceiling against 1s for the session and account ones — and `60 / retryAfter` recovers the
+      // configured per-minute rate. That disclosure is unavoidable while the retry advice is honest, and honest
+      // advice is worth more than hiding a rate an attacker can measure by timing anyway. Stated plainly rather
+      // than claimed away: the body is opaque, the header is truthful.
       return rateLimitedResponse(result.retryAfterSeconds);
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));

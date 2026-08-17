@@ -1,7 +1,7 @@
 // ACBP-P1-010 — unit tests for companies HTTP mapping + bounded body parsing.
 import { describe, test, expect } from 'vitest';
 import { DECISION_ROOM_QUEUES, okSection, nonAnsweringSection, type DecisionRoomView } from '@acbp/contracts';
-import { parseCreateCompanyBody, parseRenameCompanyBody, toCompaniesResponse, MAX_COMPANIES_BODY_BYTES } from './companies-http.js';
+import { parseCreateCompanyBody, parseRenameCompanyBody, parseRecommendBody, toCompaniesResponse, MAX_COMPANIES_BODY_BYTES } from './companies-http.js';
 import type { CompaniesRequestResult } from './companies-request.js';
 
 function req(contentType: string | null, bodyStr: string, declaredLength?: number): Parameters<typeof parseCreateCompanyBody>[0] {
@@ -28,6 +28,36 @@ describe('body parsing', () => {
   test('rename body extracts only name + description', async () => {
     const r = await parseRenameCompanyBody(req('application/json', JSON.stringify({ name: 'New', description: 'x', version: 99 })));
     expect(r).toEqual({ ok: true, input: { name: 'New', description: 'x' } });
+  });
+
+  /**
+   * ACBP-API-008 — the recommend body goes through the SAME bounded parser as every other company write.
+   *
+   * `strategy/recommend` is the only one of the four metered routes that takes a body, and it originally read it
+   * with a bare `request.json()`, following the local-parser pattern in `roadmap/edit`, `decisions`,
+   * `strategy/selection` and `tasks/{id}/delete`. Following a convention is not a reason when the convention is
+   * the defect: `request.json()` has no size cap and no content-type check, so an UNAUTHENTICATED caller could
+   * make the server buffer and parse an arbitrarily large payload — on the one route of the four that spends
+   * money. There is no global body cap in `apps/web` to fall back on.
+   *
+   * The cap and the 415 are asserted here rather than in the route because that is where they now live; the
+   * route's job is only to call this.
+   */
+  test('MONEY: the recommend body is capped and content-typed like every other company write', async () => {
+    expect(await parseRecommendBody(req('text/plain', '{}'))).toEqual({ ok: false, status: 415 });
+    expect(await parseRecommendBody(req('application/json', '{}', MAX_COMPANIES_BODY_BYTES + 1))).toEqual({ ok: false, status: 413 });
+    expect(await parseRecommendBody(req('application/json', '{bad'))).toEqual({ ok: false, status: 400 });
+    expect(await parseRecommendBody(req('application/json', '[1]'))).toEqual({ ok: false, status: 400 });
+  });
+
+  test('recommend body keeps only generationId, and refuses one that could not name anything', async () => {
+    const ok = await parseRecommendBody(req('application/json', JSON.stringify({ generationId: 'gen-1', companyId: 'evil', accountId: 'evil' })));
+    expect(ok).toEqual({ ok: true, input: { generationId: 'gen-1' } });
+    // A blank or non-string id is refused here, because it cannot name a generation and forwarding it would spend
+    // a rate-limit token to learn that. Whether a well-formed id names a REACHABLE generation stays core's ruling.
+    for (const bad of [{ generationId: '  ' }, { generationId: 7 }, {}]) {
+      expect(await parseRecommendBody(req('application/json', JSON.stringify(bad)))).toEqual({ ok: false, status: 400 });
+    }
   });
 });
 

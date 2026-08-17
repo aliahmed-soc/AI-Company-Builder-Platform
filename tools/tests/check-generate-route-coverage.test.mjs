@@ -6,9 +6,12 @@
 // killed. `check()` takes a root, so every case builds a throwaway tree rather than mutating the repository.
 import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, functionBody, requestFunctionsOf, isMeteredRoute, listRouteFiles } from '../check-generate-route-coverage.mjs';
+
+const SCRIPT = join(process.cwd(), 'tools', 'check-generate-route-coverage.mjs');
 
 const ROUTE_DIRS = [
   ['companies', '[companyId]', 'strategy', 'generate'],
@@ -70,7 +73,9 @@ function buildRepo(overrides = {}) {
   }
   const serverDir = join(root, 'apps', 'web', 'src', 'server', 'companies');
   mkdirSync(serverDir, { recursive: true });
-  const body = overrides.requestModule ?? [overrides.helper ?? helper(), ...Object.values(FN_FOR).map((n) => overrides.functions?.[n] ?? meteredFunction(n))].join('\n');
+  const body =
+    overrides.requestModule ??
+    [overrides.helper ?? helper(), ...Object.values(FN_FOR).map((n) => overrides.functions?.[n] ?? meteredFunction(n)), overrides.extraFunctions ?? ''].join('\n');
   writeFileSync(join(serverDir, 'companies-request.ts'), body, 'utf8');
 }
 
@@ -226,6 +231,121 @@ describe('the ways this check could quietly stop checking', () => {
     const r = check(root);
     expect(r.code).toBe(1);
     expect(r.failures.join('\n')).toContain('does not invoke the use case through callMetered');
+  });
+});
+
+/**
+ * An adversarial review of this checker built throwaway trees and found SIX shapes that passed while the company
+ * ceiling was not enforced. Four of them are below (the other two are the same defect as the first two). They are
+ * pinned here for the same reason as the original four probes: a hole that has been closed without a test is a
+ * hole that reopens.
+ */
+describe('the six bypasses an adversarial review actually demonstrated', () => {
+  test('BYPASS 1 — the ceiling COMMENTED OUT fails, though all three marker strings survive as comment text', () => {
+    // The most likely way this guard ever dies: a TODO, not a deletion. Every needle is still present in the
+    // file, so a substring check over raw source reports success while nothing is enforced.
+    const commented = [
+      'async function resolveMeteredContext(deps, runtime, companyId) {',
+      '  const ctx = await resolveActorWithAccount(deps, runtime);',
+      "  if ('kind' in ctx) return ctx;",
+      '  // TODO(perf): re-enable once bucket contention is fixed.',
+      "  // const limit = await runtime.checkRequestLimit('company', companyId);",
+      "  // if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: 1 } };",
+      "  // if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
+      '  return ctx;',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ helper: commented });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain("no longer contains `checkRequestLimit('company'");
+  });
+
+  test('BYPASS 2 — a metered call commented out of a request function fails too', () => {
+    const commented = meteredFunction('generateStrategyForRequest')
+      .replace('  const ctx = await resolveMeteredContext(deps, runtime, companyId);', '  // const ctx = await resolveMeteredContext(deps, runtime, companyId);\n  const ctx = await resolveActorWithAccount(deps, runtime);')
+      .replace("  if ('kind' in ctx) return ctx.result;", '');
+    buildRepo({ functions: { generateStrategyForRequest: commented } });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('does not call resolveMeteredContext');
+  });
+
+  test('BYPASS 3 — importing the compliant function without CALLING it fails', () => {
+    // The checker verified that a compliant name was imported and never that the handler used it. A handler that
+    // imports it, re-exports it to satisfy the linter, and then calls the runtime directly, passed.
+    const smuggled = [
+      "import { generateTasksForRequest } from '@/server/companies/companies-request';",
+      "import { runtimeOf } from '@/server/companies/runtime';",
+      '',
+      'export const _unused = generateTasksForRequest;',
+      '',
+      'export async function POST(request: Request): Promise<Response> {',
+      '  const runtime = await runtimeOf({});',
+      '  return Response.json(await runtime.generateTasks({ companyId: fromUrl(request) }));',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ routes: { 'tasks/generate': smuggled } });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('never calls');
+  });
+
+  test('BYPASS 4 — a SECOND HTTP method on a metered route that skips the ceiling fails', () => {
+    // Only POST was ever examined. A compliant POST beside an unmetered PUT on the same money route passed.
+    const twoMethods = [
+      "import { generateRoadmapForRequest } from '@/server/companies/companies-request';",
+      "import { runtimeOf } from '@/server/companies/runtime';",
+      '',
+      'export async function POST(request: Request): Promise<Response> {',
+      "  return respond(() => generateRoadmapForRequest('co'));",
+      '}',
+      '',
+      'export async function PUT(request: Request): Promise<Response> {',
+      '  const runtime = await runtimeOf({});',
+      "  return Response.json(await runtime.generateRoadmap({ companyId: 'co' }));",
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ routes: { 'roadmap/generate': twoMethods } });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('PUT');
+  });
+
+  test('BYPASS 5 — a paid route NOT named generate or recommend is caught by the metered-method rule', () => {
+    // `isMeteredRoute` keys on the directory name, so `brief/compose` was never examined at all. The floor does
+    // not help: it counts routes matching the convention, and a route outside it neither raises nor lowers that.
+    // The metered-METHOD rule catches it from the other direction — any request function that calls a paid
+    // runtime method must go through the ceiling, whatever the route above it is called.
+    const unmetered = [
+      'export async function composeBriefForRequest(companyId: string, deps = {}) {',
+      '  const runtime = await runtimeOf(deps);',
+      '  const ctx = await resolveActorWithAccount(deps, runtime);',
+      "  if ('kind' in ctx) return ctx.result;",
+      '  return runtime.generateStrategyOptions({ companyId });',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ extraFunctions: unmetered });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    const text = r.failures.join('\n');
+    expect(text).toContain('composeBriefForRequest');
+    expect(text).toContain('generateStrategyOptions');
+  });
+
+  test('BYPASS 6 — the exit-code contract is asserted by RUNNING the script, not by reading check()', () => {
+    // Every other case here imports `check()` and inspects `r.code`. Nothing spawned the script, so changing
+    // `process.exit(2)` to `process.exit(0)` left the whole suite green — the advertised contract had no test.
+    buildRepo();
+    expect(spawnSync(process.execPath, [SCRIPT, root], { encoding: 'utf8' }).status).toBe(0);
+    rmSync(join(root, 'apps', 'web', 'src', 'server'), { recursive: true, force: true });
+    const blindRun = spawnSync(process.execPath, [SCRIPT, root], { encoding: 'utf8' });
+    expect(blindRun.status).toBe(2);
+    expect(blindRun.stderr).toContain('COULD NOT RUN');
   });
 });
 

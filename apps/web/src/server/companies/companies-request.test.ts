@@ -894,9 +894,17 @@ describe('ACBP-API-008 slice 3b — the four metered generate surfaces (request 
   type Deps = { readonly runtime: CompanyRuntime; readonly identity: VerifiedIdentityDeps };
 
   /**
-   * One row per metered surface. Driving all four from one table is deliberate: a fifth generate route added
-   * without an entry here is a route with no money guard, and the count assertion at the end of this block is
-   * what makes that omission fail rather than pass silently.
+   * One row per metered surface. Driving all four from one table is deliberate: every assertion below then runs
+   * against every metered surface, so a guard proven for `strategy:generate` is proven for the other three too.
+   *
+   * WHAT THE COUNT ASSERTION AT THE END OF THIS BLOCK IS NOT. It used to be described here as what makes a fifth
+   * generate route fail rather than pass silently. It cannot be: `METERED` is a literal in this file, so a fifth
+   * route changes nothing about it and the count still sees four. It can only fail if somebody edits this table,
+   * which means they already remembered — the assurance was circular, and a comment that hands the next reader a
+   * guarantee that does not exist is worse than no comment. The check that actually enumerates is
+   * `tools/check-generate-route-coverage.mjs`, which walks the filesystem and additionally fails on any request
+   * function that reaches a paid runtime method without the ceiling. The count stays as a cheap guard against
+   * someone deleting a row from this table.
    */
   const METERED: readonly {
     readonly label: string;
@@ -1005,9 +1013,10 @@ describe('ACBP-API-008 slice 3b — the four metered generate surfaces (request 
     expect(r.status).toBe('forbidden');
   });
 
-  test('the metered surfaces are FOUR — a fifth added without a money guard fails here', () => {
-    // The per-route tests above cannot notice a route nobody wrote a test for. This assertion and the coverage
-    // checker are the two things that can; CDR-092 §11 explains why both exist.
+  test('the metered table still has its four rows — a deleted row fails here', () => {
+    // Guards the table above against a row being dropped, which would silently stop testing a live surface. It
+    // does NOT notice a fifth route: see the note on METERED for why that claim was wrong, and
+    // tools/check-generate-route-coverage.mjs for the check that does walk the filesystem.
     expect(METERED).toHaveLength(4);
   });
 

@@ -408,3 +408,101 @@ check outright instead of misdirecting it, and CI went red — on `'role' is def
 before a single test executed. A red run that never reached the assertion under examination is not a kill; read
 carelessly it would have "confirmed" a guard that run had not touched. The mutation was rewritten to compile and
 lint cleanly precisely so that its verdict would mean something, and that rewrite is what exposed the gap.
+---
+
+## §14 — What two adversarial review passes found, including what is NOT fixed here
+
+Both reviewers were briefed to break specific claims and were not shown the conclusion first (`AGENTS.md` §2).
+They found real defects. The honest summary is that the authorization claim survived and almost everything
+*around* it needed work.
+
+### Fixed in this slice
+
+**The precondition gates had the same hole the authorization gate had just been fixed for.** `no_understanding`,
+`not_confirmed`, `no_decision`, `decision_rejected` and the recommend `not_found` each asserted a status and that
+nothing was persisted, and none counted provider calls. Hoisting the paid call above any of those gates would
+have left every assertion in those files unchanged while charging the account to be told it was not ready. Fixing
+the authorization case and not looking one test down the file is precisely how the first survivor happened. All
+four suites now count on their gate tests as well. The `not_found` case matters most of the five: it is the only
+refusal a caller can trigger with an id they invented, so a paid call before the lookup would let anyone spend an
+account's money by guessing UUIDs.
+
+**`strategy/recommend` read its body with a bare `request.json()`** — no size cap, no content-type check — on the
+one metered route of the four that accepts input, and with no global body cap in `apps/web` behind it. It was
+following the local-parser pattern in `roadmap/edit`, `decisions`, `strategy/selection` and `tasks/{id}/delete`,
+which is a reason to stop repeating the pattern rather than a reason to keep it. The body now goes through
+`parseRecommendBody` in `companies-http.ts`, which reuses the shared `readJsonObject` and therefore the 16 KiB
+cap and the 415. The four sibling routes still have the defect; that is pre-existing and out of this slice.
+
+**The checker passed six shapes in which the ceiling was not enforced.** A review built throwaway trees and
+demonstrated each one. In order of how likely each is to happen:
+
+| Bypass | Why it passed | Now |
+|---|---|---|
+| The ceiling **commented out** with a TODO | Every needle survives as comment text, and each check was `includes()` over raw source | `stripComments` runs before all matching; string literals preserved, since the needles contain quotes |
+| A metered call commented out inside a request function | Same defect, other side | Same fix |
+| The compliant function **imported but never called** | Only the import clause was checked | Every exported method must invoke a verified function |
+| A compliant `POST` beside an **unmetered `PUT`** | Only `POST` was examined | All seven HTTP methods are examined |
+| A paid route named **`brief/compose`** rather than `generate` | `isMeteredRoute` keys on the directory name, and it was never examined at all | A second rule, from the other direction: any `*ForRequest` calling a paid runtime method must go through the ceiling, whatever the route is called |
+| `process.exit(2)` changed to `process.exit(0)` | Every test called `check()` and read `r.code`; nothing ran the script | The suite now spawns the script and asserts the exit status |
+
+The fifth is worth dwelling on. The comment above `METERED_DIR_NAMES` acknowledged the naming gap and named
+`EXPECTED_MINIMUM` as the mitigation — but that floor counts routes *matching* the convention, so a route outside
+it neither raises nor lowers the count. The stated mitigation had nothing to do with the stated gap. That is the
+§3 failure in documentation form: a sentence that reads as coverage and cannot be.
+
+**Mutation results for the hardening** (local; each mutation verified present on disk by line before the suite
+ran, restored after, and the file confirmed byte-identical):
+
+| Mutation | Result | Broke |
+|---|---|---|
+| `stripComments` returns its input | KILLED | BYPASS 1, BYPASS 2, and the self-test |
+| the metered-method rule deleted | KILLED | BYPASS 5 |
+| only `POST` examined again | KILLED | BYPASS 4 |
+| importing counts as calling again | KILLED | BYPASS 3, BYPASS 4 |
+| a blind run exits 0 | KILLED | BYPASS 6 |
+
+One of those five is worth recording as a process note rather than a result. The disposable harness failed to
+restore the file after the third mutation — a Windows write error — and left it mutated on disk. The next suite
+run went red on exactly BYPASS 4, which is how it was noticed. Had the order been different, a run reported as
+"25 passed" would have been a green obtained from a mutated tree. The mutation was verified present at
+`check-generate-route-coverage.mjs:335` before being reverted by hand, and every mutation after that was applied
+and reverted one at a time with the file re-scanned in between. **The rule is not "hash the file after the
+mutation"; it is hash it after the RESTORE too**, and this is the second time in this ticket that a mutation
+harness has produced a misleading state.
+
+### Found, NOT fixed, and needing a decision (`AGENTS.md` §6)
+
+**A viewer can drain the owner's company ceiling.** `resolveMeteredContext` consumes the per-company bucket
+*before* authorization, and `companyId` at that point is still a raw request selector. A viewer — or anyone
+holding a company id — is refused with 403, but the token is spent from the company's bucket first. At five per
+minute, five requests keep the owner throttled, from an actor whose own account ceiling is sixty times larger.
+Related: `companyId` becomes a row in `api_rate_limit_buckets`, which has no `DELETE` grant and no sweeper, so
+varying the segment mints permanent rows.
+
+Not fixed here because moving the check, or keying it on `${companyId}:${userId}`, changes a rate-limiting
+decision recorded in CDR-082 and CDR-008 §8, and the early position was chosen deliberately to bound probing.
+Three options: key the pre-authorization bucket on the actor as well as the company, which preserves the probing
+bound and removes the cross-actor denial; move the company check after authorization, accepting that an
+unauthorized probe costs an authorization round-trip; or leave it and accept a same-account denial-of-service
+between a viewer and an owner. The first looks right and is one line, but it is a limits decision and belongs to
+whoever owns CDR-082, not to this slice.
+
+**Three of the eight 409s and one 403 path are POST-payment.** Each use case re-verifies inside the persist
+transaction, after the paid call, which is correct — that is what makes the write safe. The consequence is that
+`stale_understanding`, `stale_decision` and `stale_roadmap`, and a `forbidden` arising from the *second*
+authorization check when a member is demoted mid-call, all arrive after money was spent. Nothing here is wrong,
+and no control-flow change is desirable. It is recorded because ACBP-API-009 must not be built on the assumption
+that a 4xx means no charge, and because §13's counter tests deliberately assert the *pre*-payment gates only.
+
+**A metering-write failure loses the record of a completed paid call.** If `recordUsage` throws after a
+successful provider call, the throw is not the not-configured error, so `callMetered` rethrows and it becomes the
+generic 500. Nothing leaks, but the call was paid for and left no `usage_events` row — invisible to the
+reconciliation a credit slice will depend on. For the ACBP-API-009 row, not for this one.
+
+**Two overstated comments, corrected in place.** The `Retry-After` header does disclose which ceiling refused —
+its magnitude differs per scope, so `60 / retryAfter` recovers the configured rate — and the comment claiming "no
+scope name, no limit value" was true only of the body. And the `expect(METERED).toHaveLength(4)` assertion cannot
+detect the omission its comment claims it detects: `METERED` is a literal in the same file, so a fifth route
+changes nothing about it. The count is kept as a cheap consistency check and the comment no longer claims it
+enumerates anything; `check-generate-route-coverage.mjs` is what enumerates.

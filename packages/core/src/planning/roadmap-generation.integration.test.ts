@@ -81,19 +81,43 @@ describe.skipIf(!hasTestDatabase)('roadmap generation (real PostgreSQL, restrict
   const roadmapsFor = async () => (await sql<{ id: string; version: number; status: string; origin: string; supersedes_roadmap_id: string | null }>`select id, version, status, origin, supersedes_roadmap_id from roadmaps where company_id = ${w.companyA1}::uuid order by version`.execute(owner.kysely)).rows;
   const auditCount = async () => (await sql<{ n: number }>`select count(*)::int as n from audit_events where name = 'roadmap.generated'`.execute(owner.kysely)).rows[0]!.n;
 
-  test('THE GATE: with no decision recorded, planning is blocked and nothing is persisted (J-08)', async () => {
-    const r = await generateRoadmap(product, base(), { gateway: okGateway() });
+  /**
+   * ACBP-API-008 — a gateway that counts the calls nobody should be making.
+   *
+   * "Nothing was persisted" and "nothing was spent" are different claims, and the gate tests below asserted only
+   * the first. Hoisting the paid call above the decision gate would leave every status and every row count in
+   * this file unchanged — the result would simply go unused — while charging the account to be told it has no
+   * decision yet. The counter is the claim; the status is the supporting detail.
+   */
+  const countedGateway = (): { readonly gateway: ReturnType<typeof okGateway>; calls: () => number } => {
+    const inner = okGateway();
+    let calls = 0;
+    return {
+      gateway: (request, options) => {
+        calls += 1;
+        return inner(request, options);
+      },
+      calls: () => calls,
+    };
+  };
+
+  test('THE GATE: with no decision recorded, planning is blocked and nothing is persisted OR SPENT (J-08)', async () => {
+    const gw = countedGateway();
+    const r = await generateRoadmap(product, base(), { gateway: gw.gateway });
     expect(r.status).toBe('no_decision');
     expect(await roadmapsFor()).toHaveLength(0);
     expect(await auditCount()).toBe(0);
+    expect(gw.calls(), 'a missing decision reached the paid provider first').toBe(0);
   });
 
   test('THE GATE (CDR-039 §7-G1): a REJECT decision does NOT unlock planning — a decision merely EXISTING is not enough', async () => {
     await seedDecision('reject');
-    const r = await generateRoadmap(product, base(), { gateway: okGateway() });
+    const gw = countedGateway();
+    const r = await generateRoadmap(product, base(), { gateway: gw.gateway });
     expect(r.status).toBe('decision_rejected');
     expect(await roadmapsFor()).toHaveLength(0);
     expect(await auditCount()).toBe(0);
+    expect(gw.calls(), 'a rejected decision reached the paid provider first').toBe(0);
   });
 
   test('a positive decision unlocks planning: ONE version + goals + milestones + ONE audit event, surfaced on the read', async () => {
