@@ -461,6 +461,20 @@ below are §7.1 to §7.7**, and are cited by those numbers elsewhere in this doc
 9. **The CSP nonce makes every page render unique.** Passing `contentSecurityPolicy` makes Clerk stamp a fresh
    per-request nonce into the HTML, so page output varies per request. Not a security problem, but it is a
    caching/rendering property nobody has decided on, and it arrived as a side effect of this ticket.
+
+   **INTERIM RULING, owner, 2026-08-17 — this item stays OPEN, and is now held open on purpose.** The root
+   layout carries `export const dynamic = 'force-dynamic'` (`apps/web/src/app/layout.tsx`). It exists solely to
+   preserve the render mode that used to be an accident: `auth()` reaches `await headers()`, and until the auth
+   header moved to `(site)/layout.tsx` that call was the ONLY dynamic API above `/console`, which is why every
+   page in this app rendered dynamically. Removing it would have flipped `/console` and `/_not-found` to
+   build-time prerendering — and a build-time render has no request and therefore no nonce, which would have
+   answered *this item* by side effect and in the wrong direction.
+
+   The ruling is that **`/console`'s render mode remains an open decision under this item, to be decided
+   deliberately later and never by side effect.** `force-dynamic` is the interim hold, not the answer. The
+   measured counterfactual stays beside the line and must not be removed: with it, every page is `ƒ` and
+   `prerender-manifest.json` lists only `/_global-error`; without it, `/console` and `/_not-found` turn `○` and
+   join that manifest. Anyone proposing to delete the line re-runs that mutation first.
 10. **`X-Frame-Options: DENY` forbids same-origin framing too.** Harmless today (`CLERK_PROXY_URL`/`proxyUrl`/
     `isSatellite` appear nowhere), but enabling Clerk proxy mode or any same-origin Clerk iframe would require
     `SAMEORIGIN`. Recorded so the breakage is diagnosable in one step rather than three.

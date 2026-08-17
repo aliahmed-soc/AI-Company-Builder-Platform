@@ -2333,9 +2333,17 @@ finished either way. All three were found by asserting a number instead.
 The lesson is not "take better screenshots". It is that **an artefact that cannot fail is not evidence**, which is
 the same rule as skipped suites, Turbopack builds and `skipIf`-gated authz tests — only wearing a picture.
 `tools/measure-render.mjs` is the response: it asserts overflow, viewport, layout mode, header presence and the
-motion discrimination, and **exits non-zero**. It is deliberately not wired into CI (it drives a real browser
-against a running server, which the gate does not provision) — but it is committed, so a comment can name it as
-an enforcement and a reviewer can re-run it.
+motion discrimination, and **exits non-zero**. It is committed, so a comment can name it as an enforcement and a
+reviewer can re-run it.
+
+> **OWNER RULING 2026-08-17 — `measure-render.mjs` stays UN-WIRED from CI for now. It is a LOCAL PRE-PR GATE,
+> not coverage.** Written down deliberately rather than left as an omission, because a check everyone believes is
+> running but which never runs is the same defect as a skipped suite. Concretely: nothing in CI executes it, no
+> CI failure can arise from it, and **no claim anywhere may cite it as CI coverage** — it drives a real browser
+> against a running server, which the verification gate does not provision. Whether it ever joins the gate is its
+> own decision, filed as backlog row **ACBP-FE-019** (`Planned`) so the question stays visible instead of quietly
+> resolving itself into assumed coverage. If that answer is ever yes, the wiring commit must demonstrate a RED
+> run against a seeded regression, per the 2026-07-29 standing rule at the top of this file.
 
 **A corollary, self-inflicted:** `console.css` shipped a comment citing "the no-horizontal-overflow assertion in
 the screenshot harness" while no harness existed anywhere in the repo — a comment naming an enforcement nobody
@@ -2353,8 +2361,14 @@ undecided nonce/caching question, by accident and in the wrong direction.
 
 Held deliberately with `export const dynamic = 'force-dynamic'` on the root layout, and **verified by removing
 it**: with the line, every page is `ƒ` and `prerender-manifest.json` lists only `/_global-error`; without it,
-`/console` and `/_not-found` turn `○` and join that manifest. Choosing the render mode on purpose remains the
-owner's call — that line only declines to change it.
+`/console` and `/_not-found` turn `○` and join that manifest.
+
+> **OWNER RULING 2026-08-17 — the `force-dynamic` hold is RATIFIED as an explicit INTERIM ruling.** `/console`'s
+> render mode **remains an open decision under CDR-083 §8 item 9**, to be decided deliberately later and **never
+> by side effect**. `force-dynamic` is the hold, not the answer, and it is not to be read as a settled choice of
+> dynamic rendering. **The measured counterfactual comment stays beside the line**; anyone proposing to remove
+> the line re-runs that mutation first and reports the manifest. Recorded in CDR-083 §8 item 9 as well, so the
+> open question and its holding mechanism live in the same place.
 
 ### Standing, all owner-gated — unchanged
 
