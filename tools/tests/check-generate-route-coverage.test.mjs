@@ -44,9 +44,11 @@ function meteredFunction(name) {
 /** The compliant helper. */
 function helper() {
   return [
-    'async function resolveMeteredContext(deps, runtime, companyId) {',
+    'async function resolveMeteredContext(deps, runtime, companyId, action) {',
     '  const ctx = await resolveActorWithAccount(deps, runtime);',
     "  if ('kind' in ctx) return ctx;",
+    '  const authz = await runtime.authorizeMeteredGenerate({ userId: ctx.userId, accountId: ctx.accountId, companyId, action });',
+    "  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };",
     "  const limit = await runtime.checkRequestLimit('company', companyId);",
     "  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };",
     "  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
@@ -346,6 +348,28 @@ describe('the six bypasses an adversarial review actually demonstrated', () => {
     const blindRun = spawnSync(process.execPath, [SCRIPT, root], { encoding: 'utf8' });
     expect(blindRun.status).toBe(2);
     expect(blindRun.stderr).toContain('COULD NOT RUN');
+  });
+
+  test('BYPASS 7 — debiting the company bucket BEFORE authorizeMeteredGenerate fails', () => {
+    // CDR-092 §15. Presence of both needles is not enough: the old helper had the consume and would still
+    // pass every requirement except order. That is the drain.
+    const swapped = [
+      'async function resolveMeteredContext(deps, runtime, companyId, action) {',
+      '  const ctx = await resolveActorWithAccount(deps, runtime);',
+      "  if ('kind' in ctx) return ctx;",
+      "  const limit = await runtime.checkRequestLimit('company', companyId);",
+      "  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };",
+      "  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
+      '  const authz = await runtime.authorizeMeteredGenerate({ userId: ctx.userId, accountId: ctx.accountId, companyId, action });',
+      "  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };",
+      '  return ctx;',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ helper: swapped });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('AFTER debiting the company bucket');
   });
 });
 

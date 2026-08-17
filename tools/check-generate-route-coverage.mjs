@@ -63,6 +63,7 @@ const EXPECTED_MINIMUM = 4;
 /** The helper every metered request function must go through, and what it must itself contain. */
 const METERED_HELPER = 'resolveMeteredContext';
 const HELPER_REQUIREMENTS = [
+  { needle: 'authorizeMeteredGenerate', why: 'the company bucket is consumed only after owner-only authz (CDR-092 §15)' },
   { needle: "checkRequestLimit('company'", why: 'the per-company ceiling must actually be consumed' },
   { needle: "limit.kind === 'throttled'", why: 'a throttled ceiling must be recognised' },
   { needle: "limit.kind === 'unavailable'", why: 'an unreadable bucket must fail CLOSED, not fall through' },
@@ -265,6 +266,13 @@ export function check(root = ROOT) {
   } else {
     for (const { needle, why } of HELPER_REQUIREMENTS) {
       if (!helperBody.includes(needle)) failures.push(`${METERED_HELPER} no longer contains \`${needle}\` — ${why}.`);
+    }
+    // CDR-092 §15: presence is not order. A helper that authorizes after debiting still drains the bucket
+    // on a 403. The authorize call must appear BEFORE the company consume.
+    const authzAt = helperBody.indexOf('authorizeMeteredGenerate');
+    const debitAt = helperBody.indexOf("checkRequestLimit('company'");
+    if (authzAt !== -1 && debitAt !== -1 && authzAt > debitAt) {
+      failures.push(`${METERED_HELPER} consults authorizeMeteredGenerate AFTER debiting the company bucket — that is the drain CDR-092 §15 closed.`);
     }
   }
 

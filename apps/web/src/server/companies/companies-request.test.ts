@@ -84,6 +84,10 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     // ACBP-API-008 slice 3b — THE FOUR METERED SURFACES. The unstubbed default rejects like every other, but the
     // stake is higher here: a fake that resolved `undefined` would let a test claim a generate path works while
     // the real one spends money, and these are the only four methods on this runtime that can.
+    // CDR-092 §15: the fake is an admitted authenticated user. Default ALLOWED so existing mapping
+    // tests keep testing mapping. Tests that need a refusal stub `forbidden` explicitly — that is
+    // the whole point of the new ordering tests below.
+    authorizeMeteredGenerate: () => Promise.resolve('allowed' as const),
     generateStrategyOptions: () => Promise.reject(new Error('generateStrategyOptions was called without being stubbed')),
     recommendStrategy: () => Promise.reject(new Error('recommendStrategy was called without being stubbed')),
     generateRoadmap: () => Promise.reject(new Error('generateRoadmap was called without being stubbed')),
@@ -948,6 +952,74 @@ describe('ACBP-API-008 slice 3b — the four metered generate surfaces (request 
     const boom = (): Promise<never> => Promise.reject(new Error(`SPENT MONEY: ${method} was invoked after the ceiling refused`));
     return { [method]: boom };
   }
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — a FORBIDDEN caller leaves the company bucket untouched',
+    async (_label, m) => {
+      // CDR-092 §15. A test that FAILS if the bucket moves: company is counted, authorize returns
+      // forbidden, and any company-scoped consume reddens. Session/account must still appear —
+      // those scopes are the stranger's volume control, and this test is also the verification
+      // that they apply to a non-member request.
+      const seen: { scope: string; key: string }[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => Promise.resolve('forbidden' as const),
+        checkRequestLimit: (scopeKind: string, scopeKey: string) => {
+          seen.push({ scope: scopeKind, key: scopeKey });
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...neverCalled(m.method),
+      });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe('forbidden');
+      expect(seen, 'the account ceiling must still bind a refused caller').toContainEqual({ scope: 'account', key: 'acc_1' });
+      expect(
+        seen.filter((s) => s.scope === 'company'),
+        'a forbidden request that moved the company bucket is the drain this ruling closed',
+      ).toEqual([]);
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an authorized owner still debits the company bucket',
+    async (_label, m) => {
+      // The other direction: a reorder that exempts everyone would make the forbidden test pass
+      // and silently uncap legitimate traffic. This fails if company is missing from `seen`.
+      const seen: { scope: string; key: string }[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => Promise.resolve('allowed' as const),
+        checkRequestLimit: (scopeKind: string, scopeKey: string) => {
+          seen.push({ scope: scopeKind, key: scopeKey });
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...m.ok,
+      });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe(m.okStatus);
+      expect(seen).toContainEqual({ scope: 'account', key: 'acc_1' });
+      expect(seen).toContainEqual({ scope: 'company', key: 'co_1' });
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an unauthenticated caller never reaches authorize or the company bucket',
+    async (_label, m) => {
+      const seen: string[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => {
+          seen.push('authorize');
+          return Promise.resolve('allowed' as const);
+        },
+        checkRequestLimit: (scopeKind: string) => {
+          seen.push(scopeKind);
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...neverCalled(m.method),
+      });
+      const r = await m.call({ runtime, identity: identityDeps({ userId: null }) });
+      expect(r.status).toBe('unauthenticated');
+      expect(seen).toEqual([]);
+    },
+  );
 
   test.each(METERED.map((m) => [m.label, m] as const))(
     '%s — a THROTTLED company ceiling refuses BEFORE the model is reached',

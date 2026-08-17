@@ -473,21 +473,11 @@ harness has produced a misleading state.
 
 ### Found, NOT fixed, and needing a decision (`AGENTS.md` §6)
 
-**Any authenticated caller can drain another company's generate ceiling.** An earlier wording of this
-paragraph called it a viewer-versus-owner problem on the same account. That understated it. `resolveMeteredContext`
-consumes the per-company bucket *before* membership is verified, keyed only on the `companyId` path segment.
-`resolveActorWithAccount` is the only prior check, so any signed-in user who knows or guesses a company id spends
-that company's tokens and is then refused 403. Five requests a minute keep the owner on 429. No membership, no
-shared account, no paid call. Related: each distinct `companyId` becomes a row in `api_rate_limit_buckets`, which
-has no `DELETE` grant and no sweeper, so varying the segment mints permanent rows.
-
-Not fixed here because moving the check, or keying it on `${companyId}:${userId}`, changes a rate-limiting
-decision recorded in CDR-082 and CDR-008 §8, and the early position was chosen deliberately to bound probing.
-Three options: key the pre-authorization bucket on the actor as well as the company, which preserves the probing
-bound and removes the cross-tenant denial; move the company check after membership is verified, accepting that
-an unauthorized probe costs an authorization round-trip; or leave it and accept that any authenticated user can
-throttle any company's generate surface. The first looks right and is one line, but it is a limits decision and
-belongs to whoever owns CDR-082, not to this slice.
+**The company-ceiling drain — RULED 2026-08-17, fixed in §15.** The defect was real: `resolveMeteredContext`
+consumed the per-company bucket before membership or owner-only authz, so any signed-in user who knew a company
+id could keep that company's owner on 429. The owner ruled that a request which fails authentication or
+authorization must not debit the company bucket. The three options that used to sit in this paragraph are
+closed; the fix ships in this slice.
 
 **Three of the eight 409s and one 403 path are POST-payment.** Each use case re-verifies inside the persist
 transaction, after the paid call, which is correct — that is what makes the write safe. The consequence is that
@@ -515,3 +505,79 @@ scope name, no limit value" was true only of the body. And the `expect(METERED).
 detect the omission its comment claims it detects: `METERED` is a literal in the same file, so a fifth route
 changes nothing about it. The count is kept as a cheap consistency check and the comment no longer claims it
 enumerates anything; `check-generate-route-coverage.mjs` is what enumerates.
+
+---
+
+## §15 — Owner ruling 2026-08-17: the company bucket is authorized activity only
+
+**Ruling, quoted in substance.** A request that fails authentication or authorization must not debit the
+company-scoped bucket. The company limit exists to cap what *authorized* actors can spend. A stranger's refused
+request is not company activity and must not consume the company's budget. Debit the company bucket only after
+the actor has passed the owner-only authz check for the route. The attacker's raw request volume is the
+session and account scopes' job, not the company scope's. Do not silently widen or add any scope.
+
+### §15.1 — Session and account already apply to non-member traffic (verified, not assumed)
+
+The ruling said: if those scopes do not actually apply to non-member requests hitting these routes, stop and
+report; do not invent a replacement.
+
+They do apply. The call chain for every generate `*ForRequest` is:
+
+1. `resolveVerifiedIdentity` — an authenticated caller has a session (or the user-id fallback, which is
+   stricter). That consumes the **session** bucket. An unauthenticated caller returns `unauthenticated` here
+   and never reaches any later ceiling.
+2. `resolveActorWithAccount` — `ensurePersonalAccount` then consumes the **account** bucket, keyed on *that
+   caller's* personal account. A non-member of company X still has their own account. Their volume hits their
+   own account ceiling, not X's.
+3. Only then (now) the owner-only check, and only then the company bucket.
+
+A non-member is an authenticated user. Steps 1 and 2 run for them. That is the verification. Nothing was
+widened.
+
+An *unauthenticated* caller is a different shape: there is no session id and no account id to key, so those
+scopes cannot apply. They already never reached the company bucket (they return from step 1). The ruling named
+non-member requests, not anonymous ones. CSRF plus 401 remains the unauthenticated control. No scope was added.
+
+### §15.2 — Ordering, and why it is not a second authority
+
+CDR-088 §1 forbids the request layer from *deciding* authorization — a second copy of the grant matrix drifts
+from the first. The request layer therefore does not call `checkAuthorization` itself. It calls
+`authorizeMeteredGenerate` in `@acbp/core`, which is `runInCompanyScope` plus the same `checkAuthorization`
+the generate use cases already run, restricted to the four owner-only generate actions. The use case still
+decides, and still re-checks inside the persist transaction. The request layer is consulting core so it knows
+whether the company bucket may be debited, not replacing it.
+
+The action set is closed: `strategy:generate`, `strategy:recommend`, `roadmap:generate`, `task:generate`. An
+unknown action is `forbidden` without touching the database, so this function cannot be pointed at
+`strategy:read` (owner|viewer) and used to let a viewer spend the company's tokens.
+
+Order inside `resolveMeteredContext`:
+
+1. Session + account (unchanged).
+2. `authorizeMeteredGenerate` for this route's action. `forbidden` returns. The company bucket is not read.
+3. Company bucket. `throttled` / `unavailable` as before. Fail-closed on an unreadable bucket is untouched.
+4. The generate use case, which still authorizes and still refuses a viewer.
+
+A viewer and a non-member remain indistinguishable at HTTP: both 403 `forbidden`. The difference is that
+neither of them now moves the company's tokens.
+
+### §15.3 — What this does not change
+
+Credit reservation and generate-path idempotency stay ACBP-API-009. Post-payment 409s stay post-payment: those
+callers *passed* owner-only authz, so debiting the company bucket before the paid call is correct under this
+ruling. A `recordUsage` throw after a successful provider call is still ACBP-API-009's.
+
+### §15.4 — Mutations (applied, hashed, restored, hashed again)
+
+Each edit was read back from disk before the suite ran. The file was confirmed byte-identical to the pre-mutation
+hash after restore.
+
+| Mutation | Result | Broke |
+|---|---|---|
+| company debit moved *before* `authorizeMeteredGenerate` | KILLED | the four `FORBIDDEN caller leaves the company bucket untouched` tests |
+| company consume replaced with a local `{ kind: 'allowed' }` | KILLED | the four `authorized owner still debits` tests |
+| `unavailable` fail-closed arm deleted | KILLED | the four existing `UNREADABLE bucket fails CLOSED` tests |
+| the closed-action guard deleted | KILLED | `a non-generate action is forbidden and never uses the client` (the throwing-proxy client was reached) |
+
+The viewer/non-member refusals inside `authorizeMeteredGenerate` itself are real-PostgreSQL tests. They skip
+locally (Postgres is unreachable from this Windows host) and are the hosted-CI half of the proof.

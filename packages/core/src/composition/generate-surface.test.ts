@@ -26,6 +26,8 @@ describe('CDR-092 §1 — the four generate use cases and the live gateway are p
     // import the file, so "it is exported" has to be resolved, not grepped.
     ['modelGatewayNotConfiguredError'],
     ['isModelGatewayNotConfigured'],
+    // CDR-092 §15: the request layer consults this before debiting the company bucket.
+    ['authorizeMeteredGenerate'],
   ])('%s is exported from @acbp/core', (name) => {
     expect(typeof (core as unknown as Record<string, unknown>)[name]).toBe('function');
   });

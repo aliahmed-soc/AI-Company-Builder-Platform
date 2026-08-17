@@ -7,8 +7,8 @@
 //   • OWNER ONLY — `strategy:generate`, narrowed from owner|viewer by the ACBP-API-004 ruling and enforced
 //     inside @acbp/core from the company role. NO ROLE CHECK LIVES HERE (CDR-088 §1); a viewer's refusal comes
 //     back from the domain and is deliberately indistinguishable from a non-member's.
-//   • THE PER-COMPANY CEILING — consumed in `generateStrategyForRequest` before the use case is invoked, on top
-//     of the existing session and account ceilings (CDR-092 §2).
+//   • THE PER-COMPANY CEILING — consumed in `generateStrategyForRequest` AFTER owner-only authz, on top
+//     of the existing session and account ceilings (CDR-092 §2, §15). A 403 does not debit this bucket.
 //   • THE CSRF ORIGIN GATE — this is a state-changing method, so apps/web/src/proxy.ts refuses a cross-site
 //     unsafe request before the session is even established (ACBP-P7-014), and `check:csrf-origin-gate` proves
 //     that coverage without this file carrying CSRF logic of its own.

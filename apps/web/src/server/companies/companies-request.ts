@@ -8,7 +8,7 @@
 // access goes through @acbp/core (no @acbp/database / @acbp/adapters import here).
 import { resolveVerifiedIdentity, type VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import { createLogger, createRootContext, type Logger } from '@acbp/observability';
-import { isModelGatewayNotConfigured, type RequestLimitOutcome } from '@acbp/core';
+import { isModelGatewayNotConfigured, type RequestLimitOutcome, type AuthorizeMeteredGenerateParams, type AuthorizeMeteredGenerateResult, type MeteredGenerateAction } from '@acbp/core';
 import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage, ProvisioningStatusDTO, InterviewSessionDTO, AnswerDTO, SessionQADTO, MemoryItemDTO } from '@acbp/contracts';
 import type { ReadDecisionRoomResult } from '@acbp/core';
 import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, DeleteTaskParams, DeleteTaskResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps, GenerateStrategyParams, GenerateStrategyResult, RecommendStrategyParams, RecommendStrategyResult, StrategyRecommendationOptions, GenerateRoadmapParams, GenerateRoadmapResult, GenerateTasksParams, GenerateTasksResult, TaskPlanningOptions } from '@acbp/core';
@@ -178,6 +178,11 @@ export interface CompanyRuntime {
   listTaskRuns(params: ListTaskRunsParams, options?: RunReadOptions): Promise<ListTaskRunsResult>;
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
+  /**
+   * CDR-092 §15 — consult core before debiting the company bucket. REQUIRED: a fake that omitted it
+   * would let every metered test pass while production still drained the bucket on a 403.
+   */
+  authorizeMeteredGenerate(params: AuthorizeMeteredGenerateParams): Promise<AuthorizeMeteredGenerateResult>;
   // ACBP-API-008 slice 3b — the four that spend real money. REQUIRED, like every surface above: an optional
   // method is one a runtime can omit and still typecheck, and the omission would only surface as a production
   // failure on the paths where failure costs the most.
@@ -1033,30 +1038,38 @@ export async function recordDecisionForRequest(
 //  1. THE COMPANY CEILING IS CONSULTED BEFORE THE CALL, and its refusal returns. `resolveMeteredContext` is the
 //     only way into these functions, so "did we check the limit" is not a per-route question. CDR-092 §6.2 named
 //     the failure this prevents: ACBP-P6-010 shipped a spend ceiling that WAS computed and never read.
-//  2. AUTHORIZATION IS NOT DECIDED HERE (CDR-088 §1). Core checks `strategy:generate` / `strategy:recommend` /
-//     `roadmap:generate` / `task:generate` — owner-only since the ACBP-API-004 narrowing — from the company role
-//     it reads itself. This layer must forward the refusal, never absorb or re-derive it.
+//  2. AUTHORIZATION IS NOT DECIDED HERE (CDR-088 §1). This layer consults `authorizeMeteredGenerate` in core
+//     so it knows whether the company bucket may be debited (CDR-092 §15). Core still decides inside the use
+//     case. A refusal is forwarded, never absorbed or re-derived.
 
 /**
- * Resolve the actor, then consume the per-COMPANY ceiling on top of the session and account ones.
+ * Resolve the actor, consult owner-only authz, then consume the per-COMPANY ceiling.
  *
  * A THIRD ceiling rather than a replacement: the session one bounds a browser tab, the account one bounds a
  * user with many sessions, and neither bounds the thing that matters here — how fast money leaves ONE company.
  * Keyed on `companyId` for the same reason: keyed on the account, a founder's second company would be throttled
  * because their first one was busy, and two companies could consume each other's budget ceiling.
  *
- * The company id is still only a REQUEST SELECTOR at this point — membership has not been verified yet, and is
- * not this function's job. Metering an unauthorized caller's attempt is the correct order anyway: it is the
- * cheap check, and it bounds exactly the traffic an attacker would generate probing for a company they cannot
- * reach.
+ * CDR-092 §15 (owner ruling 2026-08-17): the company bucket is authorized activity only. A request that fails
+ * authentication or authorization must not debit it. Session and account still bind the stranger; those run
+ * first, inside `resolveActorWithAccount`. The company debit is AFTER `authorizeMeteredGenerate` returns
+ * `allowed`, and not before.
  */
 async function resolveMeteredContext(
   deps: CompaniesRequestDeps,
   runtime: CompanyRuntime,
   companyId: string,
+  action: MeteredGenerateAction,
 ): Promise<{ userId: string; accountId: string } | Early> {
   const ctx = await resolveActorWithAccount(deps, runtime);
   if ('kind' in ctx) return ctx;
+  const authz = await runtime.authorizeMeteredGenerate({
+    userId: ctx.userId,
+    accountId: ctx.accountId,
+    companyId,
+    action,
+  });
+  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };
   const limit = await runtime.checkRequestLimit('company', companyId);
   // `throttled` and `unavailable` are NOT the same answer and neither may fall through to the call below. An
   // unreadable bucket fails CLOSED: the alternative is that a database hiccup silently uncaps paid generation.
@@ -1085,7 +1098,7 @@ async function callMetered<R>(call: () => Promise<R>): Promise<{ readonly ok: tr
 /** Generate the strategy option set (STRAT-001; `strategy:generate` → OWNER ONLY, enforced in `@acbp/core`). */
 export async function generateStrategyForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
-  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId, 'strategy:generate');
   if ('kind' in ctx) return ctx.result;
   const call = await callMetered(() => runtime.generateStrategyOptions({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
   if (!call.ok) return call.refusal;
@@ -1114,7 +1127,7 @@ export async function recommendStrategyForRequest(
   deps: CompaniesRequestDeps = {},
 ): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
-  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId, 'strategy:recommend');
   if ('kind' in ctx) return ctx.result;
   const call = await callMetered(() => runtime.recommendStrategy({ userId: ctx.userId, accountId: ctx.accountId, companyId, generationId: body.generationId }, {}));
   if (!call.ok) return call.refusal;
@@ -1135,7 +1148,7 @@ export async function recommendStrategyForRequest(
 /** Generate the roadmap from the recorded decision (PLAN §; `roadmap:generate` → OWNER ONLY, enforced in core). */
 export async function generateRoadmapForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
-  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId, 'roadmap:generate');
   if ('kind' in ctx) return ctx.result;
   const call = await callMetered(() => runtime.generateRoadmap({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
   if (!call.ok) return call.refusal;
@@ -1160,7 +1173,7 @@ export async function generateRoadmapForRequest(companyId: string, deps: Compani
 /** Generate the task plan for the approved phase (PLAN-001; `task:generate` → OWNER ONLY, enforced in core). */
 export async function generateTasksForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
-  const ctx = await resolveMeteredContext(deps, runtime, companyId);
+  const ctx = await resolveMeteredContext(deps, runtime, companyId, 'task:generate');
   if ('kind' in ctx) return ctx.result;
   const call = await callMetered(() => runtime.generateTasks({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {}));
   if (!call.ok) return call.refusal;

@@ -91,6 +91,12 @@ import { readArtifactLineage, type ReadLineageParams, type ReadLineageOptions, t
 import { listApprovalInbox, type ListApprovalInboxParams, type ListApprovalInboxResult, type ApprovalServiceOptions } from '../approvals/approval-service.js';
 import { recordStrategyDecision, type RecordStrategyDecisionParams, type RecordStrategyDecisionResult, type RecordStrategyDecisionDeps } from '../strategy/strategy-selection.js';
 import { recordDecision, type RecordDecisionParams, type RecordDecisionResult, type RecordDecisionDeps } from '../strategy/decision-record.js';
+import {
+  authorizeMeteredGenerate as authorizeMeteredGenerateUseCase,
+  type AuthorizeMeteredGenerateParams,
+  type AuthorizeMeteredGenerateOptions,
+  type AuthorizeMeteredGenerateResult,
+} from '../authz/authorize-metered-generate.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -267,6 +273,13 @@ export interface ClerkIdentityRuntime {
   recordStrategySelection(params: RecordStrategyDecisionParams, options?: RecordStrategyDecisionDeps): Promise<RecordStrategyDecisionResult>;
   recordDecision(params: RecordDecisionParams, options?: RecordDecisionDeps): Promise<RecordDecisionResult>;
   // ── THE METERED FOUR (ACBP-API-008; CDR-092) ────────────────────────────────────────────────────────────────
+  /**
+   * CDR-092 §15 — consult whether this actor may commission a metered generate. The request layer
+   * debits the company bucket only after this returns `allowed`. Not a second authority: same
+   * `runInCompanyScope` + `checkAuthorization` the use cases already run, closed to the four
+   * owner-only generate actions.
+   */
+  authorizeMeteredGenerate(params: AuthorizeMeteredGenerateParams, options?: AuthorizeMeteredGenerateOptions): Promise<AuthorizeMeteredGenerateResult>;
   // Each of these spends real money per call — the only four entries on this runtime that do. Each throws
   // `MODEL_GATEWAY_NOT_CONFIGURED` when no model provider is configured: never a silent no-op, and never a
   // fabricated result.
@@ -503,6 +516,9 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     recordDecision(params, options) {
       return recordDecision(client, params, options ?? {});
+    },
+    authorizeMeteredGenerate(params, options) {
+      return authorizeMeteredGenerateUseCase(client, params, options ?? {});
     },
     // ── THE METERED FOUR (ACBP-API-008; CDR-092) ──────────────────────────────────────────────────────────
     // `modelGateway()` is called INSIDE each method, not hoisted above them. That is the whole point: hoisting
