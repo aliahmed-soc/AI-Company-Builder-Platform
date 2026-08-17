@@ -2461,3 +2461,73 @@ month cannot silently omit it" would have become false in substance with no test
 **The rule this leaves behind:** a green checker that has quietly stopped checking is worse than a missing one,
 because its greenness is read as coverage. Before adding a new KIND of entry point, ask which existing guard
 enumerates entry points and whether it can see this one.
+
+
+### MERGE MARKER — the portfolio and company-profile slices are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **ACBP-FE-004** — portfolio card grid, first console screen reading real data | **`bd87653`** | #117 | `32023523290` on `b2bbf27` | **`32030012519`** on `bd87653` |
+| **ACBP-FE-006** — company profile + pause/resume, first state-changing page control | **`51b89d1`** | #119 | `32028907779` on `7e8c19b`, then **`32031059740`** on the rebased `055c9cd` | **`32031931635`** on `51b89d1` |
+
+All five runs: **17/17 steps green, zero failed, and ZERO lines anywhere in the logs reporting a skip count.**
+The final main run reports `284 passed (284)` test files and `4204 passed (4204)` tests, and its production build
+emitted both `ƒ /console/companies` and `ƒ /console/companies/[companyId]`.
+
+**Both merges were tree-identity verified before the branch was deleted** — squash tree equal to branch-head
+tree, and `git diff <branch> origin/main` empty. Ancestry can never pass for a squash, so the tree is the check.
+`fe-004-portfolio` (was `b2bbf27`) and `fe-006-company-profile` (was `055c9cd`) are both deleted; no `fe-*`
+branch remains on the remote.
+
+**FE-006 ran its CI twice on purpose.** The rebase onto the new `main` produced a different commit (`7e8c19b` →
+`055c9cd`) sitting on a main that contains FE-004's SQUASH rather than its branch history, so the earlier green
+did not carry. `32031059740` is the run that actually covers what merged.
+
+### What these two slices changed beyond the screens
+
+- **`CompanyView` now returns the caller's own company role** (`packages/core/src/company/company-lifecycle.ts`).
+  The value was already resolved by `runInCompanyScope` to authorize the read and was being discarded by
+  `unwrap`; it costs no extra query and cannot drift from the value that gated the call. It exists because an
+  unauthorized transition returns a bare `forbidden`, deliberately indistinguishable from "no such company" — so
+  a viewer's refusal cannot be explained after a failed attempt and must be known before the control renders.
+  The real-PG test that proves it is caller-scoped asserts the same company read by two members differs in
+  EXACTLY that field; a hardcoded constant passes "owner sees owner" and fails this.
+- **CDR-081 §1's premise is corrected, not deleted.** "No page in this application posts to any of the seventeen
+  state-changing methods" was still literally true at `da50603` and is false as of `51b89d1`. That premise was
+  the reason a TOKEN would have been inert, never the reason the GATE works, so the no-token ruling stands and
+  §3's "reversible if a UI ever wants defence in depth" is promoted to a live, named-but-not-taken option.
+- **The mutation goes over HTTP deliberately.** A Server Action would have been tidier, but it is a
+  state-changing entry point no static guard here can see — `check-csrf-origin-gate.mjs` enumerates `route.*`
+  under `api/`, `check-rate-limit-coverage.mjs` is scoped to `app/api/**` — and both would have stayed GREEN
+  while their promises stopped covering the app's only mutating control. After the change they still report 21
+  state-changing route modules and 36 covered handlers.
+
+### A GitHub behaviour that cost a PR number, recorded so it is not rediscovered
+
+**Deleting a base branch AUTO-CLOSES any PR stacked on it, and GitHub then refuses both `reopen` and a base
+change** — "Cannot change the base branch of a closed pull request", "Could not open the pull request". #118 was
+lost that way when `fe-004-portfolio` was deleted after #117 merged, and the work continued as #119 with the same
+commit. Nothing was lost, but the PR number and its review thread were.
+
+**The rule:** retarget the stacked child to `main` BEFORE deleting the parent branch, never after.
+
+### Verification hygiene note from the same window
+
+A post-merge check reported the new profile page MISSING from `main`. It was present. `Test-Path` treats
+`[companyId]` as a wildcard character class, so it returned `False` for a file that exists; `-LiteralPath` and
+`git ls-files` both confirm it. The check failed for a reason unrelated to the thing being checked — the same
+shape as the headless-Chrome reduced-motion default recorded earlier in this log. It was caught only because
+"the route is missing but CI just built it" is incoherent, not because anything announced a problem.
+
+### Backlog and gates at this marker
+
+`ACBP-FE-004` and `ACBP-FE-006` rows are **deliberately unchanged** — the owner granted the `Done` gate by name
+for FE-001/002/011 previously and named no rows for these two, so it is treated as unpressed rather than implied
+by a merge. `FE-016/017/018` remain `Blocked-API`; `ACBP-FE-019` remains `Planned`.
+
+The FRONTEND/UI standing instruction at the top of this file is UNCHANGED and still governs every screen. Four
+slices have been released by name; nothing else is. **Populated screenshots for both slices remain pending
+evidence** — they need Clerk credentials this environment does not have, and the committed captures are the real
+pages in their signed-out state plus server-rendered previews of the states a browser cannot reach.
