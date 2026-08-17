@@ -2852,7 +2852,10 @@ credentials did.** Noticing that the failing pages were ones the slice never tou
 
 ### Backlog state at this marker
 
-`ACBP-FE-005` remains **`Planned`** — the `Done` gate is the owner's and was not pressed. `FE-013` and
+`ACBP-FE-005` is **`Done`**, set on the owner's instruction in the same breath as merging this marker — so
+the row and this paragraph move together rather than the marker shipping a sentence its own commit falsifies.
+Its evidence is the table above: squash `442c380`, exact-head `32058460054`, exact-main `32061460475`, all at
+zero skips. `FE-013` and
 `FE-014` remain `Blocked-API` deliberately: their cells now name only the three genuinely missing
 model-driven routes (`generateStrategyOptions`, `recommendStrategy`, `generateRoadmap`), and re-scoping either
 row to its read-only half is a planning decision, not a correction.
