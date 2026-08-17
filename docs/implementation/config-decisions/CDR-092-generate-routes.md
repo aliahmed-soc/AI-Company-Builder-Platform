@@ -392,6 +392,17 @@ returned status is now the supporting detail; the counter is the claim.
 | `roadmap-generation.integration.test.ts` | the existing viewer/non-member test, now counting |
 | `task-generation.integration.test.ts` | the existing viewer/non-member test, now counting |
 
+**Re-run of the survivor against the fix.** The same one-word mutation, on top of the counting assertions,
+branch `p8-mut-slice3b-authz-v2` at `e507210`, hosted CI run **31983747364**: **KILLED**, 1 failed test,
+`strategy-generation.integration.test.ts > MONEY: a viewer and a non-member are refused BEFORE the provider is
+called`, on `AssertionError: a VIEWER reached the paid provider before being refused: expected 1 to be +0`. The
+mutation was verified present in the diff before pushing, and the failure is the assertion added for it rather
+than a lint or compile error — the distinction the paragraph below exists to insist on.
+
+Clean head for comparison: run **31983411062** on `d03822c`, **4,277 passed / 4,277**, zero skips, plus the
+boundary suite at 272/272, with the CI database preflight confirming the integration tests could not silently
+skip.
+
 **A note on the first attempt, because it is the more instructive failure.** Run **31982262095** deleted the
 check outright instead of misdirecting it, and CI went red — on `'role' is defined but never used`, from lint,
 before a single test executed. A red run that never reached the assertion under examination is not a kill; read
