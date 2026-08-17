@@ -538,6 +538,115 @@
   outline-offset: 2px;
 }
 
+/* ── Portfolio (ACBP-FE-004) ──────────────────────────────────────────────────────────────────────────────
+ * Card grid over the five fields the portfolio read returns. No slot exists for a metric, deliberately: the
+ * read returns no totals or aggregates, and a card with room for one invites inventing it later. */
+.cs-portfolio {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: var(--s-4);
+}
+.cs-co {
+  background: linear-gradient(160deg, var(--c-surface-2), var(--c-surface));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+  transition: transform var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), border-color var(--t-base) var(--ease);
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+/* A LIFT ON HOVER, BUT NO POINTER CURSOR: these cards are not links (ACBP-FE-006 is unbuilt), and a hand
+   cursor would promise a destination that does not exist. */
+.cs-co:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+  border-color: var(--c-border);
+}
+.cs-co-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.cs-co-name {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  /* A company name is user-supplied and can be long; it wraps rather than escaping the card. */
+  overflow-wrap: anywhere;
+}
+.cs-co-meta {
+  display: flex;
+  gap: var(--s-5);
+  margin: var(--s-4) 0 0;
+}
+.cs-co-meta div { min-width: 0; }
+.cs-co-meta dt {
+  color: var(--c-text-faint);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cs-co-meta dd {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+  color: var(--c-text);
+}
+.cs-co-id {
+  margin: var(--s-4) 0 0;
+  color: var(--c-text-faint);
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Status tone is DECORATION over the server's own word — see portfolio-view.ts. `unknown` is a real tone, not
+   a fallback that happens to look neutral: a status this screen does not recognise must not be dressed up as
+   one it does. */
+.cs-status--active { background: var(--c-success-soft); color: #7ff0cd; }
+.cs-status--paused { background: var(--c-warning-soft); color: #ffd98a; }
+.cs-status--progress { background: var(--c-primary-soft); color: #a9c8ff; }
+.cs-status--unknown { background: var(--c-surface-3); color: var(--c-text-dim); }
+
+/* ── Refusals and the empty state (ACBP-FE-004) ────────────────────────────────────────────────────────────
+ * Every refusal renders through one component with a per-code accent, so adding a state cannot accidentally
+ * ship without a visual identity — and so no refusal can borrow the empty state's calm wording. */
+.cs-refusal { border-left: 3px solid var(--c-text-faint); max-width: 62ch; }
+.cs-refusal--unauthenticated { border-left-color: var(--c-primary); }
+.cs-refusal--email_unverified { border-left-color: var(--c-warning); }
+.cs-refusal--rate_limited { border-left-color: var(--c-secondary); }
+.cs-refusal--unavailable { border-left-color: var(--c-text-dim); }
+.cs-refusal--forbidden { border-left-color: var(--c-danger); }
+.cs-refusal--not_found { border-left-color: var(--c-danger); }
+.cs-refusal--unexpected { border-left-color: var(--c-warning); }
+.cs-refusal-detail {
+  margin: 0;
+  color: var(--c-text-dim);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.cs-refusal-meta {
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--c-border-soft);
+  color: var(--c-text-dim);
+  font-size: 0.82rem;
+}
+.cs-refusal-meta strong {
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+.cs-empty { max-width: 62ch; }
+.cs-empty .cs-card-t { margin-bottom: var(--s-3); }
+.cs-empty .cs-btn { margin-top: var(--s-4); }
+/* The disabled control still has to be legible — a control nobody can read is not honest, only quiet. */
+.cs-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ── Mock-data banner: this console shows invented numbers, and says so on screen ─────────────────────────── */
 .cs-mock {
   /* Block, not flex: the lead-in "Mock data." must reflow INLINE with the sentence when the banner wraps.

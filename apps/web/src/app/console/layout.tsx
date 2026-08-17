@@ -15,6 +15,7 @@
 import type { ReactNode } from 'react';
 import './console.css';
 import { MOCK_COMPANY } from './mock-data';
+import { NavLinks } from './nav-links';
 
 export const metadata = {
   title: 'Console — AI Company Builder',
@@ -26,7 +27,10 @@ export const metadata = {
 // because a nested layout inheriting it is the whole point.
 
 /** Built, and therefore linked. Everything else is listed but inert. */
-const NAV_BUILT = [{ href: '/console', label: 'Overview', icon: '▤' }];
+const NAV_BUILT = [
+  { href: '/console', label: 'Overview', icon: '▤' },
+  { href: '/console/companies', label: 'Companies', icon: '◱' },
+];
 
 const NAV_PLANNED: ReadonlyArray<{ group: string; items: ReadonlyArray<{ label: string; icon: string }> }> = [
   {
@@ -75,19 +79,9 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
           </div>
 
           <nav aria-label="Console">
-            <div className="cs-navgroup-label">Overview</div>
-            <ul className="cs-nav">
-              {NAV_BUILT.map((n) => (
-                <li key={n.href}>
-                  <a href={n.href} aria-current="page">
-                    <span className="cs-ico" aria-hidden="true">
-                      {n.icon}
-                    </span>
-                    {n.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <div className="cs-navgroup-label">Console</div>
+            {/* Client component, and the comment above says why: `aria-current` must name exactly one link. */}
+            <NavLinks links={NAV_BUILT} />
 
             {NAV_PLANNED.map((g) => (
               <div key={g.group} className="cs-navgroup">
