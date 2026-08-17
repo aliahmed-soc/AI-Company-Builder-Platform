@@ -78,6 +78,11 @@ const PAGES = [
   // narrow-width case that MATTERS here (a textarea inside a fieldset inside a padded card at 492) is
   // therefore covered by the CSS rules and by review, NOT by this harness.
   { path: '/console/companies/cmp_layout_probe/interview', slug: 'interview', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-010. Signed out this renders the memory refusal, so what is measured is that refusal's layout.
+  // The TABLE — the thing this row's responsive criterion is actually about — needs a session and cannot be
+  // reached here, so its horizontal-scroll behaviour rests on the CSS rule and on review, not on this
+  // harness. Stated in the PR rather than implied away.
+  { path: '/console/companies/cmp_layout_probe/memory', slug: 'memory', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

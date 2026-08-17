@@ -1014,3 +1014,84 @@
   .cs-question-why { max-width: none; }
   .cs-control-row .cs-btn { flex: 1 1 auto; }
 }
+
+/* ── Memory browser (ACBP-FE-010) ────────────────────────────────────────────────────────────────────────
+ * THE CONSOLE'S FIRST TABLE. Nothing table-related existed before this slice, so these establish the
+ * vocabulary the way FE-005's block established forms. */
+
+/* SCROLLS RATHER THAN TRUNCATING, per the row's responsive criterion. `tabindex` is set on this element in
+   the TSX, not here, because a scroll container that only a pointer can reach is unusable by keyboard —
+   and the browser gives no focus ring to a scrollable div by default. */
+.cs-table-scroll {
+  overflow-x: auto;
+  margin-top: var(--s-4);
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+}
+.cs-table-scroll:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+.cs-table {
+  width: 100%;
+  border-collapse: collapse;
+  /* `auto`, deliberately: founder content varies wildly in length, and a fixed layout would either clip a
+     long claim or waste the row on a short one. The wrapper above absorbs the resulting width. */
+  table-layout: auto;
+  font-size: 0.88rem;
+}
+.cs-table th,
+.cs-table td {
+  padding: var(--s-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--c-border-soft);
+}
+.cs-table thead th {
+  color: var(--c-text-dim);
+  font-weight: 600;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  background: var(--c-surface-2, var(--c-surface));
+}
+.cs-table tbody tr:last-child th,
+.cs-table tbody tr:last-child td { border-bottom: 0; }
+/* The row header carries founder-supplied text, so it needs a width to wrap inside and an anywhere-break:
+   `overflow-wrap` alone will not break a pasted URL without a width to break against. */
+.cs-table-item {
+  font-weight: 400;
+  min-width: 22ch;
+  max-width: 46ch;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+/* A superseded row is dimmed AND says "replaced" in its version cell — the badge is the real signal, since
+   opacity alone is not something every reader can perceive. */
+.cs-table tbody tr[data-lifecycle='superseded'] { opacity: 0.72; }
+.cs-table-ref {
+  display: block;
+  margin-top: var(--s-1);
+  color: var(--c-text-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.cs-table-outcome { display: block; margin-top: var(--s-2); max-width: 46ch; }
+.cs-mem-cap { margin-top: var(--s-3); max-width: 62ch; }
+
+/* The dialogs are IN FLOW, not overlays: this console has no focus-trap primitive yet, and a modal that
+   traps nothing while claiming aria-modal would be worse than one that simply sits in the page. */
+.cs-dialog {
+  margin-top: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  background: var(--c-surface-2, var(--c-surface));
+  display: grid;
+  gap: var(--s-3);
+  max-width: 62ch;
+}
+.cs-dialog--danger { border-color: rgba(255, 92, 114, 0.42); }
+.cs-dialog .cs-refusal-detail { margin: 0; }
+
+@media (max-width: 640px) {
+  .cs-table-item { min-width: 16ch; max-width: none; }
+  .cs-dialog { max-width: none; }
+}
