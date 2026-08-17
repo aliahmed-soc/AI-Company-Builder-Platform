@@ -441,10 +441,16 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
    * CDR-089 §4 — the two run reads join this matrix (ACBP-API-003).
    *
    * THIS BLOCK SEEDS, AND SO IT MAKES THE STRONGER CLAIM. `task_runs` seeds from a task and tasks seed
-   * standalone, so a foreign run PROVABLY EXISTS here and is still invisible. The roadmap, artifact and
-   * approvals blocks could only prove refusal at company scope — their tables need decision/run chains — and
-   * they say so. This one has no such excuse, which is exactly why CDR-089 §4 committed it to the stronger form
-   * before any of it was written.
+   * standalone, so a foreign run PROVABLY EXISTS here and is still invisible. CDR-089 §4 committed it to that
+   * stronger form before any of it was written.
+   *
+   * IT IS NO LONGER THE ONLY BLOCK THAT DOES. This header used to add that the roadmap, artifact and approvals
+   * blocks "could only prove refusal at company scope — their tables need decision/run chains — and they say
+   * so." All three seed as of ACBP-API-010 / CDR-093, and for two of them the stated chain was never real: they
+   * cited an FK to a `runs` table that does not exist, when the constraint is a composite onto the very
+   * `task_runs` this block has been seeding all along. The sentence is removed rather than softened, because a
+   * comparative claim about a sibling block is exactly the kind that goes stale silently when the sibling
+   * changes.
    *
    * `failure_category` is applied by UPDATE, never at insert: its insert type is `never`, because a run cannot
    * be BORN failed — it has to fail. The compiler caught that in the core suite and the same rule holds here.
@@ -575,17 +581,33 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
    * refusal that still wrote a roadmap row would satisfy every status assertion below and be exactly the defect
    * worth catching, so the negative is taken FROM THE DATABASE.
    *
-   * AND IT WORKS WITHOUT SEEDING, which is why this block makes a stronger claim than the roadmap READ block
-   * despite the same inability to seed a roadmap (the decision chain). The assertion is that the set of roadmap
-   * ids is IDENTICAL before and after the refused writes. A cross-company edit that leaked through would have to
-   * create a row to succeed, and a created row changes that set. An empty table is a perfectly good baseline for
-   * "nothing was created".
+   * THE ASSERTION IS THAT THE SET OF ROADMAP IDS IS IDENTICAL before and after the refused writes. A
+   * cross-company edit that leaked through would have to create a row to succeed, and a created row changes
+   * that set.
+   *
+   * IT NOW RUNS AGAINST A NON-EMPTY BASELINE (ACBP-API-010). This header used to say the block "works without
+   * seeding, which is why it makes a stronger claim than the roadmap READ block despite the same inability to
+   * seed a roadmap (the decision chain)", and that an empty table was "a perfectly good baseline for nothing
+   * was created". Both sentences are gone: the inability was never real — `seedForeignRoadmap` builds the
+   * chain — and an empty baseline is the weaker one, because a set that starts empty and ends empty is also
+   * what a route that can never write anything produces. Seeding company B means the baseline contains a real
+   * foreign roadmap that the refused edit must leave EXACTLY as it found it.
    */
   describe('CDR-088 — roadmap edit (the only slice-2 write)', () => {
     let editRoute: ParamPostRoute<{ companyId: string }>;
+    let editForeignRoadmap: SeededRoadmap;
 
     beforeAll(async () => {
       editRoute = await import('../../app/api/companies/[companyId]/roadmap/edit/route.js');
+    });
+
+    beforeEach(async () => {
+      // Nested (§4.1) — the parent truncates before every test. Only company B is seeded here: the point is a
+      // real foreign roadmap in the baseline, and giving company A one too would change which edits are
+      // legitimately addressable and is a different test.
+      editForeignRoadmap = await seedForeignRoadmap(owner, { accountId: w.accountB, companyId: w.companyB1, userId: w.bOwner, marker: 'FOREIGN-EDIT-ROADMAP-DO-NOT-LEAK' });
+      const seeded = await owner.kysely.selectFrom('roadmaps').select(['id', 'company_id']).where('company_id', '=', w.companyB1).execute();
+      expect(seeded.map((r) => r.id), "fixture guard: B's roadmap must EXIST so the baseline is not empty").toContain(editForeignRoadmap.roadmapId);
     });
 
     const postEdit = async (companyId: string, expectedRoadmapId: string): Promise<{ status: number; body: string }> => {
@@ -821,17 +843,23 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
       }
     });
 
-    test('the caller CAN read an artifact in their own company — the positive that makes the negatives meaningful', async () => {
+    test('the caller CAN read an artifact in their own company — ALL THREE routes, the positive that makes the negatives meaningful', async () => {
       // Without this, every "B's artifact does not appear" assertion below would be satisfied just as well by
       // a route that serves no artifact to anybody. This proves the reads work before they are asked to refuse.
+      //
+      // IT COVERS ALL THREE ROUTES ON PURPOSE, and an earlier version of this test did not. It asserted only
+      // `artifact` and `runArtifacts` while `callAll` drives THREE, so every lineage negative in this block was
+      // still satisfied by a lineage route that served nothing to anybody — the exact vacuity this block exists
+      // to close, left open on one route. The relocation mutation could not reveal it either: `artifact` is
+      // index 0 in `callAll`, so its assertion throws before lineage is ever examined. Partial coverage of a
+      // multi-route helper is the failure mode; assert every route the helper drives.
       await signInAs(w.aOwner);
       const own = await callAll(w.companyA1, ownArtifact.artifactId, ownArtifact.runId);
-      const detail = own.find((r) => r.name === 'artifact');
-      expect(detail?.status, "A reading its OWN artifact").toBe(200);
-      expect(detail?.body, "A's own artifact must actually be served").toContain(ownArtifact.title);
-      const listed = own.find((r) => r.name === 'runArtifacts');
-      expect(listed?.status, "A listing its OWN run's artifacts").toBe(200);
-      expect(listed?.body, "A's own run must list its own artifact").toContain(ownArtifact.title);
+      for (const name of ['artifact', 'lineage', 'runArtifacts'] as const) {
+        const r = own.find((x) => x.name === name);
+        expect(r?.status, `A reading its OWN artifact via '${name}'`).toBe(200);
+        expect(r?.body, `'${name}' must actually serve A's own artifact`).toContain(ownArtifact.title);
+      }
     });
 
     test("G-cross(seeded) — B's artifact PROVABLY EXISTS and never appears, in B or smuggled into A", async () => {
@@ -1001,10 +1029,15 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   /**
    * CDR-088 §4 — the task board read joins this matrix.
    *
-   * THIS BLOCK SEEDS REAL DATA, AND THAT MAKES IT STRICTLY STRONGER THAN THE ROADMAP BLOCK BELOW. `tasks` needs
-   * only account_id, company_id, title and created_by_user_id — `milestone_id` is nullable and `state` defaults —
-   * so a task can be seeded WITHOUT the decision chain a roadmap requires. That means this matrix can prove the
-   * property the roadmap block explicitly cannot: a foreign task PROVABLY EXISTS and is still invisible.
+   * THIS BLOCK SEEDS REAL DATA. `tasks` needs only account_id, company_id, title and created_by_user_id —
+   * `milestone_id` is nullable and `state` defaults — so a foreign task PROVABLY EXISTS here and is still
+   * invisible.
+   *
+   * TWO COMPARATIVE CLAIMS WERE REMOVED FROM THIS HEADER, both made false by ACBP-API-010 / CDR-093: that
+   * seeding made this block "strictly stronger than the roadmap block below", and that it could prove "the
+   * property the roadmap block explicitly cannot". The roadmap block seeds now and proves exactly that
+   * property. A comment that ranks itself against a neighbour is a comment that goes stale when the neighbour
+   * improves, and nothing fails when it does.
    *
    * The fixture is seeded on the OWNER connection and its existence is ASSERTED before the negative runs. A
    * negative that would pass just as well against an empty table proves nothing, which is the trap three CDR-087
@@ -1015,6 +1048,7 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
   describe('CDR-088 — task board read', () => {
     let tasksRoute: ParamRoute<{ companyId: string }>;
     let foreignTaskTitle = '';
+    const ownTaskTitle = 'OWN-TASK-MUST-BE-VISIBLE';
 
     beforeAll(async () => {
       tasksRoute = await import('../../app/api/companies/[companyId]/tasks/route.js');
@@ -1022,14 +1056,27 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
 
     beforeEach(async () => {
       foreignTaskTitle = 'FOREIGN-TASK-DO-NOT-LEAK';
+      // `state: 'planned'` IS LOAD-BEARING, and its absence hid a second vacuity (ACBP-API-010). `tasks.state`
+      // defaults to 'draft', and DRAFTS ARE DELIBERATELY OFF THE BOARD — `getTaskBoard` counts them only in
+      // `draftsOffBoard` and places none of them in a bucket. The foreign task used to be seeded at that
+      // default, so "B's task never appears in A's board" was asserted about a task that appears on NOBODY'S
+      // board, including its own company's. The negative was true for a reason unrelated to tenant isolation.
+      // Both fixtures are now in a state the board actually renders, so the assertion is about visibility.
       await owner.kysely
         .insertInto('tasks')
-        .values({ account_id: w.accountB, company_id: w.companyB1, title: foreignTaskTitle, created_by_user_id: w.bOwner })
+        .values({ account_id: w.accountB, company_id: w.companyB1, title: foreignTaskTitle, state: 'planned', created_by_user_id: w.bOwner })
         .execute();
-      // The fixture must EXIST for the negative below to mean anything. If this ever returns zero the test must
+      // A task in the CALLER'S OWN company as well. Without it, A's board is empty and "B's task never appears
+      // in A's board" is satisfied by a board that returns nothing to anybody.
+      await owner.kysely
+        .insertInto('tasks')
+        .values({ account_id: w.accountA, company_id: w.companyA1, title: ownTaskTitle, state: 'planned', created_by_user_id: w.aOwner })
+        .execute();
+      // The fixtures must EXIST for the negative below to mean anything. If either returns zero the test must
       // fail here, loudly, rather than pass vacuously downstream.
-      const seeded = await owner.kysely.selectFrom('tasks').select('id').where('company_id', '=', w.companyB1).execute();
-      expect(seeded.length, 'fixture guard: the foreign task must exist before the negative runs').toBeGreaterThan(0);
+      const seeded = await owner.kysely.selectFrom('tasks').select(['id', 'company_id']).execute();
+      expect(seeded.filter((r) => r.company_id === w.companyB1).length, 'fixture guard: the foreign task must exist before the negative runs').toBeGreaterThan(0);
+      expect(seeded.filter((r) => r.company_id === w.companyA1).length, "fixture guard: A's own task must exist or the negative is vacuous").toBeGreaterThan(0);
     });
 
     const getTasks = async (companyId: string): Promise<{ status: number; body: string }> => {
@@ -1040,6 +1087,9 @@ describe.skipIf(!hasTestDatabase)('HTTP routes against a real database — ACBP-
     test('G-cross — a member of A cannot reach company B, and B\'s task NEVER appears in any response', async () => {
       await signInAs(w.aOwner);
       expect((await getTasks(w.companyB1)).status, 'read into B').not.toBe(200);
+      // POSITIVE CONTROL FIRST: A's own board really does serve A's own task, so the absence asserted below is
+      // a real absence rather than an empty response.
+      expect((await getTasks(w.companyA1)).body, "positive control: A's own task must actually be served").toContain(ownTaskTitle);
       // The board A legitimately CAN read must not contain B's task either — the stronger claim, and the whole
       // reason this block seeds.
       const own = await getTasks(w.companyA1);

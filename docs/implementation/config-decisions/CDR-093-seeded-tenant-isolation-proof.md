@@ -76,9 +76,12 @@ column set here, not just on syntax.
   three real `strategy_options` rows are inserted rather than declaring three and seeding none.
 - `strategy_selections_mode_shape` for `'select'` demands a non-null `selected_option_id`, so the
   selection points at option 0 and the composite FK pins it to the same generation.
-- `artifacts_key_is_company_prefixed` is satisfied by **deriving** the key from the company id, so a
-  fixture planted in the wrong company fails at the database instead of producing a row that lies about
-  where it lives; `content_hash` is a real sha256 of the body.
+- `artifacts_key_is_company_prefixed` is satisfied by **deriving** the key from the company id, mirroring
+  the production derivation so the row is internally consistent; `content_hash` is a real sha256 of the
+  body. **That derivation does not make a misplanted fixture fail at the database** — an earlier draft of
+  this section claimed it did. `object_key` and `company_id` come from the same parameter, so the CHECK
+  compares a value with itself and holds for any company. What catches a misplanted fixture is the caller's
+  existence assertion pinned to the expected company, not the constraint.
 - `approval_requests_reversibility_matches_risk` makes reversibility **derived, not chosen**.
 
 ### §1.3 — What these fixtures do NOT prove
@@ -119,18 +122,97 @@ With a real artifact in B, the CDR-087 G7(b) sub-resource oracle finally applies
 company A, which the caller legitimately holds, a FOREIGN artifact id and an UNKNOWN one must be
 byte-identical. Previously every id in play was unknown, so the question could not be posed.
 
-## §3 — Evidence
+## §3 — Evidence, and a first mutation report that was WRONG
 
-**The green was mutation-proven before it was reported.** Planting the three "foreign" fixtures in the
-caller's own company — a simulated cross-tenant leak — turned **10 tests red** across all three blocks,
-including the raw-column tripwire. The file was restored byte-for-byte afterwards and re-verified green.
+### §3.1 — The retracted claim, kept because the mistake is the lesson
 
-That step exists because of this repository's standing rule: before treating any green as evidence, ask
-whether a wrong implementation could have produced the same green. For an invisibility assertion the honest
-answer is usually yes, so the assertion has to be shown capable of saying no.
+The first version of this section read: *"Planting the three 'foreign' fixtures in the caller's own company
+— a simulated cross-tenant leak — turned **10 tests red** across all three blocks, including the raw-column
+tripwire."* **That claim is false and is retracted.**
 
-Hosted CI on the exact head, at zero skips, remains the only real-database evidence for the merge gate;
-the local run is a pre-PR gate, not a substitute.
+Reading the failure TEXT rather than the failure COUNT shows what actually happened. That mutation moved
+each foreign fixture into company A while the caller's own fixture was already there, which put two
+version-1 rows in one company and violated two UNIQUE constraints:
+
+```
+error: duplicate key value violates unique constraint "understanding_documents_company_version_uq"
+error: duplicate key value violates unique constraint "policies_company_version_uq"
+```
+
+Those exceptions were thrown in `beforeEach`, so **every** test in the roadmap and approvals blocks failed —
+including `an unknown query parameter is REFUSED, not ignored`, which has nothing to do with tenant
+isolation. All-tests-in-a-block-red is the signature of a fixture error, not of a control being exercised.
+Of the ten red tests, **eight were fixture errors and only two were assertions**, both in the artifact block.
+
+This repository already had the rule — *a red exit code is not evidence* (ACBP-P7-013's probe reported 7/7
+kills having run zero tests). It was broken here in its subtler form: the tests really did run, really did
+go red, and the number was still not evidence, because nothing checked WHY. **A mutation report must quote
+the failing assertion messages, not the count.**
+
+### §3.2 — What the corrected mutations actually prove
+
+Two mutations, each designed so a failure can only be an assertion failure.
+
+**M1 — marker collision.** Each block's OWN fixture is given the FOREIGN marker, so the caller's own served
+body legitimately contains the exact string the invisibility assertions forbid. Both rows stay in their own
+companies, so no UNIQUE constraint is touched and no fixture throws. Result: **3 red, all assertions**, one
+per block:
+
+```
+AssertionError: A's own roadmap read must not contain B's goal title
+AssertionError: A's own inbox must not contain B's preview
+AssertionError: A's own board must not contain B's task
+```
+
+**M2 — relocation, artifact block.** The foreign artifact planted in company A (no UNIQUE constraint applies
+to `artifacts`, so this one is collision-free). Result: **2 red, both assertions**:
+
+```
+AssertionError: artifact: B's artifact must not surface inside A
+AssertionError: artifact: identical status: expected 200 to be 404
+```
+
+Together these cover all four seeded blocks — roadmap, approvals, task board, artifacts — with a named,
+quoted assertion apiece. The file was restored byte-for-byte after each run (verified: zero mutation
+residue) and re-verified green at 54/54.
+
+**What M1 does NOT prove**, stated so the next reader does not over-read it: it exercises the *content*
+assertions, showing they fire when a forbidden string reaches the caller's body. It does not itself
+demonstrate that RLS is what keeps the foreign row out — M2 does that for artifacts, by making a genuinely
+foreign row reachable and watching the cross-tenant assertions fail.
+
+### §3.3 — Suite evidence
+
+Local, real PostgreSQL, zero skips: `pnpm run check` exit 0 — **284 test files / 4207 tests passed**, plus
+12 / 267 for `test:boundaries`. Hosted CI on the exact head at zero skips remains the merge gate and the
+only real-database evidence that counts; the local run is a pre-PR gate, not a substitute.
+
+## §4 — What independent review found AFTER this was called complete
+
+Five review dimensions with two adversarial refuters per finding reported 29 defects; **6 survived**. Four
+were prose that this ticket's own change had made false, which is the failure mode the repository keeps
+recording. Two were live vacuities in the tests:
+
+- **The artifact positive control covered 2 of the 3 routes `callAll` drives.** `lineage` was requested and
+  discarded, so every lineage negative in the block was still satisfied by a lineage route serving nothing
+  to anybody — the exact vacuity this ticket exists to close, left open on one route. M2 could not reveal
+  it either: `artifact` is index 0, so its assertion throws before lineage is examined. Now asserted for
+  all three.
+- **The task-board fixtures were seeded at the `tasks.state` default of `'draft'`, and drafts are
+  deliberately OFF the board.** So "B's task never appears in A's board" was asserted about a task that
+  appears on *nobody's* board, including its own company's — vacuous for a second reason entirely unrelated
+  to isolation, and pre-existing rather than introduced here. Both fixtures are now `'planned'`.
+
+Stale-by-my-own-hand prose, all corrected in place:
+- the CDR-089 header still said the other three blocks "could only prove refusal at company scope … and
+  they say so";
+- the **roadmap EDIT block** — a CDR-088 block this audit had not visited — still claimed an "inability to
+  seed a roadmap (the decision chain)" that this ticket disproved. It now seeds, so its no-write negative
+  runs against a non-empty baseline rather than an empty table;
+- the task-board header ranked itself "strictly stronger than the roadmap block below" and claimed to prove
+  "the property the roadmap block explicitly cannot" — both false once the roadmap block seeded;
+- §1.2 of this document claimed the derived `object_key` makes a misplanted fixture fail at the database. It
+  cannot: key and `company_id` come from the same parameter, so the CHECK compares a value with itself.
 
 ## §4 — Not done here, deliberately
 

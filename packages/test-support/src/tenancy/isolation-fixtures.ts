@@ -103,9 +103,17 @@ export interface SeededArtifact extends SeededRun {
  * Every remaining NOT NULL on `artifacts` is literal-satisfiable, and the three interesting CHECKs are
  * honoured rather than worked around:
  *
- *   • `artifacts_key_is_company_prefixed` — the key really is derived from this company's id, lowercased,
- *     and contains no '..'. Deriving it (instead of hardcoding a passing string) means a fixture planted in
- *     the wrong company fails at the database rather than producing a row that lies about where it lives.
+ *   • `artifacts_key_is_company_prefixed` — the key is derived from this company's id, lowercased, and
+ *     contains no '..', mirroring the production derivation (CDR-060 G2) so the stored row is internally
+ *     consistent instead of merely constraint-passing.
+ *
+ *     WHAT THAT DERIVATION DOES NOT BUY, said plainly because an earlier version of this comment claimed it
+ *     did: it does NOT make a fixture planted in the wrong company fail at the database. `object_key` and
+ *     `company_id` are both derived from the SAME `params.companyId`, so the CHECK compares a value against
+ *     itself and holds for every possible company — including a wrong one. The constraint is a real control
+ *     over production writes, where the two values have independent origins; here it is satisfied by
+ *     construction. What actually catches a misplanted fixture is the caller's existence assertion, which
+ *     pins the returned id to the company the test expects.
  *   • `artifacts_content_hash_shape` — a REAL sha256 of the body text, not 64 hand-typed characters. It
  *     costs nothing and the row is then internally consistent.
  *   • `artifacts_size_bounded` / `artifacts_provenance_present` — actual byte length, non-blank provenance.
