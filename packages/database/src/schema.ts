@@ -381,8 +381,9 @@ export interface InterviewAnswersTable {
 /**
  * Typed memory items (ACBP-P2-006; CDR-024; MEM-001/003; DATA-ARCHITECTURE §3). Company-owned, dual-keyed
  * FORCE RLS. The closed 8-value `type` (set by source path) + 6-value `source_type` provenance + resolvable
- * `source_ref`. P2-006 grants are SELECT + INSERT only (append-only); `superseded_by`/`confirmation_state`
- * advance in P2-010/M3, so they are `never` on update for the app role here.
+ * `source_ref`. P2-006 granted SELECT + INSERT only; P2-010 added two narrow column-level UPDATE grants, so
+ * `superseded_by` (0015) and `deleted_at`/`deleted_by_user_id` (0016) are updatable below. Every other column —
+ * content/type/source/confidence/identity/creation, and `confirmation_state` (advancing it is M3) — stays `never`.
  */
 export interface MemoryItemsTable {
   id: ColumnType<string, string | undefined, never>;

@@ -2,9 +2,10 @@
 
 Governed by **CDR-024**; requirements **MEM-001** (typed items), **MEM-003** (provenance + company scope),
 UNDER-002 (classes). ADRs: ADR-015 (audit), ADR-007 (tenancy). P2-006 delivers the **typed memory substrate**:
-persist a typed, source-linked memory item and list a company's items. Supersede/confirm/delete and the browser
-UI are later tickets (P2-010/M3); context assembly and provenance ranking are P2-007; understanding generation
-and confidence *scoring* are P2-008.
+persist a typed, source-linked memory item and list a company's items. P2-010 has since added the supersede
+(edit) and soft-delete operations plus the browser's read filters — see "Memory browser" below. The browser
+**UI** and advancing `confirmation_state` (confirm) are still later work; context assembly and provenance
+ranking are P2-007; understanding generation and confidence *scoring* are P2-008.
 
 ## The typed item (DATA-ARCHITECTURE §3)
 
@@ -49,12 +50,13 @@ set by the **source path**, never by content.
 
 ## HTTP
 
-- `GET  /api/companies/{companyId}/memory` — list (redacted, newest-first, bounded). No query parameter (filter
-  is P2-010's browser); any present → bounded 400.
+- `GET  /api/companies/{companyId}/memory` — list (redacted, newest-first, bounded). Accepts ONLY the P2-010
+  browser filters `type` and `currentOnly`; any OTHER query parameter → bounded 400.
 - `POST /api/companies/{companyId}/memory` — create (`201`), body `{ type, content, sourceType, sourceRef,
   confidence? }`. account/company/actor are **server-resolved** — a request cannot forge them; extra body fields
-  are ignored. Denial → one opaque 403; validation → 400; unexpected throw → the bounded generic 500. No
-  PATCH/DELETE verb (supersede/delete are P2-010).
+  are ignored. Denial → one opaque 403; validation → 400; unexpected throw → the bounded generic 500. POST takes
+  no query parameter. The COLLECTION route exposes no PATCH/DELETE verb — supersede and delete are P2-010 verbs
+  on the ITEM route `…/memory/{id}`, specified under "Memory browser" below.
 
 ## Audit — `memory.item_created` (in-transaction; REQUIRED)
 
