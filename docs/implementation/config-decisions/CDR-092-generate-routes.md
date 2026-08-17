@@ -473,20 +473,21 @@ harness has produced a misleading state.
 
 ### Found, NOT fixed, and needing a decision (`AGENTS.md` §6)
 
-**A viewer can drain the owner's company ceiling.** `resolveMeteredContext` consumes the per-company bucket
-*before* authorization, and `companyId` at that point is still a raw request selector. A viewer — or anyone
-holding a company id — is refused with 403, but the token is spent from the company's bucket first. At five per
-minute, five requests keep the owner throttled, from an actor whose own account ceiling is sixty times larger.
-Related: `companyId` becomes a row in `api_rate_limit_buckets`, which has no `DELETE` grant and no sweeper, so
-varying the segment mints permanent rows.
+**Any authenticated caller can drain another company's generate ceiling.** An earlier wording of this
+paragraph called it a viewer-versus-owner problem on the same account. That understated it. `resolveMeteredContext`
+consumes the per-company bucket *before* membership is verified, keyed only on the `companyId` path segment.
+`resolveActorWithAccount` is the only prior check, so any signed-in user who knows or guesses a company id spends
+that company's tokens and is then refused 403. Five requests a minute keep the owner on 429. No membership, no
+shared account, no paid call. Related: each distinct `companyId` becomes a row in `api_rate_limit_buckets`, which
+has no `DELETE` grant and no sweeper, so varying the segment mints permanent rows.
 
 Not fixed here because moving the check, or keying it on `${companyId}:${userId}`, changes a rate-limiting
 decision recorded in CDR-082 and CDR-008 §8, and the early position was chosen deliberately to bound probing.
 Three options: key the pre-authorization bucket on the actor as well as the company, which preserves the probing
-bound and removes the cross-actor denial; move the company check after authorization, accepting that an
-unauthorized probe costs an authorization round-trip; or leave it and accept a same-account denial-of-service
-between a viewer and an owner. The first looks right and is one line, but it is a limits decision and belongs to
-whoever owns CDR-082, not to this slice.
+bound and removes the cross-tenant denial; move the company check after membership is verified, accepting that
+an unauthorized probe costs an authorization round-trip; or leave it and accept that any authenticated user can
+throttle any company's generate surface. The first looks right and is one line, but it is a limits decision and
+belongs to whoever owns CDR-082, not to this slice.
 
 **Three of the eight 409s and one 403 path are POST-payment.** Each use case re-verifies inside the persist
 transaction, after the paid call, which is correct — that is what makes the write safe. The consequence is that
@@ -499,6 +500,14 @@ that a 4xx means no charge, and because §13's counter tests deliberately assert
 successful provider call, the throw is not the not-configured error, so `callMetered` rethrows and it becomes the
 generic 500. Nothing leaks, but the call was paid for and left no `usage_events` row — invisible to the
 reconciliation a credit slice will depend on. For the ACBP-API-009 row, not for this one.
+
+**There is no HTTP- or generate-path idempotency.** Duplicate or concurrent successful POSTs each cause a
+separate provider charge. The routes accept no `Idempotency-Key`; the use cases do not set one on
+`ModelGatewayRequest`; credit `preflight`/`reserve`/`settle` is unwired. The Anthropic SDK is `maxRetries: 0`,
+but the gateway itself retries up to twice on timeout / rate-limited / provider-unavailable, so one logical
+request can still produce three billed provider attempts. A client retry after 502, or two tabs, doubles it
+again. Same ticket as the credit wiring (ACBP-API-009 / CDR-091 §3.2); recorded here so it is not mistaken for
+something this slice closed.
 
 **Two overstated comments, corrected in place.** The `Retry-After` header does disclose which ceiling refused —
 its magnitude differs per scope, so `60 / retryAfter` recovers the configured rate — and the comment claiming "no
