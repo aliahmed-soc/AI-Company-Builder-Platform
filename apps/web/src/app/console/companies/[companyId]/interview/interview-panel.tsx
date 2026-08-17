@@ -9,10 +9,20 @@
  * there is nothing for this component to invent with. After a write it re-reads the qa payload and renders
  * whatever came back.
  *
- * EVERY MUTATION IS A SAME-ORIGIN `fetch`, NEVER A FORM POST. `proxy.ts:87-100` refuses any unsafe-method
- * request without same-origin provenance, and this app sends `Referrer-Policy: no-referrer`, so a native
- * form POST arrives with `Origin: null` and is refused with a 403 byte-identical to an authorization denial
- * — undiagnosable from the response.
+ * EVERY MUTATION IS A SAME-ORIGIN `fetch`. The first version of this comment justified that with a claim
+ * that was FALSE, and a false explanation of a security control is worse than none, so here is what the
+ * enforcer actually does. `decideSameOrigin` (server/http/same-origin.ts) consults `Sec-Fetch-Site` FIRST
+ * and EXCLUSIVELY when it is present: `same-origin` returns allow, and the `Origin` comparison rows are
+ * never reached. So a same-origin native `<form method="post">` in any current browser would be ALLOWED,
+ * not refused — the gate's real work is denying the `cross-site` row, and denying requests that arrive with
+ * no usable provenance at all.
+ *
+ * `fetch` is therefore used because it is the transport this screen can reason about — it carries
+ * `Sec-Fetch-Site: same-origin`, it lets the response body and status be read and mapped to an honest
+ * arm, and it does not navigate away from a page holding unsaved answer text. It is NOT used because a form
+ * would be blocked. Relatedly, `Referrer-Policy: no-referrer` is why an Origin check could not be the
+ * primary defence: security-headers.ts records that it would see `null` from a legitimate same-origin form
+ * AND from an attacker's cross-origin form and could not tell them apart.
  *
  * THE CONTENT-TYPE HEADER IS SENT ON THE ANSWER POST AND ONLY THERE. `readJsonObject` checks the content
  * type before reading a byte, so omitting it on the answer would 415 every submission; the three bodiless
@@ -43,6 +53,8 @@ export function InterviewPanel({
   const [session, setSession] = useState<InterviewSessionDTO | null>(initialSession);
   const [qa, setQa] = useState<SessionQADTO | null>(initialQa);
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
+  // Whether a qa read has EVER succeeded on the client. `qa === null` already means "unknown", but a read
+  // that fails after a success must not silently discard the last known list, so the two are tracked apart.
   const [busyQuestion, setBusyQuestion] = useState<string | null>(null);
   const [answerOutcome, setAnswerOutcome] = useState<{ questionId: string; outcome: AnswerOutcome } | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
@@ -127,16 +139,23 @@ export function InterviewPanel({
         <button type="button" className="cs-btn cs-btn--primary" onClick={() => void runSessionAction('start')} disabled={sessionBusy} aria-busy={sessionBusy}>
           {sessionBusy ? 'Starting…' : 'Start the interview'}
         </button>
-        {sessionOutcome === null ? null : (
-          <p className={`cs-control-outcome cs-control-outcome--${sessionOutcome.kind}`} role="status">
-            {sessionOutcome.detail}
-          </p>
-        )}
+        {/* The region is mounted even while empty. A live region inserted into the DOM already containing
+            its text is frequently not announced at all — the rule this file states for the answer outcome
+            and, until review caught it, did not apply to its own control outcomes. */}
+        <div aria-live="polite" className="cs-outcome-region">
+          {sessionOutcome === null ? null : (
+            <p className={`cs-control-outcome cs-control-outcome--${sessionOutcome.kind}`} role="status">
+              {sessionOutcome.detail}
+            </p>
+          )}
+        </div>
       </div>
     );
   }
 
-  const view = toInterviewView(session, qa ?? { sessionId: session.sessionId, items: [] });
+  // `qa` is passed THROUGH, never defaulted to an empty list: an unread list and an empty one are different
+  // facts, and only one of them is something the server said. See interview-view.ts.
+  const view = toInterviewView(session, qa);
   const announcement = describeInterview(view);
 
   return (
@@ -157,16 +176,24 @@ export function InterviewPanel({
           {view.totalCount > 0 ? <span className="cs-badge cs-badge--muted">{view.addressedCount} of {view.totalCount} addressed</span> : null}
         </div>
 
-        {readError === null ? null : (
-          <p className="cs-control-outcome cs-control-outcome--error" role="status">
-            {readError}
-          </p>
-        )}
+        {/* Mounted while empty, for the same reason as every other live region in this file. */}
+        <div aria-live="polite" className="cs-outcome-region">
+          {readError === null ? null : (
+            <p className="cs-control-outcome cs-control-outcome--error" role="status">
+              {readError}
+            </p>
+          )}
+        </div>
 
-        {qaRefusal !== null && qa === null ? (
+        {view.questionsState === 'unknown' ? (
+          // THE LIST WAS NEVER SUCCESSFULLY READ. This says so and asserts nothing about what it holds.
+          // Review found the first version rendering the definite "there are no questions" copy here,
+          // because the component substituted an empty list for a missing read. The `qaRefusal` reason is
+          // named when there is one, and its absence does not change the claim — only how much is known
+          // about why.
           <p className="cs-control-outcome cs-control-outcome--refused" role="status">
-            The question list could not be read (the server answered <strong>{qaRefusal}</strong>), so none is shown. This is NOT the same as there being no questions — nothing is known either way until the read
-            succeeds.
+            The question list has not been read{qaRefusal === null ? '' : <> (the server answered <strong>{qaRefusal}</strong>)</>}, so none is shown. This is NOT the same as there being no questions — nothing is
+            known either way until a read succeeds.
           </p>
         ) : view.questionsState === 'none_exist' ? (
           <p className="cs-help">
@@ -238,11 +265,15 @@ function SessionCard({
           <ControlButton label="Pause" busyLabel="Pausing…" action="pause" availability={view.pause} busy={busy} onAction={onAction} />
           <ControlButton label="Resume" busyLabel="Resuming…" action="resume" availability={view.resume} busy={busy} onAction={onAction} />
         </div>
-        {outcome === null ? null : (
-          <p className={`cs-control-outcome cs-control-outcome--${outcome.kind}`} role="status">
-            {outcome.detail}
-          </p>
-        )}
+        {/* Mounted while empty. See the note on the start control's region: a live region created in the
+            same commit as its text is frequently not announced, and this one was. */}
+        <div aria-live="polite" className="cs-outcome-region">
+          {outcome === null ? null : (
+            <p className={`cs-control-outcome cs-control-outcome--${outcome.kind}`} role="status">
+              {outcome.detail}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -306,13 +337,15 @@ function QuestionCard({
   onDraft: (text: string) => void;
   onSubmit: (submission: AnswerSubmission) => void;
 }): React.JSX.Element {
-  // Ids are derived from the RENDER INDEX rather than the question id: they only need to be unique within
-  // the page, and an index is guaranteed to be a valid id fragment, whereas a server id would need
-  // sanitizing to be safe in `aria-describedby`. Every id in this file is per-question for that reason —
-  // the console's other screens use literals, which would collide the moment a list renders more than one.
+  // Ids for the REPEATED elements are derived from the render index: they only need to be unique within the
+  // page, and an index is guaranteed to be a valid id fragment, whereas a server id would need sanitizing
+  // to be safe in `aria-describedby`. (The panel's non-repeating landmarks — the two card headings — keep
+  // literal ids, because exactly one of each is ever rendered. The earlier version of this comment claimed
+  // EVERY id here was per-question, which was simply untrue of those two.)
   const fieldId = `cs-q${String(index)}`;
   const whyId = `${fieldId}-why`;
   const helpId = `${fieldId}-help`;
+  const labelId = `${fieldId}-label`;
   const described = [q.rationale === null ? null : whyId, helpId].filter((x): x is string => x !== null).join(' ');
 
   // Matches the SERVER's rule exactly: content is NOT trimmed, and emptiness is checked on the raw string,
@@ -343,6 +376,15 @@ function QuestionCard({
 
         {q.lifecycle === 'asked' ? (
           <>
+            {/* THE TEXTAREA NEEDS ITS OWN ACCESSIBLE NAME. A `<legend>` names the `<fieldset>`'s group, not
+                the controls inside it, and `aria-describedby` supplies a description rather than a name —
+                so the first version of this field had NO accessible name at all, and its `id` was
+                referenced by nothing. The label is visually hidden because the prompt is already displayed
+                in the legend directly above; hiding it avoids showing the same sentence twice while still
+                naming the control for anyone not seeing the layout. */}
+            <label className="cs-sr-only" id={labelId} htmlFor={fieldId}>
+              Your answer to: {q.prompt}
+            </label>
             <textarea
               id={fieldId}
               className="cs-input cs-textarea"
@@ -374,7 +416,10 @@ function QuestionCard({
             ) : (
               <p className="cs-question-text">{q.answerText}</p>
             )}
-            {q.revisionCount > 1 ? <p className="cs-help">Revised {q.revisionCount} times. The server keeps every revision.</p> : null}
+            {/* COUNTS VERSIONS, NOT REVISIONS, because `revisions` includes the original answer row — so
+                "revised N times" was off by one for every answer that had ever been changed. Saying what
+                the number actually IS avoids the arithmetic entirely. */}
+            {q.revisionCount > 1 ? <p className="cs-help">The server has kept {q.revisionCount} versions of this answer, including the first.</p> : null}
           </div>
         )}
       </fieldset>

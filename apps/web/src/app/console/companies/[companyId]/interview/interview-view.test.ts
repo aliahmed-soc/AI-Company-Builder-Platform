@@ -98,6 +98,25 @@ describe('toInterviewView — an empty session is not a finished one', () => {
     expect(view.questionsState).toBe('none_exist');
   });
 
+  it('DISTINGUISHES a list never read from a list the server said was empty', () => {
+    // The defect an independent review found in the first version of this screen: the component wrote
+    // `qa ?? { items: [] }`, so a FAILED read became a positive server assertion that no questions exist —
+    // and the sr-only announcement said so too, where no error banner exists to contradict it. Absence of
+    // evidence rendered as evidence of absence, which is the one thing this whole module exists to prevent.
+    expect(toInterviewView(session(), null).questionsState).toBe('unknown');
+    expect(toInterviewView(session(), qa([])).questionsState).toBe('none_exist');
+  });
+
+  it('claims nothing about counts when the list was never read', () => {
+    const view = toInterviewView(session(), null);
+    expect(view.totalCount).toBe(0);
+    expect(view.resumeAt).toBeNull();
+    // The sentence must not assert an absence the server never stated.
+    const sentence = describeInterview(view).toLowerCase();
+    expect(sentence).not.toContain('no questions in this interview');
+    expect(sentence).toContain('not');
+  });
+
   it('reports all-addressed only when questions actually exist', () => {
     const view = toInterviewView(session(), qa([question({ id: 'q1', position: 1, lifecycle: 'answered' })]));
     expect(view.questionsState).toBe('all_addressed');
@@ -145,7 +164,7 @@ describe('toInterviewView — fields the screen must not invent', () => {
   });
 });
 
-describe('toInterviewView — exactly one of pause/resume can ever act', () => {
+describe('toInterviewView — at most one of pause/resume can ever act, and often neither', () => {
   it('offers pause and refuses resume while the session is running', () => {
     const view = toInterviewView(session({ state: 'in_progress', phase: 'in_progress' }), qa([]));
     expect(view.pause.kind).toBe('available');
@@ -189,6 +208,19 @@ describe('describeInterview — the politely-announced sentence', () => {
     expect(describeInterview(view)).toContain('of 2');
   });
 
+  it('leads with the SAME quantity the visible badge shows, so the two cannot disagree', () => {
+    // Review finding: the badge counted `addressed` while the announcement counted `answered`, and a skip
+    // moves one but not the other — so a screen-reader user and a sighted user were told different numbers
+    // about the same interview. Both now lead with `addressed`; `answered` is still reported, because a skip
+    // being addressed-but-not-answered is a real distinction and dropping it would lose the skip signal.
+    const view = toInterviewView(session(), qa([question({ id: 'q1', position: 1, lifecycle: 'answered' }), question({ id: 'q2', position: 2, lifecycle: 'skipped' }), question({ id: 'q3', position: 3, lifecycle: 'asked' })]));
+    expect(view.addressedCount).toBe(2);
+    expect(view.answeredCount).toBe(1);
+    const sentence = describeInterview(view);
+    expect(sentence).toContain('2 of 3');
+    expect(sentence).toContain('1');
+  });
+
   it('never calls an empty session finished', () => {
     // The whole point of the empty/end split. On this build a founder ALWAYS sees this state, because no
     // route can generate a question — so this is the sentence most likely to be read, and a "you're done"
@@ -202,7 +234,7 @@ describe('describeInterview — the politely-announced sentence', () => {
   it('says every existing question is addressed without implying the interview is over', () => {
     const sentence = describeInterview(toInterviewView(session(), qa([question({ id: 'q1', position: 1, lifecycle: 'answered' })]))).toLowerCase();
     expect(sentence).not.toContain('interview is over');
-    // Both numbers, and the denominator is the count of questions that EXIST — the only one the server sends.
-    expect(sentence).toContain('1 answered of 1');
+    // The denominator is the count of questions that EXIST — the only one the server sends.
+    expect(sentence).toContain('1 of 1');
   });
 });

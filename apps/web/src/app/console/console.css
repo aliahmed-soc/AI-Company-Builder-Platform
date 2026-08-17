@@ -538,9 +538,15 @@
    reached by keyboard with no visible focus. FE-005 added four.
 
    ACBP-FE-007 ADDED NO NEW SELECTOR, AND THAT WAS CHECKED RATHER THAN ASSUMED. Its focusables are the answer
-   textarea (`cs-input cs-textarea`, so :541 and :542 both match) and the start/pause/resume/save/skip buttons
-   (`.cs-btn`). The interview screen introduces no `<select>`, no checkbox or radio outside `.cs-choice`, and
-   no `tabIndex` focus target — each of which WOULD have needed a new selector here. */
+   textarea (carrying `cs-input cs-textarea`, so the `.cs-input` and `.cs-textarea` rules below both match),
+   the start/pause/resume/save/skip buttons, and the "Open the interview" anchor added to the company screen
+   — all three of the latter carry `.cs-btn`. The interview screen introduces no `<select>`, no checkbox or
+   radio outside `.cs-choice`, and no `tabIndex` focus target, each of which WOULD have needed a new selector.
+
+   CITATIONS HERE NAME SELECTORS, NOT LINE NUMBERS, DELIBERATELY. The first version of this comment cited
+   ":541 and :542" — and the five lines it itself added to this block pushed those selectors down to 546/547,
+   so the citation was false the moment it was written. A line number in a comment in the same file it cites
+   is invalidated by its own edit. */
 .cs-nav a:focus-visible,
 .cs-btn:focus-visible,
 .cs-input:focus-visible,
@@ -853,7 +859,12 @@
 .cs-form { display: grid; gap: var(--s-4); max-width: 62ch; }
 .cs-field { display: grid; gap: var(--s-1); border: 0; padding: 0; margin: 0; min-width: 0; }
 .cs-label { font-weight: 600; color: var(--c-text); padding: 0; }
-.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-faint); }
+/* `--c-text-dim`, NOT `--c-text-faint`. Measured: faint (#6c7999) at this size gives 3.98:1 on --c-surface
+   and 3.56:1 on --c-surface-2, both under the 4.5:1 WCAG 2.1 AA floor for normal-weight text at 0.82rem —
+   and FE-001's accessibility criterion asserts contrast pairs against AA. ACBP-FE-007 made this rule
+   load-bearing (it carries the character counter and the empty-state explanation), so it is corrected here
+   rather than inherited. `--c-text-faint` remains fine for the larger/decorative uses it was chosen for. */
+.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-dim); }
 .cs-input {
   width: 100%;
   min-width: 0; /* load-bearing in a grid: without it a long value forces horizontal overflow */
@@ -981,11 +992,16 @@
 }
 
 .cs-question-answered { display: grid; gap: var(--s-2); }
-.cs-question-text { margin: 0; max-width: 62ch; line-height: 1.7; white-space: pre-wrap; }
+/* `overflow-wrap: anywhere` ALONGSIDE `pre-wrap`, and the pairing is the point: pre-wrap preserves the
+   founder's newlines but creates no break opportunity inside a long unbroken token, so a pasted URL or a
+   200-character word would push the page into horizontal overflow. This is founder-supplied content, the
+   same reason `.cs-co-name` and `.cs-co-id` already carry the property — the hazard was understood in this
+   file and simply not carried over here until review said so. */
+.cs-question-text { margin: 0; max-width: 62ch; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* A skip reads differently from an answer on purpose: they are different server states. */
 .cs-question-skip { margin: 0; color: var(--c-text-dim); font-style: italic; }
 .cs-question-server-msg { margin: 0 0 var(--s-2); font-weight: 600; color: var(--c-text); }
-.cs-question-stored { margin: var(--s-2) 0 0; white-space: pre-wrap; }
+.cs-question-stored { margin: var(--s-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Two controls side by side (pause/resume, save/skip), wrapping rather than overflowing on a narrow screen. */
 .cs-control-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-3); }

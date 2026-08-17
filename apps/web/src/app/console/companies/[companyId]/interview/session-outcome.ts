@@ -115,7 +115,13 @@ export function interpretSessionResponse(action: SessionAction, status: number, 
       // 404 there cannot mean "no session" — only that actor resolution found no internal user record.
       return action === 'start'
         ? { kind: 'no_user_record', detail: 'You are signed in, but no internal user record exists for this sign-in yet — usually a provisioning step that has not landed. Reloading in a moment often resolves it.' }
-        : { kind: 'no_session', detail: `There is no open interview session for this company, so nothing was ${did}. Start one first, or reload to see the current state.` };
+        : {
+            kind: 'no_session',
+            // Names BOTH causes. This 404 covers "no open interview session exists" AND actor resolution
+            // finding no internal user record — the same two-in-one the start arm above has, and the first
+            // version of this sentence asserted only the first as though the server had distinguished them.
+            detail: `The server found nothing to act on, so nothing was ${did}. That usually means no interview session is open for this company, though the same response also covers this sign-in having no internal user record yet — and the response does not say which applied. Reload to see the current state.`,
+          };
     case 409: {
       if (code === 'company_not_active') {
         return { kind: 'company_not_active', detail: 'An interview can only be started on an active company, and the server reports this one is not active right now. Nothing was started.' };

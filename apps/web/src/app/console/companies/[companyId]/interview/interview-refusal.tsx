@@ -30,10 +30,11 @@ const COPY: Readonly<Record<string, { title: string; detail: string }>> = {
     title: 'Something this page depends on is down',
     detail: 'The interview could not be read because a dependency is unavailable. Nothing is wrong with your company and retrying is safe.',
   },
-  conflict: {
-    title: 'The server refused this read',
-    detail: 'The server reported a conflict and did not say which of several possible reasons applied. Reloading in a moment often resolves it.',
-  },
+  // NO `conflict` ENTRY. `getInterviewForRequest` maps `GetInterviewResult`, which has no conflict arm, so
+  // a conflict cannot reach this component — an entry for it would be copy for a response the server cannot
+  // send, which is the same unfalsifiable branch this slice's interpreters refuse to carry. The first
+  // version had one; review caught it. Anything genuinely unhandled falls through to the default below,
+  // which names the status instead of inventing a diagnosis for it.
 };
 
 export function InterviewRefusal({ status, retryAfterSeconds }: { status: string; retryAfterSeconds?: number }): React.JSX.Element {

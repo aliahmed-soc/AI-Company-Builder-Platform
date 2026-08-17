@@ -88,9 +88,17 @@ describe('ACBP-FE-007 — the qa read: what the server serializes is what the sc
     expect(toInterviewView(session, parsed.qa).questionsState).toBe('none_exist');
   });
 
-  test('the served qa body carries no account identifier', async () => {
+  test('the served question carries EXACTLY the six DTO fields and nothing else', async () => {
+    // This replaces a `not.toContain('accountId')` assertion that could not fail: the arm is typed
+    // `SessionQADTO`, which has no such field, so the responder was handed a payload with nothing to leak
+    // and the test name promised a redaction guarantee it never exercised. Pinning the exact key set is a
+    // real guarantee — it fails if a field is ADDED to the wire as well as if one is dropped, which is the
+    // direction an accidental disclosure would actually take.
     const { body } = await throughServer({ status: 'qa', qa: { sessionId: 'ses_1', items: [item({ id: 'q1', position: 1, rationale: 'why', source: 'adaptive' })] } });
-    expect(body).not.toContain('accountId');
+    const parsed = JSON.parse(body) as { qa: { items: readonly { question: Record<string, unknown> }[] } };
+    const question = parsed.qa.items[0]?.question;
+    expect(question).toBeDefined();
+    expect(Object.keys(question ?? {}).sort()).toEqual(['createdAt', 'position', 'prompt', 'questionId', 'rationale', 'source'].sort());
   });
 });
 
@@ -201,8 +209,12 @@ describe('ACBP-FE-007 — the session read', () => {
     expect(view.pause.kind).toBe('unavailable');
   });
 
-  test('the served session body carries no account identifier', async () => {
+  test('the served session carries EXACTLY the seven DTO fields and nothing else', async () => {
+    // Same reasoning as the qa key-set assertion above: pinning the set catches an ADDED field, which is the
+    // shape a disclosure would take. `accountId` really is absent — but the point is that this test would
+    // now notice if it stopped being.
     const { body } = await throughServer({ status: 'interview', session });
-    expect(body).not.toContain('accountId');
+    const parsed = JSON.parse(body) as { session: Record<string, unknown> };
+    expect(Object.keys(parsed.session).sort()).toEqual(['companyId', 'createdAt', 'phase', 'sessionId', 'startedAt', 'state', 'updatedAt'].sort());
   });
 });

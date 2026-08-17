@@ -7,20 +7,27 @@
  * THIS FILE OWNS TWO DERIVATIONS THE SERVER WILL NEVER CONTRADICT, which is precisely why they are here and
  * tested rather than inline in a component:
  *
- *  1. WHERE A RESUMED SESSION LANDS. There is no server cursor. `interview_sessions` has seven columns
- *     (id, account_id, company_id, state, started_at, created_at, updated_at — migration 0012) and
- *     `InterviewSessionDTO` mirrors them exactly; neither carries a current-question id, index or pointer.
- *     Suspend/resume preserve the session row and its append-only answers, nothing more. So "a suspended
- *     session resumes at the same question" is satisfied HERE, as the earliest question by `position` that
- *     is still `asked`. That is a derivation over two server-supplied fields, so it is honest — but it is
- *     THIS SCREEN'S RULE, not a guarantee the server makes, and no field exists to show if a founder asks
- *     "which question was I on".
+ *  1. WHERE A RESUMED SESSION LANDS. There is no server cursor. The `interview_sessions` table (migration
+ *     0012) carries id, account_id, company_id, state, started_at, created_at, updated_at, and NONE of them
+ *     is a current-question id, index or pointer. `InterviewSessionDTO` is not a mirror of that row — it
+ *     redacts `account_id` and adds the derived `phase` — but it likewise carries no pointer. Suspend and
+ *     resume preserve the session row and its append-only answers, nothing more. So "a suspended session
+ *     resumes at the same question" is satisfied HERE, as the earliest question by `position` that is still
+ *     `asked`. That is a derivation over two server-supplied fields, so it is honest — but it is THIS
+ *     SCREEN'S RULE, not a guarantee the server makes, and no field exists to show if a founder asks "which
+ *     question was I on".
  *
- *  2. WHETHER AN EMPTY LIST MEANS FINISHED. It does not. `items` carries EVERY question ever asked in the
- *     session regardless of lifecycle (core interview-qa.ts:153,157-166), so an empty list means no question
- *     has ever been generated — a different fact from "all of them are answered", and the two get different
- *     copy. On this build the empty case is what a founder actually sees, because no HTTP route can generate
- *     a question (see the page header).
+ *  2. WHETHER AN EMPTY LIST MEANS FINISHED. It does not — and, added after review, whether a list was READ
+ *     AT ALL is a third state that must not collapse into either. `SessionQADTO.items` carries EVERY
+ *     question ever asked in the session regardless of lifecycle (built by `getSessionQa` in core
+ *     interview-qa.ts), so an empty list means no question has ever been generated. That is a different fact
+ *     from "all of them are answered", and BOTH are different from "nobody has successfully asked".
+ *
+ *     THE `unknown` ARM EXISTS BECAUSE THE FIRST VERSION OF THIS SCREEN GOT IT WRONG. The component passed
+ *     `qa ?? { items: [] }`, so a FAILED read rendered as a positive server assertion that no questions
+ *     exist — and the polite live region announced it, where no error banner exists to contradict it. An
+ *     independent review found it. Taking `SessionQADTO | null` here, rather than letting a caller
+ *     substitute an empty list, makes that mistake unrepresentable instead of merely discouraged.
  *
  * `position` IS THE ORDERING FACT; ARRAY ORDER IS A CONVENIENCE. The contract documents `items` as arriving
  * in `position` order, and the display renders them in the order given. The resume derivation deliberately
@@ -59,9 +66,14 @@ export interface QuestionCardView {
 export type ControlAvailability = { readonly kind: 'available' } | { readonly kind: 'unavailable'; readonly because: string; readonly reason: string };
 
 /**
- * `none_exist` and `all_addressed` are DIFFERENT STATES and must never share copy. See the header.
+ * Four states, no two of which may share copy. See the header.
+ *
+ * `unknown` — nobody has successfully read the list. Claims NOTHING about whether questions exist.
+ * `none_exist` — the server returned a list and it was empty. An absence the server actually stated.
+ * `all_addressed` — every question that exists has been answered or skipped.
+ * `work_remains` — at least one question is still `asked`.
  */
-export type QuestionsState = 'none_exist' | 'all_addressed' | 'work_remains';
+export type QuestionsState = 'unknown' | 'none_exist' | 'all_addressed' | 'work_remains';
 
 export interface InterviewView {
   readonly sessionId: string;
@@ -96,11 +108,14 @@ function toCard(item: QuestionWithAnswerDTO): QuestionCardView {
 }
 
 /**
- * Exactly one of pause/resume can ever act, and which one is decided by the server's own phase word.
+ * AT MOST one of pause/resume can act, and on most phases NEITHER can — five of the seven arms below
+ * disable both. (The first version of this comment said "exactly one", which is false for those five and
+ * was contradicted by the tests directly under it.)
  *
- * Both transitions are server-enforced against the legal map (contracts interview.ts:38-45), so firing the
- * wrong one is a guaranteed 409 — a control that cannot act. The disabled one therefore carries the reason
- * as TEXT (console.css:681-683: a hover-only explanation is unreachable by touch and by keyboard).
+ * Both transitions are server-enforced against `LEGAL_TRANSITIONS` in contracts `interview.ts`, so firing
+ * the wrong one is a guaranteed 409 — a control that cannot act. The disabled one therefore carries its
+ * reason as TEXT, per the rule stated on `.cs-control-why` in console.css: a hover-only explanation is
+ * unreachable by touch and by keyboard, which makes the explanation decorative.
  *
  * The phases below `awaiting_input` are all currently unreachable — nothing in the repository writes
  * `ready_for_review`, `confirmed` or `superseded`, and `insertStartedIfAbsent` mints a session directly in
@@ -140,8 +155,12 @@ function controls(phase: InterviewDisplayPhase): { pause: ControlAvailability; r
   }
 }
 
-export function toInterviewView(session: InterviewSessionDTO, qa: SessionQADTO): InterviewView {
-  const questions = qa.items.map(toCard);
+/**
+ * `qa` is nullable ON PURPOSE and callers must NOT substitute an empty list for a missing read — that
+ * substitution is the defect the `unknown` arm exists to make unrepresentable. See the header.
+ */
+export function toInterviewView(session: InterviewSessionDTO, qa: SessionQADTO | null): InterviewView {
+  const questions = (qa?.items ?? []).map(toCard);
 
   // Lowest `position` among the still-asked, computed rather than taken from array order. See the header.
   let resumeAt: QuestionCardView | null = null;
@@ -153,7 +172,9 @@ export function toInterviewView(session: InterviewSessionDTO, qa: SessionQADTO):
   const answeredCount = questions.filter((q) => q.lifecycle === 'answered').length;
   const addressedCount = questions.filter((q) => q.lifecycle !== 'asked').length;
 
-  const questionsState: QuestionsState = questions.length === 0 ? 'none_exist' : resumeAt === null ? 'all_addressed' : 'work_remains';
+  // `qa === null` is checked FIRST and separately from `questions.length === 0`: an unread list and an
+  // empty one are different facts, and only the second is something the server said.
+  const questionsState: QuestionsState = qa === null ? 'unknown' : questions.length === 0 ? 'none_exist' : resumeAt === null ? 'all_addressed' : 'work_remains';
 
   const { pause, resume } = controls(session.phase);
 
@@ -179,17 +200,26 @@ export function toInterviewView(session: InterviewSessionDTO, qa: SessionQADTO):
  * text CHANGES, so "announce only on movement" is achieved by this function returning an IDENTICAL string
  * when nothing moved. A timestamp, a fetch counter or anything else that varies per render would make the
  * region speak on every poll no matter what guard the component puts around it.
+ *
+ * IT ALSO LEADS WITH THE SAME QUANTITY THE VISIBLE BADGE SHOWS. Review found the badge counting `addressed`
+ * while this counted `answered` — quantities that diverge the moment anyone skips a question — so a
+ * screen-reader user and a sighted user were given different numbers for the same interview. Both now lead
+ * with `addressed`. `answered` is still reported, because "addressed but not answered" is exactly what a
+ * skip is and dropping it would discard the "I don't know" signal.
  */
 export function describeInterview(view: InterviewView): string {
   switch (view.questionsState) {
+    case 'unknown':
+      // Asserts NO absence. The list has not been read, so nothing is known about what it holds.
+      return 'The question list has not been read yet, so it is not known whether this interview has any questions.';
     case 'none_exist':
       // Deliberately contains no word for completion. This is the state a founder always reaches on this
       // build, and calling it "finished" would be the screen's largest lie.
       return 'There are no questions in this interview yet.';
     case 'all_addressed':
-      return `Every question so far has been addressed: ${String(view.answeredCount)} answered of ${String(view.totalCount)}.`;
+      return `Every question so far has been addressed: ${String(view.addressedCount)} of ${String(view.totalCount)}, of which ${String(view.answeredCount)} were answered and the rest skipped.`;
     case 'work_remains':
     default:
-      return `${String(view.answeredCount)} answered of ${String(view.totalCount)} questions so far.`;
+      return `${String(view.addressedCount)} of ${String(view.totalCount)} questions addressed so far, of which ${String(view.answeredCount)} were answered.`;
   }
 }
