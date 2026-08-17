@@ -115,7 +115,7 @@ export async function generateStrategyOptions(client: DatabaseClient, params: Ge
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<PreRead> => {
-      if (checkAuthorization(role, 'strategy:generate', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { kind: 'forbidden' };
+      if (checkAuthorization(role, 'strategy:read', { accountId: params.accountId, actorId: params.userId }, optsBase).kind === 'deny') return { kind: 'forbidden' };
       const docs = new UnderstandingRepository(scope.db);
       const current = await docs.currentDocument(params.companyId);
       if (current === undefined) return { kind: 'no_understanding' };
