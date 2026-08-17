@@ -93,7 +93,8 @@
  * rather than as a bug, so it survived several visual passes before a scrollWidth assertion named it.
  *
  * Scoped to the console subtree rather than declared on `*`: the root layout and the auth pages are outside
- * this slice, and silently changing the box model under them would be a change nobody asked for. */
+ * this slice, and silently changing the box model under them would be a change nobody asked for. (That is
+ * still true after the `(site)` split — the auth pages keep the app's default box model, untouched.) */
 .cs-root,
 .cs-root *,
 .cs-root *::before,
@@ -579,7 +580,9 @@
      refused to shrink below the full width of its nav items: the single grid column grew to the widest nav
      strip and the whole page scrolled sideways, cutting off the right edge of every card. Allowing the item
      to shrink is what lets the `overflow-x: auto` below actually scroll instead of pushing the layout wider.
-     Pinned by the no-horizontal-overflow assertion in the screenshot harness. */
+     Pinned by the no-horizontal-overflow assertion in `tools/measure-render.mjs` (scrollWidth <= innerWidth,
+     asserted at 1440, 900 and 492 px). That file is named here because a comment claiming enforcement must
+     point at something a reader can run; when this comment was first written it pointed at nothing. */
   .cs-side { min-width: 0; }
   .cs-side nav {
     display: flex;

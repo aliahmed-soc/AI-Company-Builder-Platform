@@ -1,8 +1,10 @@
 /*
  * ACBP-FE-002 — the console application shell: sidebar navigation + top bar.
  *
- * Scoped to `/console` rather than replacing the root layout, so the existing authentication boundary
- * (ACBP-P1-001) is untouched by a visual slice. Nothing here reads a session, a company, or a role.
+ * Scoped to `/console`. The ACBP-P1-001 authentication header is NOT inherited here: it moved to the `(site)`
+ * route group, so the console shell is no longer stacked underneath an auth placeholder bar. That is a layout
+ * relocation only — `ClerkProvider` still wraps this subtree from the root layout, and the boundary itself
+ * (`src/proxy.ts`) is untouched. Nothing here reads a session, a company, or a role.
  *
  * NAVIGATION IS DELIBERATELY NOT LINKED to routes that do not exist yet. Every destination except the overview
  * is rendered as a non-navigating item with `aria-disabled` — a sidebar full of links that 404 looks finished
@@ -19,20 +21,9 @@ export const metadata = {
   description: 'Company overview (ACBP-FE Slice 1; mock data).',
 };
 
-/*
- * WITHOUT THIS, THE RESPONSIVE RULES NEVER RUN ON A PHONE. The app ships no viewport meta tag anywhere
- * (verified: no occurrence of `viewport` or `device-width` under apps/web/src before this line), so a mobile
- * browser lays the page out at a fallback desktop width and scales it down — the narrow-width media queries
- * in console.css would simply never match on the device they were written for. Measured, not assumed: under
- * Chrome mobile emulation at 420px, `window.innerWidth` reported 1395 until this export existed.
- *
- * Declared on the CONSOLE layout, not the root one: the gap is app-wide, but the root layout is the P1-001
- * authentication boundary and is out of scope for this visual slice. The app-wide gap is reported in the PR.
- */
-export const viewport = {
-  width: 'device-width',
-  initialScale: 1,
-};
+// The viewport meta tag this layout used to declare now lives on the ROOT layout, where it covers `/`,
+// `/sign-in` and `/sign-up` as well — the gap was app-wide, not console-only. Nothing is declared here,
+// because a nested layout inheriting it is the whole point.
 
 /** Built, and therefore linked. Everything else is listed but inert. */
 const NAV_BUILT = [{ href: '/console', label: 'Overview', icon: '▤' }];
