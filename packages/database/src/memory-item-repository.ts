@@ -1,9 +1,12 @@
 // @acbp/database — typed memory item repository (ACBP-P2-006; CDR-024).
 //
-// Operates on the append-only `memory_items` rows. Takes a plain executor and relies on the caller to run it
-// under the correct RLS scope — every method requires a validated COMPANY scope (the dual-keyed policies deny
-// anything else). Kysely parameterized queries only; no raw SQL interpolation. There is deliberately NO
-// update/delete method: P2-006 creates + lists only (supersede/confirm/delete are P2-010/M3).
+// Operates on the `memory_items` rows, whose CONTENT is append-only: type/content/source/confidence/identity are
+// never updated in place. Takes a plain executor and relies on the caller to run it under the correct RLS scope —
+// every method requires a validated COMPANY scope (the dual-keyed policies deny anything else). Kysely
+// parameterized queries only; no raw SQL interpolation. P2-006 shipped insert + list; P2-010 added findById,
+// findByIdForUpdate and the two LIFECYCLE-POINTER updates `supersede` + `softDelete`. There is still no HARD
+// delete and no in-place content update — migrations 0015/0016 grant column-level UPDATE on exactly
+// `superseded_by`/`deleted_at`/`deleted_by_user_id` and no DELETE/TRUNCATE. Advancing confirmation_state is M3.
 import { sql, type Kysely } from 'kysely';
 import type { DatabaseSchema, MemoryItemRow } from './schema.js';
 

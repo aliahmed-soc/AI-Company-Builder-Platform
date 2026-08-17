@@ -70,9 +70,8 @@ export const AUTHZ_ACTIONS = [
   'interview:read',
   'interview:participate',
   // Typed memory (ACBP-P2-006; CDR-024 §3). Checked against the caller's COMPANY-membership role: any active
-  // company member may READ the memory items and WRITE (create) a typed item. There is deliberately NO
-  // `memory:edit`/`memory:delete` action yet — the owner-only edit/delete/supersede operations belong to the
-  // memory browser (P2-010), which registers those actions when it implements them.
+  // company member may READ the memory items and WRITE (create) a typed item. The owner-only edit/delete/supersede
+  // operations are `memory:edit`/`memory:delete`, registered by the memory browser (P2-010) immediately below.
   'memory:read',
   'memory:write',
   // Memory browser (ACBP-P2-010; CDR-025). `memory:edit` is the OWNER-ONLY correction (versioned supersede) and

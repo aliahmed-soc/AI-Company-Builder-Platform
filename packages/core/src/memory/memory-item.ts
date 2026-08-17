@@ -2,13 +2,14 @@
 //
 // The typed memory persistence layer. Every op runs under the caller's validated CompanyScope
 // (runInCompanyScope) on the restricted acbp_app role: the caller's ACTIVE company-membership role is resolved
-// first, the ADR-022 role check gates the action (memory:write for create, memory:read for list — any active
-// company member), and the mutation runs RLS-confined to the company (cross-company reads are impossible —
-// MEM-003 trust-critical).
+// first, the ADR-022 role check gates the action (memory:write for create and memory:read for list/get — any
+// active company member; memory:edit for the supersede and memory:delete for the soft delete — OWNER-only), and
+// the mutation runs RLS-confined to the company (cross-company reads are impossible — MEM-003 trust-critical).
 //
-// P2-006 implements CREATE + LIST only (supersede/confirm/delete are P2-010/M3). The type is set by the SOURCE
-// PATH, not by content: a generated source can never produce a `user_fact`/`user_preference` (contract +
-// DB CHECK, defense in depth). A memory item creation is AUDITED (MEM-003 "All changes audited") — the
+// P2-006 shipped CREATE + LIST; P2-010 added GET, EDIT (`editMemoryItem` — the owner-only versioned supersede) and
+// soft DELETE (`deleteMemoryItem`, owner-only). Advancing confirmation_state (confirm) is still M3. The type is set
+// by the SOURCE PATH, not by content: a generated source can never produce a `user_fact`/`user_preference`
+// (contract + DB CHECK, defense in depth). A memory item creation is AUDITED (MEM-003 "All changes audited") — the
 // `memory.item_created` event is written in the SAME transaction as the insert, so an audit-write failure rolls
 // the item back (no unaudited memory). Audit metadata is EXACTLY `{item_type, source_type}` — never content or
 // the raw source_ref.
