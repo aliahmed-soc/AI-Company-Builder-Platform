@@ -11,18 +11,19 @@
  * this file only arranges what they produced.
  */
 import type { RoadmapView } from './roadmap-view';
+import { RoadmapGenerateControl } from './roadmap-generate-control';
 import type { BoardView, BucketView } from './board-view';
 
 export function RoadmapScreen({ roadmap, board, boardRefusalStatus, companyId }: { roadmap: RoadmapView; board: BoardView | null; boardRefusalStatus: string | null; companyId: string }): React.JSX.Element {
   return (
     <>
-      <RoadmapSection view={roadmap} />
+      <RoadmapSection view={roadmap} companyId={companyId} />
       {board === null ? <BoardUnavailable status={boardRefusalStatus} /> : <BoardSection view={board} companyId={companyId} />}
     </>
   );
 }
 
-function RoadmapSection({ view }: { view: RoadmapView }): React.JSX.Element {
+function RoadmapSection({ view, companyId }: { view: RoadmapView; companyId: string }): React.JSX.Element {
   if (view.state === 'nothing_planned') {
     return (
       <section className="cs-card" aria-labelledby="cs-rm-empty-h">
@@ -32,10 +33,7 @@ function RoadmapSection({ view }: { view: RoadmapView }): React.JSX.Element {
           </h2>
         </div>
         <p className="cs-empty">{view.headline}</p>
-        <p className="cs-help">
-          A roadmap is generated from a recorded strategy decision. That generation is a model-driven step this console cannot start yet — no HTTP route reaches it — so there is deliberately no button here rather than
-          one that would do nothing.
-        </p>
+        <RoadmapGenerateControl companyId={companyId} hasRoadmap={false} />
       </section>
     );
   }
