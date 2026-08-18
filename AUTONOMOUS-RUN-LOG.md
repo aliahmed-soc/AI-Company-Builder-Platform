@@ -2981,3 +2981,62 @@ gate, and the harness is deliberately not in CI.
 says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
 reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
 ticket rather than edited from a frontend slice.
+
+
+### MERGE MARKER — ACBP-FE-010 is on `main` (appended 2026-08-18)
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-010** — transparent memory browser | **`bed0a70`** | #130 | `32086960764` on `3935935` — 295 files / **4407** tests, zero skips |
+
+`main` stood still at `1328c46` from the CI run through the merge, so the green covered the merged tree —
+no per-file fallback needed. The FOUR NEW PATCH ROUTE TESTS are named in that log as having executed, which
+matters because they live in a `skipIf` real-PG suite and vanish silently without a database.
+
+### What the ticket refused to build
+
+**MEM-004 has no wire.** The row requires "any withheld conflicting item" from the server; no memory route
+emits one. MEM-004 lives in `assembleContext`, CDR-025 records it as deferred, and the traceability CSV maps
+it to ACBP-P2-007. Computing it client-side would be the UI hiding an item on its own — which the same cell
+forbids. The row also names the wrong requirement: this screen serves **MEM-002**, which the row omits.
+
+**The delete dialog refuses the word "permanent"**, because it would be false three ways: the delete is soft,
+the record is retained, and earlier versions survive and cannot themselves be removed.
+
+### PATCH had no route-level coverage, and the file read as though it did
+
+The `itemRoute` type declared `PATCH`, but nothing under `apps/web` ever called it — the type was the
+only thing asserting the verb existed. Four real-PG tests now pin supersede-not-mutate, the provenance
+rewrite, the bare 409, the viewer 403, both 415s, the string-vs-object 400 split, and a forged foreign-tenant
+denial that writes nothing.
+
+### The review found 42 defects, and the worst one was a fix
+
+**BLOCKER, self-inflicted:** minutes before the review returned I "corrected" a hardcoded `100` by importing
+`MEMORY_LIST_DEFAULT_LIMIT` from `@acbp/core` — into a `'use client'` module, dragging the server
+composition graph across the client boundary. `check:boundaries` passed it, so **that checker has a gap this
+review did not**. The limit is now a prop from the server page.
+
+**Two HIGH on the delete path.** The delete answer could never be read — it was keyed to a table row, and the
+reload removes that row, so a 200 "removed", a 404 "nothing was there" and a 409 "state changed" all rendered
+**identically**. And the empty state said "an empty list means nothing has been recorded, not that anything
+was lost" — reachable one action after a founder deleted their last item.
+
+**The dialogs claimed `aria-modal="true"`** while the CSS shipped in the same commit said, correctly, that a
+modal trapping nothing is worse than a form in the page. Nothing trapped focus.
+
+**A reassurance pointing at a door that does not open:** the copy promised the item "still appears in your
+data export" — true of the stored row, naming a document no route or screen in this build can produce.
+
+### The encoding guard earned its keep
+
+A PowerShell `.Replace()` with backticks inside a double-quoted string ate an "a" and left a raw BEL in a
+comment — damage that survives typecheck, lint and tests because it lands in a literal. `pnpm run check`
+caught it. That is the `CHECK=1` this log already records as having been scrolled past once.
+
+### Backlog state
+
+`ACBP-FE-010` → **Done**. The FE board is now **8 Done, 5 Planned, 6 Blocked-API**. Of the Planned five,
+**FE-008 and FE-009 are effectively blocked** — verified zero HTTP wiring for the question generator and all
+seven understanding use cases — and FE-019 is a ruling rather than a screen. **FE-003 and FE-012 are the only
+buildable screens left on the current API.**
