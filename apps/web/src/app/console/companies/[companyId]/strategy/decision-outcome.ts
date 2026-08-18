@@ -17,10 +17,20 @@
  *   says ask an owner for the role, the other says go verify your own address — so the body decides, not the code.
  *
  *   400 carries the DOMAIN's `{error:{category:'validation',…}}` (the decision was refused on its per-mode
- *   shape) OR the ROUTE's generic `{error:'internal_error'}` envelope (the body was malformed and never reached
+ *   shape) OR the ROUTE's generic `{error:'bad_request'}` envelope (the body was malformed and never reached
  *   the domain). The second is OUR defect. Telling a founder to fix their input when this screen sent something
- *   unparseable would blame them for a bug they cannot see. The two are told apart by the SHAPE of `error`: an
- *   object for the domain's typed envelope, a bare string for the generic one.
+ *   unparseable would blame them for a bug they cannot see. The two are told apart by the SHAPE of `error` —
+ *   an OBJECT for the domain's typed envelope, a bare STRING for the generic one — and never by its VALUE.
+ *   That distinction is load-bearing: an earlier version of this comment named `internal_error` as the
+ *   generic 400 body and a test pinned that fixture, when `genericErrorBody(400)` actually returns
+ *   `bad_request`. The detection was right and the evidence written beside it was wrong, which is the worse
+ *   half to get wrong — a reader checks the example, not the predicate.
+ *
+ * WHAT AN `invalid` MEANS DIFFERS BY VERB, and the copy has to follow. On `POST /strategy/selection` the
+ * domain runs `validateStrategyDecision`, so a 400 really is about mode, ordinal or the 16-field shape. On
+ * `POST /decisions` the ONLY path to `invalid` is `normalizeDecisionRationale` returning `undefined` — a
+ * rationale that is present but unusable (non-string or over-long). Naming modes and ordinals there would
+ * send a founder to re-check a form the endpoint never looked at.
  *
  * `persisted` IS TRI-STATE ON PURPOSE. Every refusal arm is deny-by-default with nothing written — the core
  * types say so in their own comments — so a founder never has to guess whether to re-submit. The exception is a
@@ -43,7 +53,11 @@ export type OutcomeKind =
   | 'server_error'
   | 'unexpected';
 
-/** Which write was attempted. Only the 404 copy differs — see the header. */
+/**
+ * Which write was attempted. FOUR arms differ by verb, not one: the 404 cause, the invalid cause, the
+ * success copy, and the noun interpolated into every remaining sentence. An earlier comment here said "only
+ * the 404 copy differs", which stopped being true the moment the 400 became verb-aware.
+ */
 export type DecisionVerb = 'selection' | 'decision';
 
 export interface Outcome {
@@ -122,7 +136,7 @@ export function outcomeFor(status: number, body: unknown, retryAfterHeader: stri
         kind: 'recorded',
         title: verb === 'selection' ? 'Your choice is recorded' : 'The decision is recorded',
         detail: verb === 'selection'
-          ? 'The server recorded this decision against the generation. It is immutable — a later change is recorded as a new decision rather than as an edit to this one.'
+          ? 'The server recorded your choice against this generation. It is immutable — a later change is recorded as a new choice rather than as an edit to this one. It is NOT yet the decision the planning gate reads: hardening it into a decision is a second, separate step below.'
           : 'The decision is recorded and immutable. It hardens the selection it names, which is what the planning gate reads.',
         persisted: true,
         retryAfterSeconds: null,
@@ -143,8 +157,13 @@ export function outcomeFor(status: number, body: unknown, retryAfterHeader: stri
     if (isDomainValidation(body)) {
       return {
         kind: 'invalid',
-        title: 'The server refused this decision',
-        detail: `The decision did not pass the rules for its mode — for example a selected option that is not in this generation, or a rejection with no reasons. ${NOTHING_SAVED}`,
+        title: verb === 'selection' ? 'The server refused this decision' : 'The server refused the reason you gave',
+        // PER VERB, because `invalid` has a different single cause on each endpoint. The decisions route runs
+        // no per-mode validation at all — its only route to `invalid` is an unusable rationale.
+        detail:
+          verb === 'selection'
+            ? `The decision did not pass the rules for its mode — for example a selected option that is not in this generation, or a rejection with no reasons. ${NOTHING_SAVED}`
+            : `The decision itself was fine; the written reason was not usable — it is bounded, and an over-long one is refused rather than truncated. Shorten it or leave it blank, which never blocks the record. ${NOTHING_SAVED}`,
         persisted: false,
         retryAfterSeconds: null,
       };
@@ -192,7 +211,7 @@ export function outcomeFor(status: number, body: unknown, retryAfterHeader: stri
       kind: 'not_found',
       title: 'The server found nothing to record against',
       detail: verb === 'selection'
-        ? `The generation this choice refers to could not be resolved — it may have been superseded since this page loaded. ${NOTHING_SAVED} Reload to see the current generation.`
+        ? `The generation this choice refers to could not be resolved. The server does not say why, and this page does not guess. ${NOTHING_SAVED} Reload to see the current generation.`
         : `The generation or the selection could not be resolved, OR the selection belongs to a different generation than the one named. The server answers all three identically and does not say which applied. ${NOTHING_SAVED} Reload to see the current state.`,
       persisted: false,
       retryAfterSeconds: null,

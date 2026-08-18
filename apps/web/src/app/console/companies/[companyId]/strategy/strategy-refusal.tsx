@@ -28,7 +28,7 @@ const COPY: Readonly<Record<string, { title: string; detail: string }>> = {
   not_found: {
     title: 'The server found nothing at that address',
     detail:
-      'This usually means no internal user record exists for this sign-in yet — a provisioning step that has not landed, which reloading in a moment often resolves. The same response also covers a company this sign-in cannot resolve, and the server does not say which applied.',
+      'On this screen a 404 can only be about YOU, not about the company: the strategy read itself has no not-found arm — it answers "ok" (with a possibly-null generation) or "forbidden" — so this status arrives from actor resolution, before the read is attempted. It means no internal user record exists for this sign-in yet, a provisioning step that has not landed, which reloading in a moment often resolves.',
   },
   unavailable: {
     title: 'Something this page depends on is down',

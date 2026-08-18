@@ -1150,9 +1150,139 @@
 .cs-strat-caveat--warning { border-inline-start-color: var(--c-warning); }
 .cs-strat-caveat--muted { border-inline-start-color: var(--c-text-faint); }
 
-/* The outcome tones this screen adds. `cs-control-outcome--*` is matched on the interpreter's `kind`, so a
-   kind with no rule here would render unstyled — these are the four FE-013 introduces. */
+/* THE OUTCOME TONES, ONE PER KIND WITH NONE MISSING. `cs-control-outcome--${kind}` is built from the
+   interpreter's `OutcomeKind`, so any kind without a rule renders as an unstyled paragraph — and an earlier
+   comment here claimed "these are the four FE-013 introduces" while the union had twelve members, two of
+   which (`recorded` had a rule, `unreachable` did not until this block) matched nothing at all. The list
+   below is generated from the union by hand and must stay that way: adding a kind means adding a line.
+
+   Colour is on the BORDER and the border only. `cs-control-outcome` already sets the text colour, and a
+   success and a server error that differ solely by a 3px edge are two states a reader can confuse — so the
+   successful and failed families also differ in weight. */
 .cs-control-outcome--recorded { border-inline-start-color: var(--c-success); }
+.cs-control-outcome--recorded strong { color: var(--c-success); }
 .cs-control-outcome--unreachable { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unreachable strong { color: var(--c-warning); }
 .cs-control-outcome--client_defect { border-inline-start-color: var(--c-danger); }
+.cs-control-outcome--client_defect strong { color: var(--c-danger); }
 .cs-control-outcome--server_error { border-inline-start-color: var(--c-danger); }
+.cs-control-outcome--server_error strong { color: var(--c-danger); }
+.cs-control-outcome--unexpected { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unexpected strong { color: var(--c-warning); }
+.cs-control-outcome--email_unverified { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unauthenticated { border-inline-start-color: var(--c-warning); }
+
+/* A list item that must STACK. `cs-item` is a flex row, so bare spans dropped into it lay out side by side —
+   a title, a timestamp and a body sentence ran together on one line. */
+.cs-stack {
+  display: grid;
+  gap: var(--s-1);
+  align-items: start;
+}
+
+/* The authored 16 fields of an edit/combine selection, collapsed by default: it is the full content of a
+   recorded option and belongs on the page, but it is long enough to bury the decision summary above it. */
+.cs-strat-chosen { margin-top: var(--s-2); }
+.cs-strat-chosen > summary {
+  cursor: pointer;
+  color: var(--c-primary);
+  font-size: 0.86rem;
+}
+.cs-strat-chosen > summary:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+/* The COLUMN header has to stay put as well as the row header. Pinning only the row headers meant the
+   "Field" heading scrolled away while the field NAMES stayed, so a reader scrolling right eventually had an
+   "Option N" heading sitting directly above the pinned column of field names. */
+.cs-strat-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.cs-strat-table thead th:first-child {
+  left: 0;
+  z-index: 3;
+}
+
+/* ── ACBP-FE-014: the plan screen (roadmap + task board) ───────────────────────────────────────────────────
+ * The board is a set of COLUMNS that must all stay visible, including the ones nothing can fill: an
+ * unavailable bucket is the whole point of the tri-state, so it is never collapsed away to save width. */
+.cs-plan-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--s-3);
+  align-items: start;
+}
+.cs-plan-bucket {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-3);
+  background: var(--c-surface-2);
+}
+/* An unavailable bucket is visibly SET APART rather than merely empty — dashed, dimmed, and carrying its own
+   sentence. The styling reinforces the note; it never carries the meaning alone. */
+.cs-plan-bucket--unavailable {
+  border-style: dashed;
+  background: transparent;
+  color: var(--c-text-faint);
+}
+.cs-plan-bucket-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  justify-content: space-between;
+}
+.cs-plan-bucket-t {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.cs-plan-bucket-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-dim);
+  font-weight: 700;
+}
+.cs-plan-bucket-note {
+  margin: var(--s-2) 0 0;
+  font-size: 0.8rem;
+  color: var(--c-text-dim);
+}
+.cs-plan-tasks {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.cs-plan-task {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-2);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  border-inline-start: 3px solid transparent;
+}
+.cs-plan-task--blocked { border-inline-start-color: var(--c-warning); }
+
+.cs-plan-goals { display: grid; gap: var(--s-4); }
+.cs-plan-goal { display: grid; gap: var(--s-2); }
+.cs-plan-goal-h { display: flex; align-items: baseline; gap: var(--s-2); }
+/* A dropped goal is dimmed, but its status word is still rendered beside it — the colour is a reinforcement,
+   never the only signal, because a reader who cannot see the difference still needs to know it was dropped. */
+.cs-plan-goal--dropped { color: var(--c-text-faint); }
+.cs-plan-milestones {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--s-4);
+  display: grid;
+  gap: var(--s-2);
+  border-inline-start: 2px solid var(--c-border-soft);
+}
+.cs-plan-milestone { display: grid; gap: var(--s-1); }
+
+/* Every modifier the markup can generate has a rule, so no class ships without one. `has_tasks` and `empty`
+   differ only in weight — an empty AVAILABLE bucket is a real answer about this company, so it stays fully
+   legible rather than being dimmed like an unavailable one. */
+.cs-plan-bucket--has_tasks { border-color: var(--c-border); }
+.cs-plan-bucket--empty { border-style: solid; }
+.cs-plan-goal--active { color: var(--c-text); }
+.cs-plan-goal--achieved { color: var(--c-text-dim); }

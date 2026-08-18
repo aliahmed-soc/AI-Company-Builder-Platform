@@ -6,7 +6,7 @@
  *
  * WHAT THIS SCREEN CANNOT DO, STATED HERE RATHER THAN DISCOVERED LATER: there is no HTTP route for
  * `generateStrategyOptions` or for `recommendStrategy`. Both use cases exist in `@acbp/core` and are reachable
- * from no route file — verified by enumerating all 36 `route.ts` files rather than by a glob, since a
+ * from no route file — verified by enumerating all 37 `route.ts` files rather than by a glob, since a
  * bracketed segment like `[companyId]` is read as a character class and silently matches nothing. So this
  * screen ships NO "generate options" button and NO "ask for a recommendation" button. A control that cannot
  * act is the thing this console refuses to ship, and a permanently disabled one is the same lie with a

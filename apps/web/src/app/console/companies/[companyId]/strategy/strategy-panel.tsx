@@ -10,22 +10,27 @@
  *
  * THE FORM HOLDS ONE DRAFT ACROSS FOUR MODES, WHICH IS WHY THE BUILDER EXISTS. Switching from "select" to
  * "reject" leaves an ordinal and a phase scope in state, and `validateStrategyDecision` FORBIDS both on a
- * rejection — so submitting whatever the form holds produces a bounded 400 naming no field, and a founder
- * would have no way to learn that an invisible leftover caused it. `buildDecisionRequest` drops what each
- * mode forbids and its suite proves the drop by running every built body through the real validator.
+ * rejection, so submitting whatever the form holds produces a bounded 400 naming no field.
  *
- * NO GENERATE AND NO RECOMMEND CONTROL. Neither use case has an HTTP route — see the page's header. The
- * empty state says so in words rather than offering a button that cannot act.
+ * TWO WRITES, TWO STEPS, AND THE SECOND ONE MUST STAY REACHABLE. A selection is not a decision: the
+ * immutable decision record is what hardens it. An earlier version of this file showed the harden control
+ * only while `decisionState === 'selected_not_recorded'` — i.e. only while NO decision existed at all — so
+ * the moment any decision was recorded the control vanished. A founder who then recorded a NEWER selection
+ * was shown "the recorded decision hardened an EARLIER choice" by this very screen and given no way to act
+ * on it, while the server would have accepted the hardening happily. That was a control that could not act
+ * on a state the page itself named, which is the exact thing this console refuses to ship. It is now driven
+ * by `decisionCoversLatestSelection`.
+ *
+ * NO GENERATE AND NO RECOMMEND CONTROL. Neither use case has an HTTP route — see the page's header.
  *
  * WHAT IS SENT: `content-type: application/json` on both POSTs, because both routes call `request.json()`.
- * The CSRF origin gate in `proxy.ts` covers unsafe methods before the session is established, so nothing here
- * carries CSRF logic of its own.
+ * The CSRF origin gate in `proxy.ts` covers unsafe methods before the session is established.
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { PHASE_SCOPES, SELECTION_MODES, STRATEGY_OPTION_FIELDS } from '@acbp/contracts';
-import type { StrategyGenerationDTO, StrategyPhaseScope, StrategySelectionMode } from '@acbp/contracts';
-import { toStrategyView, type OptionView, type StrategyView } from './strategy-view';
+import { PHASE_SCOPES, RATIONALE_MAX_DECISION, SELECTION_MODES, STRATEGY_OPTION_FIELDS, UNKNOWN_FIELD } from '@acbp/contracts';
+import type { StrategyGenerationDTO, StrategyOptionFields, StrategyPhaseScope, StrategySelectionMode } from '@acbp/contracts';
+import { fieldCellsFor, toStrategyView, type OptionView, type StrategyView } from './strategy-view';
 import { buildDecisionRequest } from './decision-request';
 import { networkFailure, outcomeFor, type Outcome } from './decision-outcome';
 
@@ -41,6 +46,9 @@ const PHASE_LABEL: Readonly<Record<StrategyPhaseScope, string>> = {
   whole_plan: 'Approve the whole plan',
 };
 
+/** Which control produced the outcome currently on screen, so it renders beside the button that caused it. */
+type OutcomeSource = 'selection' | 'decision';
+
 function blankFields(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of STRATEGY_OPTION_FIELDS) out[f] = '';
@@ -49,6 +57,13 @@ function blankFields(): Record<string, string> {
 
 function labelForField(field: string): string {
   return field.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
+/** The 16 fields of one option as an editable draft. The sentinel is carried through as the CONSTANT. */
+function fieldsFromOption(option: OptionView): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const c of option.cells) next[c.field] = c.determined ? c.text : UNKNOWN_FIELD;
+  return next;
 }
 
 export function StrategyPanel({ companyId, initialGeneration }: { companyId: string; initialGeneration: StrategyGenerationDTO | null }): React.JSX.Element {
@@ -60,29 +75,56 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
   const [reasons, setReasons] = useState<string>('');
   const [rationale, setRationale] = useState<string>('');
   const [problem, setProblem] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [outcome, setOutcome] = useState<{ source: OutcomeSource; result: Outcome } | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [readError, setReadError] = useState<string | null>(null);
 
   const view: StrategyView = useMemo(() => toStrategyView(generation), [generation]);
   const base = `/api/companies/${encodeURIComponent(companyId)}`;
+  const options = view.options;
 
-  const reread = useCallback(async (): Promise<void> => {
+  const reread = useCallback(async (): Promise<boolean> => {
     try {
-      // No query string: `GET /strategy` allows NO parameters and refuses an unknown one with a bounded 400,
-      // so a cache-buster would turn every refresh into a failure.
+      // No query string: `GET /strategy` allows NO parameters and refuses an unknown one with a bounded 400.
       const res = await fetch(`${base}/strategy`, { headers: { accept: 'application/json' } });
       if (!res.ok) {
         setReadError('The strategy could not be re-read just now, so what is shown may be out of date.');
-        return;
+        return false;
       }
       const body = (await res.json()) as { generation: StrategyGenerationDTO | null };
       setGeneration(body.generation);
       setReadError(null);
+      return true;
     } catch {
       setReadError('The strategy could not be re-read just now, so what is shown may be out of date.');
+      return false;
     }
   }, [base]);
+
+  /** Prefill the 16-field grid from an option. Called from BOTH the radio and the mode switch — see below. */
+  const prefillFrom = useCallback(
+    (ordinal: number | null): void => {
+      if (ordinal === null) return;
+      const option = options.find((o) => o.ordinal === ordinal);
+      if (option !== undefined) setChosenFields(fieldsFromOption(option));
+    },
+    [options],
+  );
+
+  /*
+   * THE MODE SWITCH PREFILLS, NOT ONLY THE RADIO. `onChange` fires only when a radio's checked state
+   * CHANGES, so a founder who picked option 2 in `select` mode and then switched to `edit` left the already
+   * -checked radio untouched: no change event, no prefill, and sixteen empty REQUIRED boxes under a control
+   * claiming a base option was chosen. The prefill has to hang off whichever action makes it newly relevant.
+   */
+  const changeMode = useCallback(
+    (next: StrategySelectionMode): void => {
+      setMode(next);
+      setProblem(null);
+      if (next === 'edit') prefillFrom(selectedOrdinal);
+    },
+    [prefillFrom, selectedOrdinal],
+  );
 
   const submitDecision = useCallback(async (): Promise<void> => {
     if (view.generationId === null) return;
@@ -108,10 +150,10 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
         // A body this screen cannot parse is not a reason to guess: the interpreter decides from the status.
       }
       const result = outcomeFor(res.status, body, res.headers.get('retry-after'), 'selection');
-      setOutcome(result);
+      setOutcome({ source: 'selection', result });
       if (result.persisted === true || result.persisted === null) await reread();
     } catch {
-      setOutcome(networkFailure('selection'));
+      setOutcome({ source: 'selection', result: networkFailure('selection') });
     } finally {
       setBusy(false);
     }
@@ -120,6 +162,21 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
   const hardenDecision = useCallback(async (): Promise<void> => {
     const selectionId = view.selection?.selectionId;
     if (view.generationId === null || selectionId === undefined) return;
+    /*
+     * NEVER HARDEN AGAINST A SELECTION THIS PAGE IS NO LONGER SURE OF. A decision is IMMUTABLE, so a
+     * `selectionId` left over from before a failed re-read would permanently harden the wrong choice. When
+     * the page knows its own view is stale, the honest move is to refuse locally and make the founder reload.
+     */
+    if (readError !== null) {
+      setProblem('This page could not confirm the current state after the last request, so it will not record a decision against what it is showing. Reload first — a decision is immutable, and hardening the wrong choice cannot be undone.');
+      return;
+    }
+    if (rationale.length > RATIONALE_MAX_DECISION) {
+      // Bounded HERE as well as on the server, because the server's refusal for an over-long rationale is the
+      // same opaque 400 as every other `invalid` and names no field.
+      setProblem(`The reason is too long — ${String(rationale.length)} characters against a limit of ${String(RATIONALE_MAX_DECISION)}. It is optional, so shortening it or clearing it both work.`);
+      return;
+    }
     setProblem(null);
     setOutcome(null);
     setBusy(true);
@@ -127,8 +184,8 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
       const res = await fetch(`${base}/decisions`, {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
-        // `rationale` is OPTIONAL and a missing one must never block the record (CDR-038 §6-G2), so a blank
-        // box sends the key at all rather than an empty string the domain would have to interpret.
+        // `rationale` is OPTIONAL and a missing one must never block the record (CDR-038 §6-G2). A blank box
+        // therefore OMITS the key entirely rather than sending an empty string the domain would have to judge.
         body: JSON.stringify(rationale.trim() === '' ? { generationId: view.generationId, selectionId } : { generationId: view.generationId, selectionId, rationale: rationale.trim() }),
       });
       let body: unknown = null;
@@ -138,14 +195,14 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
         /* status decides */
       }
       const result = outcomeFor(res.status, body, res.headers.get('retry-after'), 'decision');
-      setOutcome(result);
+      setOutcome({ source: 'decision', result });
       if (result.persisted === true || result.persisted === null) await reread();
     } catch {
-      setOutcome(networkFailure('decision'));
+      setOutcome({ source: 'decision', result: networkFailure('decision') });
     } finally {
       setBusy(false);
     }
-  }, [base, view.generationId, view.selection?.selectionId, rationale, reread]);
+  }, [base, view.generationId, view.selection?.selectionId, rationale, readError, reread]);
 
   if (view.state === 'nothing_generated') {
     return (
@@ -164,6 +221,13 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
     );
   }
 
+  // A generation with NO options is a real response shape (`fewer_than_three` has no floor at 1). `select`
+  // and `edit` both need one to point at, so they are refused with a reason rather than offered as controls
+  // that cannot be completed.
+  const noOptions = options.length === 0;
+  const modeUnavailable = (m: StrategySelectionMode): boolean => noOptions && (m === 'select' || m === 'edit');
+  const effectiveMode: StrategySelectionMode = modeUnavailable(mode) ? 'combine' : mode;
+
   return (
     <>
       <StrategyCaveats view={view} />
@@ -181,31 +245,36 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
           Recording a decision is restricted to a company owner. This page is not told your role — the read returns the generation, not a permission set — so the controls are shown to everyone and the server decides.
           A refusal below means exactly that, and nothing is written.
         </p>
+        {noOptions ? (
+          <p className="cs-help">
+            This generation carries no options, so “choose one” and “start from one” have nothing to point at and are not offered. Building a new option from scratch, or rejecting the generation, both still work.
+          </p>
+        ) : null}
 
         <div className="cs-form">
           <fieldset className="cs-field">
             <legend className="cs-label">What do you want to do?</legend>
             <div className="cs-choices">
-              {SELECTION_MODES.map((m) => (
+              {SELECTION_MODES.filter((m) => !modeUnavailable(m)).map((m) => (
                 <label key={m} className="cs-choice">
-                  <input type="radio" name="cs-st-mode" value={m} checked={mode === m} onChange={() => { setMode(m); setProblem(null); }} disabled={busy} />
+                  <input type="radio" name="cs-st-mode" value={m} checked={effectiveMode === m} onChange={() => changeMode(m)} disabled={busy} />
                   <span>{MODE_LABEL[m]}</span>
                 </label>
               ))}
             </div>
           </fieldset>
 
-          {mode === 'select' || mode === 'edit' ? (
+          {effectiveMode === 'select' || effectiveMode === 'edit' ? (
             <fieldset className="cs-field">
-              <legend className="cs-label">{mode === 'select' ? 'Which option?' : 'Which option do you want to start from? (optional)'}</legend>
+              <legend className="cs-label">{effectiveMode === 'select' ? 'Which option?' : 'Which option do you want to start from? (optional)'}</legend>
               <div className="cs-choices">
-                {mode === 'edit' ? (
+                {effectiveMode === 'edit' ? (
                   <label className="cs-choice">
                     <input type="radio" name="cs-st-option" checked={selectedOrdinal === null} onChange={() => setSelectedOrdinal(null)} disabled={busy} />
                     <span>Start from nothing</span>
                   </label>
                 ) : null}
-                {view.options.map((o) => (
+                {options.map((o) => (
                   <label key={o.optionId} className="cs-choice">
                     <input
                       type="radio"
@@ -213,13 +282,9 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
                       checked={selectedOrdinal === o.ordinal}
                       onChange={() => {
                         setSelectedOrdinal(o.ordinal);
-                        // PREFILL FROM THE BASE, for an edit only. An edit that started from a blank grid
-                        // would make "change one thing" mean retyping sixteen.
-                        if (mode === 'edit') {
-                          const next: Record<string, string> = {};
-                          for (const c of o.cells) next[c.field] = c.determined ? c.text : 'unknown';
-                          setChosenFields(next);
-                        }
+                        // PREFILL FROM THE BASE, for an edit only. An edit starting from a blank grid would
+                        // make "change one thing" mean retyping sixteen.
+                        if (effectiveMode === 'edit') prefillFrom(o.ordinal);
                       }}
                       disabled={busy}
                     />
@@ -233,34 +298,34 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
             </fieldset>
           ) : null}
 
-          {mode === 'edit' || mode === 'combine' ? (
+          {effectiveMode === 'edit' || effectiveMode === 'combine' ? (
             <fieldset className="cs-field">
               <legend className="cs-label">The option you are recording</legend>
               <p className="cs-help">
-                All {STRATEGY_OPTION_FIELDS.length} fields are required. Write “unknown” where you genuinely do not know — that is recorded as undetermined rather than as a guess, and it is the same marker the model
-                uses.
+                All {STRATEGY_OPTION_FIELDS.length} fields are required. Write “{UNKNOWN_FIELD}” where you genuinely do not know — that is recorded as undetermined rather than as a guess, and it is the same marker
+                the model uses.
               </p>
               <div className="cs-strat-grid">
                 {STRATEGY_OPTION_FIELDS.map((f) => (
                   <label key={f} className="cs-field">
                     <span className="cs-label">{labelForField(f)}</span>
-                    <textarea className="cs-textarea" rows={2} value={chosenFields[f] ?? ''} onChange={(e) => setChosenFields((prev) => ({ ...prev, [f]: e.target.value }))} disabled={busy} />
+                    <textarea className="cs-input cs-textarea" rows={2} value={chosenFields[f] ?? ''} onChange={(e) => setChosenFields((prev) => ({ ...prev, [f]: e.target.value }))} disabled={busy} />
                   </label>
                 ))}
               </div>
             </fieldset>
           ) : null}
 
-          {mode === 'reject' ? (
+          {effectiveMode === 'reject' ? (
             <label className="cs-field">
               <span className="cs-label">Why does none of these fit?</span>
-              <textarea className="cs-textarea" rows={4} value={reasons} onChange={(e) => setReasons(e.target.value)} disabled={busy} />
+              <textarea className="cs-input cs-textarea" rows={4} value={reasons} onChange={(e) => setReasons(e.target.value)} disabled={busy} />
               <span className="cs-help">A rejection is recorded with its reasons, and those reasons are what a later generation is steered by.</span>
             </label>
           ) : (
             /* PHASE SCOPE IS NOT OFFERED ON A REJECTION, because the validator refuses a reject that carries
                one — "phase scope is meaningless for reject". The builder drops it as well, so a stale value
-               cannot leak through this control being unmounted. */
+               cannot leak through this control merely being unmounted. */
             <fieldset className="cs-field">
               <legend className="cs-label">How much are you approving? (optional)</legend>
               <div className="cs-choices">
@@ -280,32 +345,25 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
 
           <div className="cs-control-row">
             <button type="button" className="cs-btn cs-btn--primary" onClick={() => void submitDecision()} disabled={busy}>
-              {busy ? 'Recording…' : 'Record this decision'}
+              {busy ? 'Recording…' : 'Record this choice'}
             </button>
           </div>
-
-          {problem === null ? null : (
-            <p className="cs-control-outcome cs-control-outcome--invalid" role="alert">
-              {problem}
-            </p>
-          )}
         </div>
 
+        {/* ALWAYS MOUNTED. A live region inserted into the DOM together with its text is frequently not
+            announced at all; the container has to exist and be empty first, and only its CONTENT change. */}
+        <div aria-live="assertive" className="cs-outcome-region">
+          {problem === null ? null : <p className="cs-control-outcome cs-control-outcome--invalid">{problem}</p>}
+        </div>
         <div aria-live="polite" className="cs-outcome-region">
-          {outcome === null ? null : (
-            <div className={`cs-control-outcome cs-control-outcome--${outcome.kind}`} role="status" data-kind={outcome.kind}>
-              <strong>{outcome.title}</strong> <span>{outcome.detail}</span>
-            </div>
-          )}
-          {readError === null ? null : (
-            <p className="cs-control-outcome cs-control-outcome--error" role="status">
-              {readError}
-            </p>
-          )}
+          {outcome !== null && outcome.source === 'selection' ? <OutcomeBlock outcome={outcome.result} /> : null}
+          {readError === null ? null : <p className="cs-control-outcome cs-control-outcome--error">{readError}</p>}
         </div>
       </section>
 
-      {view.decisionState === 'selected_not_recorded' ? (
+      {/* THE HARDEN STEP, REACHABLE WHENEVER THE LATEST CHOICE IS NOT THE ONE A DECISION COVERS — not merely
+          when no decision exists at all. See the file header for the defect that wording replaced. */}
+      {view.selection !== null && !view.decisionCoversLatestSelection ? (
         <section className="cs-card" aria-labelledby="cs-st-harden-h">
           <div className="cs-card-h">
             <h2 className="cs-card-t" id="cs-st-harden-h">
@@ -313,21 +371,36 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
             </h2>
           </div>
           <p className="cs-help">
-            A choice is recorded; the immutable DECISION over it is a second, separate step, and it is the one the planning gate reads. Until it exists, planning stays locked.
+            {view.decision === null
+              ? 'A choice is recorded; the immutable DECISION over it is a second, separate step, and it is the one the planning gate reads. Until it exists, this choice does not affect planning.'
+              : 'The decision on record hardened an EARLIER choice than the one above. Recording a decision over the latest choice replaces which one the planning gate reads.'}
           </p>
           <label className="cs-field">
             <span className="cs-label">Why? (optional)</span>
-            <textarea className="cs-textarea" rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} disabled={busy} />
-            <span className="cs-help">Leaving this blank never blocks the record.</span>
+            <textarea className="cs-input cs-textarea" rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} disabled={busy} />
+            <span className="cs-help">
+              Leaving this blank never blocks the record. At most {String(RATIONALE_MAX_DECISION)} characters.
+            </span>
           </label>
           <div className="cs-control-row">
             <button type="button" className="cs-btn cs-btn--primary" onClick={() => void hardenDecision()} disabled={busy}>
               {busy ? 'Recording…' : 'Record the decision'}
             </button>
           </div>
+          <div aria-live="polite" className="cs-outcome-region">
+            {outcome !== null && outcome.source === 'decision' ? <OutcomeBlock outcome={outcome.result} /> : null}
+          </div>
         </section>
       ) : null}
     </>
+  );
+}
+
+function OutcomeBlock({ outcome }: { outcome: Outcome }): React.JSX.Element {
+  return (
+    <div className={`cs-control-outcome cs-control-outcome--${outcome.kind}`} data-kind={outcome.kind}>
+      <strong>{outcome.title}</strong> <span>{outcome.detail}</span>
+    </div>
   );
 }
 
@@ -365,13 +438,22 @@ function StrategyCaveats({ view }: { view: StrategyView }): React.JSX.Element | 
 
 function RecommendationCard({ view }: { view: StrategyView }): React.JSX.Element {
   const rec = view.recommendation;
+  // The recommendation names an option BY ID; the badge shows the option's own position. If the id resolves
+  // to nothing in this generation, "option 0" would be a number no option has — so it says so instead.
+  const target = rec === null ? undefined : view.options.find((o) => o.optionId === rec.recommendedOptionId);
   return (
     <section className="cs-card" aria-labelledby="cs-st-rec-h">
       <div className="cs-card-h">
         <h2 className="cs-card-t" id="cs-st-rec-h">
           Advisory recommendation
         </h2>
-        {rec === null ? <span className="cs-badge cs-badge--muted">none recorded</span> : <span className="cs-badge cs-badge--primary">option {rec.recommendedOrdinal + 1}</span>}
+        {rec === null ? (
+          <span className="cs-badge cs-badge--muted">none recorded</span>
+        ) : target === undefined ? (
+          <span className="cs-badge cs-badge--warning">names an option not in this generation</span>
+        ) : (
+          <span className="cs-badge cs-badge--primary">option {String(target.ordinal + 1)}</span>
+        )}
       </div>
       <p className="cs-help">{view.recommendationNote}</p>
       {rec === null ? null : (
@@ -379,7 +461,7 @@ function RecommendationCard({ view }: { view: StrategyView }): React.JSX.Element
           <p className="cs-item-body">{rec.rationale}</p>
           {/* SENSITIVITIES ARE SHOWN, NOT COLLAPSED. They are the half that says what would change the
               recommendation, and a recommendation without them reads as more certain than it is. */}
-          <p className="cs-item-meta">What would change this: {rec.sensitivities}</p>
+          <p className="cs-help">What would change this: {rec.sensitivities}</p>
         </>
       )}
     </section>
@@ -387,45 +469,55 @@ function RecommendationCard({ view }: { view: StrategyView }): React.JSX.Element
 }
 
 function ComparisonCard({ view }: { view: StrategyView }): React.JSX.Element {
-  const selectedId = view.selection?.selectedOptionId ?? null;
+  /*
+   * THE "YOUR CHOICE" MARKER IS ONLY HONEST FOR A `select`. On an `edit` the selection also carries a
+   * `selectedOptionId` — the BASE the founder started from and then changed — so badging that column as the
+   * choice labels the option they moved away from. On `combine` there is no id at all. The recorded content
+   * for edit/combine is shown by {@link DecisionRecordCard} instead, where it can be labelled correctly.
+   */
+  const selectedId = view.selection !== null && view.selection.mode === 'select' ? view.selection.selectedOptionId : null;
   return (
     <section className="cs-card" aria-labelledby="cs-st-cmp-h">
       <div className="cs-card-h">
         <h2 className="cs-card-t" id="cs-st-cmp-h">
           The options, compared
         </h2>
-        <span className="cs-badge cs-badge--muted">
-          generated from understanding v{String(view.understandingVersion ?? 0)}
-        </span>
+        <span className="cs-badge cs-badge--muted">generated from understanding v{String(view.understandingVersion ?? 0)}</span>
       </div>
-      {/* Horizontal scroll lives on the wrapper, so a wide table never makes the PAGE scroll sideways. */}
-      <div className="cs-table-scroll">
-        <table className="cs-table cs-strat-table">
-          <caption className="cs-sr-only">Each of the {STRATEGY_OPTION_FIELDS.length} fields of the strategy option standard, across every option in this generation.</caption>
-          <thead>
-            <tr>
-              <th scope="col">Field</th>
-              {view.options.map((o) => (
-                <th key={o.optionId} scope="col" data-recommended={o.recommended ? 'yes' : 'no'} data-selected={selectedId === o.optionId ? 'yes' : 'no'}>
-                  Option {o.ordinal + 1}
-                  {o.recommended ? <span className="cs-badge cs-badge--primary">recommended</span> : null}
-                  {selectedId === o.optionId ? <span className="cs-badge cs-badge--success">your choice</span> : null}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {STRATEGY_OPTION_FIELDS.map((field, row) => (
-              <tr key={field}>
-                <th scope="row">{labelForField(field)}</th>
+      {view.options.length === 0 ? (
+        <p className="cs-empty">This generation carries no options to compare.</p>
+      ) : (
+        /* Horizontal scroll lives on the wrapper, so a wide table never makes the PAGE scroll sideways. It is
+           focusable and labelled because a scroll container that only a mouse can reach strands a keyboard
+           user at whatever columns happen to fit. */
+        <div className="cs-table-scroll" tabIndex={0} role="region" aria-label="Strategy options compared field by field. Scrollable horizontally.">
+          <table className="cs-table cs-strat-table">
+            <caption className="cs-sr-only">Each of the {STRATEGY_OPTION_FIELDS.length} fields of the strategy option standard, across every option in this generation.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Field</th>
                 {view.options.map((o) => (
-                  <OptionCell key={o.optionId} option={o} row={row} />
+                  <th key={o.optionId} scope="col" data-recommended={o.recommended ? 'yes' : 'no'} data-selected={selectedId === o.optionId ? 'yes' : 'no'}>
+                    Option {o.ordinal + 1}
+                    {o.recommended ? <span className="cs-badge cs-badge--primary">recommended</span> : null}
+                    {selectedId === o.optionId ? <span className="cs-badge cs-badge--success">your choice</span> : null}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {STRATEGY_OPTION_FIELDS.map((field, row) => (
+                <tr key={field}>
+                  <th scope="row">{labelForField(field)}</th>
+                  {view.options.map((o) => (
+                    <OptionCell key={o.optionId} option={o} row={row} />
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -434,9 +526,7 @@ function OptionCell({ option, row }: { option: OptionView; row: number }): React
   const cell = option.cells[row];
   if (cell === undefined) return <td />;
   // AN UNDETERMINED FIELD IS MARKED, NOT PRINTED AS CONTENT. The contract requires the model to write a
-  // labelled sentinel where it cannot determine a field precisely so this can be shown as a gap rather than
-  // as an answer; rendering the raw token would put the word "unknown" in front of a founder as though the
-  // model had asserted it.
+  // labelled sentinel where it cannot determine a field precisely so this can be shown as a gap.
   return (
     <td data-determined={cell.determined ? 'yes' : 'no'} className={cell.determined ? undefined : 'cs-strat-undetermined'}>
       {cell.determined ? cell.text : <em>Not determined</em>}
@@ -452,47 +542,78 @@ function DecisionRecordCard({ view }: { view: StrategyView }): React.JSX.Element
         <h2 className="cs-card-t" id="cs-st-dec-h">
           Where this stands
         </h2>
-        <span className={`cs-badge ${view.planningUnlocked ? 'cs-badge--success' : 'cs-badge--muted'}`}>{view.planningUnlocked ? 'planning unlocked' : 'planning locked'}</span>
       </div>
+
+      {/* NOT A "PLANNING UNLOCKED" BADGE. This read carries only the decision for the DISPLAYED generation,
+          while the planning gate reads the company's latest decision across ALL generations, so a badge
+          claiming the gate's answer could contradict the server in either direction. The sentence says
+          exactly what is known and names what is not. */}
+      <p className="cs-help">
+        {view.generationDecisionAllowsPlanning
+          ? 'The decision recorded against this generation is one that permits planning. Whether planning is actually open also depends on the company’s most recent decision across every generation, which this page does not read — so treat this as being about this generation, not as the platform’s answer.'
+          : 'No decision permitting planning is recorded against this generation. The company may still have a permitting decision on a different generation; this page does not read that, and does not guess.'}
+      </p>
 
       {view.decisionState === 'none' ? (
         <p className="cs-empty">No choice has been recorded over this generation yet.</p>
       ) : (
         <ul className="cs-list">
           {selection === null ? null : (
-            <li className="cs-item">
+            <li className="cs-item cs-stack">
               <span className="cs-item-title">Latest choice: {selection.mode}</span>
-              <span className="cs-item-meta">
+              <span className="cs-help">
                 {selection.phaseScope === null ? 'No phase scope was stated.' : PHASE_LABEL[selection.phaseScope]} · recorded {selection.createdAt}
               </span>
               {selection.reasons === null ? null : <span className="cs-item-body">{selection.reasons}</span>}
+              {/* THE AUTHORED OPTION, WHICH IS THE WHOLE CONTENT OF AN edit OR combine. Without it, two
+                  selections carrying completely different strategies render identically — as the single
+                  word "edit" — and the company's actual recorded strategy appears nowhere on this screen. */}
+              {selection.chosenFields === null ? null : <ChosenFields fields={selection.chosenFields} />}
             </li>
           )}
           {decision === null ? (
-            <li className="cs-item">
+            <li className="cs-item cs-stack">
               <span className="cs-item-title">Not yet hardened into a decision</span>
-              <span className="cs-item-meta">A choice on its own does not unlock planning; the immutable decision record is what the gate reads.</span>
+              <span className="cs-help">A choice on its own does not affect planning; the immutable decision record is what the gate reads.</span>
             </li>
           ) : (
-            <li className="cs-item">
+            <li className="cs-item cs-stack">
               {/* THE MODE COMES FROM THE DECISION, NEVER FROM THE LATEST SELECTION. The DTO carries it
-                  snapshot at record time precisely because the two can differ, and reading it off the
-                  selection would report a rejection as a selection, or the reverse. */}
+                  snapshot at record time precisely because the two can differ. */}
               <span className="cs-item-title">Decision recorded: {decision.mode}</span>
-              <span className="cs-item-meta">
+              <span className="cs-help">
                 Over {String(decision.optionsConsideredCount)} options, at understanding v{String(decision.understandingVersion)} · {decision.createdAt}
               </span>
               {decision.rationale === null ? null : <span className="cs-item-body">{decision.rationale}</span>}
-              {decision.mode === 'reject' ? <span className="cs-item-meta">A rejection is a real decision, and it deliberately does not unlock planning.</span> : null}
+              {decision.mode === 'reject' ? <span className="cs-help">A rejection is a real decision, and it deliberately does not permit planning.</span> : null}
             </li>
           )}
           {view.decisionCoversLatestSelection ? null : (
-            <li className="cs-item cs-strat-caveat cs-strat-caveat--warning">
-              The recorded decision hardened an EARLIER choice than the latest one shown above. The newer choice is not what the planning gate reads.
+            <li className="cs-item cs-stack cs-strat-caveat cs-strat-caveat--warning">
+              The recorded decision hardened an EARLIER choice than the latest one shown above. The newer choice is not what the planning gate reads — the control below records a decision over it.
             </li>
           )}
         </ul>
       )}
     </section>
+  );
+}
+
+/** The 16 authored fields of an `edit` or `combine` selection, rendered through the same cell mapper as the
+ *  comparison table so the sentinel is handled identically in both places. */
+function ChosenFields({ fields }: { fields: StrategyOptionFields }): React.JSX.Element {
+  const cells = fieldCellsFor(fields);
+  return (
+    <details className="cs-strat-chosen">
+      <summary>The option you recorded, in full</summary>
+      <dl className="cs-co-meta cs-co-meta--wide">
+        {cells.map((c) => (
+          <div key={c.field}>
+            <dt>{c.label}</dt>
+            <dd className={c.determined ? undefined : 'cs-strat-undetermined'}>{c.determined ? c.text : <em>Not determined</em>}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
   );
 }

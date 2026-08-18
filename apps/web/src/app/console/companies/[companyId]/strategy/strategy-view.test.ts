@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { STRATEGY_OPTION_FIELDS, UNKNOWN_FIELD } from '@acbp/contracts';
 import type { StrategyGenerationDTO, StrategyOptionFields } from '@acbp/contracts';
-import { toStrategyView, planningUnlocked, fieldCellsFor } from './strategy-view';
+import { toStrategyView, decisionAllowsPlanning, fieldCellsFor } from './strategy-view';
 
 function fields(overrides: Partial<Record<string, string>> = {}): StrategyOptionFields {
   const out: Record<string, string> = {};
@@ -82,20 +82,38 @@ describe('fewer than three options is disclosed with the server-supplied reason'
 });
 
 describe('the three similarity states are three different things', () => {
-  it('pending is NOT reported as distinct', () => {
+  /*
+   * EACH ASSERTS WHAT IS SAID, not only which token came back. An earlier version checked the tone and one
+   * negative substring — assertions a wrong implementation passes trivially, because `not.toContain('are
+   * distinct')` is satisfied by any note that happens to word it differently, including a wrong one.
+   */
+  it('pending says the check has NOT RUN, and never that the options were found to differ', () => {
     const view = toStrategyView(generation({ similarityCheckResult: 'pending' }));
     expect(view.distinctness.tone).toBe('pending');
-    expect(view.distinctness.note.toLowerCase()).not.toContain('are distinct');
+    expect(view.distinctness.note.toLowerCase()).toContain('not run');
+    // A pending check has produced no finding at all, so no claim about the options may appear.
+    expect(view.distinctness.note.toLowerCase()).not.toMatch(/\b(found them|are different|too similar)\b/);
   });
 
-  it('insufficient_distinct is reported as a real caveat', () => {
+  it('insufficient_distinct says the server CHECKED and found them too similar', () => {
     const view = toStrategyView(generation({ similarityCheckResult: 'insufficient_distinct' }));
     expect(view.distinctness.tone).toBe('insufficient');
+    expect(view.distinctness.note.toLowerCase()).toContain('too similar');
+    expect(view.distinctness.note.toLowerCase()).toContain('checked');
   });
 
-  it('distinct is the only state that claims the options differ', () => {
+  it('distinct is the only state that says the server found them different', () => {
     const view = toStrategyView(generation({ similarityCheckResult: 'distinct' }));
     expect(view.distinctness.tone).toBe('distinct');
+    expect(view.distinctness.note.toLowerCase()).toContain('different');
+    expect(view.distinctness.note.toLowerCase()).not.toContain('too similar');
+  });
+
+  it('the three notes are all different from one another', () => {
+    // The point of a three-state signal is three answers. If any two coincided the tri-state would be a
+    // boolean wearing three names, and no single-state test above would notice.
+    const notes = (['pending', 'distinct', 'insufficient_distinct'] as const).map((r) => toStrategyView(generation({ similarityCheckResult: r })).distinctness.note);
+    expect(new Set(notes).size).toBe(3);
   });
 });
 
@@ -178,18 +196,18 @@ describe('selection and decision are different facts', () => {
     expect(view.decisionState).toBe('selected_not_recorded');
   });
 
-  it('a recorded non-reject decision unlocks planning', () => {
-    expect(planningUnlocked({ decisionId: 'dec-1', generationId: 'gen-1', selectionId: 'sel-1', mode: 'select', understandingVersion: 3, optionsConsideredCount: 3, rationale: null, createdAt: '2026-08-18T10:11:00.000Z' })).toBe(true);
+  it('a recorded non-reject decision is one that permits planning', () => {
+    expect(decisionAllowsPlanning({ decisionId: 'dec-1', generationId: 'gen-1', selectionId: 'sel-1', mode: 'select', understandingVersion: 3, optionsConsideredCount: 3, rationale: null, createdAt: '2026-08-18T10:11:00.000Z' })).toBe(true);
   });
 
-  it('a recorded REJECT decision does NOT unlock planning', () => {
+  it('a recorded REJECT decision does NOT permit planning', () => {
     // CDR-038 §6-G1, stated in the DecisionDTO's own doc comment. Getting this backwards would tell a founder
     // planning is available when the server will refuse it.
-    expect(planningUnlocked({ decisionId: 'dec-1', generationId: 'gen-1', selectionId: 'sel-1', mode: 'reject', understandingVersion: 3, optionsConsideredCount: 3, rationale: 'None fit.', createdAt: '2026-08-18T10:11:00.000Z' })).toBe(false);
+    expect(decisionAllowsPlanning({ decisionId: 'dec-1', generationId: 'gen-1', selectionId: 'sel-1', mode: 'reject', understandingVersion: 3, optionsConsideredCount: 3, rationale: 'None fit.', createdAt: '2026-08-18T10:11:00.000Z' })).toBe(false);
   });
 
-  it('no decision at all does not unlock planning', () => {
-    expect(planningUnlocked(null)).toBe(false);
+  it('no decision at all does not permit planning', () => {
+    expect(decisionAllowsPlanning(null)).toBe(false);
   });
 
   it('reads the decision mode from the decision, never from the latest selection', () => {
@@ -200,7 +218,7 @@ describe('selection and decision are different facts', () => {
       decision: { decisionId: 'dec-1', generationId: 'gen-1', selectionId: 'sel-1', mode: 'reject', understandingVersion: 3, optionsConsideredCount: 3, rationale: 'None fit.', createdAt: '2026-08-18T10:11:00.000Z' },
     }));
     expect(view.decision?.mode).toBe('reject');
-    expect(view.planningUnlocked).toBe(false);
+    expect(view.generationDecisionAllowsPlanning).toBe(false);
     expect(view.decisionState).toBe('recorded');
   });
 

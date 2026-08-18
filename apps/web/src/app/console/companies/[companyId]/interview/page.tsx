@@ -4,7 +4,7 @@
  * WHAT THIS SCREEN CANNOT DO, STATED FIRST, BECAUSE IT SHAPED EVERYTHING ELSE.
  * No HTTP route in this repository can cause an interview question to exist. The five interview routes are
  * the session read, the session start, the qa read, the answer write, and suspend/resume — verified by
- * enumerating all 36 route files, not by a glob (a bracket path segment is read as a character class and
+ * enumerating all 37 route files, not by a glob (a bracket path segment is read as a character class and
  * silently matches nothing). `generateAdaptiveBatch`, `evaluateAnswer` and `suggestAssumptionForSkip` exist
  * as core use cases with ZERO references anywhere under apps/web; INTERVIEW.md:141-143 records the
  * orchestration routes as deliberately deferred behind the live-provider owner gate.

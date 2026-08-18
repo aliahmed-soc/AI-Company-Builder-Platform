@@ -61,9 +61,10 @@ function collectFields(raw: Readonly<Record<string, string>>): { ok: true; field
 }
 
 export function buildDecisionRequest(draft: DecisionDraft): BuildResult {
-  // Keys are added ONLY where the mode permits them. `undefined` is not the same as absent to a validator that
-  // checks `!== undefined && !== null`, so building one object and deleting keys would be a subtler version of
-  // the same bug.
+  // Keys are added ONLY where the mode permits them. `validateStrategyDecision` treats an explicit`undefined`
+  // the same as an absent key (every guard is `!== undefined && !== null`), so this is not strictly required to
+  // pass validation — but a body that carries keys the mode forbids still MISDESCRIBES what was asked for, and
+  // JSON.stringify drops an explicit undefined anyway, so building the object correctly is the honest form.
   if (draft.mode === 'select') {
     if (draft.selectedOrdinal === null) return { ok: false, problem: 'Choose one option before recording a selection.' };
     return {
@@ -97,6 +98,8 @@ export function buildDecisionRequest(draft: DecisionDraft): BuildResult {
   // REJECT. Everything except `reasons` is dropped — including `phaseScope`, which the validator refuses outright.
   const reasons = draft.reasons.trim();
   if (reasons.length === 0) return { ok: false, problem: 'Say why none of these options fit. A rejection is recorded with its reasons, and those reasons are what a later generation is steered by.' };
-  if (draft.reasons.length > REASONS_MAX) return { ok: false, problem: `The reasons are too long — ${String(draft.reasons.length)} characters against a limit of ${String(REASONS_MAX)}.` };
+  // MEASURED ON THE TRIMMED VALUE, because the trimmed value is what gets SENT. Bounding the raw text refused
+  // input the server would have accepted — trailing whitespace counted against a limit it never reaches.
+  if (reasons.length > REASONS_MAX) return { ok: false, problem: `The reasons are too long — ${String(reasons.length)} characters against a limit of ${String(REASONS_MAX)}.` };
   return { ok: true, request: { mode: 'reject', reasons } };
 }

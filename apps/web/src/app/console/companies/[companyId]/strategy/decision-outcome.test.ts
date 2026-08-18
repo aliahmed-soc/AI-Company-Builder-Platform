@@ -88,7 +88,10 @@ describe('400 is two different failures', () => {
   it('a malformed body is reported as this screen’s fault, not the founder’s', () => {
     // The route refuses an unparseable body BEFORE the domain sees it, with the generic envelope. That is a bug
     // in what this page sent — telling a founder to fix their input would be blaming them for our defect.
-    const r = outcomeFor(400, { error: 'internal_error' }, null, 'selection');
+    // `genericErrorBody(400)` returns `{error:'bad_request'}` — the REAL body this route sends. An earlier
+    // version of this fixture used 'internal_error', a body the 400 path never produces, so the test passed
+    // for the right reason by luck: the detection is on the SHAPE of `error` (string vs object), not its value.
+    const r = outcomeFor(400, { error: 'bad_request' }, null, 'selection');
     expect(r.kind).toBe('client_defect');
   });
 
@@ -135,19 +138,28 @@ describe('rate limiting', () => {
 });
 
 describe('the remaining arms', () => {
-  it('401 is a signed-out session', () => {
-    expect(outcomeFor(401, { error: 'internal_error' }, null, 'selection').kind).toBe('unauthenticated');
+  it('401 maps to the unauthenticated kind and says the session is the problem', () => {
+    const r = outcomeFor(401, { error: 'unauthorized' }, null, 'selection');
+    expect(r.kind).toBe('unauthenticated');
+    expect(r.detail.toLowerCase()).toContain('session');
+    expect(r.persisted).toBe(false);
   });
 
-  it('503 is a dependency being down, and says retrying is safe', () => {
+  it('503 names a dependency, says retrying is safe, and states nothing was written', () => {
     const r = outcomeFor(503, { error: 'unavailable' }, null, 'selection');
     expect(r.kind).toBe('unavailable');
+    expect(r.detail.toLowerCase()).toContain('dependency');
     expect(r.detail.toLowerCase()).toContain('retry');
+    expect(r.persisted).toBe(false);
   });
 
-  it('500 is bounded and echoes no server detail', () => {
-    const r = outcomeFor(500, { error: 'internal_error' }, null, 'selection');
+  it('500 echoes no server detail and refuses to claim the write did not happen', () => {
+    // `bounded` was the old name and the body checked nothing of the kind. These are the two properties
+    // that actually matter: nothing from the server is repeated, and the outcome is honestly unknown.
+    const r = outcomeFor(500, { error: 'internal_error', stack: 'at Foo (bar.ts:1)' }, null, 'selection');
     expect(r.kind).toBe('server_error');
+    expect(r.detail).not.toContain('bar.ts');
+    expect(r.persisted).toBeNull();
   });
 
   it('an unhandled status is reported as unhandled rather than guessed at', () => {
@@ -183,5 +195,38 @@ describe('every refusal states that nothing was persisted', () => {
     // this screen has no basis for — the one refusal where the honest answer is that the outcome is unknown.
     const r = outcomeFor(500, { error: 'internal_error' }, null, 'selection');
     expect(r.persisted).toBeNull();
+  });
+});
+
+describe('an `invalid` means a different thing on each endpoint', () => {
+  it('on a selection it names the per-mode rules, because that endpoint runs validateStrategyDecision', () => {
+    const r = outcomeFor(400, { error: { category: 'validation', code: 'V', message: 'm', retryable: false } }, null, 'selection');
+    expect(r.detail.toLowerCase()).toContain('mode');
+  });
+
+  it('on a decision it names the RATIONALE, because that is the only path to invalid there', () => {
+    // `recordDecision` runs no per-mode validation at all — `normalizeDecisionRationale` returning undefined
+    // is its single route to `invalid`. Naming modes and ordinals here sends a founder to re-check a form
+    // this endpoint never looked at.
+    const r = outcomeFor(400, { error: { category: 'validation', code: 'V', message: 'm', retryable: false } }, null, 'decision');
+    expect(r.detail.toLowerCase()).toContain('reason');
+    expect(r.detail.toLowerCase()).not.toContain('ordinal');
+    expect(r.detail.toLowerCase()).not.toContain('rejection with no reasons');
+  });
+});
+
+describe('the selection success does not claim to be the decision', () => {
+  it('says the hardening step is still owed', () => {
+    // Recording a selection is step one of two. Copy that calls it "this decision ... immutable" at the
+    // moment a separate hardening step is still required tells the founder they are finished when they are
+    // not — and the planning gate reads the decision, not the selection.
+    const r = outcomeFor(200, { selection: { selectionId: 's' } }, null, 'selection');
+    expect(r.kind).toBe('recorded');
+    expect(r.detail.toLowerCase()).toContain('second');
+  });
+
+  it('the decision success, by contrast, IS the final step and says so', () => {
+    const r = outcomeFor(200, { decision: { decisionId: 'd' } }, null, 'decision');
+    expect(r.detail.toLowerCase()).toContain('planning gate');
   });
 });

@@ -174,3 +174,66 @@ describe('a locally-refused draft is never sent', () => {
     }
   });
 });
+
+describe('each mode FORWARDS what it is allowed to carry', () => {
+  /*
+   * The suite above proves the builder DROPS what each mode forbids. Dropping everything would also pass all
+   * of it — `validateStrategyDecision` accepts a `select` with no phase scope and an `edit` with no base —
+   * so without these the builder could silently discard the founder's phase scope and base option and the
+   * whole file would stay green. A review found exactly that gap.
+   */
+  it('select forwards the phase scope it was given', () => {
+    const built = buildDecisionRequest(draft({ mode: 'select', selectedOrdinal: 1, phaseScope: 'whole_plan' }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.phaseScope).toBe('whole_plan');
+  });
+
+  it('edit forwards BOTH the base option and the phase scope', () => {
+    const built = buildDecisionRequest(draft({ mode: 'edit', selectedOrdinal: 2, phaseScope: 'first_phase' }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.selectedOrdinal).toBe(2);
+    expect(built.request.phaseScope).toBe('first_phase');
+    const parsed = validateStrategyDecision(built.request, OPTION_COUNT);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.mode !== 'edit') return;
+    expect(parsed.value.selectedOrdinal).toBe(2);
+    expect(parsed.value.phaseScope).toBe('first_phase');
+  });
+
+  it('combine forwards the phase scope', () => {
+    const built = buildDecisionRequest(draft({ mode: 'combine', selectedOrdinal: null, phaseScope: 'whole_plan' }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.phaseScope).toBe('whole_plan');
+  });
+
+  it('edit and combine forward the authored field CONTENT, not just a valid shape', () => {
+    const fields = completeFields();
+    fields['customer'] = 'Cairo gyms with 200-800 members';
+    const built = buildDecisionRequest(draft({ mode: 'combine', selectedOrdinal: null, chosenFields: fields }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const parsed = validateStrategyDecision(built.request, OPTION_COUNT);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.mode !== 'combine') return;
+    expect(parsed.value.chosenFields.customer).toBe('Cairo gyms with 200-800 members');
+  });
+
+  it('reject forwards the reasons, trimmed', () => {
+    const built = buildDecisionRequest(draft({ mode: 'reject', reasons: '  none of these reach the pilot customer  ' }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.reasons).toBe('none of these reach the pilot customer');
+  });
+
+  it('accepts reasons that are over-long ONLY in untrimmed whitespace', () => {
+    // The bound is measured on what is SENT. Counting the raw text refused input the server would accept.
+    const body = 'x'.repeat(4000);
+    const built = buildDecisionRequest(draft({ mode: 'reject', reasons: `   ${body}   ` }));
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.reasons).toHaveLength(4000);
+  });
+});

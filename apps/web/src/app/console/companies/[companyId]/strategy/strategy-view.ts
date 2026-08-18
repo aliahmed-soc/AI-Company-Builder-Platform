@@ -18,7 +18,7 @@
  *
  * WHAT THIS SCREEN CANNOT DO, AND SAYS SO RATHER THAN IMPLYING IT: there is no HTTP route for
  * `generateStrategyOptions` or `recommendStrategy`. Both are model-driven use cases that exist in `@acbp/core`
- * and are reachable from no route file — verified by enumerating all 36 `route.ts` files, not by a glob (a
+ * and are reachable from no route file — verified by enumerating all 37 `route.ts` files, not by a glob (a
  * bracketed path segment like `[companyId]` is read as a character class and silently matches nothing). So this
  * console ships NO "generate options" and NO "ask for a recommendation" button. A control that cannot act is the
  * exact thing this console refuses to ship, and a disabled one that never enables is the same lie with a tooltip.
@@ -75,7 +75,12 @@ export interface StrategyView {
   readonly decisionState: DecisionState;
   /** False when the recorded decision hardened a selection OTHER than the latest one. */
   readonly decisionCoversLatestSelection: boolean;
-  readonly planningUnlocked: boolean;
+  /**
+   * True when THIS GENERATION'S decision is a non-reject. NOT the planning gate — see
+   * {@link decisionAllowsPlanning}. The company-level gate reads the latest decision across ALL generations,
+   * which this read does not carry, so the screen must not render this as the gate's answer.
+   */
+  readonly generationDecisionAllowsPlanning: boolean;
   readonly createdAt: string | null;
 }
 
@@ -106,16 +111,24 @@ export function fieldCellsFor(fields: StrategyOptionFields): readonly FieldCell[
 }
 
 /**
- * Whether a recorded decision unlocks planning.
+ * Whether THIS GENERATION'S recorded decision is of a kind that would allow planning.
  *
- * A REJECTION NEVER DOES (CDR-038 §6-G1, stated in `DecisionDTO`'s own doc comment: "The P4-001 planning gate
- * keys off a NON-reject decision — a rejection never unlocks planning"). Getting this backwards would tell a
- * founder planning is available when the server will refuse it, which is worse than saying nothing.
+ * IT IS NOT THE PLANNING GATE, AND THE NAME NO LONGER PRETENDS IT IS. An earlier version was called
+ * `planningUnlocked` and the screen rendered it as a "planning unlocked / locked" badge — a claim this read
+ * cannot support. The real gate calls `classifyPlanningGate(await strategy.latestDecisionForCompany(companyId))`,
+ * and the repository says so in its own words: "The COMPANY's latest decision across all generations ... This
+ * is what the P4-001 planning gate reads". What arrives here is `generation.decision`, built from
+ * `repo.latestDecision(generation.id)` — the latest decision FOR THE DISPLAYED GENERATION.
  *
- * It reads the mode off the DECISION, never off the latest selection: the two can differ, and the decision's mode
- * is snapshot at record time for exactly this reason.
+ * BOTH DIRECTIONS OF DISAGREEMENT ARE REACHABLE. Record a non-reject decision on generation G1, then generate
+ * G2: the screen shows G2 with no decision and would have said "locked" while the server's gate is open.
+ * Record a `reject` against an OLDER generation afterwards and `latestDecisionForCompany` returns that
+ * rejection while the displayed generation's own decision is non-reject — the badge would have said
+ * "unlocked" for a company the server will refuse. Neither route constrains which generation a decision names.
+ *
+ * A REJECTION IS STILL NEVER A YES (CDR-038 §6-G1). That part was right; the SCOPE was not.
  */
-export function planningUnlocked(decision: DecisionDTO | null): boolean {
+export function decisionAllowsPlanning(decision: DecisionDTO | null): boolean {
   if (decision === null) return false;
   return decision.mode !== 'reject';
 }
@@ -158,7 +171,7 @@ export function toStrategyView(generation: StrategyGenerationDTO | null): Strate
       decision: null,
       decisionState: 'none',
       decisionCoversLatestSelection: true,
-      planningUnlocked: false,
+      generationDecisionAllowsPlanning: false,
       createdAt: null,
     };
   }
@@ -208,7 +221,7 @@ export function toStrategyView(generation: StrategyGenerationDTO | null): Strate
     // A decision hardens ONE selection. The latest selection may already be a different one, in which case the
     // recorded decision does not describe what the founder last chose. `true` when there is nothing to compare.
     decisionCoversLatestSelection: decision === null || selection === null || decision.selectionId === selection.selectionId,
-    planningUnlocked: planningUnlocked(decision),
+    generationDecisionAllowsPlanning: decisionAllowsPlanning(decision),
     createdAt: generation.createdAt,
   };
 }
