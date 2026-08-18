@@ -4,13 +4,12 @@
  * The company's latest generation, its options side by side, the advisory recommendation, and the owner's
  * decision. The first read happens here so the page is truthful before any client code runs.
  *
- * WHAT THIS SCREEN CANNOT DO, STATED HERE RATHER THAN DISCOVERED LATER: there is no HTTP route for
- * `generateStrategyOptions` or for `recommendStrategy`. Both use cases exist in `@acbp/core` and are reachable
- * from no route file — verified by enumerating all 37 `route.ts` files rather than by a glob, since a
- * bracketed segment like `[companyId]` is read as a character class and silently matches nothing. So this
- * screen ships NO "generate options" button and NO "ask for a recommendation" button. A control that cannot
- * act is the thing this console refuses to ship, and a permanently disabled one is the same lie with a
- * tooltip. The empty state says so in words instead.
+ * GENERATION IS REACHABLE NOW, AND THE COPY THAT SAID OTHERWISE WENT WITH THE BUTTON. Until ACBP-API-008
+ * landed (`c908c7c`), `generateStrategyOptions` and `recommendStrategy` existed in `@acbp/core` and reached
+ * no route, so this screen shipped no control and said so. Both now have metered POST routes behind a
+ * per-company generation ceiling, so the controls are real — and the paragraphs claiming they could not be
+ * built were deleted in the SAME commit that added them, because a screen that offers a button while telling
+ * you the button cannot exist is worse than either half alone.
  *
  * THE DECISION CONTROLS ARE RENDERED FOR EVERYONE AND AUTHORIZED BY THE SERVER. Recording a decision is
  * owner-only (`strategy:select`, `decision:record`), and this page is not told the caller's role — the read

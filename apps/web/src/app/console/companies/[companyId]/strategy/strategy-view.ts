@@ -16,12 +16,10 @@
  * no failure vocabulary. A test pins that: the headline may not contain "error", "failed", "refused", "denied",
  * "not found" or "unavailable".
  *
- * WHAT THIS SCREEN CANNOT DO, AND SAYS SO RATHER THAN IMPLYING IT: there is no HTTP route for
- * `generateStrategyOptions` or `recommendStrategy`. Both are model-driven use cases that exist in `@acbp/core`
- * and are reachable from no route file — verified by enumerating all 37 `route.ts` files, not by a glob (a
- * bracketed path segment like `[companyId]` is read as a character class and silently matches nothing). So this
- * console ships NO "generate options" and NO "ask for a recommendation" button. A control that cannot act is the
- * exact thing this console refuses to ship, and a disabled one that never enables is the same lie with a tooltip.
+ * GENERATION IS REACHABLE AS OF ACBP-API-008 (`c908c7c`). `generateStrategyOptions` and `recommendStrategy`
+ * now have metered POST routes behind a per-company ceiling, so this console ships real controls for both. The
+ * paragraph that used to sit here — explaining why no such button could exist — was deleted in the same commit
+ * that added them.
  */
 import { STRATEGY_OPTION_FIELDS, UNKNOWN_FIELD } from '@acbp/contracts';
 import type {

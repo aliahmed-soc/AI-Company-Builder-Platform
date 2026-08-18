@@ -1375,3 +1375,15 @@
 .cs-tk-stale, .cs-tk-stop { color: var(--c-warning); }
 .cs-tk-failed { color: var(--c-danger); }
 .cs-tk-failure { border-inline-start: 3px solid var(--c-danger); }
+
+/* ── ACBP-FE-013: the generate/recommend outcome kinds ─────────────────────────────────────────────────────
+ * Every GenerateKind gets a rule, for the reason the FE-016 review made expensive: a kind with no rule renders
+ * as an unstyled paragraph, and the comment claiming a list is complete is the part that goes stale. */
+.cs-control-outcome--generated { border-inline-start-color: var(--c-success); }
+.cs-control-outcome--generated strong { color: var(--c-success); }
+/* A PRECONDITION IS NOT AN ERROR. It is the server telling the founder what to do first, so it reads as
+   information rather than as a failure — the retry it does not offer is the point. */
+.cs-control-outcome--blocked_precondition { border-inline-start-color: var(--c-primary); }
+.cs-control-outcome--blocked_precondition strong { color: var(--c-primary); }
+.cs-control-outcome--model_failed { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--model_failed strong { color: var(--c-warning); }
