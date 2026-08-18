@@ -2983,7 +2983,6 @@ reachable; it is not, and only two of the six session states occur in practice. 
 ticket rather than edited from a frontend slice.
 
 
-<<<<<<< HEAD
 ### MERGE MARKER — ACBP-FE-010 is on `main` (appended 2026-08-18)
 
 | Ticket | Squash SHA | PR | Exact-head CI |
