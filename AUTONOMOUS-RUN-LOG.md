@@ -2981,3 +2981,100 @@ gate, and the harness is deliberately not in CI.
 says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
 reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
 ticket rather than edited from a frontend slice.
+
+---
+
+## 2026-08-18 — nine memory-domain comments that denied shipped P2-010 behaviour
+
+Branch `docs-memory-stale-p2-010-comments`, commit `52d5a3c`, **draft PR #131**. Comment and
+documentation text only; no behaviour change. Across every TypeScript file in the diff the only
+non-comment lines are two `test(...)` display names — no assertion, no logic.
+
+### One commit caused all nine
+
+`10b4e2e` (ACBP-P2-010: Memory browser) added `supersede`, `softDelete`, the route `DELETE` verb, the
+`type`/`currentOnly` read filters and the `memory:edit`/`memory:delete` actions. It wrote a correct
+comment beside each new piece of code and left the P2-006-era header directly above it asserting that
+the thing deliberately does not exist. Eight files ended up documenting the opposite of what they
+implement, each with the truth and its negation a few lines apart.
+
+The worst was the item route's own header: titled "GET + PATCH", stating "no DELETE verb (delete is the
+CDR-025 §0 owner-gated sub-feature)" **28 lines above `export async function DELETE`**. A route header
+is where a reader re-derives what an API can do, and ACBP-FE-007 had just found a feature with no route
+— the same caution applied here would have concluded delete was unavailable.
+
+One was security-relevant rather than merely wrong: `packages/core/src/memory/memory-item.ts` described
+the authz model as "memory:write for create, memory:read for list — any active company member" and
+stopped, omitting that edit and delete are OWNER-only. Read literally it grants every active member the
+right to edit and delete.
+
+### Six were reported; the sweep found three more
+
+Reported: the item route header, the repository's "deliberately NO update/delete method", core's "CREATE
++ LIST only", contracts' "deliberately NO `memory:edit`/`memory:delete` action yet" sitting directly
+above the block registering both, `MEMORY.md`'s "No query parameter ... any present → 400" (the
+collection route accepts `type` and `currentOnly`), and the adversarial test's header and title claiming
+"NO supersede/delete verb" when its assertions cover only the collection route.
+
+Found by sweeping the domain rather than stopping at six: `schema.ts` said `superseded_by` is "`never`
+on update" fifteen lines above declaring it updatable; a database integration test titled itself "only
+superseded_by is updatable" while **the very next test in the same file** proves 0016's two delete
+columns are updatable too; and `MEMORY.md`'s intro still called shipped operations "later tickets".
+
+### Every claim was re-derived from code, because the sources were the thing being corrected
+
+Checking a comment against another comment would have proven nothing here. Mechanically confirmed: the
+item route exports exactly `GET`/`PATCH`/`DELETE`; the repository exposes exactly `insert`, `list`,
+`findById`, `findByIdForUpdate`, `supersede`, `softDelete`; grants on `memory_items` are exactly
+`select, insert` (0014), `update(superseded_by)` (0015), `update(deleted_at, deleted_by_user_id)` (0016)
+with **no DELETE/TRUNCATE grant anywhere**; and every remaining column is `never` on update.
+
+**That last check stopped a new false comment.** `confirmation_state` is still `never` with no grant, so
+"advancing it is M3" was *preserved* rather than swept up in the correction. Similarly the browser **UI**
+is not claimed as shipped — `origin/main` has no memory browser page and ACBP-FE-010 is in flight. An
+earlier draft of the repository header misattributed `findById`/`findByIdForUpdate` to P2-006;
+`git show 942cc1d` showed P2-006 shipped only `insert` + `list`, and it was corrected before commit.
+
+### Deliberately not changed
+
+Migration comments in `0014`/`0015`/`0016` accurately record what those migrations did and are history,
+not current state. `catalog.adversarial.integration.test.ts:54` annotates a table-level privilege catalog
+that is correct — column-level UPDATEs legitimately do not appear there — so it is dated phrasing, not a
+false statement. `authz.ts:67-69`'s "deliberately NO `interview:confirm` action yet" is **still true**
+(verified: registered nowhere); only its prediction that P2-009 would register it is off, since P2-009
+registered `understanding:confirm` instead. Left rather than silently widened.
+
+### Verification, and what it does not cover
+
+Local gate: `pnpm install --frozen-lockfile` exit 0; `pnpm run check` exit 0 (typecheck, lint,
+`check:secrets`, `check:encoding`, `check:boundaries`, fourteen further checks, `test:boundaries` at
+12 files / 267 tests, then the full suite at 175 files passed / 117 skipped and 2662 tests passed /
+1673 skipped); `pnpm audit --audit-level high` exit 0 (1 moderate, below the threshold);
+`git diff --check` exit 0.
+
+`ACBP_TEST_DATABASE_URL` is unset in this worktree, so the real-PostgreSQL suites skipped — **including
+both files whose test titles this change edits**. `memory-routes.integration.test.ts` (7 tests) and
+`memory-items.integration.test.ts` (8 tests) were skipped entirely; `tsc` and `eslint` parsed them, so
+the strings are valid, but neither test executed locally.
+
+**Hosted CI closed that gap.** Run
+[`32082664315`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/32082664315)
+on the exact head `52d5a3c`, job `verify`, 17 steps, conclusion **success**: **292 of 292 test files
+passed with ZERO skipped** and **4335 of 4335 tests passed**, against the real PostgreSQL service. Both
+renamed tests were verified by name in the log as having actually executed — not merely as a green
+checkmark: `content/type/identity immutable + no hard DELETE; superseded_by is updatable
+(0015 edit=supersede)` and `malformed companyId is a bounded {error} envelope; an unknown query
+parameter is a bounded 400; the collection route has no supersede/delete verb`. The only occurrence of
+the word "skipped" anywhere in the 6311-line log is pnpm's "Lockfile is up to date, resolution step is
+skipped".
+
+`check:encoding` passing is the guard against this repo's Win-1252 mojibake hazard — the em-dashes,
+arrows and section signs round-tripped as clean UTF-8.
+
+### Owed
+
+**Independent review.** AGENTS.md §2 asks for two independent passes; this session was instructed not to
+dispatch subagents, so what exists is self-review plus mechanical re-derivation against source — a
+different anchor than the prose, but not an independent reviewer.
+
+Owner gates not taken: marking PR #131 ready, merging, deleting the branch, setting any backlog row.
