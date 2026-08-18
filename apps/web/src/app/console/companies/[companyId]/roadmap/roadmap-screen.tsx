@@ -13,11 +13,11 @@
 import type { RoadmapView } from './roadmap-view';
 import type { BoardView, BucketView } from './board-view';
 
-export function RoadmapScreen({ roadmap, board, boardRefusalStatus }: { roadmap: RoadmapView; board: BoardView | null; boardRefusalStatus: string | null }): React.JSX.Element {
+export function RoadmapScreen({ roadmap, board, boardRefusalStatus, companyId }: { roadmap: RoadmapView; board: BoardView | null; boardRefusalStatus: string | null; companyId: string }): React.JSX.Element {
   return (
     <>
       <RoadmapSection view={roadmap} />
-      {board === null ? <BoardUnavailable status={boardRefusalStatus} /> : <BoardSection view={board} />}
+      {board === null ? <BoardUnavailable status={boardRefusalStatus} /> : <BoardSection view={board} companyId={companyId} />}
     </>
   );
 }
@@ -172,7 +172,7 @@ function BoardUnavailable({ status }: { status: string | null }): React.JSX.Elem
   );
 }
 
-function BoardSection({ view }: { view: BoardView }): React.JSX.Element {
+function BoardSection({ view, companyId }: { view: BoardView; companyId: string }): React.JSX.Element {
   return (
     <section className="cs-card" aria-labelledby="cs-tb-h">
       <div className="cs-card-h">
@@ -200,7 +200,7 @@ function BoardSection({ view }: { view: BoardView }): React.JSX.Element {
           ) : null}
           <div className="cs-plan-board">
             {view.buckets.map((b) => (
-              <BucketColumn key={b.bucket} bucket={b} />
+              <BucketColumn key={b.bucket} bucket={b} companyId={companyId} />
             ))}
           </div>
         </>
@@ -209,7 +209,7 @@ function BoardSection({ view }: { view: BoardView }): React.JSX.Element {
   );
 }
 
-function BucketColumn({ bucket }: { bucket: BucketView }): React.JSX.Element {
+function BucketColumn({ bucket, companyId }: { bucket: BucketView; companyId: string }): React.JSX.Element {
   const headingId = `cs-tb-${bucket.bucket}`;
   return (
     <section className={`cs-plan-bucket cs-plan-bucket--${bucket.tone}`} data-bucket={bucket.bucket} data-tone={bucket.tone} aria-labelledby={headingId}>
@@ -229,7 +229,10 @@ function BucketColumn({ bucket }: { bucket: BucketView }): React.JSX.Element {
         <ul className="cs-plan-tasks">
           {bucket.tasks.map((t) => (
             <li key={t.taskId} className={`cs-plan-task${t.dependencyBlocked ? ' cs-plan-task--blocked' : ''}`}>
-              <span className="cs-item-title">{t.title}</span>
+              {/* ACBP-FE-015: every task row reaches its execution history. A real link, not a placeholder. */}
+              <a className="cs-item-title" href={`/console/companies/${encodeURIComponent(companyId)}/tasks/${encodeURIComponent(t.taskId)}`}>
+                {t.title}
+              </a>
               <span className="cs-item-meta">
                 {t.taskTypeLabel}
                 {t.rankLabel === null ? '' : ` · ${t.rankLabel}`}
