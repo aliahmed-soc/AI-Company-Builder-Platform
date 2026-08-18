@@ -1301,16 +1301,30 @@
   /* The left edge repeats the risk, so a scan down the list groups by severity without reading each badge. */
   border-inline-start: 3px solid var(--c-border);
 }
-.cs-ap-item[data-risk='high'] { border-inline-start-color: var(--c-warning); }
-.cs-ap-item[data-risk='critical'] { border-inline-start-color: var(--c-danger); }
-/* An UNKNOWN risk is marked as unknown, never left looking like the calm default. */
-.cs-ap-item[data-risk='unknown'] { border-inline-start-style: dashed; border-inline-start-color: var(--c-text-faint); }
-.cs-ap-item-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
-.cs-ap-risk--low { background: var(--c-success-soft); color: var(--c-success); }
-.cs-ap-risk--medium { background: var(--c-primary-soft); color: var(--c-primary); }
-.cs-ap-risk--high { background: var(--c-warning-soft); color: var(--c-warning); }
-.cs-ap-risk--critical { background: var(--c-danger-soft); color: var(--c-danger); }
-.cs-ap-risk--unknown { background: transparent; color: var(--c-text-faint); border: 1px dashed var(--c-text-faint); }
+/* THE FOUR CLASSES THE DATABASE CAN ACTUALLY HOLD, in the contract's own order (migration 0047's CHECK, and
+   `RISK_CLASSES` in @acbp/contracts). An earlier version of this block styled `low`/`medium`/`high`/`critical`
+   — four values no row can carry — so every real approval fell to a dashed "unknown" edge and a
+   `sensitive_irreversible` action was indistinguishable from an `informational` one. Five rules that could
+   never match. */
+.cs-ap-item[data-risk='informational'] { border-inline-start-color: var(--c-text-faint); }
+.cs-ap-item[data-risk='internal_reversible'] { border-inline-start-color: var(--c-primary); }
+.cs-ap-item[data-risk='external_reversible'] { border-inline-start-color: var(--c-warning); }
+.cs-ap-item[data-risk='sensitive_irreversible'] { border-inline-start-color: var(--c-danger); }
+/* An expired request is set apart REGARDLESS of its risk: it is the one state where the right action is to
+   do nothing at all. */
+.cs-ap-item[data-expiry='expired'],
+.cs-ap-item[data-expiry='unreadable'] { opacity: 0.72; border-style: dashed; }
+.cs-ap-item-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); min-width: 0; }
+/* The badge wraps rather than overflowing: `sensitive_irreversible` beside a scope label is wider than a
+   phone, and `.cs-badge` sets `white-space: nowrap`. */
+.cs-ap-risk { white-space: normal; overflow-wrap: anywhere; }
+.cs-ap-risk--informational { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-ap-risk--internal_reversible { background: var(--c-primary-soft); color: var(--c-primary); }
+.cs-ap-risk--external_reversible { background: var(--c-warning-soft); color: var(--c-warning); }
+.cs-ap-risk--sensitive_irreversible { background: var(--c-danger-soft); color: var(--c-danger); }
+.cs-ap-expiry { margin: 0; font-size: 0.84rem; }
+.cs-ap-expiry--expired, .cs-ap-expiry--unreadable { color: var(--c-danger); }
+.cs-ap-expiry--expiring_soon { color: var(--c-warning); }
 /* The server's own rendering of the payload. Monospace and scrollable IN ITS OWN BOX, so a long line never
    makes the page scroll sideways, and focusable so a keyboard can reach the scroll. */
 .cs-ap-preview {

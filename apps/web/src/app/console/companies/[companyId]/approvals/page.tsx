@@ -7,14 +7,20 @@
  * verified by enumerating all 37 `route.ts` files rather than by a glob, since a bracketed segment like
  * `[companyId]` is read as a character class and silently matches nothing.
  *
- *   DELIVERED — the inbox and the payload preview, plus everything the platform records for judging one:
- *               the action, the reason, the expected result, risk class, reversibility, scope, the estimated
- *               cost and the exact tool version that would run.
- *   NOT BUILT — approve / reject / edit. No route accepts a decision, so this screen ships NO control. A
- *               disabled Approve button would make the same false promise with a tooltip on it.
- *   NOT ON THE WIRE AT ALL — expiry and revocation. `ApprovalInboxItem` is an allowlist and carries no status
- *               and no timestamp of any kind, so nothing here can say whether a listed request is still
- *               live. That is stated on the screen, first, above the list.
+ *   DELIVERED — the inbox, the payload preview, and EXPIRY, plus everything the platform records for judging
+ *               one: the action, the reason, the expected result, risk class, reversibility, scope, the
+ *               estimated cost and the exact tool version that would run.
+ *   BUILT BUT UNREACHABLE — approve / reject. `@acbp/core` exports `decideApproval` and `revokeApproval`; no
+ *               route reaches either. The gap is one route file, not a domain, and this screen ships NO
+ *               control: a disabled Approve button would make the same false promise with a tooltip on it.
+ *   NOT SHOWN — the history of anything already decided or revoked. This read is `listPending`, so such a
+ *               request is not listed at all. That is a scope limit, not an uncertainty: everything shown IS
+ *               awaiting a decision, and a CHECK constraint behind the filter guarantees it.
+ *
+ * AN EARLIER VERSION OF THIS FILE CLAIMED EXPIRY WAS "NOT ON THE WIRE AT ALL". It was wrong. `expires_at` is
+ * NOT NULL on every row and was simply missing from the request layer's allowlist — a one-line omission that
+ * this screen turned into a paragraph telling approvers the platform could not tell them whether a request
+ * had expired. The field is now carried and this page leads with it.
  *
  * The refusal component is shared with nothing: like the other company-scoped reads, `listApprovalInbox`
  * answers `ok` or `forbidden`, and every other status arrives from actor resolution before the read runs.
@@ -45,7 +51,9 @@ export default async function ApprovalsPage({ params }: { params: Promise<{ comp
         <h1 className="cs-h1">Approvals</h1>
         <p className="cs-sub">Actions the platform has prepared and will not take without a human decision. Everything recorded for judging one is shown here.</p>
       </div>
-      <ApprovalsScreen view={toApprovalsView(result.approvals)} />
+      {/* Date.now() is read HERE, in the server component, and passed in: the mapper stays pure so its
+          expiry boundaries are testable, which is where an approver is actually misled. */}
+      <ApprovalsScreen view={toApprovalsView(result.approvals, Date.now())} />
     </>
   );
 }
