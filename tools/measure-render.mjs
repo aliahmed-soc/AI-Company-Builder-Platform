@@ -83,6 +83,8 @@ const PAGES = [
   // reached here, so its horizontal-scroll behaviour rests on the CSS rule and on review, not on this
   // harness. Stated in the PR rather than implied away.
   { path: '/console/companies/cmp_layout_probe/memory', slug: 'memory', expectHeader: false, isConsole: true, shot: true },
+  // ACBP-FE-012. Signed out this renders the Decision Room refusal; the ten queue cards need a session.
+  { path: '/console/companies/cmp_layout_probe/decision-room', slug: 'decisionroom', expectHeader: false, isConsole: true, shot: true },
   { path: '/sign-in', slug: 'signin', expectHeader: true, isConsole: false, shot: true },
   { path: '/', slug: 'home', expectHeader: true, isConsole: false, shot: false },
 ];

@@ -1110,3 +1110,43 @@
   .cs-table-item { min-width: 16ch; max-width: none; }
   .cs-dialog { max-width: none; }
 }
+/* -- Decision Room (ACBP-FE-012) ------------------------------------------------------------------------
+ * NOTE WHAT CARRIES MEANING HERE. A queue that did not report shows an em dash rather than a zero, and the
+ * tone classes below only TINT that distinction -- the sentence in `.cs-queue-note` states it, and the count
+ * carries an aria-label spelling it out. Colour never has to be perceived for the difference between "empty"
+ * and "not reported" to land, because that difference is the whole point of the tri-state. */
+
+.cs-queues { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+.cs-queue {
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  padding: var(--s-3) var(--s-4);
+  min-width: 0;
+}
+.cs-queue--has_items { border-left-color: var(--c-primary); }
+.cs-queue--empty { border-left-color: var(--c-border); }
+/* Restricted and unavailable are DIFFERENT states and get different accents, for the same reason the copy
+   distinguishes them: one is a refusal, the other a failure. */
+.cs-queue--restricted { border-left-color: var(--c-secondary); }
+.cs-queue--unavailable { border-left-color: var(--c-warning); }
+
+.cs-queue-h { display: flex; align-items: baseline; gap: var(--s-3); }
+.cs-queue-t { margin: 0; font-size: 0.95rem; font-weight: 600; min-width: 0; }
+.cs-queue-count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 1.15rem; color: var(--c-text); }
+.cs-queue-note { margin: var(--s-2) 0 0; color: var(--c-text-dim); font-size: 0.8rem; line-height: 1.6; }
+.cs-queue-items { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-2); }
+.cs-queue-item { display: grid; gap: 2px; min-width: 0; }
+.cs-queue-item-t { font-size: 0.86rem; overflow-wrap: anywhere; }
+.cs-queue-item-meta { color: var(--c-text-dim); font-size: 0.76rem; }
+.cs-dr-mode { font-variant-numeric: tabular-nums; }
+
+/* The row asks queues to collapse to tabs on mobile. They collapse to a single stacked column instead, and
+   that is a deliberate departure: tabs would hide nine of the ten queues behind a control, and the whole
+   point of this screen is that a founder can see at a glance which queues did NOT report. Hiding them to
+   save vertical space would defeat the tri-state it exists to show. */
+@media (max-width: 640px) {
+  .cs-queues { grid-template-columns: 1fr; }
+  .cs-queue-count { font-size: 1rem; }
+}

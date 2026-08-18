@@ -10,7 +10,7 @@ import { nonAnsweringSection, okSection, type DecisionRoomItem, type DecisionRoo
 import { describeRoom, toRoomView } from './room-view';
 
 function item(id: string): DecisionRoomItem {
-  return { itemId: id, kind: 'approval_request', title: `Item ${id}`, executionState: 'proposed', createdAt: '2026-08-18T00:00:00.000Z', detail: {} } as unknown as DecisionRoomItem;
+  return { id, kind: 'approval_request', title: `Item ${id}`, state: 'proposed', occurredAt: '2026-08-18T00:00:00.000Z', detail: {} } as unknown as DecisionRoomItem;
 }
 
 function room(sections: readonly ReturnType<typeof okSection>[]): DecisionRoomView {

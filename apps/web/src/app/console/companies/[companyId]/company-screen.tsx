@@ -113,8 +113,22 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 3 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">
+      {/* ACBP-FE-012. Company-scoped like the others. */}
+      <section className="cs-card cs-rise" style={{ '--i': 3 } as React.CSSProperties} aria-labelledby="cs-dr-t">
         <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-dr-t">
+            Decision Room
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">The queues waiting on a decision for this company, with an update channel that says plainly when it is not connected.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/decision-room`}>
+            Open the Decision Room
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 4 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
           </h2>
