@@ -1,0 +1,54 @@
+/* ACBP-FE-003 — the auth surfaces' frame.
+ *
+ * Scoped to the `(site)` group and deliberately SMALL. Clerk's component brings its own styling, and this
+ * file does not try to restyle its internals: overriding another product's DOM from outside is how a UI
+ * breaks silently on their next release. What is styled here is the frame around it — the page ground, a
+ * centred column and a heading — so the surface belongs to the product instead of floating on a blank page.
+ *
+ * SINGLE COLUMN AT ALL WIDTHS, per the row. There is no breakpoint that introduces a second column, so
+ * there is no width at which that criterion could regress; the max-width simply stops the column growing.
+ *
+ * NO `var()` FALLBACKS ANYWHERE IN THIS FILE, DELIBERATELY (ACBP-FE-003 review). Every token below is
+ * declared in `app/globals.css`, which the ROOT layout imports, so on these routes they always resolve. The
+ * first version of this file wrote `var(--c-bg, #0e1220)` while the tokens lived in `console.css` — which
+ * this route group never imports — so all six references silently used their literal fallback. The page
+ * looked right and the token system did nothing: a light theme would have flipped `/console` and left
+ * `/sign-in` dark. A fallback here would hide exactly that failure again, so there are none: if a token ever
+ * goes missing the page breaks visibly, which is the only way anyone finds out.
+ */
+.cs-auth {
+  /* OPT OUT OF THE PROSE COLUMN. `globals.css` sets `main { max-width: 40rem }` as the readable default, and
+   * this element IS that `main`. Without this line the full-bleed ground painted a 640px dark stripe down the
+   * middle of an otherwise default-background page, under a full-width header. */
+  max-width: none;
+  /* The header is a sibling of this element, so a full `100vh` here guarantees the document exceeds the
+   * viewport by exactly the header's height and every visit gets a scrollbar with nothing below the fold.
+   * Both rules read ONE token, so they cannot drift apart. */
+  min-height: calc(100vh - var(--site-header-h));
+  box-sizing: border-box;
+  display: grid;
+  place-items: start center;
+  padding: var(--s-6) var(--s-4);
+  background: var(--c-bg);
+  color: var(--c-text);
+}
+.cs-auth-frame {
+  width: 100%;
+  max-width: 26rem;
+  display: grid;
+  gap: var(--s-4);
+  justify-items: center;
+}
+.cs-auth-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cs-auth-note {
+  margin: 0;
+  color: var(--c-text-dim);
+  font-size: 0.86rem;
+}
+.cs-auth-note a { color: var(--c-primary); }
+.cs-auth-note a:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }

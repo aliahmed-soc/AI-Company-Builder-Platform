@@ -2305,3 +2305,828 @@ transcript looks the same either way, which is why "I checked" is not the same a
   test, it is not proven — it is merely present.
 
 The rule generalises past testing: it applies to any claim of the form "I checked and it was fine."
+## 2026-08-17 — FRONTEND, under owner direction (FE slice 1 + the root-layout micro-slice)
+
+The FRONTEND/UI standing instruction at the top of this file was **lifted by the owner for a scoped slice**
+(ruling 2026-08-15: Berry visual language, rebuilt natively, dark-first) and then for a second, narrower one
+(the root-layout micro-slice). The gate is otherwise unchanged and still governs everything not named in those
+two rulings. Nothing here was started on my own initiative.
+
+### What shipped
+
+| Work | Head | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **FE slice 1** — console shell + company overview, mock data | `9771880` | #114 (DRAFT) | run **31985116502** — green, **281/281 files, 4167/4167 tests, zero skips**, production build step green with `ƒ /console` in the route table |
+| **Root-layout micro-slice** — app-wide viewport, `(site)` route group | see PR | #115 (DRAFT) | pending at time of writing |
+
+Neither ticket is Done, and no backlog row was set to Done — both are owner gates. FE slice 1 is held at
+`9771880` awaiting the owner's **visual** verdict.
+
+### A NAMED TRAP: headless Chrome reports `prefers-reduced-motion: reduce` BY DEFAULT
+
+Worth naming because it is silent, it looks like success, and it will catch the next person who verifies a
+motion preference the obvious way.
+
+The console honours `prefers-reduced-motion` in two places — CSS duration tokens, and JS, because the counter is
+`requestAnimationFrame`-driven and no CSS token can reach a rAF loop. To prove the JS half worked I captured the
+page twice, once normally and once with `Emulation.setEmulatedMedia` forcing `reduce`, and the two renders came
+back **byte-identical (same sha256)**. That reads as a clean result. It was worthless: **headless Chrome defaults
+to `reduce`**, so the "normal" run was also a reduced run and I had measured one condition twice.
+
+The fix is to set **both** directions explicitly — `no-preference` as well as `reduce` — and then the conditions
+separate cleanly:
+
+| | normal motion | reduced motion |
+| --- | --- | --- |
+| `matchMedia` reduce | `false` | `true` |
+| computed `--t-base` | `240ms` | `0ms` |
+| counter at 250 ms | **10,268** | **48,250** |
+| counter at rest | 48,250 | 48,250 |
+
+The identical-sha256 pair is now real evidence, because the two runs are verifiably in *different* media states.
+Before, it was the same shape as the two retractions in the 2026-08-14 entry: **a measurement that could not have
+come out differently.** Encoded in `tools/measure-render.mjs` with the reason written next to it, so the next
+session inherits the answer rather than the trap.
+
+### The standing rule again, in a new medium: A SCREENSHOT IS A CHECK THAT CANNOT SAY NO
+
+Three defects shipped through FE slice 1's visual review. Every one of them was **in the picture** and none was
+visible *as a defect*, because an image has no failure mode — it renders whatever is there and looks equally
+finished either way. All three were found by asserting a number instead.
+
+1. **No `box-sizing: border-box` anywhere in the app.** This app ships no CSS reset, so padding is added to
+   declared widths; every `width: 100%` element with padding overflowed its parent by exactly its horizontal
+   padding — **48px** at desktop (2 × `--s-5`), **32px** narrow (2 × `--s-4`). The right edge of every card was
+   cut off. In a screenshot that reads as a bad crop, not a bug, and it survived several passes of me looking
+   directly at it. A `scrollWidth > innerWidth` assertion named it in one run — and named it on **all three**
+   captures at once, including the desktop one I had already accepted.
+2. **No viewport meta tag anywhere in the app.** The narrow-width media queries could never have matched on a
+   phone: a mobile browser with no viewport meta lays out at a fallback desktop width. Measured — under mobile
+   emulation at 420px, `window.innerWidth` reported **1395**. A screenshot cannot report this at all; it just
+   shows the desktop layout, which looks correct.
+3. **The animated counter server-rendered `0`.** The credits figure was wrong until hydration and permanently
+   wrong without JavaScript. A number that is only right when an animation runs is not a decoration, it is a
+   false reading.
+
+The lesson is not "take better screenshots". It is that **an artefact that cannot fail is not evidence**, which is
+the same rule as skipped suites, Turbopack builds and `skipIf`-gated authz tests — only wearing a picture.
+`tools/measure-render.mjs` is the response: it asserts overflow, viewport, layout mode, header presence and the
+motion discrimination, and **exits non-zero**. It is committed, so a comment can name it as an enforcement and a
+reviewer can re-run it.
+
+> **OWNER RULING 2026-08-17 — `measure-render.mjs` stays UN-WIRED from CI for now. It is a LOCAL PRE-PR GATE,
+> not coverage.** Written down deliberately rather than left as an omission, because a check everyone believes is
+> running but which never runs is the same defect as a skipped suite. Concretely: nothing in CI executes it, no
+> CI failure can arise from it, and **no claim anywhere may cite it as CI coverage** — it drives a real browser
+> against a running server, which the verification gate does not provision. Whether it ever joins the gate is its
+> own decision, filed as backlog row **ACBP-FE-019** (`Planned`) so the question stays visible instead of quietly
+> resolving itself into assumed coverage. If that answer is ever yes, the wiring commit must demonstrate a RED
+> run against a seeded regression, per the 2026-07-29 standing rule at the top of this file.
+
+**A corollary, self-inflicted:** `console.css` shipped a comment citing "the no-horizontal-overflow assertion in
+the screenshot harness" while no harness existed anywhere in the repo — a comment naming an enforcement nobody
+could locate, which is exactly what the 2026-08-06 rule forbids. Caught by an independent review pass, not by me.
+Committing the harness is what made the sentence true; the alternative was deleting the sentence.
+
+### The micro-slice found one thing that was nobody's screenshot
+
+Removing `auth()` from the root layout is presentational — its only consumer was the signed-in/out ternary, and
+enforcement lives in `proxy.ts` and `resolveVerifiedIdentity()`. But `auth()` reaches `await headers()`, a dynamic
+API, and it was **the only one above `/console`**. Deleting it would have flipped `/console` and `/_not-found` to
+build-time prerendering — harmless today (the page reads `MOCK_` constants only) but it would have deleted an
+app-wide dynamic-rendering guarantee nothing else asserts, and settled **CDR-083 §8 item 9**, the explicitly
+undecided nonce/caching question, by accident and in the wrong direction.
+
+Held deliberately with `export const dynamic = 'force-dynamic'` on the root layout, and **verified by removing
+it**: with the line, every page is `ƒ` and `prerender-manifest.json` lists only `/_global-error`; without it,
+`/console` and `/_not-found` turn `○` and join that manifest.
+
+> **OWNER RULING 2026-08-17 — the `force-dynamic` hold is RATIFIED as an explicit INTERIM ruling.** `/console`'s
+> render mode **remains an open decision under CDR-083 §8 item 9**, to be decided deliberately later and **never
+> by side effect**. `force-dynamic` is the hold, not the answer, and it is not to be read as a settled choice of
+> dynamic rendering. **The measured counterfactual comment stays beside the line**; anyone proposing to remove
+> the line re-runs that mutation first and reports the manifest. Recorded in CDR-083 §8 item 9 as well, so the
+> open question and its holding mechanism live in the same place.
+
+### Standing, all owner-gated — unchanged
+
+P2-011, P7-006, everything in `OWNER-ACTION-PACK.md`, PRs **#86** and **#10**. The FRONTEND/UI standing
+instruction still governs every screen not named in the owner's two rulings above. Sibling work on
+`p8-api-008-slice3b` left untouched throughout, as instructed.
+
+
+### MERGE MARKER — both frontend slices are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs and run ids rather than to status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **FE slice 1** — console shell + company overview | **`ef3a119`** | #114 | `31985116502` on `9771880` | **`31988034424`** on `ef3a119` |
+| **Root-layout micro-slice** — app-wide viewport + `(site)` route group | **`c4a714c`** | #115 | `31988659637` on `9a5c412` (rebased head) | **`31989248948`** on `c4a714c` |
+
+Every one of those four runs: **all 17 steps green, `281 passed (281)` test files, `4167 passed (4167)` tests, and
+ZERO lines anywhere in the logs reporting a skip count.** The production-build step ran in each and emitted the
+route table; the two later runs show `ƒ /console`, confirming the `force-dynamic` interim hold holds on `main`
+and on CI's machine, not only locally.
+
+**Both merges were tree-identity verified before the branch was deleted** — squash tree equal to branch-head
+tree, and `git diff <branch> origin/main` empty. Ancestry can never pass for a squash, so the tree is the check.
+`fe-slice1-console-shell` (was `9771880`) and `fe-slice2-root-layout` (was `9a5c412`) are both deleted.
+
+**The three page moves survived rebase AND squash as pure renames.** On `main`, `git show --summary` reports
+`rename apps/web/src/app/{ => (site)}/page.tsx (100%)` and the same for both auth catch-alls; their git blob
+hashes are identical to the pre-move blobs. The ACBP-P1-001 auth pages are byte-for-byte unchanged.
+
+**Backlog at this marker:** `ACBP-FE-001`, `ACBP-FE-002`, `ACBP-FE-011` → **Done** (owner gate granted for
+exactly those three rows). `ACBP-FE-019` added as `Planned` — the deferred decision on whether the render
+harness joins CI. `FE-016/017/018` unchanged at `Blocked-API`.
+
+**Owner rulings carried by `c4a714c`:** the `force-dynamic` hold ratified as an explicit INTERIM ruling with
+`/console`'s render mode left open under CDR-083 §8 item 9; and `tools/measure-render.mjs` confirmed UN-WIRED
+from CI — a local pre-PR gate that no claim may cite as coverage.
+
+**Frontend status after this marker:** the FRONTEND/UI standing instruction at the top of this file is UNCHANGED
+and still governs every screen. Two slices were released by name; nothing else is. The next slice was proposed to
+the owner (ACBP-FE-004, portfolio and company switching) and **awaits confirmation — it is not started.**
+
+
+### ACBP-FE-004 and ACBP-FE-006 — released by name (owner, 2026-08-17)
+
+The FRONTEND/UI standing instruction at the top of this file is **release-by-name**, so the authorization is
+recorded here before the work, not inferred from it afterwards.
+
+- **ACBP-FE-004** — portfolio card grid. Owner ruling: card grid in the Berry language, only the fields the
+  portfolio read returns, empty state stating absence plainly with a disabled labelled create control, all six
+  refusals distinct with the real `retryAfterSeconds`, no Clerk keys, backlog untouched. Shipped as `b2bbf27`,
+  draft PR **#117**, exact-head CI **32023523290** green with zero skips.
+- **ACBP-FE-006** — company profile. Owner ruling: single profile page, pause control on the page only; and
+  after a preflight, two follow-up rulings — surface the caller's role from core, and use `fetch` rather than a
+  Server Action.
+
+Nothing beyond those two names is released. Every other screen remains gated.
+
+### What the FE-006 preflight found, and why it ran before any code
+
+Three questions were checked against the source before building, because two of them could have made the slice
+either dishonest or a security change in disguise.
+
+**1. The company read does not carry the caller's role — and the reason cannot be recovered afterwards.**
+`CompanyView` is six fields and role is not one of them. That matters because an unauthorized transition comes
+back as a bare `forbidden`, *deliberately indistinguishable from "no such company"*, so a viewer's refusal
+cannot be explained after a failed attempt: the reason has to be known before the control renders. Four options
+existed and three were rejected on evidence — a second portfolio read costs another rate-limit charge and
+silently misses any company past the first page; `listMembersForRequest` answers ACCOUNT role, a different
+question; and inferring viewer-ness from a derived usage flag would flip to a FALSE ENABLED control the day the
+authz matrix widened. The owner chose the fourth: return the role core already resolved. It costs no extra
+query and cannot drift from the value that gated the read, because it IS that value.
+
+**2. A pause button falsifies CDR-081's premise — and does not reopen its ruling.** "No page in this
+application posts to any of the seventeen state-changing methods" was still literally true at `da50603`
+(verified: zero `use server`, zero `<form>`, zero page-side `fetch`), and FE-006 is the first slice in the
+repository's history to break it. But that premise is the reason a *token* would have been inert, never the
+reason the *gate* works — the gate rests on `Sec-Fetch-Site`/`Origin` being forbidden header names, and §3 had
+already pre-ruled that a token is "reversible if a UI ever wants defence in depth". So this is a doc
+correction, recorded in CDR-081 §1 with the old sentences rescoped rather than deleted.
+
+**3. The transport was the part that genuinely needed the owner.** A Server Action would have been the tidier
+architecture — no second hop, no second rate-limit charge, matching the FE-004 precedent of calling the request
+function directly. It is also **invisible to both static guards**: `check-csrf-origin-gate.mjs` enumerates
+`route.*` under `api/`, and `check-rate-limit-coverage.mjs` is scoped to `app/api/**`. Both would have stayed
+GREEN while their promises stopped covering the app's only mutating control — CDR-082 §2's "a route added next
+month cannot silently omit it" would have become false in substance with no test failing. The owner ruled
+`fetch` against the existing routes, so both guards keep meaning what they say.
+
+**The rule this leaves behind:** a green checker that has quietly stopped checking is worse than a missing one,
+because its greenness is read as coverage. Before adding a new KIND of entry point, ask which existing guard
+enumerates entry points and whether it can see this one.
+
+
+### MERGE MARKER — the portfolio and company-profile slices are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **ACBP-FE-004** — portfolio card grid, first console screen reading real data | **`bd87653`** | #117 | `32023523290` on `b2bbf27` | **`32030012519`** on `bd87653` |
+| **ACBP-FE-006** — company profile + pause/resume, first state-changing page control | **`51b89d1`** | #119 | `32028907779` on `7e8c19b`, then **`32031059740`** on the rebased `055c9cd` | **`32031931635`** on `51b89d1` |
+
+All five runs: **17/17 steps green, zero failed, and ZERO lines anywhere in the logs reporting a skip count.**
+The final main run reports `284 passed (284)` test files and `4204 passed (4204)` tests, and its production build
+emitted both `ƒ /console/companies` and `ƒ /console/companies/[companyId]`.
+
+**Both merges were tree-identity verified before the branch was deleted** — squash tree equal to branch-head
+tree, and `git diff <branch> origin/main` empty. Ancestry can never pass for a squash, so the tree is the check.
+`fe-004-portfolio` (was `b2bbf27`) and `fe-006-company-profile` (was `055c9cd`) are both deleted; no `fe-*`
+branch remains on the remote.
+
+**FE-006 ran its CI twice on purpose.** The rebase onto the new `main` produced a different commit (`7e8c19b` →
+`055c9cd`) sitting on a main that contains FE-004's SQUASH rather than its branch history, so the earlier green
+did not carry. `32031059740` is the run that actually covers what merged.
+
+### What these two slices changed beyond the screens
+
+- **`CompanyView` now returns the caller's own company role** (`packages/core/src/company/company-lifecycle.ts`).
+  The value was already resolved by `runInCompanyScope` to authorize the read and was being discarded by
+  `unwrap`; it costs no extra query and cannot drift from the value that gated the call. It exists because an
+  unauthorized transition returns a bare `forbidden`, deliberately indistinguishable from "no such company" — so
+  a viewer's refusal cannot be explained after a failed attempt and must be known before the control renders.
+  The real-PG test that proves it is caller-scoped asserts the same company read by two members differs in
+  EXACTLY that field; a hardcoded constant passes "owner sees owner" and fails this.
+- **CDR-081 §1's premise is corrected, not deleted.** "No page in this application posts to any of the seventeen
+  state-changing methods" was still literally true at `da50603` and is false as of `51b89d1`. That premise was
+  the reason a TOKEN would have been inert, never the reason the GATE works, so the no-token ruling stands and
+  §3's "reversible if a UI ever wants defence in depth" is promoted to a live, named-but-not-taken option.
+- **The mutation goes over HTTP deliberately.** A Server Action would have been tidier, but it is a
+  state-changing entry point no static guard here can see — `check-csrf-origin-gate.mjs` enumerates `route.*`
+  under `api/`, `check-rate-limit-coverage.mjs` is scoped to `app/api/**` — and both would have stayed GREEN
+  while their promises stopped covering the app's only mutating control. After the change they still report 21
+  state-changing route modules and 36 covered handlers.
+
+### A GitHub behaviour that cost a PR number, recorded so it is not rediscovered
+
+**Deleting a base branch AUTO-CLOSES any PR stacked on it, and GitHub then refuses both `reopen` and a base
+change** — "Cannot change the base branch of a closed pull request", "Could not open the pull request". #118 was
+lost that way when `fe-004-portfolio` was deleted after #117 merged, and the work continued as #119 with the same
+commit. Nothing was lost, but the PR number and its review thread were.
+
+**The rule:** retarget the stacked child to `main` BEFORE deleting the parent branch, never after.
+
+### Verification hygiene note from the same window
+
+A post-merge check reported the new profile page MISSING from `main`. It was present. `Test-Path` treats
+`[companyId]` as a wildcard character class, so it returned `False` for a file that exists; `-LiteralPath` and
+`git ls-files` both confirm it. The check failed for a reason unrelated to the thing being checked — the same
+shape as the headless-Chrome reduced-motion default recorded earlier in this log. It was caught only because
+"the route is missing but CI just built it" is incoherent, not because anything announced a problem.
+
+### Backlog and gates at this marker
+
+`ACBP-FE-004` and `ACBP-FE-006` rows are **deliberately unchanged** — the owner granted the `Done` gate by name
+for FE-001/002/011 previously and named no rows for these two, so it is treated as unpressed rather than implied
+by a merge. `FE-016/017/018` remain `Blocked-API`; `ACBP-FE-019` remains `Planned`.
+
+The FRONTEND/UI standing instruction at the top of this file is UNCHANGED and still governs every screen. Four
+slices have been released by name; nothing else is. **Populated screenshots for both slices remain pending
+evidence** — they need Clerk credentials this environment does not have, and the committed captures are the real
+pages in their signed-out state plus server-rendered previews of the states a browser cannot reach.
+
+
+### ACBP-API-010 — the CDR-088 disclosure list goes to zero, and two of its three reasons were false
+
+The owner ordered the seeded foreign-roadmap invisibility proof, plus an audit of **every** CDR-088 matrix
+block for the same disclosure: *"One ticket, disclosure list to zero — not shrinking by one."* Three blocks
+carried it; a fourth was found by review. The audit is the part worth keeping.
+
+**Two of the three disclosures were factually wrong, in the same way.** The artifact block and the approvals
+block each justified seeding nothing by saying their `run_id` was *"NOT NULL with an FK to `runs`"*.
+
+**There is no `runs` table in this schema and there never has been.** The tables are `task_runs`,
+`planning_runs` and `worker_runs`. The real constraints are `artifacts_run_fk` and
+`approval_requests_run_fk`, both tenant-pinned composites onto **`task_runs`** — and the CDR-089 block in
+the *same test file*, about two hundred lines above the artifact block, had been seeding that exact chain
+all along. `task_runs` needs four columns; `state` defaults.
+
+So neither matrix was blocked by a hard constraint. Each was blocked by **an unverified sentence about
+one**, and withheld a provable tenant-isolation claim for as long as the sentence stood. The repository
+already had the mirror-image rule from ACBP-P7-014: a control whose justification this repo cannot check
+must not ship. This is that rule inverted — an unchecked premise talked two tenant-data matrices *out of*
+proving isolation, and nothing ever failed, because a disclosure costs nothing to leave in place.
+
+The roadmap block, the one the owner's ruling was actually about, was the **only** one of the three whose
+stated blocker was real: `roadmaps.decision_id` genuinely requires understanding document → generation →
+selection → decision. That chain is now built, in
+`packages/test-support/src/tenancy/isolation-fixtures.ts`. The journey helpers were checked first, as the
+ruling required: `runMvpLoopJourney` does reach a roadmap and an artifact, but only by driving the core use
+cases through a **fake model gateway** with an injected `ops` bundle, and the adversarial HTTP suite has
+neither.
+
+**Two NOT NULL columns exist only as later `ALTER`s** and would have failed a `CREATE TABLE`-only reading:
+`policies.autonomy_level` (0049) and `approval_requests.payload_hash` / `binding_version` / `expires_at`
+(0048). The generated Kysely types encode NOT NULL as a *required insert field*, so `tsc` is a real check on
+the column set — it also caught `strategy_options.fields` typing its insert as `Record<string, string>`
+while `policies.rules` types its own as `string`, two jsonb columns that do not agree.
+
+### THE FIRST MUTATION REPORT WAS WRONG, AND THAT IS THE ENTRY WORTH READING
+
+The ticket was reported complete with: *"planting the three foreign fixtures in the caller's own company
+turned **10 tests red** across all three blocks, including the raw-column tripwire."* **False, and
+retracted.**
+
+Reading the failure TEXT rather than the COUNT shows the mutation moved each foreign fixture into company A
+while the caller's own fixture was already there, putting two version-1 rows in one company:
+
+```
+error: duplicate key value violates unique constraint "understanding_documents_company_version_uq"
+error: duplicate key value violates unique constraint "policies_company_version_uq"
+```
+
+Those threw in `beforeEach`, so **every** test in the roadmap and approvals blocks failed — including
+`an unknown query parameter is REFUSED, not ignored`, which has nothing to do with tenant isolation.
+All-tests-in-a-block-red is the signature of a fixture error, not of a control being exercised. **Eight of
+the ten were fixture errors; two were assertions.**
+
+This log already records *a red exit code is not evidence* (ACBP-P7-013's probe reported 7/7 kills having
+run zero tests). This is its subtler form and it defeated the same author on the same day: the tests really
+did run, really did go red, and the number was still not evidence, because nothing checked WHY. **A mutation
+report must quote the failing assertion messages, not the tally.**
+
+The corrected evidence is two collision-free mutations producing five quoted assertion failures — M1
+(marker collision, rows stay in their own companies so no UNIQUE constraint is touched) fires
+`A's own roadmap read must not contain B's goal title`, `A's own inbox must not contain B's preview` and
+`A's own board must not contain B's task`; M2 (relocation, artifact block, where no UNIQUE constraint
+applies) fires `artifact: B's artifact must not surface inside A` and the artifact-granularity
+`expected 200 to be 404`. Restored byte-for-byte after each run and re-verified green.
+
+### Independent review found six defects AFTER the work was called complete
+
+Five dimensions, two adversarial refuters per finding: 29 reported, **6 survived**. Four were prose that
+this ticket's own change had falsified. Two were live vacuities:
+
+- **The artifact positive control asserted 2 of the 3 routes `callAll` drives.** `lineage` was requested and
+  discarded, so every lineage negative was still satisfied by a lineage route serving nothing to anybody —
+  the exact vacuity the ticket exists to close, left open on one route. The relocation mutation could not
+  reveal it either: `artifact` is index 0, so its assertion throws before lineage is examined. **Partial
+  coverage of a multi-route helper is the failure mode; assert every route the helper drives.**
+- **Adding a task-board positive control exposed a PRE-EXISTING vacuity nobody was looking for.**
+  `tasks.state` defaults to `'draft'`, and drafts are deliberately OFF the board — `getTaskBoard` counts
+  them only in `draftsOffBoard`. The foreign task had always been seeded at that default, so *"B's task
+  never appears in A's board"* was asserted about a task that appears on **nobody's** board, including its
+  own company's. True for a reason unrelated to isolation, and true since the block was written.
+
+A **fifth CDR-088 block the audit never visited** also surfaced: the roadmap EDIT block still claimed an
+"inability to seed a roadmap (the decision chain)" that this ticket had just disproved, and rested its
+no-write negative on an empty table. It now seeds, so the baseline contains a real foreign roadmap the
+refused edit must leave exactly as it found it.
+
+**The pattern, stated plainly: every comparative or absence claim a comment makes about a sibling block goes
+stale silently when the sibling improves.** Three of the four prose defects were exactly that shape. The
+corrections delete the comparison rather than update it.
+
+### Local PostgreSQL is reachable again, and the documented path did not work
+
+`ACBP_TEST_DATABASE_URL` has been unset on this machine for most of this project's history, which is why so
+many real-PG suites in this log were skipped rather than run. The `acbp-local-dev` distro was already
+provisioned and `pnpm local:db:setup` is the sanctioned tool. A full `pnpm run check` now runs **284 files /
+4207 tests at zero skips** locally.
+
+**`docs/LOCAL-DEVELOPMENT.md` claims the database is reachable at `127.0.0.1:5432` via "WSL localhost
+forwarding". That did not hold here** — PostgreSQL accepted connections on WSL's own loopback while Windows
+got `ECONNREFUSED`, with no `.wslconfig` and WSL on defaults. Worked around **locally only** by binding the
+cluster to the WSL interface and allowing the private WSL subnet (never `0.0.0.0/0`). **No repository file
+was changed for this** — one machine's NAT behaviour is not evidence about the documented path, and a doc
+rewritten from a single failure is worse than one with a known caveat.
+
+Three hazards from that work, all handled:
+
+- **`pnpm local:db:setup` OVERWRITES `.env.local` wholesale** (`[IO.File]::WriteAllText`), and this
+  machine's held the owner's `ANTHROPIC_API_KEY`. Backed up first, merged back after. The script's docstring
+  says it writes the file; it does not say it destroys unrelated keys in it.
+- **A vitest error dump printed the generated database password** into the session, because the serialized
+  `pg` error carries `connectionParameters`. Rotated immediately rather than left live.
+- **The WSL VM drops mid-run**, producing `the database system is shutting down` across suites the ticket
+  never touched — 17 red tests, all one dead server. Pinned open with a keepalive. Again: read the failure
+  text, not the count.
+
+The run that mattered took three attempts for reasons unrelated to the code, and the pattern is one this log
+already records: **the connectivity check and the thing being checked kept running in different
+invocations.** A `Test-NetConnection` that succeeded and a vitest run that failed were never in the same
+shell. Putting the precheck and the run in one invocation is what finally produced a readable result.
+
+### A "zero skips" check that could not have said no
+
+The first CI skip check reported "zero skip lines" — and had also failed to find the *tallies*, which meant
+it was not matching the log format at all. A detector that finds nothing because it matches nothing reads
+exactly like a clean result. The ANSI strip then removed 3 bytes (a BOM), because the `^[` in GitHub's log
+is the literal two-character sequence, not an ESC byte. Only after fixing the parse **and feeding it a
+synthetic `4200 passed | 7 skipped (4207)` line to confirm it fires** is "zero skips" evidence rather than
+an absence of evidence.
+
+### Three numbering collisions avoided by checking every remote branch, not `main`
+
+`main` has CDRs up to 089, so 090 looked free. **090, 091 and 092 are all claimed on unmerged sibling
+branches** — 090 by `origin/p8-api-006-cdr`, 091 and 092 by `origin/p8-api-006-model-gateway` (091 also on
+three further branches). This ticket is **CDR-093**. Taking the next number visible on `main` alone would
+have collided three times over. The reliable check enumerates CDR numbers across every remote branch with
+`git ls-tree`, not the working tree.
+
+### A structural judgment call the owner can reverse
+
+The ruling asked for *"backlog row filed for the ticket itself."* `ACBP-API-*` tickets have **no backlog
+anywhere** — they are outside the 104-ticket numbering, and `BACKLOG.csv` is exactly 104 rows, a count
+`OWNER-ACTION-PACK.md` states and `FRONTEND-BACKLOG.csv` leans on in a column named *"backend work NOT in
+the 104-ticket backlog"*. Making it 105 would falsify a structure other documents depend on.
+
+The row went into a new `docs/implementation/API-BACKLOG.csv`, mirroring the precedent the owner approved
+when out-of-backlog frontend work got `FRONTEND-BACKLOG.csv` (PR #95). **It contains this ticket only.**
+`ACBP-API-001` through `009` belong to the concurrent session, are recorded in this log, and were
+deliberately not backfilled — inventing rows for another session's tickets would be worse than the gap.
+
+
+### MERGE MARKER — ACBP-API-010 is on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs, tree hashes and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI | Exact-main CI |
+| --- | --- | --- | --- | --- |
+| **ACBP-API-010** — seeded foreign-row invisibility proof for every CDR-088 tenant-data read | **`3ca0971`** | #122 | **`32047608085`** on `dee627d` | **`32048661352`** on `3ca0971` |
+
+Both runs report **`284 passed (284)` test files and `4207 passed (4207)` tests**, plus `12 / 267` for
+`test:boundaries`, with **zero failures and no skip tally anywhere in either log**. The production build ran
+in both. The two runs agreeing exactly is what a byte-identical squash should produce.
+
+**The skip claim was made with a detector that was first shown capable of failing.** An earlier pass through
+the same log reported "zero skip lines" while also failing to find the *tallies* — it was matching nothing at
+all, and a detector that finds nothing because it matches nothing is indistinguishable from a clean result.
+The `^[` in a GitHub log is the literal two-character sequence, not an ESC byte, so an ANSI strip keyed on
+char 27 removes only the BOM. Every "zero skips" figure above was produced by a parser that was fed a
+synthetic `4200 passed | 7 skipped (4207)` line and observed to fire on it.
+
+**Merged, then verified, then deleted — in that order.** Branch-head tree `f0d5a04956aa7a8898e2f180d09b6cf5945d8f50`
+equals the squash tree on `main`, and `git diff api-010-roadmap-isolation-proof origin/main` was empty.
+Ancestry can never pass for a squash, so the tree is the check. `api-010-roadmap-isolation-proof` (was
+`dee627d`) is deleted from the remote and locally; no `api-010` ref remains.
+
+**A deletion instruction arrived one step early and was refused.** "Delete the branch and finalize" came
+while the merge had not happened: PR #122 was still `OPEN` with `mergedAt: null`, `origin/main` was still
+`4a8b377`, and all four commits existed only on the branch. `git merge-base --is-ancestor` said the branch
+was not contained in `main`. Deleting then would have destroyed `622baae` (proof + fixtures), `6db2e72`
+(the two vacuity fixes and the retraction), `4856581` (this log's entry) and `dee627d` (CDR-093 accepted).
+**The tree/ancestry distinction is what made the refusal legible rather than a guess:** ancestry failing is
+normally uninformative after a squash, but here there was no squash commit at all, and `main` was byte-for-byte
+where it had been three hours earlier.
+
+### What is on `main` that was not before
+
+- **`packages/test-support/src/tenancy/isolation-fixtures.ts`** — model-free builders for tenant rows behind
+  a multi-table constraint chain, with a guard that throws rather than returning an id for a row that is not
+  there. Every constraint read out of the migrations, including two NOT NULL columns that exist only as later
+  `ALTER`s (`policies.autonomy_level`, and `approval_requests.payload_hash` / `binding_version` / `expires_at`).
+- **Five CDR-088 blocks now seed** — roadmap read, artifact reads, approvals inbox, task board, roadmap edit —
+  each asserting the foreign row EXISTS on the owner connection first, then proving byte-identical refusal
+  with it present, then proving the caller's own read still serves the caller's own data.
+- **`docs/implementation/API-BACKLOG.csv`** — a new tracking file, because `ACBP-API-*` sits outside the
+  104-row `BACKLOG.csv` whose count `OWNER-ACTION-PACK.md` states. Row `ACBP-API-010` is `Done` as of this
+  marker, on the owner's instruction. `ACBP-API-001`…`009` belong to the concurrent session and are
+  deliberately not backfilled.
+- **CDR-093**, accepted by the owner. 090, 091 and 092 were all claimed on unmerged sibling branches.
+
+### The two findings worth carrying forward
+
+**An unverified premise cost two matrices their proof.** The artifact and approvals blocks each declined to
+seed because `run_id` supposedly had "an FK to `runs`". No `runs` table exists in this schema; the constraints
+are tenant-pinned composites onto `task_runs`, which the CDR-089 block in the same file had been seeding two
+hundred lines above. ACBP-P7-014 established that a control whose justification cannot be checked must not
+ship. This is the inverse and it is quieter: an unchecked premise talked two tenant-data matrices *out of*
+proving isolation, and nothing ever failed, because a disclosure costs nothing to leave in place.
+
+**A positive control is what makes a negative mean anything, and adding one found a bug nobody sought.**
+Company A held no roadmap, artifact or board task, so "A's read does not contain B's data" was satisfied by a
+read returning nothing to anybody. Adding the task-board positive control then exposed a *pre-existing*
+vacuity: `tasks.state` defaults to `'draft'` and drafts are deliberately OFF the board, so the foreign-task
+negative had been asserted about a task that appears on **nobody's** board since the block was written.
+
+
+### MERGE MARKER — ACBP-FE-005 and the FE backlog label correction are on `main` (appended 2026-08-17)
+
+Pinned to squash SHAs, tree hashes and run ids rather than status words, so nothing here can go stale.
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **FE backlog label correction** — FE-013/FE-014 stale `Blocked-API` cells | **`2340fa3`** | #125 | **`32060226143`** on `60d413b` — 284 files / 4207 tests |
+| **ACBP-FE-005** — company creation and provisioning progress | **`442c380`** | #124 | **`32058460054`** on `bda5b33` — 288 files / 4248 tests |
+
+Both head runs: **12 / 267 for `test:boundaries`, zero failures, and NO skip tally anywhere in either log.**
+FE-005's +4 files / +41 tests over the 284 / 4207 baseline is exactly its four new suites — 15 create-outcome,
+12 provisioning-view, 6 resume-outcome, 8 contract-alignment.
+
+**Exact-main CI on the combined tree: `32061460475` on `442c380` — 288 files / 4248 tests, 12 / 267
+boundaries, zero failures, no skip tally, production build ran.** It matches FE-005's pre-merge totals
+exactly, so the label correction interacted with nothing — which is what the owner's disjoint-diffs ruling
+was a judgement about, now measured rather than assumed.
+
+Every "zero skips" figure in this marker was produced by a parser that was first fed a synthetic
+`4200 passed | 7 skipped (4207)` line and observed to fire on it. A detector that finds nothing because it
+matches nothing is indistinguishable from a clean result, and this log already records one occasion where
+that cost a round of worthless evidence.
+
+### The deletion check had to change shape, and the difference is the point
+
+For #125 the usual check held: squash tree `07e622a5f3326ea36efd03fee52c0dabc653d0c5` equalled `main`'s, and
+`git diff branch origin/main` was empty.
+
+**For #124 tree-equality FAILED — `1bd505d…` against `63ccbbc…` — and that failure was correct rather than
+alarming.** `main` moved between FE-005's CI and its merge, because #125 landed in between. A tree comparison
+answers "is main byte-identical to this branch", which is the right question only while main stands still.
+
+So the check became: **is every file this branch touched byte-identical on `main`?** All fifteen were, and the
+comparison was self-tested first — fed a file that SHOULD differ, and confirmed to report it — because a
+comparison that silently matches nothing reads exactly like a clean result. The single branch-vs-main
+difference was `FRONTEND-BACKLOG.csv`, which FE-005 never touched: #125's correction, which the branch
+predates.
+
+Recorded because both failure modes were live here: accepting the tree mismatch at face value would have
+blocked a legitimate deletion, and waving it through would have risked deleting unmerged work.
+
+### Merged without a rebase, on an explicit owner ruling
+
+FE-005's green was taken against `main` at `ba7b3e8`; `main` was `2340fa3` by merge time. The owner ruled
+"merge anyway, diffs are disjoint" after the staleness was raised. Supporting evidence: GitHub reported
+`mergeable_state: clean`, and a local `git merge-tree` trial produced **zero conflict markers**. The
+pre-merge green still did not itself cover the combined tree — `32061460475` is the first run that does, and
+it is cited above rather than assumed.
+
+Also noted so it is not rediscovered: the `main` run for `2340fa3` was **cancelled** by #124 landing on top of
+it. A cancelled run is not a failed one, and it is not evidence either.
+
+### What ACBP-FE-005 put on `main`
+
+Two screens — `/console/companies/new` and `/console/companies/{companyId}/provisioning` — three pure
+interpreters, and the portfolio's "Create a company" control turned from a disabled button labelled *not built
+yet* into a real link. That button had been honest for exactly as long as the claim was true.
+
+**Three contract facts shaped it more than any design choice:**
+
+- **`POST /api/companies` BLOCKS on provisioning** (`core company-service.ts:192-211`), so the 201 already
+  carries the verdict. The common render of a "progress" screen is the FINISHED state, and a stall is
+  detectable at create time rather than after the first poll.
+- **There is no `running` step status.** `PROVISIONING_STEP_STATUSES` is `pending | completed | failed` and the
+  contract calls `running` *"intentionally ABSENT: an in-flight step … must never survive a commit"*
+  (`contracts provisioning.ts:22-27`). So there is no stepper spinner and deliberately **no `--running` CSS
+  modifier** — unreachable styling implying a state the database refuses to hold is the same class of lie as a
+  control that cannot act.
+- **The stalled signal is a real field.** `resumable` / `exhausted` / `completed` come from
+  `deriveProvisioningFlags` (`:137-148`), which also makes four arms mutually exclusive: all three false
+  happens IFF the step set is malformed. That arm says an operator must look; it does not imply quiet progress
+  and does not offer a resume the server would refuse with 409 — whose body, note, carries **no
+  discriminator**, so the copy states the server refused without claiming which of five gates applied.
+
+### Three defects the tests caught that reading would not have
+
+- **The screen was discarding the server's own error message.** The 400 validation arm carries a
+  `PublicErrorEnvelope` OBJECT whose `message` names which of three fields is wrong
+  (`companies-http.ts:180-181`, `errors.ts:71/:147`). The first interpreter treated `error` as a string and
+  substituted vaguer copy of its own — the inversion of this console's founding rule — and **its unit tests
+  passed because they asserted the same wrong shape**.
+- **`Number('') === 0`**, so an empty `Retry-After` parsed as "retry immediately": a 429 telling a
+  rate-limited founder to hammer the endpoint.
+- **`create-contract-alignment.test.ts`** drives the REAL `toCompaniesResponse` instead of hand-written bodies,
+  because a hand-written body encodes what the author BELIEVED the server sends. Writing it immediately proved
+  the `created` arm is FLAT — the `{company:{…}}` nesting is built BY the responder — and that an
+  `as CompaniesRequestResult` cast had hidden the wrong shape from the compiler. The cast is gone.
+
+Two more were fixture-shaped: `null ?? 'profile'` in a test helper silently replaced the explicit `null` the
+one null-path case existed to exercise, and a phantom `--r-2` CSS token whose fallback would have hidden it
+while others copied it forward.
+
+### The evidence limit, stated rather than implied away
+
+The measured harness passes `/console/companies/new` **12/12** — no horizontal overflow at 1440 / 900 / 492,
+viewport meta, no auth header, correct shell tracks. It **cannot validate any data-reading console page in
+this environment**: without real Clerk credentials they return 500, so those measurements are of Next's error
+page. That affected the provisioning screen — and equally `/console/companies` and the company profile, which
+are already merged and were previously green on this same harness. **The change did not break them; the absent
+credentials did.** Noticing that the failing pages were ones the slice never touched is what prevented
+"fixing" working code until the harness went green. Real keys are an owner gate.
+
+### Backlog state at this marker
+
+`ACBP-FE-005` is **`Done`**, set on the owner's instruction in the same breath as merging this marker — so
+the row and this paragraph move together rather than the marker shipping a sentence its own commit falsifies.
+Its evidence is the table above: squash `442c380`, exact-head `32058460054`, exact-main `32061460475`, all at
+zero skips. `FE-013` and
+`FE-014` remain `Blocked-API` deliberately: their cells now name only the three genuinely missing
+model-driven routes (`generateStrategyOptions`, `recommendStrategy`, `generateRoadmap`), and re-scoping either
+row to its read-only half is a planning decision, not a correction.
+
+The method note in those cells is load-bearing: a glob over the api route tree **silently matches nothing**,
+because a path segment in square brackets is read as a character class. That produced a confident, empty,
+wrong answer twice before a self-test caught it — the same shape as the `Test-Path` wildcard trap recorded
+earlier in this log, now seen four times.
+
+
+### MERGE MARKER — ACBP-FE-007 is on `main` (appended 2026-08-18)
+
+Pinned to squash SHAs, run ids and quoted assertion text rather than status words.
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-007** — interview session screen | **`41160b3`** | #127 | implementation `32069651328` on `6097130` — 292 files / **4332** tests |
+| | | | review fixes `32072993347` on `7c36db2` — 292 files / **4335** tests |
+
+Both head runs: **12 / 267 boundaries, zero failures, and NO skip tally anywhere in either log.**
+The +3 between them is exactly the three view-mapper cases the review fix brought with it — the guard and
+the tests that fail without it landed in the same commit.
+
+**The merge was the clean case, and it is worth recording that it CAN be.** `main` stood still at `072ccb6`
+from the CI run through to the merge, so the green on `7c36db2` genuinely covered the merged tree, and GitHub
+reported `mergeable: MERGEABLE` / `mergeStateStatus: CLEAN`. No per-file fallback was needed, unlike FE-005
+two commits earlier where `main` moved underneath the run.
+
+### The finding that reshaped the ticket, before any code
+
+**No HTTP route in this repository can cause an interview question to exist.** Five interview routes exist
+(session read, start, qa read, answer write, suspend/resume); `generateAdaptiveBatch`, `evaluateAnswer` and
+`suggestAssumptionForSkip` have **zero references anywhere under `apps/web`**, and `INTERVIEW.md` records the
+orchestration routes as deferred behind the live-provider owner gate. Verified by **enumerating all 36 route
+files**, because a glob over a bracket path silently matches nothing — the trap this log has now recorded
+five times.
+
+So a founder starting an interview gets an empty question list permanently. Two of the row's criteria
+therefore shipped **disclosed-not-met**: "batched questions" (no batch grouping, id or size exists on the
+wire) and "E2E completing an interview" (nothing writes `ready_for_review`, so there is no completion to
+reach, and no DOM harness exists in any `package.json`). Every other consequence is an **absence** — no
+next-question control, no finish control, no batch chrome — because each would have been a control that
+cannot act.
+
+### THE SLICE COMMITTED THE EXACT DEFECT IT WAS BUILT TO PREVENT, AND ONLY THE REVIEW CAUGHT IT
+
+The first commit passed `qa ?? { items: [] }` into the view mapper. A **failed** question-list read therefore
+rendered as a positive server assertion: *"There are no questions in this interview yet. The server has not
+produced any for this session."* The server had said nothing of the kind — the only event was a GET that
+failed.
+
+The screen knew the distinction and stated it correctly one branch above. But that guard tested `qaRefusal`,
+a **prop fixed at mount**, so it could only ever represent a server-component refusal; a client-side failure
+fell straight through to the definite copy. And `describeInterview` announced the same fabricated fact to the
+polite live region — where, unlike the sighted path, **no error banner exists to contradict it**. A refused
+read and a true empty list were byte-identical to a screen-reader user.
+
+Fixed where it cannot recur rather than patched at the call site: `toInterviewView` now takes
+`SessionQADTO | null` and owns a fourth `unknown` state, so a caller **cannot** substitute an empty list for a
+missing read. Mutation-proved — reverting it yields
+`AssertionError: expected 'none_exist' to be 'unknown'` **and**
+`expected 'there are no questions in this interv…' not to contain 'no questions in this interview'`, the
+second catching the announcement lie specifically.
+
+**This is the strongest evidence in this log for why independent review is not optional.** A full local gate,
+two green CI runs at zero skips, 84 passing tests including four mutation checks, and a self-review had all
+passed over it. The defect was in the one place none of them were looking: the difference between what the
+screen knew and what it said.
+
+### The other 20, grouped by what they teach
+
+**A false security comment is worse than none.** The header claimed a native form POST "arrives with
+`Origin: null` and is refused". `decideSameOrigin` consults `Sec-Fetch-Site` **first and exclusively when
+present** and returns allow for `same-origin` — so a same-origin form POST is *allowed*, and the Origin rows
+are never reached. The code was safe; the stated reason was fiction. The real enforcer is the `cross-site`
+row plus the no-provenance row.
+
+**Accessibility failures that a screenshot cannot see.** The answer textarea had **no accessible name** at
+all (a `<legend>` names the group, not the controls, and `aria-describedby` is a description) — while the
+comment beside it justified the id as safe for `aria-describedby`. Three live regions were created in the
+same React commit as their text, the exact failure this file's own comment describes and had guarded in
+precisely one of four places. The visible badge counted `addressed` while the announcement counted
+`answered`, so the two channels reported different numbers the moment anyone skipped. `.cs-help` measured
+**3.98:1** and **3.56:1** against a 4.5:1 AA floor.
+
+**A comment can be invalidated by its own commit.** Three findings, one cause: the five comment lines this
+ticket *added* to the focus-visible block pushed the selectors below it down by exactly five, so a
+`console.css:681-683` citation written in the same commit was **false on arrival**, and a comment asserting
+the textarea is covered "so :541 and :542 both match" ended up pointing at its own prose. Citations into
+files a commit edits now name **selectors and symbols, never line numbers**.
+
+**An assertion that cannot fail is not coverage.** `expect(body).not.toContain('accountId')` was a tautology:
+the arm is typed `SessionQADTO`, which has no such field, so the responder was handed nothing to leak while
+the test name promised a redaction guarantee. Replaced with exact key-set assertions that fail if a field is
+**added** — the direction a real disclosure would take.
+
+Also corrected: "exactly one of pause/resume can ever act" (false in five of seven branches, and the test
+`describe` title repeated it while two tests under it refuted it); "the DTO mirrors those columns exactly"
+(it redacts `account_id` and adds the derived `phase`); "every id in this file is per-question" (two are
+literals); "Revised N times" (off by one — `revisions` includes the original); the pause/resume 404 asserting
+one of its two causes; and a `conflict` refusal arm for a status the read cannot return, which is this
+slice's own no-unreachable-arms rule broken by its author.
+
+### It also repaid a debt from FE-005
+
+`provisioning-progress.tsx` rendered `cs-control-outcome--${kind}` for eight `ResumeOutcome` kinds while only
+`refused` and `error` had CSS rules — so on the already-merged provisioning screen a **success** and five
+distinct refusals rendered identically. All six gaps are closed, and the accent list is now documented as a
+maintained claim like the focus-visible one.
+
+### Evidence limits, stated rather than implied away
+
+The measured render harness reaches only the **signed-out refusal** for this page; without Clerk credentials
+the authenticated view returns 500. The question cards, the fieldset/legend and the live regions are
+therefore **not** covered by it, and the narrow-width case that matters most here — a textarea inside a
+fieldset inside a padded card at 492px — rests on the CSS rules and on review. Real keys remain an owner
+gate, and the harness is deliberately not in CI.
+
+### Still owed
+
+`packages/contracts/src/interview/interview.ts:29` states *"a session is never inserted directly into
+`in_progress`"*, which `packages/database/src/interview-repository.ts:33` does exactly — and whose own comment
+says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
+reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
+ticket rather than edited from a frontend slice.
+
+
+### MERGE MARKER — ACBP-FE-010 is on `main` (appended 2026-08-18)
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-010** — transparent memory browser | **`bed0a70`** | #130 | `32086960764` on `3935935` — 295 files / **4407** tests, zero skips |
+
+`main` stood still at `1328c46` from the CI run through the merge, so the green covered the merged tree —
+no per-file fallback needed. The FOUR NEW PATCH ROUTE TESTS are named in that log as having executed, which
+matters because they live in a `skipIf` real-PG suite and vanish silently without a database.
+
+### What the ticket refused to build
+
+**MEM-004 has no wire.** The row requires "any withheld conflicting item" from the server; no memory route
+emits one. MEM-004 lives in `assembleContext`, CDR-025 records it as deferred, and the traceability CSV maps
+it to ACBP-P2-007. Computing it client-side would be the UI hiding an item on its own — which the same cell
+forbids. The row also names the wrong requirement: this screen serves **MEM-002**, which the row omits.
+
+**The delete dialog refuses the word "permanent"**, because it would be false three ways: the delete is soft,
+the record is retained, and earlier versions survive and cannot themselves be removed.
+
+### PATCH had no route-level coverage, and the file read as though it did
+
+The `itemRoute` type declared `PATCH`, but nothing under `apps/web` ever called it — the type was the
+only thing asserting the verb existed. Four real-PG tests now pin supersede-not-mutate, the provenance
+rewrite, the bare 409, the viewer 403, both 415s, the string-vs-object 400 split, and a forged foreign-tenant
+denial that writes nothing.
+
+### The review found 42 defects, and the worst one was a fix
+
+**BLOCKER, self-inflicted:** minutes before the review returned I "corrected" a hardcoded `100` by importing
+`MEMORY_LIST_DEFAULT_LIMIT` from `@acbp/core` — into a `'use client'` module, dragging the server
+composition graph across the client boundary. `check:boundaries` passed it, so **that checker has a gap this
+review did not**. The limit is now a prop from the server page.
+
+**Two HIGH on the delete path.** The delete answer could never be read — it was keyed to a table row, and the
+reload removes that row, so a 200 "removed", a 404 "nothing was there" and a 409 "state changed" all rendered
+**identically**. And the empty state said "an empty list means nothing has been recorded, not that anything
+was lost" — reachable one action after a founder deleted their last item.
+
+**The dialogs claimed `aria-modal="true"`** while the CSS shipped in the same commit said, correctly, that a
+modal trapping nothing is worse than a form in the page. Nothing trapped focus.
+
+**A reassurance pointing at a door that does not open:** the copy promised the item "still appears in your
+data export" — true of the stored row, naming a document no route or screen in this build can produce.
+
+### The encoding guard earned its keep
+
+A PowerShell `.Replace()` with backticks inside a double-quoted string ate an "a" and left a raw BEL in a
+comment — damage that survives typecheck, lint and tests because it lands in a literal. `pnpm run check`
+caught it. That is the `CHECK=1` this log already records as having been scrolled past once.
+
+### Backlog state
+
+`ACBP-FE-010` → **Done**. The FE board is now **8 Done, 5 Planned, 6 Blocked-API**. Of the Planned five,
+**FE-008 and FE-009 are effectively blocked** — verified zero HTTP wiring for the question generator and all
+seven understanding use cases — and FE-019 is a ruling rather than a screen. **FE-003 and FE-012 are the only
+buildable screens left on the current API.**
+### MERGE MARKER — ACBP-FE-012 is on `main` (appended 2026-08-18)
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-012** — Decision Room queues | **`ac5ddd6`** | #133 | `32126593976` on `19864a7` — 297 files / **4442** tests, zero skips |
+
+`main` stood still at `bed0a70` from the CI run through the merge, so the green covered the merged tree.
+
+### The row's requirement had a trap in the word "disconnect"
+
+This stream **always ends**: a bounded five-minute lifetime and a terminal `closed` event on every exit the
+server controls. Ending is the NORMAL case, not a fault. The server's own comment gives the motive — "the
+room went quiet" must never be how a founder learns their access changed. So five endings get five outcomes:
+routine expiry reconnects; `unauthorized` **stops**, because the stream re-authorizes every tick and
+retrying would hammer an endpoint that keeps refusing; `unavailable` polls; a refusal-to-open is a refusal,
+not a loss; and an ending with no terminal event is the genuine transport fault.
+
+### The review found a permanent silent freeze — the exact outcome the row forbids
+
+Keying the transport effect on `stream.mode` meant a SECOND `max_lifetime` produced
+`reconnecting → reconnecting`: the handler closed the socket, the dependency string was unchanged so the
+effect never re-ran, no replacement opened, and polling stayed inert because it requires `mode === 'polling'`.
+The badge would have read "reconnecting" forever while nothing was connected. The same dependency also tore
+down HEALTHY connections on their first event. Fixed with an explicit `connectionEpoch`; mutation-proved.
+
+**The banned word was on screen.** Three files declare "live" banned because the channel is `poll_backed` —
+and the badge rendered `stream.mode` verbatim. The test named as the enforcement only inspected
+`describeStream`, never anything the panel rendered. That is the third consecutive ticket where a guarantee
+was asserted in prose with nothing actually enforcing it.
+
+**A dead listener I caught before the review, which it then confirmed independently:** the server writes its
+heartbeat as an SSE *comment*, and EventSource ignores comments entirely; its only named events are `room`
+and `closed`, and `message` fires only for an event with no name. The listener could never run, and the
+comment calling it "the closest observable signal" named an enforcement that did not exist.
+
+### Deliberate departure from the row, and an owed test
+
+**Queues do NOT collapse to tabs on mobile.** Tabs would hide nine of ten queues behind a control, and the
+whole point of this screen is seeing at a glance which queues did *not* report. They stack instead.
+
+**No test exercises the EventSource wiring.** Every fix is proved at the reducer, where the logic lives, but
+the panel has no test file — so "closing the source suppresses the browser's auto-retry" is enforced by one
+line and asserted by nothing. A DOM-level test is impossible here: no DOM harness exists in any
+`package.json`.
+
+### Board state, corrected
+
+Marking FE-012 Done exposed that **FE-010 was still `Planned` on `main`** — its marker PR (#132) had been
+opened and never merged, so a "9 Done" count stated earlier in this session was wrong. #132 is merged as
+`ff9738f`. The FE board now reads **9 Done, 4 Planned, 6 Blocked-API**, and of the four Planned, FE-008 and
+FE-009 are effectively blocked (verified zero HTTP wiring) and FE-019 is a ruling rather than a screen —
+leaving **FE-003 as the only buildable screen on the current API**.

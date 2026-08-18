@@ -47,7 +47,7 @@ and CDR-075/P6-010 already own that seam. Two limiters, two dimensions, no overl
 
 ### §1.3 Clerk covers the auth surface, and only the auth surface
 
-`apps/web/src/app/sign-in/[[...sign-in]]/page.tsx` and its sign-up counterpart render Clerk's hosted `<SignIn/>`
+`apps/web/src/app/(site)/sign-in/[[...sign-in]]/page.tsx` and its sign-up counterpart render Clerk's hosted `<SignIn/>`
 and `<SignUp/>` components. Credential submission therefore goes to **Clerk's Frontend API**, not to any route in
 this repository — there is no `/api/sign-in`, and `grep` finds no credential-accepting handler. Clerk applies its
 own rate limits at that edge.

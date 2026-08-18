@@ -1,11 +1,16 @@
 ---
-description: Select the appropriate frontier model, preserve approved specifications, and enforce complete verified task handoffs
+description: Choose the model and reasoning level that fits the task and hand work to another model completely; the standing engineering rules live in AGENTS.md
 alwaysApply: true
 ---
 
-# Model Selection, Scope Control, and Task Completion
+# Model Selection and Routing
 
-## 0. Project identity, rule authority, and scope protection
+The standing operating rules for this repository are **not** in this file. They are in
+[`AGENTS.md`](../../AGENTS.md) at the repository root, which is canonical. This file carries the one
+thing Cursor needs loaded into every session that `AGENTS.md` deliberately does not cover: which
+model and reasoning level fits the work in front of it, and how a task is handed to another model.
+
+## 0. Project identity and rule authority
 
 ### Project identity
 
@@ -13,82 +18,63 @@ This protocol governs the **AI Company Builder Platform** (temporary working nam
 official name is selected). This repository (`ai-company-builder-platform`, at
 `E:\AI-Company-Builder-Platform`) is the standalone home of that product. It is a new product
 effort. It is NOT Halo Suite, NOT Systevo, and not any other previous project, even where
-those projects share this machine or disk.
+those projects share this machine or disk. The full isolation rule is `AGENTS.md` §9.
 
 ### Rule authority
 
-Authoritative-copy hierarchy for this protocol:
+1. `AGENTS.md` — **canonical** for every standing rule: gates, engineering discipline, evidence,
+   security, verification, git policy, status definitions, and handoffs.
+2. `.cursor/rules/model-routing.mdc` (this file) — authoritative for model selection and routing
+   only. Cursor loads it automatically through the frontmatter above.
+3. `tooling/cursor-rules/model-routing.mdc` — portability copy for use outside Cursor. It must stay
+   byte-identical to this file, and `tools/check-cursor-rules-sync.mjs` now enforces that
+   (`pnpm check:cursor-rules-sync`, part of `pnpm check:static`) rather than leaving it to care.
+4. Machine-local agent memory — convenience summary **only**.
 
-1. `.cursor/rules/model-routing.mdc` (this file, in the repository) — **authoritative**
-2. `tooling/cursor-rules/model-routing.mdc` — synchronized portability copy; must be kept
-   byte-identical to the repository rule
-3. Claude machine-local memory — convenience summary ONLY
+Machine-local memory must never override a repository file and must never become the only source
+for an important product or engineering decision. Where this file and `AGENTS.md` appear to
+disagree on anything other than model selection, `AGENTS.md` wins.
 
-Machine-local memory must never override this repository rule and must never become the only
-source for an important product or engineering decision. If memory and this file disagree,
-this file wins.
+This file no longer states its own source-of-truth hierarchy for conflicting requirements. It used
+to, and that ladder contradicted the one in `AGENTS.md` §10 — which is the ladder the repository
+has actually been applying and citing in its review records. `AGENTS.md` §10 governs.
 
 ### Project-scope protection
 
-Never reuse names, requirements, architectural decisions, data models, branding, or
-assumptions from Halo Suite, Systevo, or another project unless the user explicitly imports
-them into the AI Company Builder Platform.
+Never reuse names, requirements, architectural decisions, data models, branding, or assumptions
+from Halo Suite, Systevo, or another project unless the user explicitly imports them into the AI
+Company Builder Platform. Before creating a specification or implementation artifact, confirm that
+its title, paths, requirement IDs, and product terminology belong to this product.
 
-Before creating a specification or implementation artifact, confirm that its title, paths,
-requirement IDs, and product terminology belong to the AI Company Builder Platform.
+## 1. Classify the task before choosing a model
 
-## 1. Before starting
+Classify the work as one of:
 
-Before modifying files or producing final artifacts:
+- Product architecture or specification
+- Technical architecture
+- Routine implementation
+- Cross-file implementation
+- Deep debugging
+- Trust-critical implementation
+- Validation or audit
 
-- Read the complete user request.
-- Inspect all relevant repository files, documentation, dependencies, configuration, tests, and existing conventions.
-- Identify the applicable approved specification, architecture document, requirement IDs, acceptance criteria, and previous decisions.
-- Determine the requested scope, expected deliverables, risks, dependencies, and verification requirements.
-- Classify the task as one of:
-  - Product architecture or specification
-  - Technical architecture
-  - Routine implementation
-  - Cross-file implementation
-  - Deep debugging
-  - Trust-critical implementation
-  - Validation or audit
+Then:
+
 - Select the model and reasoning level appropriate to the actual work.
 - Use the explicitly assigned model when it is suitable.
-- If the assigned model is unavailable or unsuitable, report that before substantive work begins and recommend the correct available model.
+- If the assigned model is unavailable or unsuitable, report that **before** substantive work
+  begins and recommend the correct available model.
 - Never silently substitute a requested model.
-- Never silently reduce the requested scope.
+- Never silently reduce the requested scope (`AGENTS.md` §18).
+- Do not start implementation while a required product or architectural decision is unresolved and
+  different choices would materially change the result (`AGENTS.md` §6). When the unresolved point
+  is non-blocking, use the safest documented assumption and record it in the handoff
+  (`AGENTS.md` §24).
 
-Do not start implementation when a required product or architectural decision is unresolved and different choices would materially change the result.
-When the unresolved point is non-blocking, use the safest documented assumption and record it in the final handoff.
+## 2. Routing
 
-## 2. Source-of-truth hierarchy
-
-Use this hierarchy whenever instructions or documents conflict:
-
-1. The user's latest explicit instruction
-2. Approved Master PRD
-3. Approved technical architecture
-4. Approved requirement and acceptance-test documents
-5. Approved decision records
-6. Current repository behavior and tests
-7. Existing implementation documentation
-8. Reasonable implementation assumptions
-
-Do not overwrite an approved product decision merely because the current code behaves differently.
-Do not silently reinterpret or remove an approved requirement.
-
-When a conflict is discovered:
-
-- Identify the conflicting sources.
-- Explain the impact.
-- Follow the higher-authority source.
-- Record the conflict in the task handoff.
-- Create or update a decision record when required.
-
-## 3. Model routing
-
-Model routing is capability-based. Model names may be updated when availability changes, but the responsibility of each routing tier remains the same.
+Routing is capability-based. Model names may be updated when availability changes, but the
+responsibility of each tier does not.
 
 ### Claude Fable 5
 
@@ -160,6 +146,9 @@ Opus must not invent:
 - Workflow states
 - External-action permissions
 
+That list is the routing-tier expression of `AGENTS.md` §18; the section governs, this is the
+reminder at the point of model choice.
+
 ### Codex GPT-5.6 Sol
 
 #### High reasoning
@@ -177,7 +166,8 @@ Use for:
 - Reconciliation between implementation and specification
 - Reviewing generated changes from another model
 
-High reasoning should inspect the repository, form evidence-based hypotheses, implement the narrowest correct change, and verify it.
+High reasoning should inspect the repository, form evidence-based hypotheses, implement the
+narrowest correct change, and verify it.
 
 #### Max reasoning
 
@@ -202,7 +192,8 @@ Use only when the additional reasoning is justified by material risk or complexi
 - Security-sensitive migrations
 - Difficult failures spanning several services
 
-Max may also be used for an exceptionally complex repository-wide incident when High reasoning has produced insufficient evidence.
+Max may also be used for an exceptionally complex repository-wide incident when High reasoning has
+produced insufficient evidence.
 
 Do not use Max for:
 
@@ -216,9 +207,8 @@ Do not use Max for:
 
 ### Model availability and Codex handoffs
 
-Model availability is environment-dependent and must be checked at task start. Never claim
-that a model was invoked unless the execution environment provides evidence that it was
-actually used.
+Model availability is environment-dependent and must be checked at task start. Never claim that a
+model was invoked unless the execution environment provides evidence that it was actually used.
 
 For tasks labeled "route to Codex," create a self-contained handoff file containing:
 
@@ -230,266 +220,34 @@ For tasks labeled "route to Codex," create a self-contained handoff file contain
 - Verification expectations
 - Expected outputs
 
-Do not substitute an internal Claude subagent for Codex unless the user explicitly approves
-that substitution for the specific task.
-
-## 4. Specification protection
-
-Implementation models must treat approved product and architecture documents as controlled artifacts.
-
-They must not:
-
-- Change the product's intended behavior without authorization.
-- Remove an acceptance criterion because it is difficult to implement.
-- Weaken an approval or security requirement.
-- Replace a server-side control with a frontend-only check.
-- Present an unimplemented control in the UI.
-- Create fake metrics, fake integrations, or fake success states.
-- Mark placeholder behavior as production-ready.
-- Alter pricing, credits, billing, or usage semantics without an approved decision.
-- Add new autonomous permissions without explicit authorization.
-
-When implementation reveals that a requirement is impossible, unsafe, contradictory, or disproportionately expensive, report it and propose options rather than silently changing it.
-
-## 5. Execution rules
-
-Work autonomously within the authorized scope.
-
-Ask a question only when:
-
-- A missing decision materially changes the product behavior.
-- A required credential, permission, or external resource is unavailable.
-- Two equally authoritative requirements conflict.
-- Continuing could cause an irreversible external effect.
-- The action would exceed the authorized financial or operational boundary.
-
-Do not ask merely to avoid repository exploration or reasonable engineering judgment.
-
-Preserve throughout implementation:
-
-- Tenant isolation
-- Least privilege
-- Server-authoritative authorization
-- Auditability
-- Idempotency
-- Approval gates
-- Payload-bound authorization
-- Secret redaction
-- Evidence provenance
-- Data ownership
-- Usage accounting
-- Safe retries
-- Explicit failure states
-- External-action limits
-
-For external side effects, determine before execution:
-
-- Whether approval is required
-- Whether the action is reversible
-- Whether an idempotency key is required
-- Whether retries could duplicate the action
-- Whether usage or billing must be recorded
-- Whether an audit event is required
-- Whether the user must be notified
-
-## 6. Change discipline
-
-Before modifying code:
-
-- Identify the smallest coherent set of files.
-- Search for existing patterns and reusable components.
-- Check relevant tests before changing behavior.
-- Preserve backward compatibility unless the approved task requires otherwise.
-- Avoid unrelated cleanup.
-- Avoid broad dependency upgrades unless necessary.
-- Do not reformat unrelated files.
-- Do not introduce infrastructure merely for theoretical future scale.
-
-When a database change is needed:
-
-- Provide a migration.
-- Consider backward compatibility.
-- Define rollback or forward-recovery behavior.
-- Preserve tenant ownership.
-- Add appropriate constraints and indexes.
-- Test existing data behavior.
-- Avoid destructive changes without explicit approval.
-
-When an API or event contract changes:
-
-- Update producers.
-- Update consumers.
-- Update schemas.
-- Update tests.
-- Update documentation.
-- Identify compatibility consequences.
-
-## 7. Verification requirements
-
-Do not claim success without current verification evidence.
-
-Run the narrowest relevant checks first, such as:
-
-- Targeted unit tests
-- Targeted integration tests
-- Type checking
-- Linting
-- Schema validation
-- Migration validation
-- Build checks
-- Browser or end-to-end verification
-- Security-specific tests
-- Tenant-isolation tests
-- Idempotency tests
-- Replay tests
-- Failure-recovery tests
-
-Expand verification according to risk and blast radius.
-
-For trust-critical work, verification must include applicable negative tests.
-Examples:
-
-- Another tenant cannot access the resource.
-- An unapproved action cannot execute.
-- Editing an approved payload invalidates authorization.
-- Replaying a webhook does not duplicate accounting.
-- Retrying a job does not repeat an external action.
-- Revoking an integration prevents execution.
-- Exceeding a policy limit blocks the action.
-- An emergency stop prevents newly queued external actions.
-- Secrets do not appear in logs, browser responses, or error messages.
-
-Record every verification command and its result.
-
-When a check cannot be run:
-
-- State why.
-- Explain the resulting uncertainty.
-- Do not describe the work as fully verified.
-- Use `PARTIAL` or `BLOCKED` when appropriate.
-
-## 8. Artifact requirements
-
-Every substantial task must leave reusable artifacts in the repository when applicable.
-Examples include:
-
-- Product specification
-- Architecture document
-- Decision record
-- Implementation code
-- Migration
-- Test suite
-- Validation report
-- Updated README
-- Requirement traceability entry
-- Operational runbook
-- Risk register entry
-
-Do not leave the only important result inside the chat response.
-Report the exact path of every created or materially changed artifact.
-
-For specification tasks, include:
-
-- Version
-- Status
-- Evidence
-- Assumptions
-- Requirement IDs
-- Open questions
-- Approval state
-
-For implementation tasks, reference the requirement IDs being implemented.
-
-## 9. Completion status definitions
-
-`Status: DONE`
-
-Use only when:
-
-- All requested scope is complete.
-- Required files were created or updated.
-- Acceptance criteria are satisfied.
-- Relevant verification passed.
-- No known requested work remains incomplete.
-- No material failure is hidden.
-- Remaining risks are non-blocking and explicitly reported.
-
-`Status: PARTIAL`
-
-Use when:
-
-- Useful work was completed.
-- Some requested scope remains unfinished.
-- Some required verification could not be performed.
-- A non-critical dependency prevented full completion.
-- The result is usable but not fully compliant with the request.
-
-Clearly identify completed and incomplete portions.
-
-`Status: BLOCKED`
-
-Use when:
-
-- A required decision is missing.
-- Required access, credentials, or infrastructure are unavailable.
-- Continuing would be unsafe.
-- A higher-authority requirement conflict cannot be resolved.
-- The requested result cannot be produced correctly in the current environment.
-
-Explain the blocker and the smallest action needed to resolve it.
-
-Never use `DONE` when:
-
-- Tests failed.
-- Verification was skipped without explanation.
-- Requested scope remains incomplete.
-- Placeholders remain in requested functionality.
-- Known defects remain unresolved.
-- The system only appears to work through hardcoded or fake behavior.
-- A frontend control exists without required backend enforcement.
-
-## 10. Required final handoff
-
-End every task with the following structure:
-
-**Status** — `Status: DONE`, `Status: PARTIAL`, or `Status: BLOCKED`
-
-**Summary** — a concise explanation of:
-
-- What was accomplished
-- Which requirement IDs were addressed
-- Important behavior changes
-- Important decisions made
-
-**Files** — list created, modified, and deleted files plus generated artifacts, with exact repository paths.
-
-**Verification** — for each check include:
-
-- Command or procedure
-- Result
-- Relevant failure or warning
-- Whether it was targeted or repository-wide
-
-**Risks and assumptions** — include remaining risks, assumptions used, known limitations, compatibility concerns, and security or operational implications.
-
-**Blockers or required user actions** — include only actions genuinely required from the user.
-
-**Recommended next step** — include only when another step is genuinely necessary. Do not provide a generic next step merely to continue the conversation.
-
-## 11. Handoff integrity
-
-The final handoff must be sufficient for another model or engineer to continue without reconstructing the work from scratch.
-
-It must not:
-
-- Claim unsupported success
-- Hide failed tests
-- Omit changed files
-- Omit important assumptions
-- Misrepresent partial work as complete
-- Describe planned work as implemented work
-- Describe generated output as executed action
-- Expose secrets
-- Include sensitive credentials or tokens
-
-The handoff is part of the task deliverable, not optional reporting.
+Do not substitute an internal Claude subagent for Codex unless the user explicitly approves that
+substitution for the specific task.
+
+## 3. Everything else is in AGENTS.md
+
+This file used to restate the general engineering rules. It no longer does, because two copies of
+one rule drift apart and the drift is invisible until it matters. Read `AGENTS.md` for:
+
+| Subject | Section |
+|---|---|
+| Hard gates, and what needs owner authorization | §1, §16 |
+| Engineering discipline per ticket, TDD, mutation testing, review passes | §2 |
+| The evidence standard — could a wrong implementation produce this result? | §3 |
+| Money paths | §4 |
+| Multi-session safety | §5 |
+| Undecided judgment calls | §6 |
+| Stop conditions and reporting | §7, §8 |
+| Repository isolation | §9 |
+| Source-of-truth hierarchy for conflicting requirements | §10 |
+| Architectural boundaries | §11 |
+| Security rules | §12 |
+| Database and concurrency | §13 |
+| The verification gate, and verification breadth | §14, §21 |
+| Git and PR policy | §15 |
+| Completion standard | §17 |
+| Specification protection | §18 |
+| External side effects | §19 |
+| Change discipline | §20 |
+| Artifacts | §22 |
+| Status: DONE, PARTIAL, BLOCKED | §23 |
+| The final handoff | §24 |

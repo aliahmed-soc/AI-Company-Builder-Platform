@@ -130,7 +130,8 @@ It also cannot carry a per-request CSP nonce, which §3 needs.
 ### §2.3 Per-route — REJECTED
 
 Route handlers can set their own headers, but the surfaces that need a CSP most are the **HTML pages**
-(`app/page.tsx`, `app/layout.tsx`, `sign-in`, `sign-up`) — where scripts actually execute — and pages have
+(`app/(site)/page.tsx`, `app/(site)/layout.tsx`, `app/layout.tsx`, `sign-in`, `sign-up`, `console`) — where
+scripts actually execute — and pages have
 no header hook. Per-route would also put the same six-line block in 23 files, where the twenty-fourth is
 the one that forgets.
 
@@ -302,7 +303,7 @@ reference and breaks social sign-in."* An independent review took it apart, and 
 
 **The premise is not establishable in this repository.** `@clerk/clerk-js` — the package that would contain the
 popup logic — **is not installed**; only `@clerk/nextjs` is, and `grep -rn "opener\|window.open"` over its
-`dist/esm/` returns nothing. `sign-in/[[...sign-in]]/page.tsx` renders a bare `<SignIn />` with no `oauthFlow`
+`dist/esm/` returns nothing. `(site)/sign-in/[[...sign-in]]/page.tsx` renders a bare `<SignIn />` with no `oauthFlow`
 prop, and no social provider is configured anywhere in code. Whether a popup is ever opened is a property of a
 Clerk dashboard configuration and a runtime bundle, neither of which exists here.
 
@@ -460,6 +461,20 @@ below are §7.1 to §7.7**, and are cited by those numbers elsewhere in this doc
 9. **The CSP nonce makes every page render unique.** Passing `contentSecurityPolicy` makes Clerk stamp a fresh
    per-request nonce into the HTML, so page output varies per request. Not a security problem, but it is a
    caching/rendering property nobody has decided on, and it arrived as a side effect of this ticket.
+
+   **INTERIM RULING, owner, 2026-08-17 — this item stays OPEN, and is now held open on purpose.** The root
+   layout carries `export const dynamic = 'force-dynamic'` (`apps/web/src/app/layout.tsx`). It exists solely to
+   preserve the render mode that used to be an accident: `auth()` reaches `await headers()`, and until the auth
+   header moved to `(site)/layout.tsx` that call was the ONLY dynamic API above `/console`, which is why every
+   page in this app rendered dynamically. Removing it would have flipped `/console` and `/_not-found` to
+   build-time prerendering — and a build-time render has no request and therefore no nonce, which would have
+   answered *this item* by side effect and in the wrong direction.
+
+   The ruling is that **`/console`'s render mode remains an open decision under this item, to be decided
+   deliberately later and never by side effect.** `force-dynamic` is the interim hold, not the answer. The
+   measured counterfactual stays beside the line and must not be removed: with it, every page is `ƒ` and
+   `prerender-manifest.json` lists only `/_global-error`; without it, `/console` and `/_not-found` turn `○` and
+   join that manifest. Anyone proposing to delete the line re-runs that mutation first.
 10. **`X-Frame-Options: DENY` forbids same-origin framing too.** Harmless today (`CLERK_PROXY_URL`/`proxyUrl`/
     `isSatellite` appear nowhere), but enabling Clerk proxy mode or any same-origin Clerk iframe would require
     `SAMEORIGIN`. Recorded so the breakage is diagnosable in one step rather than three.

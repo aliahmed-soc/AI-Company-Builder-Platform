@@ -107,12 +107,42 @@ middleware was right; the path had moved.
 **A synchronizer or double-submit token is the wrong control for this codebase today, and would be worse
 than the gap it closes.**
 
-A token has to be issued to a document and echoed by the client. **No page in this application posts to any
-of the seventeen state-changing methods**, and that — not "there is no UI" — is the load-bearing fact.
+A token has to be issued to a document and echoed by the client. **At the time of this decision, no page in
+this application posted to any of the seventeen state-changing methods**, and that — not "there is no UI" — is
+the load-bearing fact for rejecting a token.
 
-`apps/web/src/app` *does* render: `layout.tsx` mounts `ClerkProvider` with `SignInButton`, `SignUpButton`
-and `UserButton`; `page.tsx` is a server component; and there are Clerk's `sign-in`/`sign-up` catch-alls.
-What none of them contains is a `<form>`, a Server Action (`grep "use server"` across `apps/web/src` and
+> **CORRECTION, 2026-08-17 — that premise no longer holds, and the ruling is unchanged.** `ACBP-FE-006` ships
+> the repository's first state-changing page control: the company profile screen's pause/resume button, a
+> same-origin `fetch` to the existing `POST /api/companies/{id}/pause|resume`. The two present-tense sentences
+> in this section were true when written and are now false, so they are rescoped to the past rather than
+> deleted — §0.3's own rule is that "a present-tense claim in a decision record is a claim that goes stale by
+> its own success", and CDR-083 §6.2 exists because removed reasoning is worse than corrected reasoning.
+>
+> **What this does NOT change: the no-token ruling, and the gate's sufficiency.** The premise was the reason a
+> token would have been *inert* — no producer of a valid token anywhere in production. It was never the reason
+> the gate WORKS. That rests on `Sec-Fetch-Site` and `Origin` being forbidden header names page script cannot
+> set or remove, which is unaffected by a page posting. §3 already anticipated this arrival, calling a token
+> "reversible if a UI ever wants defence in depth" — additive, not newly required. §2/§4 deliberately put the
+> gate at the boundary so that "a route module that does not exist yet is covered the day it is written"; the
+> same sentence covers a page control written later. A same-origin `fetch` hits the allow row; a cross-site
+> forgery still hits the deny rows.
+>
+> **The live, named-but-not-taken option** is therefore §3's: a token remains available as defence in depth if
+> a future UI wants it. Nothing about ACBP-FE-006 obliges it.
+>
+> **Why the control is a `fetch` and not a Server Action**, recorded here because it is a CSRF-adjacent choice:
+> a Server Action is a state-changing entry point that no static guard in this repository can see —
+> `tools/check-csrf-origin-gate.mjs` enumerates `route.*` modules under `api/`, and
+> `tools/check-rate-limit-coverage.mjs` is scoped to `apps/web/src/app/api/**`. Both would have stayed green
+> while their promises silently stopped covering the app's only mutating control. Routing the mutation through
+> a real route keeps both guards' coverage true. (It is also not a raw `<form method="post">`: CDR-083 §6.4
+> established that this app's `Referrer-Policy: no-referrer` makes such a POST arrive with `Origin: null`, and
+> the fix is the transport, never loosening the gate.)
+
+`apps/web/src/app` *does* render: `layout.tsx` mounts `ClerkProvider`; `(site)/layout.tsx` renders
+`SignInButton`, `SignUpButton` and `UserButton`; `(site)/page.tsx` is a server component; there are Clerk's
+`sign-in`/`sign-up` catch-alls under `(site)`; and `console/` renders the application shell against mock data.
+What none of them contained AT THE TIME OF THIS DECISION was a `<form>`, a Server Action (`grep "use server"` across `apps/web/src` and
 `packages` returns zero) or a `fetch` to any of those methods. So a token would ship with an issuing
 endpoint, a cookie, a verification path, and **no producer of a valid token anywhere in production** — a
 control that only tests can satisfy.
@@ -244,7 +274,7 @@ statement leaves nothing in the database to assert on. §6.3 records what was pl
 | Not delivered | Why |
 |---|---|
 | **HTTP rate limiting** (NFR-010) | The second of CDR-080 §4's three. Different control, different failure mode, needs a store and a limit value nobody has ruled. Its own ticket. |
-| **Security headers / CSP** (NFR-010) | The third. A different control with its own failure modes, whose policy has to be authored against the actual rendered surface — `layout.tsx` mounting Clerk's components today, plus whatever the first real product UI adds. Its own ticket. **Not** deferred because no UI exists: one does (§1), and an earlier draft of this row said otherwise. |
+| **Security headers / CSP** (NFR-010) | The third. A different control with its own failure modes, whose policy has to be authored against the actual rendered surface — `(site)/layout.tsx` mounting Clerk's components, plus the `/console` application shell, which now exists rather than being hypothetical. Its own ticket. **Not** deferred because no UI exists: one does (§1), and an earlier draft of this row said otherwise. |
 | Pen review | External engagement at the General MVP gate (`RELEASE-GATES.md:11`). Untouched by this ticket, and the NFR-010 traceability cells keep saying so. |
 | A CSRF **token** | §1. Rejected on the record, not overlooked — and reversible if a UI ever wants defence in depth. |
 | Any change to `authorizedParties` | §0.2.3 is a real finding and a different control. Widening this ticket to it would be scope this CDR did not rule on. |

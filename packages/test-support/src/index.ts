@@ -33,3 +33,8 @@ export type { MvpLoopOps, MvpLoopJourneyDeps, MvpLoopFakeBehavior, MvpLoopGatewa
 export { sweepAuditPayloadsForSecrets, assertNoSecretsInAuditPayloads, SWEPT_TABLES } from './security/audit-secret-sweep.js';
 export type { SweepFinding, SweepableClient } from './security/audit-secret-sweep.js';
 export type { SliceFOps, SliceFJourneyDeps, SliceFDispatchResult, SliceFGateway, SliceFLogCapture, SliceFLogRecord } from './tenancy/slice-f-journey.js';
+// ACBP-API-010 — model-free fixture builders for tenant rows behind a multi-table constraint chain, so an
+// adversarial matrix can prove a foreign row that PROVABLY EXISTS is still invisible. The journeys reach the
+// same rows only through a fake model gateway; these do not, which is why they are separate.
+export { seedForeignRun, seedForeignArtifact, seedForeignApprovalRequest, seedForeignRoadmap } from './tenancy/isolation-fixtures.js';
+export type { ForeignFixtureParams, SeededRun, SeededArtifact, SeededApprovalRequest, SeededRoadmap } from './tenancy/isolation-fixtures.js';

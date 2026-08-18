@@ -93,7 +93,8 @@ export function routePathFor(routeFile: string): string {
 
 /**
  * The request pathname a page file serves. An OPTIONAL catch-all segment (`[[...sign-in]]`) matches zero
- * segments, so `sign-in/[[...sign-in]]/page.tsx` serves `/sign-in`, and `page.tsx` serves `/`.
+ * segments, and a parenthesised route-group segment is stripped below — so
+ * `(site)/sign-in/[[...sign-in]]/page.tsx` serves `/sign-in`, and `(site)/page.tsx` serves `/`.
  */
 export function pagePathFor(pageFile: string): string {
   return pathFor(pageFile, PAGE_FILE);

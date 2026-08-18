@@ -1,0 +1,1377 @@
+/*
+ * ACBP-FE-001 / FE-002 — console design tokens + shell styles.
+ *
+ * VISUAL LANGUAGE: Berry (CodedThemes), rebuilt natively. Berry is an MUI template; this repository adopts no
+ * CSS framework (ADR-023) and no component library, so nothing is imported from it — the language is rebuilt in
+ * plain CSS on this repo's own conventions. What is borrowed is the LOOK: deep indigo ground, raised cards with
+ * generous radius and soft shadows, a saturated primary, and restrained accent colours.
+ *
+ * DARK-FIRST, PER THE OWNER RULING 2026-08-15. Every colour is a token on :root, and :root is the dark theme —
+ * not a `.dark` override bolted onto a light base. Adding light later means redefining these same tokens inside
+ * one selector; no component rule needs to change, because no component rule names a colour literal.
+ *
+ * NOTE: ACBP-FE-001's backlog row carries the exclusion "No dark theme". The owner ruling supersedes it (owner
+ * decisions outrank the backlog in this repo's source priority) and the row is updated in the same commit rather
+ * than left contradicting the code.
+ */
+
+/* THE TOKENS MOVED TO `app/globals.css` (ACBP-FE-003 review). They were declared here, but this file is
+ * imported by `app/console/layout.tsx` ONLY — so on `/sign-in` and `/sign-up`, a different route group, not
+ * one of them existed, so every `var()` in `site.css` silently fell through to a colour literal. The
+ * dark-first invariant stated above is unchanged; it is now declared one layer up, where every route group
+ * reaches it. Nothing here redeclares a token — a second copy is the drift the invariant is about. */
+
+/* ── ACCESSIBILITY: honour prefers-reduced-motion globally ───────────────────────────────────────────────
+ * The duration-token zeroing moved to globals.css with the tokens. What stays here are the entrance
+ * animations this file declares, cancelled beside the rules that create them. */
+@media (prefers-reduced-motion: reduce) {
+  .cs-rise,
+  .cs-stat {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── box-sizing ───────────────────────────────────────────────────────────────────────────────────────────
+ * THIS APP SHIPS NO CSS RESET, so `box-sizing` is the CSS default `content-box` and padding is ADDED to a
+ * declared width. Every `width: 100%` element with padding therefore overflowed its parent by exactly its
+ * horizontal padding — measured at 48px on desktop (2 × --s-5) and 32px at narrow widths (2 × --s-4). The
+ * page scrolled sideways and the right edge of every card was cut off, which reads as a bad screenshot crop
+ * rather than as a bug, so it survived several visual passes before a scrollWidth assertion named it.
+ *
+ * Scoped to the console subtree rather than declared on `*`: the root layout and the auth pages are outside
+ * this slice, and silently changing the box model under them would be a change nobody asked for. (That is
+ * still true after the `(site)` split — the auth pages keep the app's default box model, untouched.) */
+.cs-root,
+.cs-root *,
+.cs-root *::before,
+.cs-root *::after {
+  box-sizing: border-box;
+}
+
+.cs-root {
+  background: var(--c-bg);
+  color: var(--c-text);
+  min-height: 100vh;
+  /* A soft, off-centre glow — Berry's cards read as "warm" because the ground is not flat black. */
+  background-image:
+    radial-gradient(1100px 520px at 78% -8%, rgba(76, 141, 255, 0.1), transparent 60%),
+    radial-gradient(820px 420px at 8% 4%, rgba(149, 117, 255, 0.08), transparent 62%);
+  background-attachment: fixed;
+}
+
+/* ── Skip link (FE-002 accessibility: skip-to-content) ───────────────────────────────────────────────────── */
+.cs-skip {
+  position: absolute;
+  left: -9999px;
+  top: var(--s-2);
+  z-index: 50;
+  background: var(--c-primary);
+  color: #06122b;
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-control);
+  font-weight: 650;
+}
+.cs-skip:focus {
+  left: var(--s-4);
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 100vh;
+}
+
+.cs-side {
+  border-right: 1px solid var(--c-border-soft);
+  background: linear-gradient(180deg, rgba(19, 26, 46, 0.92), rgba(14, 18, 32, 0.92));
+  padding: var(--s-4) var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.cs-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2) 0;
+}
+.cs-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: #06122b;
+  background: linear-gradient(135deg, var(--c-primary), var(--c-secondary));
+  box-shadow: 0 6px 18px -8px rgba(76, 141, 255, 0.9);
+}
+.cs-brand-name {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cs-brand-sub {
+  color: var(--c-text-faint);
+  font-size: 0.75rem;
+}
+
+/* Wrapper for a labelled group of nav items. It carries a CLASS rather than an inline margin so the
+   narrow-width rules below can flatten the groups into one scrolling strip — an inline style would win
+   over any media query and leave the groups stacked. */
+.cs-navgroup {
+  margin-top: var(--s-4);
+}
+.cs-navgroup-label {
+  color: var(--c-text-faint);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding: 0 var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.cs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cs-nav a {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0.6rem var(--s-3);
+  border-radius: var(--r-control);
+  color: var(--c-text-dim);
+  text-decoration: none;
+  font-size: 0.9rem;
+  /* "Decision Room" must not break across two lines when the nav becomes a horizontal strip. */
+  white-space: nowrap;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.cs-nav a:hover {
+  background: var(--c-surface-2);
+  color: var(--c-text);
+  transform: translateX(2px);
+}
+.cs-nav a[aria-current='page'] {
+  background: var(--c-primary-soft);
+  color: #cfe0ff;
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--c-primary);
+}
+.cs-nav .cs-ico {
+  width: 18px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+/* ── Topbar ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cs-top {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: 0 var(--s-5);
+  border-bottom: 1px solid var(--c-border-soft);
+  background: rgba(14, 18, 32, 0.72);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.cs-company {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-pill);
+  padding: 0.35rem 0.85rem 0.35rem 0.4rem;
+  font-size: 0.88rem;
+  color: var(--c-text);
+}
+.cs-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #06122b;
+  background: linear-gradient(135deg, var(--c-success), var(--c-primary));
+}
+.cs-spacer {
+  flex: 1;
+}
+
+/* ── Content ─────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-content {
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  max-width: 1380px;
+  width: 100%;
+}
+.cs-h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+.cs-sub {
+  margin: var(--s-1) 0 0;
+  color: var(--c-text-dim);
+  font-size: 0.9rem;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-card {
+  background: linear-gradient(180deg, var(--c-surface), var(--c-surface-2));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+}
+.cs-card-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.cs-card-t {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+/* ── Stat cards ──────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(232px, 1fr));
+  gap: var(--s-4);
+}
+.cs-stat {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--c-surface-2), var(--c-surface));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+  transition: transform var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), border-color var(--t-base) var(--ease);
+  /* Staggered entrance — the per-card delay is set inline via --i so the markup stays declarative. */
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.cs-stat:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lift);
+  border-color: var(--c-border);
+}
+/* The tinted wash that makes a Berry stat card read as "warm" rather than as a plain box. */
+.cs-stat::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(220px 120px at 100% 0%, var(--tint, transparent), transparent 70%);
+  pointer-events: none;
+}
+.cs-stat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.cs-stat-label {
+  color: var(--c-text-dim);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.cs-stat-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  background: var(--ico-bg, var(--c-primary-soft));
+  color: var(--ico-fg, var(--c-primary));
+}
+.cs-stat-value {
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.cs-stat-foot {
+  margin-top: var(--s-2);
+  font-size: 0.78rem;
+  color: var(--c-text-faint);
+}
+
+@keyframes cs-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.cs-rise {
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+/* ── Two-column region ───────────────────────────────────────────────────────────────────────────────────── */
+.cs-cols {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: var(--s-4);
+  align-items: start;
+}
+
+/* ── Approval list ───────────────────────────────────────────────────────────────────────────────────────── */
+.cs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.cs-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  background: var(--c-surface-2);
+  transition: border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.cs-item:hover {
+  border-color: var(--c-border);
+  background: var(--c-surface-3);
+  transform: translateY(-2px);
+}
+.cs-item-body {
+  min-width: 0;
+  flex: 1;
+}
+.cs-item-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.cs-item-meta {
+  color: var(--c-text-faint);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+/* ── Badges ──────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0.22rem 0.6rem;
+  border-radius: var(--r-pill);
+  font-size: 0.72rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.cs-badge--primary { background: var(--c-primary-soft); color: #a9c8ff; }
+.cs-badge--success { background: var(--c-success-soft); color: #7ff0cd; }
+.cs-badge--warning { background: var(--c-warning-soft); color: #ffd98a; }
+.cs-badge--danger  { background: var(--c-danger-soft);  color: #ffa3b0; }
+.cs-badge--muted   { background: var(--c-surface-3);    color: var(--c-text-dim); }
+
+/* ── Activity feed (FE-011) ──────────────────────────────────────────────────────────────────────────────── */
+.cs-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+.cs-feed::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--c-border), transparent);
+}
+.cs-feed li {
+  position: relative;
+  padding: 0 0 var(--s-4) 42px;
+}
+.cs-feed li:last-child {
+  padding-bottom: 0;
+}
+.cs-dot {
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2.5px solid var(--c-bg);
+  background: var(--c-text-faint);
+}
+.cs-dot--primary { background: var(--c-primary); }
+.cs-dot--success { background: var(--c-success); }
+.cs-dot--warning { background: var(--c-warning); }
+.cs-dot--danger  { background: var(--c-danger); }
+.cs-feed-text {
+  margin: 0;
+  font-size: 0.88rem;
+}
+.cs-feed-time {
+  color: var(--c-text-faint);
+  font-size: 0.75rem;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────────────────────────────────── */
+.cs-btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--r-control);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface-3);
+  color: var(--c-text);
+  white-space: nowrap;
+  transition: transform var(--t-fast) var(--ease), background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.cs-btn:hover { transform: translateY(-1px); border-color: var(--c-primary); }
+.cs-btn--ghost { background: transparent; }
+.cs-btn--danger {
+  background: var(--c-danger-soft);
+  border-color: rgba(255, 92, 114, 0.42);
+  color: #ffc3cc;
+}
+.cs-btn--danger:hover { border-color: var(--c-danger); }
+
+/* Focus-visible on EVERY FOCUSABLE element (FE-001 accessibility criterion). The list is exactly the
+   focusable set: links, buttons, the skip link, and — as of ACBP-FE-005 — the creation form's text input,
+   textarea and radios. `.cs-item` is deliberately absent — it is an <li> with no tabindex, so a rule for it
+   could never fire and would only imply a control that is not there.
+
+   THIS LIST IS A CLAIM THAT HAS TO BE MAINTAINED. It says "every focusable element", so any slice that adds
+   a focusable element and does not add it here makes the sentence false and ships a control that can be
+   reached by keyboard with no visible focus. FE-005 added four.
+
+   ACBP-FE-010 ADDED TWO FOCUSABLES AND BOTH ARE ACCOUNTED FOR HERE, not left to be discovered: the edit
+   form's <select> carries .cs-input, so the rule below already matches it, and the table's scroll
+   container is focusable by 	abIndex and has its own .cs-table-scroll:focus-visible rule in the FE-010
+   block at the end of this file. Naming them here keeps the sentence above true from THIS block alone,
+   which is where a reader checks it.
+
+   ACBP-FE-007 ADDED NO NEW SELECTOR, AND THAT WAS CHECKED RATHER THAN ASSUMED. Its focusables are the answer
+   textarea (carrying `cs-input cs-textarea`, so the `.cs-input` and `.cs-textarea` rules below both match),
+   the start/pause/resume/save/skip buttons, and the "Open the interview" anchor added to the company screen
+   — all three of the latter carry `.cs-btn`. The interview screen introduces no `<select>`, no checkbox or
+   radio outside `.cs-choice`, and no `tabIndex` focus target, each of which WOULD have needed a new selector.
+
+   CITATIONS HERE NAME SELECTORS, NOT LINE NUMBERS, DELIBERATELY. The first version of this comment cited
+   ":541 and :542" — and the five lines it itself added to this block pushed those selectors down to 546/547,
+   so the citation was false the moment it was written. A line number in a comment in the same file it cites
+   is invalidated by its own edit. */
+.cs-nav a:focus-visible,
+.cs-btn:focus-visible,
+.cs-input:focus-visible,
+.cs-textarea:focus-visible,
+.cs-choice input:focus-visible,
+.cs-skip:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+/* ── Portfolio (ACBP-FE-004) ──────────────────────────────────────────────────────────────────────────────
+ * Card grid over the five fields the portfolio read returns. No slot exists for a metric, deliberately: the
+ * read returns no totals or aggregates, and a card with room for one invites inventing it later. */
+.cs-portfolio {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: var(--s-4);
+}
+.cs-co {
+  background: linear-gradient(160deg, var(--c-surface-2), var(--c-surface));
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+  transition: transform var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), border-color var(--t-base) var(--ease);
+  animation: cs-rise var(--t-slow) var(--ease) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+/* The card IS the link now that ACBP-FE-006 exists, so the whole surface is the target rather than a small
+   "open" affordance — and the hover lift finally promises something real. */
+.cs-co {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.cs-co:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+  border-color: var(--c-primary);
+}
+.cs-co:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+.cs-co-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.cs-co-name {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  /* A company name is user-supplied and can be long; it wraps rather than escaping the card. */
+  overflow-wrap: anywhere;
+}
+.cs-co-meta {
+  display: flex;
+  gap: var(--s-5);
+  margin: var(--s-4) 0 0;
+}
+.cs-co-meta div { min-width: 0; }
+.cs-co-meta dt {
+  color: var(--c-text-faint);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cs-co-meta dd {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+  color: var(--c-text);
+}
+.cs-co-id {
+  margin: var(--s-4) 0 0;
+  color: var(--c-text-faint);
+  font-size: 0.72rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+/* Status tone is DECORATION over the server's own word — see portfolio-view.ts. `unknown` is a real tone, not
+   a fallback that happens to look neutral: a status this screen does not recognise must not be dressed up as
+   one it does. */
+.cs-status--active { background: var(--c-success-soft); color: #7ff0cd; }
+.cs-status--paused { background: var(--c-warning-soft); color: #ffd98a; }
+.cs-status--progress { background: var(--c-primary-soft); color: #a9c8ff; }
+.cs-status--unknown { background: var(--c-surface-3); color: var(--c-text-dim); }
+
+/* ── Refusals and the empty state (ACBP-FE-004) ────────────────────────────────────────────────────────────
+ * Every refusal renders through one component with a per-code accent, so adding a state cannot accidentally
+ * ship without a visual identity — and so no refusal can borrow the empty state's calm wording. */
+.cs-refusal { border-left: 3px solid var(--c-text-faint); max-width: 62ch; }
+.cs-refusal--unauthenticated { border-left-color: var(--c-primary); }
+.cs-refusal--email_unverified { border-left-color: var(--c-warning); }
+.cs-refusal--rate_limited { border-left-color: var(--c-secondary); }
+.cs-refusal--unavailable { border-left-color: var(--c-text-dim); }
+.cs-refusal--forbidden { border-left-color: var(--c-danger); }
+.cs-refusal--not_found { border-left-color: var(--c-danger); }
+.cs-refusal--unexpected { border-left-color: var(--c-warning); }
+/* ACBP-FE-005 adds refusal codes the earlier screens could not produce. Each needs its own accent or it
+   silently falls back to the grey default and reads as a lesser event than it is. `invalid` is the founder's
+   own input being refused — warning, not danger, because it is correctable; `malformed`, `malformed_media`
+   and `too_large` are faults in THIS SCREEN and share the secondary accent so they look like what they are:
+   a class of bug, not a user error. */
+.cs-refusal--invalid { border-left-color: var(--c-warning); }
+.cs-refusal--malformed { border-left-color: var(--c-secondary); }
+.cs-refusal--malformed_media { border-left-color: var(--c-secondary); }
+.cs-refusal--too_large { border-left-color: var(--c-secondary); }
+.cs-refusal--signed_out { border-left-color: var(--c-primary); }
+.cs-refusal--no_user_record { border-left-color: var(--c-danger); }
+.cs-refusal--error { border-left-color: var(--c-warning); }
+.cs-refusal-title {
+  margin: 0 0 var(--s-1);
+  font-weight: 600;
+  color: var(--c-text);
+}
+.cs-refusal-detail {
+  margin: 0;
+  color: var(--c-text-dim);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.cs-refusal-meta {
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--c-border-soft);
+  color: var(--c-text-dim);
+  font-size: 0.82rem;
+}
+.cs-refusal-meta strong {
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+/* ── Company profile + the pause control (ACBP-FE-006) ─────────────────────────────────────────────────── */
+.cs-co-meta--wide { gap: var(--s-6); flex-wrap: wrap; }
+/* The profile's status pill carries no tone class: `displayStatus` is already the honest founder-facing value
+   (COMP-008 renders an unrecognised state as `unknown`), so it needs no colour-coding to be truthful. */
+.cs-status--tone { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-control { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-3); }
+/* The reason a control is unavailable is TEXT, at readable size — not a tooltip. A disabled button whose
+   explanation only appears on hover is unreachable by touch and by keyboard, which makes the explanation
+   decorative. */
+.cs-control-why {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--c-text-dim);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+.cs-control-outcome {
+  margin: 0;
+  max-width: 62ch;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-control);
+  border: 1px solid var(--c-border-soft);
+  background: var(--c-surface-2);
+  color: var(--c-text-dim);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+/* ONE ACCENT PER OUTCOME KIND, AND THE LIST IS A CLAIM LIKE THE FOCUS ONE ABOVE. Every screen renders
+   `cs-control-outcome--${outcome.kind}` from its own union, so a kind with no rule here falls back to the
+   neutral base and becomes visually identical to every other unaccented kind.
+
+   ACBP-FE-007 FIXED A REAL GAP RATHER THAN ONLY ADDING TO IT. FE-005 shipped `ResumeOutcome` with eight
+   kinds while only `refused` and `error` had rules (provisioning-progress.tsx:213), so on the merged
+   provisioning screen a SUCCESS and five distinct refusals rendered identically — the exact "two refusals
+   must never collapse" failure the interpreters exist to prevent. Those six are closed below.
+
+   COLOUR IS DECORATION ONLY. Every one of these boxes carries the outcome's `detail` sentence as text, so
+   the tone adds emphasis and never carries meaning on its own. Four tones, by what the founder has to do:
+     success — it worked;  danger — refused, or the data did not land;  warning — something is off, retrying
+     is safe;  wait — a ceiling asked for time. */
+
+/* success: the action did what it said */
+.cs-control-outcome--done,
+.cs-control-outcome--ok,
+.cs-control-outcome--saved,
+.cs-control-outcome--unchanged,
+.cs-control-outcome--deleted { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
+
+/* danger: refused, or the founder's data is not stored. `overwritten_by_other` is here deliberately — it is
+   a 200, but it means the answer was LOST, and it must not look like the success it arrived as. */
+.cs-control-outcome--refused,
+.cs-control-outcome--forbidden,
+.cs-control-outcome--email_unverified,
+.cs-control-outcome--signed_out,
+.cs-control-outcome--not_found,
+.cs-control-outcome--no_session,
+.cs-control-outcome--no_user_record,
+.cs-control-outcome--invalid,
+.cs-control-outcome--too_large,
+.cs-control-outcome--company_not_active,
+.cs-control-outcome--blocked_transition,
+.cs-control-outcome--conflict,
+.cs-control-outcome--overwritten_by_other { border-color: rgba(255, 92, 114, 0.42); color: #ffc3cc; }
+
+/* warning: a fault or an outage rather than a judgement; retrying is safe */
+.cs-control-outcome--error,
+.cs-control-outcome--stale,
+.cs-control-outcome--malformed,
+.cs-control-outcome--malformed_media,
+.cs-control-outcome--unavailable { border-color: rgba(255, 193, 77, 0.42); color: #ffdc9e; }
+
+/* wait: the server asked for time */
+.cs-control-outcome--retry,
+.cs-control-outcome--rate_limited { border-color: rgba(149, 117, 255, 0.42); color: #cfc0ff; }
+
+.cs-empty { max-width: 62ch; }
+.cs-empty .cs-card-t { margin-bottom: var(--s-3); }
+.cs-empty .cs-btn { margin-top: var(--s-4); }
+/* The disabled control still has to be legible — a control nobody can read is not honest, only quiet. */
+.cs-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Mock-data banner: this console shows invented numbers, and says so on screen ─────────────────────────── */
+.cs-mock {
+  /* Block, not flex: the lead-in "Mock data." must reflow INLINE with the sentence when the banner wraps.
+     As a flex row it became a narrow first column with the text crushed beside it on small screens. */
+  display: block;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-control);
+  background: var(--c-warning-soft);
+  border: 1px solid rgba(255, 193, 77, 0.32);
+  color: #ffdc9e;
+  font-size: 0.82rem;
+}
+
+/* ── Responsive: the sidebar becomes a top nav strip under the tablet breakpoint (FE-002) ────────────────────
+ *
+ * The sidebar does NOT simply become `flex-direction: row`. That was tried and is wrong: each labelled group
+ * is its own block, so a row-direction sidebar turned into three stacked half-rows with the later items
+ * clipped at the right edge and no labels to explain the grouping.
+ *
+ * Instead the brand keeps its own row, and every group is flattened into ONE horizontally scrollable strip:
+ * the <nav> becomes the row, the group wrappers lose their stacking margin, and the group labels are dropped
+ * (a bare uppercase word inside a scrolling strip reads as another nav item). Items keep their order, so the
+ * grouping still comes through as clusters. Nothing is hidden — everything remains reachable by scrolling.
+ *
+ * No drawer/hamburger: that needs client state, and this slice deliberately ships exactly one client component. */
+@media (max-width: 960px) {
+  .cs-shell { grid-template-columns: 1fr; }
+  .cs-side {
+    position: static;
+    height: auto;
+    align-items: stretch;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border-soft);
+    overflow: visible;
+  }
+  .cs-brand { padding: 0; }
+  /* `min-width: 0` is LOAD-BEARING, not tidying. A grid item defaults to `min-width: auto`, so the sidebar
+     refused to shrink below the full width of its nav items: the single grid column grew to the widest nav
+     strip and the whole page scrolled sideways, cutting off the right edge of every card. Allowing the item
+     to shrink is what lets the `overflow-x: auto` below actually scroll instead of pushing the layout wider.
+     Pinned by the no-horizontal-overflow assertion in `tools/measure-render.mjs` (scrollWidth <= innerWidth,
+     asserted at 1440, 900 and 492 px). That file is named here because a comment claiming enforcement must
+     point at something a reader can run; when this comment was first written it pointed at nothing. */
+  .cs-side { min-width: 0; }
+  .cs-side nav {
+    display: flex;
+    flex-direction: row;
+    gap: var(--s-2);
+    min-width: 0;
+    overflow-x: auto;
+    /* Room for the focus ring and the 2px hover nudge, which would otherwise be cropped by the scroller. */
+    padding-bottom: var(--s-1);
+  }
+  .cs-navgroup { margin-top: 0; }
+  .cs-nav { flex-direction: row; gap: var(--s-2); }
+  .cs-navgroup-label { display: none; }
+  .cs-cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .cs-content { padding: var(--s-4); }
+  .cs-stat-value { font-size: 1.6rem; }
+  /* The topbar gains a second line rather than crushing the company pill against the stop button. The
+     flex spacer is removed with it: once the bar wraps, a 1fr gap would push the avatar onto a line by itself. */
+  .cs-top {
+    height: auto;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+  }
+  .cs-top .cs-spacer { display: none; }
+  /* Let a long approval title take the full width and drop its badge + button to a second line. */
+  .cs-item { flex-wrap: wrap; gap: var(--s-3); }
+  .cs-item-body { flex: 1 1 100%; }
+}
+
+/* ── Company creation + provisioning progress (ACBP-FE-005) ──────────────────────────────────────────────── */
+
+/* The primary action. `.cs-btn` alone is the neutral control; this is the one the eye should land on, and it
+   is used for exactly one button per screen. */
+.cs-btn--primary {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #08122b;
+  font-weight: 600;
+}
+.cs-btn--primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* Form. Deliberately plain: this console has had no inputs until now, so these establish the vocabulary. */
+.cs-form { display: grid; gap: var(--s-4); max-width: 62ch; }
+.cs-field { display: grid; gap: var(--s-1); border: 0; padding: 0; margin: 0; min-width: 0; }
+.cs-label { font-weight: 600; color: var(--c-text); padding: 0; }
+/* `--c-text-dim`, NOT `--c-text-faint`. Measured: faint (#6c7999) at this size gives 3.98:1 on --c-surface
+   and 3.56:1 on --c-surface-2, both under the 4.5:1 WCAG 2.1 AA floor for normal-weight text at 0.82rem —
+   and FE-001's accessibility criterion asserts contrast pairs against AA. ACBP-FE-007 made this rule
+   load-bearing (it carries the character counter and the empty-state explanation), so it is corrected here
+   rather than inherited. `--c-text-faint` remains fine for the larger/decorative uses it was chosen for. */
+.cs-help { margin: 0; font-size: 0.82rem; color: var(--c-text-dim); }
+.cs-input {
+  width: 100%;
+  min-width: 0; /* load-bearing in a grid: without it a long value forces horizontal overflow */
+  padding: 0.55rem 0.7rem;
+  background: var(--c-surface-2, var(--c-surface));
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  color: var(--c-text);
+  font: inherit;
+}
+.cs-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.cs-textarea { resize: vertical; min-height: 5.5rem; }
+.cs-choices { display: grid; gap: var(--s-2); }
+.cs-choice { display: flex; align-items: center; gap: var(--s-2); cursor: pointer; }
+.cs-choice input { accent-color: var(--c-primary); }
+
+/* The outcome region is always present so the live region exists before it has anything to say — an
+   aria-live container that is added to the DOM at the same moment as its text is frequently not announced. */
+.cs-outcome-region { min-height: 0; }
+
+/* Screen-reader-only: the provisioning announcement is heard, never seen, because the stepper beside it
+   already says the same thing visually. */
+.cs-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The stepper. NOTE what is absent: there is no "in progress" or "running" modifier, because the contract
+   never commits that status (contracts provisioning.ts:22-27). A tone for it would be unreachable styling
+   that implied a state the database refuses to hold. */
+.cs-steps { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-2); }
+.cs-step {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  min-width: 0;
+}
+.cs-step--done { border-left-color: var(--c-success); }
+.cs-step--waiting { border-left-color: var(--c-text-faint); }
+.cs-step--failed { border-left-color: var(--c-danger); }
+.cs-step--unknown { border-left-color: var(--c-warning); }
+.cs-step-order {
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3, var(--c-border-soft));
+  color: var(--c-text-dim);
+  font-size: 0.78rem;
+}
+.cs-step-name { font-weight: 600; min-width: 0; }
+.cs-step-status { color: var(--c-text-dim); font-size: 0.86rem; }
+.cs-step-attempt { color: var(--c-text-faint); font-size: 0.8rem; margin-left: auto; }
+
+/* Full-width stepper on mobile, per the backlog row's responsive criterion. */
+@media (max-width: 640px) {
+  .cs-step { align-items: flex-start; }
+  .cs-step-attempt { margin-left: 0; flex-basis: 100%; }
+  .cs-form { max-width: none; }
+}
+
+/* ── Interview session (ACBP-FE-007) ─────────────────────────────────────────────────────────────────────
+ * NOTE WHAT IS ABSENT, and why, on the same principle as the stepper's missing "running" tone: there is no
+ * batch chrome, no pagination, no "question N of M" and no progress bar. The wire carries no batch id, no
+ * batch size and no total, so any of those would be styling for data that does not exist. The only honest
+ * counter is "n of items.length", which is plain text in the card header. */
+
+.cs-questions { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: grid; gap: var(--s-4); }
+.cs-question {
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  padding: var(--s-4);
+  min-width: 0; /* load-bearing in a grid, same reason as .cs-input */
+}
+/* The question a resumed session lands on. A LEFT BORDER PLUS THE "next" TAG in the legend — the tag is the
+   real signal, because a colour alone would be invisible to a founder who cannot distinguish it. */
+.cs-question--next { border-left-color: var(--c-primary); }
+.cs-question-tag { margin-left: var(--s-2); vertical-align: middle; }
+/* A fieldset carries a default border and padding that would double the card's; .cs-field already zeroes
+   them, and this only adds the internal rhythm. */
+.cs-question-set { gap: var(--s-3); }
+/* `<fieldset disabled>` greys NOTHING on its own — the only :disabled rules in this file are for .cs-btn and
+   .cs-input — so a question group disabled mid-submit would otherwise render at full contrast and look
+   interactive while refusing every keystroke. */
+.cs-question-set:disabled { opacity: 0.6; }
+.cs-question-set:disabled .cs-label { color: var(--c-text-dim); }
+
+/* The "why this question" block. Present ONLY when the server sent a rationale. */
+.cs-question-why {
+  margin: 0;
+  max-width: 62ch;
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--c-border);
+  color: var(--c-text-dim);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+.cs-question-why-lead { color: var(--c-text); font-weight: 600; }
+
+/* The static-fallback flag. Warning-toned because it reports a degradation, and carries its own sentence so
+   the tone is not doing the work. */
+.cs-question-degraded {
+  margin: 0;
+  max-width: 62ch;
+  color: #ffdc9e;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.cs-question-answered { display: grid; gap: var(--s-2); }
+/* `overflow-wrap: anywhere` ALONGSIDE `pre-wrap`, and the pairing is the point: pre-wrap preserves the
+   founder's newlines but creates no break opportunity inside a long unbroken token, so a pasted URL or a
+   200-character word would push the page into horizontal overflow. This is founder-supplied content, the
+   same reason `.cs-co-name` and `.cs-co-id` already carry the property — the hazard was understood in this
+   file and simply not carried over here until review said so. */
+.cs-question-text { margin: 0; max-width: 62ch; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A skip reads differently from an answer on purpose: they are different server states. */
+.cs-question-skip { margin: 0; color: var(--c-text-dim); font-style: italic; }
+.cs-question-server-msg { margin: 0 0 var(--s-2); font-weight: 600; color: var(--c-text); }
+.cs-question-stored { margin: var(--s-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Two controls side by side (pause/resume, save/skip), wrapping rather than overflowing on a narrow screen. */
+.cs-control-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-3); }
+
+/* One question per screen on mobile, per the row's responsive criterion: each card takes the full width and
+   they stack, so a founder sees one at a time. Deliberately NOT a pager — a pager implies batch boundaries,
+   and no batch boundary exists on the wire to honour. */
+@media (max-width: 640px) {
+  .cs-question { padding: var(--s-3); }
+  .cs-question-why { max-width: none; }
+  .cs-control-row .cs-btn { flex: 1 1 auto; }
+}
+
+/* ── Memory browser (ACBP-FE-010) ────────────────────────────────────────────────────────────────────────
+ * THE CONSOLE'S FIRST TABLE. Nothing table-related existed before this slice, so these establish the
+ * vocabulary the way FE-005's block established forms. */
+
+/* SCROLLS RATHER THAN TRUNCATING, per the row's responsive criterion. `tabindex` is set on this element in
+   the TSX, not here, because a scroll container that only a pointer can reach is unusable by keyboard —
+   and the browser gives no focus ring to a scrollable div by default. */
+.cs-table-scroll {
+  overflow-x: auto;
+  margin-top: var(--s-4);
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+}
+.cs-table-scroll:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+.cs-table {
+  width: 100%;
+  border-collapse: collapse;
+  /* `auto`, deliberately: founder content varies wildly in length, and a fixed layout would either clip a
+     long claim or waste the row on a short one. The wrapper above absorbs the resulting width. */
+  table-layout: auto;
+  font-size: 0.88rem;
+}
+.cs-table th,
+.cs-table td {
+  padding: var(--s-3);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--c-border-soft);
+}
+.cs-table thead th {
+  color: var(--c-text-dim);
+  font-weight: 600;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  background: var(--c-surface-2, var(--c-surface));
+}
+.cs-table tbody tr:last-child th,
+.cs-table tbody tr:last-child td { border-bottom: 0; }
+/* The row header carries founder-supplied text, so it needs a width to wrap inside and an anywhere-break:
+   `overflow-wrap` alone will not break a pasted URL without a width to break against. */
+.cs-table-item {
+  font-weight: 400;
+  min-width: 22ch;
+  max-width: 46ch;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+/* A superseded row is marked by its "replaced" badge — a TEXT signal, which is the only one every reader
+   gets. It is deliberately NOT dimmed with opacity: opacity multiplies the contrast of every descendant,
+   and these rows always carry the dimmest text on the screen (.cs-control-why and .cs-table-ref, both
+   --c-text-dim at under 0.85rem). Measured, a 0.72 layer drops them from about 5.6:1 to near 4.0:1 —
+   under the 4.5:1 AA floor — so the styling that marked the state also made the state's own explanation
+   harder to read. The left border carries the visual cue instead, at full text contrast. */
+.cs-table tbody tr[data-lifecycle='superseded'] > * { border-left: 0; }
+.cs-table tbody tr[data-lifecycle='superseded'] th[scope='row'] { border-left: 3px solid var(--c-border); padding-left: calc(var(--s-3) - 3px); }
+.cs-table-ref {
+  display: block;
+  margin-top: var(--s-1);
+  color: var(--c-text-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.cs-table-outcome { display: block; margin-top: var(--s-2); max-width: 46ch; }
+.cs-mem-cap { margin-top: var(--s-3); max-width: 62ch; }
+
+/* The dialogs are IN FLOW, not overlays: this console has no focus-trap primitive yet, and a modal that
+   traps nothing while claiming aria-modal would be worse than one that simply sits in the page. */
+.cs-dialog {
+  margin-top: var(--s-4);
+  padding: var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  background: var(--c-surface-2, var(--c-surface));
+  display: grid;
+  gap: var(--s-3);
+  max-width: 62ch;
+}
+.cs-dialog--danger { border-color: rgba(255, 92, 114, 0.42); }
+/* The item the confirmation is about, quoted back. These forms sit in flow BELOW the table, so without
+   this a founder could be reading a destructive confirmation with its subject scrolled off screen. */
+.cs-dialog-target { border-left: 3px solid var(--c-border); padding-left: var(--s-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cs-dialog .cs-refusal-detail { margin: 0; }
+
+@media (max-width: 640px) {
+  .cs-table-item { min-width: 16ch; max-width: none; }
+  .cs-dialog { max-width: none; }
+}
+/* -- Decision Room (ACBP-FE-012) ------------------------------------------------------------------------
+ * NOTE WHAT CARRIES MEANING HERE. A queue that did not report shows an em dash rather than a zero, and the
+ * tone classes below only TINT that distinction -- the sentence in `.cs-queue-note` states it, and the count
+ * carries an aria-label spelling it out. Colour never has to be perceived for the difference between "empty"
+ * and "not reported" to land, because that difference is the whole point of the tri-state. */
+
+.cs-queues { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+.cs-queue {
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--c-text-faint);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  padding: var(--s-3) var(--s-4);
+  min-width: 0;
+}
+.cs-queue--has_items { border-left-color: var(--c-primary); }
+.cs-queue--empty { border-left-color: var(--c-border); }
+/* Restricted and unavailable are DIFFERENT states and get different accents, for the same reason the copy
+   distinguishes them: one is a refusal, the other a failure. */
+.cs-queue--restricted { border-left-color: var(--c-secondary); }
+.cs-queue--unavailable { border-left-color: var(--c-warning); }
+
+.cs-queue-h { display: flex; align-items: baseline; gap: var(--s-3); }
+.cs-queue-t { margin: 0; font-size: 0.95rem; font-weight: 600; min-width: 0; }
+.cs-queue-count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 1.15rem; color: var(--c-text); }
+.cs-queue-note { margin: var(--s-2) 0 0; color: var(--c-text-dim); font-size: 0.8rem; line-height: 1.6; }
+.cs-queue-items { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: var(--s-2); }
+.cs-queue-item { display: grid; gap: 2px; min-width: 0; }
+.cs-queue-item-t { font-size: 0.86rem; overflow-wrap: anywhere; }
+.cs-queue-item-meta { color: var(--c-text-dim); font-size: 0.76rem; }
+.cs-dr-mode { font-variant-numeric: tabular-nums; }
+
+/* The row asks queues to collapse to tabs on mobile. They collapse to a single stacked column instead, and
+   that is a deliberate departure: tabs would hide nine of the ten queues behind a control, and the whole
+   point of this screen is that a founder can see at a glance which queues did NOT report. Hiding them to
+   save vertical space would defeat the tri-state it exists to show. */
+@media (max-width: 640px) {
+  .cs-queues { grid-template-columns: 1fr; }
+  .cs-queue-count { font-size: 1rem; }
+}
+
+/* ── ACBP-FE-013: the strategy comparison and the decision form ────────────────────────────────────────────
+ * Built on the FE-010 table vocabulary rather than beside it. What is new here is a MATRIX: sixteen contract
+ * fields down, one column per option across, which is a shape nothing else in this console has. */
+
+/* The row header (the field name) stays put while the options scroll past it. Without this a founder
+   comparing "Cost range" across four options loses the name of the row they are reading the moment the
+   table scrolls, which is the whole failure mode a comparison table exists to avoid. */
+.cs-strat-table tbody th[scope='row'] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--c-surface);
+  min-width: 10rem;
+  font-weight: 600;
+  color: var(--c-text-dim);
+}
+.cs-strat-table td {
+  min-width: 15rem;
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+}
+/* The recommended and chosen columns are marked with a border AND a badge in the header, never by colour
+   alone — a column tinted differently says nothing to a reader who cannot see the difference. */
+.cs-strat-table thead th[data-recommended='yes'] { box-shadow: inset 0 -2px 0 var(--c-primary); }
+.cs-strat-table thead th[data-selected='yes'] { box-shadow: inset 0 -2px 0 var(--c-success); }
+.cs-strat-table thead th[data-recommended='yes'][data-selected='yes'] {
+  box-shadow: inset 0 -2px 0 var(--c-success), inset 0 -4px 0 var(--c-primary);
+}
+.cs-strat-table thead th .cs-badge { margin-inline-start: var(--s-2); }
+/* An undetermined field is dimmed and italic (the <em> is in the markup), so it reads as an absence rather
+   than as content. The word itself still says "Not determined" — the styling is not carrying the meaning. */
+.cs-strat-undetermined { color: var(--c-text-faint); }
+
+/* The sixteen-field editor. Two columns where there is room, one where there is not; no breakpoint hides a
+   field, because every one of them is required and a hidden required field is an unfixable error. */
+.cs-strat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--s-3);
+}
+
+.cs-strat-caveat {
+  border-inline-start: 3px solid var(--c-border);
+  padding-inline-start: var(--s-3);
+}
+.cs-strat-caveat--warning { border-inline-start-color: var(--c-warning); }
+.cs-strat-caveat--muted { border-inline-start-color: var(--c-text-faint); }
+
+/* THE OUTCOME TONES, ONE PER KIND WITH NONE MISSING. `cs-control-outcome--${kind}` is built from the
+   interpreter's `OutcomeKind`, so any kind without a rule renders as an unstyled paragraph — and an earlier
+   comment here claimed "these are the four FE-013 introduces" while the union had twelve members, two of
+   which (`recorded` had a rule, `unreachable` did not until this block) matched nothing at all. The list
+   below is generated from the union by hand and must stay that way: adding a kind means adding a line.
+
+   Colour is on the BORDER and the border only. `cs-control-outcome` already sets the text colour, and a
+   success and a server error that differ solely by a 3px edge are two states a reader can confuse — so the
+   successful and failed families also differ in weight. */
+.cs-control-outcome--recorded { border-inline-start-color: var(--c-success); }
+.cs-control-outcome--recorded strong { color: var(--c-success); }
+.cs-control-outcome--unreachable { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unreachable strong { color: var(--c-warning); }
+.cs-control-outcome--client_defect { border-inline-start-color: var(--c-danger); }
+.cs-control-outcome--client_defect strong { color: var(--c-danger); }
+.cs-control-outcome--server_error { border-inline-start-color: var(--c-danger); }
+.cs-control-outcome--server_error strong { color: var(--c-danger); }
+.cs-control-outcome--unexpected { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unexpected strong { color: var(--c-warning); }
+.cs-control-outcome--email_unverified { border-inline-start-color: var(--c-warning); }
+.cs-control-outcome--unauthenticated { border-inline-start-color: var(--c-warning); }
+
+/* A list item that must STACK. `cs-item` is a flex row, so bare spans dropped into it lay out side by side —
+   a title, a timestamp and a body sentence ran together on one line. */
+.cs-stack {
+  display: grid;
+  gap: var(--s-1);
+  align-items: start;
+}
+
+/* The authored 16 fields of an edit/combine selection, collapsed by default: it is the full content of a
+   recorded option and belongs on the page, but it is long enough to bury the decision summary above it. */
+.cs-strat-chosen { margin-top: var(--s-2); }
+.cs-strat-chosen > summary {
+  cursor: pointer;
+  color: var(--c-primary);
+  font-size: 0.86rem;
+}
+.cs-strat-chosen > summary:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+/* The COLUMN header has to stay put as well as the row header. Pinning only the row headers meant the
+   "Field" heading scrolled away while the field NAMES stayed, so a reader scrolling right eventually had an
+   "Option N" heading sitting directly above the pinned column of field names. */
+.cs-strat-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.cs-strat-table thead th:first-child {
+  left: 0;
+  z-index: 3;
+}
+
+/* ── ACBP-FE-014: the plan screen (roadmap + task board) ───────────────────────────────────────────────────
+ * The board is a set of COLUMNS that must all stay visible, including the ones nothing can fill: an
+ * unavailable bucket is the whole point of the tri-state, so it is never collapsed away to save width. */
+.cs-plan-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--s-3);
+  align-items: start;
+}
+.cs-plan-bucket {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-3);
+  background: var(--c-surface-2);
+}
+/* An unavailable bucket is visibly SET APART rather than merely empty — dashed, dimmed, and carrying its own
+   sentence. The styling reinforces the note; it never carries the meaning alone. */
+.cs-plan-bucket--unavailable {
+  border-style: dashed;
+  background: transparent;
+  color: var(--c-text-faint);
+}
+.cs-plan-bucket-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  justify-content: space-between;
+}
+.cs-plan-bucket-t {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.cs-plan-bucket-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text-dim);
+  font-weight: 700;
+}
+.cs-plan-bucket-note {
+  margin: var(--s-2) 0 0;
+  font-size: 0.8rem;
+  color: var(--c-text-dim);
+}
+.cs-plan-tasks {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-2);
+}
+.cs-plan-task {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-2);
+  border-radius: var(--r-control);
+  background: var(--c-surface);
+  border-inline-start: 3px solid transparent;
+}
+.cs-plan-task--blocked { border-inline-start-color: var(--c-warning); }
+
+.cs-plan-goals { display: grid; gap: var(--s-4); }
+.cs-plan-goal { display: grid; gap: var(--s-2); }
+.cs-plan-goal-h { display: flex; align-items: baseline; gap: var(--s-2); }
+/* A dropped goal is dimmed, but its status word is still rendered beside it — the colour is a reinforcement,
+   never the only signal, because a reader who cannot see the difference still needs to know it was dropped. */
+.cs-plan-goal--dropped { color: var(--c-text-faint); }
+.cs-plan-milestones {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--s-4);
+  display: grid;
+  gap: var(--s-2);
+  border-inline-start: 2px solid var(--c-border-soft);
+}
+.cs-plan-milestone { display: grid; gap: var(--s-1); }
+
+/* Every modifier the markup can generate has a rule, so no class ships without one. `has_tasks` and `empty`
+   differ only in weight — an empty AVAILABLE bucket is a real answer about this company, so it stays fully
+   legible rather than being dimmed like an unavailable one. */
+.cs-plan-bucket--has_tasks { border-color: var(--c-border); }
+.cs-plan-bucket--empty { border-style: solid; }
+.cs-plan-goal--active { color: var(--c-text); }
+.cs-plan-goal--achieved { color: var(--c-text-dim); }
+
+/* ── ACBP-FE-016: the approvals inbox ──────────────────────────────────────────────────────────────────────
+ * One card per waiting action. The risk badge is tinted, but the RAW WORD is always inside it — the column is
+ * free text, so a tint can never be the only thing carrying the severity. */
+.cs-ap-list { display: grid; gap: var(--s-4); list-style: none; padding: 0; }
+.cs-ap-item {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-4);
+  background: var(--c-surface-2);
+  display: grid;
+  gap: var(--s-3);
+  /* The left edge repeats the risk, so a scan down the list groups by severity without reading each badge. */
+  border-inline-start: 3px solid var(--c-border);
+}
+/* THE FOUR CLASSES THE DATABASE CAN ACTUALLY HOLD, in the contract's own order (migration 0047's CHECK, and
+   `RISK_CLASSES` in @acbp/contracts). An earlier version of this block styled `low`/`medium`/`high`/`critical`
+   — four values no row can carry — so every real approval fell to a dashed "unknown" edge and a
+   `sensitive_irreversible` action was indistinguishable from an `informational` one. Five rules that could
+   never match. */
+.cs-ap-item[data-risk='informational'] { border-inline-start-color: var(--c-text-faint); }
+.cs-ap-item[data-risk='internal_reversible'] { border-inline-start-color: var(--c-primary); }
+.cs-ap-item[data-risk='external_reversible'] { border-inline-start-color: var(--c-warning); }
+.cs-ap-item[data-risk='sensitive_irreversible'] { border-inline-start-color: var(--c-danger); }
+/* An expired request is set apart REGARDLESS of its risk: it is the one state where the right action is to
+   do nothing at all. */
+.cs-ap-item[data-expiry='expired'],
+.cs-ap-item[data-expiry='unreadable'] { opacity: 0.72; border-style: dashed; }
+.cs-ap-item-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); min-width: 0; }
+/* The badge wraps rather than overflowing: `sensitive_irreversible` beside a scope label is wider than a
+   phone, and `.cs-badge` sets `white-space: nowrap`. */
+.cs-ap-risk { white-space: normal; overflow-wrap: anywhere; }
+.cs-ap-risk--informational { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-ap-risk--internal_reversible { background: var(--c-primary-soft); color: var(--c-primary); }
+.cs-ap-risk--external_reversible { background: var(--c-warning-soft); color: var(--c-warning); }
+.cs-ap-risk--sensitive_irreversible { background: var(--c-danger-soft); color: var(--c-danger); }
+.cs-ap-expiry { margin: 0; font-size: 0.84rem; }
+.cs-ap-expiry--expired, .cs-ap-expiry--unreadable { color: var(--c-danger); }
+.cs-ap-expiry--expiring_soon { color: var(--c-warning); }
+/* The server's own rendering of the payload. Monospace and scrollable IN ITS OWN BOX, so a long line never
+   makes the page scroll sideways, and focusable so a keyboard can reach the scroll. */
+.cs-ap-preview {
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-control);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cs-ap-preview:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+/* ── ACBP-FE-015: task execution ───────────────────────────────────────────────────────────────────────────
+ * A run's phase is carried by the badge WORD; these tints reinforce it and never replace it. The five states
+ * are the contract's (RUN_STATES), plus `unknown` for a value this platform does not define — which is set
+ * apart rather than left looking like the calm default. */
+.cs-tk-runs { display: grid; gap: var(--s-3); list-style: none; padding: 0; }
+.cs-tk-run {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-3);
+  background: var(--c-surface-2);
+  display: grid;
+  gap: var(--s-2);
+  border-inline-start: 3px solid var(--c-border);
+}
+.cs-tk-run[data-phase='active'] { border-inline-start-color: var(--c-primary); }
+.cs-tk-run[data-phase='succeeded'] { border-inline-start-color: var(--c-success); }
+.cs-tk-run[data-phase='failed'] { border-inline-start-color: var(--c-danger); }
+.cs-tk-run[data-phase='cancelled'] { border-inline-start-color: var(--c-text-faint); }
+.cs-tk-run[data-phase='waiting'] { border-inline-start-color: var(--c-warning); }
+.cs-tk-run[data-phase='unknown'] { border-inline-start-style: dashed; border-inline-start-color: var(--c-text-faint); }
+.cs-tk-run-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); min-width: 0; }
+.cs-tk-phase--active { background: var(--c-primary-soft); color: var(--c-primary); }
+.cs-tk-phase--succeeded { background: var(--c-success-soft); color: var(--c-success); }
+.cs-tk-phase--failed { background: var(--c-danger-soft); color: var(--c-danger); }
+.cs-tk-phase--cancelled { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-tk-phase--waiting { background: var(--c-warning-soft); color: var(--c-warning); }
+.cs-tk-phase--unknown { background: transparent; color: var(--c-text-faint); border: 1px dashed var(--c-text-faint); }
+/* A stale heartbeat and a pending stop are OBSERVATIONS the founder should notice, not verdicts. Warning
+   tone, never danger — the server has not ruled. */
+.cs-tk-stale, .cs-tk-stop { color: var(--c-warning); }
+.cs-tk-failed { color: var(--c-danger); }
+.cs-tk-failure { border-inline-start: 3px solid var(--c-danger); }

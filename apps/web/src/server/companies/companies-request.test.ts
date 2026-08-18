@@ -62,7 +62,7 @@ function identityDeps(opts: { userId?: string | null; email?: string; verified?:
   };
 }
 
-const COMPANY_VIEW = { companyId: 'co_1', status: 'active' as const, displayStatus: 'active' as const, name: 'Acme', description: null, profileVersion: 1 };
+const COMPANY_VIEW = { companyId: 'co_1', status: 'active' as const, displayStatus: 'active' as const, name: 'Acme', description: null, profileVersion: 1, role: 'owner' as const };
 
 function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
   return {
@@ -635,6 +635,9 @@ describe('CDR-088 — approvals inbox (request layer)', () => {
   // A row carrying every column the real table has, plus a sentinel in each field that must NOT be published.
   const ROW = {
     id: 'apr_1',
+    // Both NOT NULL in the table (migration 0048), so the fixture carries them.
+    expires_at: '2026-08-19T12:00:00.000Z',
+    created_at: '2026-08-18T09:00:00.000Z',
     account_id: 'acc_SECRET',
     company_id: 'co_SECRET',
     run_id: 'run_SECRET',
@@ -648,9 +651,9 @@ describe('CDR-088 — approvals inbox (request layer)', () => {
     expected_result: 'an email',
     preview: 'To: someone',
     estimated_cost_credits: 5,
-    risk_class: 'high',
+    // REAL values: migration 0047 CHECKs all three, and 'high'/'once' were impossible. A fixture carrying\n    // values the database cannot store is how ACBP-FE-016 shipped a risk map that matched no real row.\n    risk_class: 'sensitive_irreversible',
     reversibility: 'irreversible',
-    scope: 'once',
+    scope: 'one_action',
   } as unknown as never;
 
   test('the wire shape is an ALLOWLIST: no internal column of the row is ever published', async () => {
@@ -666,10 +669,21 @@ describe('CDR-088 — approvals inbox (request layer)', () => {
     }
     // And positively: the item carries EXACTLY the allowlisted keys, so a new column cannot arrive unnoticed.
     expect(Object.keys(r.approvals[0] ?? {}).sort()).toEqual(
-      ['action', 'approvalRequestId', 'estimatedCostCredits', 'expectedResult', 'preview', 'reason', 'reversibility', 'riskClass', 'scope', 'toolId', 'toolVersion'],
+      ['action', 'approvalRequestId', 'createdAt', 'estimatedCostCredits', 'expectedResult', 'expiresAt', 'preview', 'reason', 'reversibility', 'riskClass', 'scope', 'toolId', 'toolVersion'],
     );
   });
 
+  test('an UNREADABLE timestamp degrades to the raw value instead of failing the whole read', async () => {
+    // `new Date(x).toISOString()` throws RangeError, and this mapping runs inside a `.map` over every row —
+    // so one odd value would turn the entire inbox into a 500 rather than one odd card. Both columns are NOT
+    // NULL, so this should not arise; "should not" is not an enforcer, and the blast radius of being wrong
+    // here is the whole page. The client has an `unreadable` state that refuses to treat it as valid.
+    const bad = { ...(ROW as unknown as Record<string, unknown>), expires_at: 'not-a-date' } as unknown as never;
+    const r = await listApprovalInboxForRequest('co_1', { runtime: fakeRuntime({ listApprovalInbox: () => Promise.resolve({ status: 'ok', requests: [bad] }) }), identity: identityDeps() });
+    expect(r.status).toBe('approvals');
+    if (r.status !== 'approvals') return;
+    expect(r.approvals[0]?.expiresAt).toBe('not-a-date');
+  });
   test('a refusal carries no payload', async () => {
     const r = await listApprovalInboxForRequest('co_1', { runtime: fakeRuntime({ listApprovalInbox: () => Promise.resolve({ status: 'forbidden' }) }), identity: identityDeps() });
     expect(r.status).toBe('forbidden');

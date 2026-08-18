@@ -17,10 +17,14 @@ PostgreSQL — the pattern P1-014 established and CI already runs with zero skip
 
 **Browser-driven E2E is NOT used, and this is forced by facts rather than chosen:**
 
-- There is **no company UI**. `apps/web/src/app` contains only the root layout/page and Clerk's
-  `sign-in` / `sign-up` catch-all pages; company creation, switching, activity and provisioning are
-  API-only surfaces (P1-010 through P1-013 each shipped "API-only, no UI, no SSE" by owner decision).
-  A browser cannot drive a journey that has no screens.
+- There is **no company UI that reads company data**. *(Stated as a dated finding, because the first half of
+  this bullet went stale once and would again: as of `85fcb8f`, `apps/web/src/app` contained only the root
+  layout/page and Clerk's `sign-in` / `sign-up` catch-alls. As of `9771880` a console shell also exists at
+  `/console`, and as of the `(site)` route-group split the root page and the auth catch-alls live under
+  `app/(site)/`.)* Company creation, switching, activity and provisioning remain API-only surfaces (P1-010
+  through P1-013 each shipped "API-only, no UI, no SSE" by owner decision), and `/console` renders `MOCK_`
+  constants only — it reads nothing from the database. So a browser still cannot drive a slice-A journey:
+  the reason is now "no screen reads company data", not "no screens exist".
 - Driving Clerk's hosted sign-in requires **live provider credentials and a real Clerk instance**, which the
   operating constraints forbid. The one seam permitted — and already used — is the provider SDK at its edge,
   with the production authentication boundary (`resolveVerifiedIdentity`) still executing in full.
