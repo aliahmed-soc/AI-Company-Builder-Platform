@@ -99,3 +99,17 @@ describe('toRoomView / describeRoom — the page must not claim a complete pictu
     expect(withRefusal).toContain('1 of 2');
   });
 });
+
+describe('toRoomView — the founder-facing label', () => {
+  it('turns a snake_case queue id into a sentence and upper-cases AI', () => {
+    // `labelFor` had NO test until a reviewer proved it by mutation: replacing its body with `return queue`
+    // left every existing test green, because nothing read `.label` at all. Sentence-casing alone rendered
+    // one of the ten real queues as "Questions from ai", which reads as a typo.
+    expect(toRoomView(room([okSection(Q('questions_from_ai'), [], 0)])).queues[0]?.label).toBe('Questions from AI');
+    expect(toRoomView(room([okSection(Q('needs_your_decision'), [], 0)])).queues[0]?.label).toBe('Needs your decision');
+  });
+
+  it('does not mangle a word that merely contains the letters ai', () => {
+    expect(toRoomView(room([okSection(Q('waiting_on_email'), [], 0)])).queues[0]?.label).toBe('Waiting on email');
+  });
+});

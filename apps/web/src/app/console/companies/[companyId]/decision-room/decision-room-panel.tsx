@@ -25,17 +25,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DecisionRoomView } from '@acbp/contracts';
 import { describeRoom, toRoomView, type QueueView } from './room-view';
-import { describeStream, initialStreamState, nextStreamState, type StreamState } from './stream-state';
+import { describeStream, initialStreamState, nextStreamState, streamModeLabel, type StreamState } from './stream-state';
 
 /** How often to re-read when the channel is not connected. Deliberately slower than the stream's own tick. */
 const POLL_INTERVAL_MS = 15_000;
 
 export function DecisionRoomPanel({ companyId, initialRoom }: { companyId: string; initialRoom: DecisionRoomView }): React.JSX.Element {
   const [room, setRoom] = useState<DecisionRoomView>(initialRoom);
-  const [stream, setStream] = useState<StreamState>(initialStreamState());
+  // Seeded from the room the SERVER already rendered, so the stream's immediate first event is not
+  // mistaken for a change and does not fire a redundant re-read of what is already on screen.
+  const [stream, setStream] = useState<StreamState>(() => initialStreamState(initialRoom.digest));
   const [readError, setReadError] = useState<string | null>(null);
   const streamRef = useRef<StreamState>(stream);
   streamRef.current = stream;
+  // Whether the machine currently wants a transport connection at all. Read from a ref inside the effect
+  // so that it gates opening without becoming a dependency that re-runs it.
+  const wantsConnectionRef = useRef<boolean>(true);
+  wantsConnectionRef.current = stream.mode !== 'stopped' && stream.mode !== 'polling';
 
   const base = `/api/companies/${encodeURIComponent(companyId)}/decision-room`;
 
@@ -59,7 +65,10 @@ export function DecisionRoomPanel({ companyId, initialRoom }: { companyId: strin
 
   // The update channel. Re-established when the state machine asks for it, and never by EventSource itself.
   useEffect(() => {
-    if (stream.mode === 'stopped' || stream.mode === 'polling') return;
+    // wantsConnection is read from a ref, NOT a dependency: the effect must re-run when a NEW
+    // connection is wanted (epoch) and at no other time. Keying on mode both froze the screen forever on
+    // a repeated max_lifetime and tore down healthy connections on their first event.
+    if (!wantsConnectionRef.current) return;
 
     const source = new EventSource(`${base}/stream`);
     let live = true;
@@ -92,19 +101,27 @@ export function DecisionRoomPanel({ companyId, initialRoom }: { companyId: strin
       advance({ kind: 'closed', reason });
     });
 
-    // EventSource surfaces a comment-only tick as nothing at all, so `message` standing in for the
-    // heartbeat is the closest observable signal that the connection is alive.
-    source.addEventListener('message', () => advance({ kind: 'heartbeat' }));
+    // THE SERVER'S HEARTBEAT IS NOT OBSERVABLE HERE, and no listener pretends otherwise. It is written
+    // as an SSE comment line, and EventSource ignores comments entirely; a message event fires only
+    // for a message with no event field, and this server names every event it sends. A message
+    // listener would therefore be a branch that can never run. The open event is the real signal that
+    // the channel came up, and it is what moves the state out of connecting.
+    source.addEventListener('open', () => advance({ kind: 'open' }));
 
-    // An `error` here means the connection ended WITHOUT the server's terminal event — the genuine fault.
-    source.addEventListener('error', () => advance({ kind: 'error' }));
+    // EventSource fires 'error' for BOTH a connection it could not open and one that dropped
+    // mid-flight, and those are different facts: the route authorizes BEFORE writing a 200 precisely
+    // so a refusal arrives as an ordinary error envelope rather than as a dead stream. readyState
+    // tells them apart - CLOSED means the browser gave up on a non-2xx open, CONNECTING means it
+    // intends to retry a socket it lost. Reporting a refusal as 'lost' would discard the very
+    // distinction the route was built to preserve.
+    source.addEventListener('error', () => advance({ kind: source.readyState === EventSource.CLOSED ? 'refused' : 'lost' }));
 
     return () => {
       live = false;
       source.close();
     };
     // `stream.mode` is the trigger: a move to `reconnecting` tears this down and mounts a fresh connection.
-  }, [base, stream.mode, reread]);
+  }, [base, stream.connectionEpoch, reread]);
 
   // The polling fallback. Runs ONLY when the channel is not carrying updates, so the two never double up.
   useEffect(() => {
@@ -133,8 +150,8 @@ export function DecisionRoomPanel({ companyId, initialRoom }: { companyId: strin
           <h2 className="cs-card-t" id="cs-dr-status-h">
             Updates
           </h2>
-          <span className={`cs-badge cs-badge--muted cs-dr-mode`} data-mode={stream.mode}>
-            {stream.mode}
+          <span className="cs-badge cs-badge--muted cs-dr-mode" data-mode={stream.mode}>
+            {streamModeLabel(stream.mode)}
           </span>
         </div>
         {/* The channel's own state, in words. `isError` is true ONLY for an ending the founder should treat

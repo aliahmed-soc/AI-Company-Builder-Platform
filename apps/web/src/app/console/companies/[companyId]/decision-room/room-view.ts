@@ -45,9 +45,18 @@ export interface RoomView {
   readonly incomplete: boolean;
 }
 
-/** Queue ids are snake_case machine words; this is the founder-facing label, not a new vocabulary. */
+/**
+ * Queue ids are snake_case machine words; this is the founder-facing label, not a new vocabulary.
+ *
+ * "ai" IS UPPER-CASED as a special case. Sentence-casing alone rendered one of the ten canonical queues as
+ * "Questions from ai", which reads as a typo rather than as an initialism — a reviewer caught it, and the
+ * label had no test at all until then.
+ */
 function labelFor(queue: string): string {
-  return queue.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  return queue
+    .replace(/_/g, ' ')
+    .replace(/^./, (c) => c.toUpperCase())
+    .replace(/\bai\b/g, 'AI');
 }
 
 function toQueueView(section: DecisionRoomSection): QueueView {
@@ -90,6 +99,13 @@ function toQueueView(section: DecisionRoomSection): QueueView {
   };
 }
 
+/**
+ * `room.integrity` AND `room.usage` ARE DELIBERATELY NOT RENDERED, and that is written down rather than
+ * left to be discovered. They are separate surfaces — an integrity counter and an account usage summary —
+ * each with its own honesty rules, and neither belongs in a queue list. A reviewer noticed they were being
+ * silently discarded, which is exactly why the omission needs to be a stated decision instead of an
+ * accident of what this mapper happened to read.
+ */
 export function toRoomView(room: DecisionRoomView): RoomView {
   const queues = room.sections.map(toQueueView);
   const answered = queues.filter((q) => q.count !== null).length;
