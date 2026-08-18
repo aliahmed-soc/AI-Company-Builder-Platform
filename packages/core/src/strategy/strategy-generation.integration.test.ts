@@ -71,14 +71,24 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
   const gensFor = async (companyId: string) => (await sql<{ id: string; status: string; option_count: number; similarity_check_result: string; understanding_version: number }>`select id, status, option_count, similarity_check_result, understanding_version from strategy_generations where company_id = ${companyId}::uuid`.execute(owner.kysely)).rows;
   const optsFor = async (generationId: string) => (await sql<{ ordinal: number; fields: Record<string, string> }>`select ordinal, fields from strategy_options where generation_id = ${generationId}::uuid order by ordinal`.execute(owner.kysely)).rows;
 
-  test('GATED: no understanding → no_understanding; understanding present but unconfirmed → not_confirmed; nothing persisted', async () => {
+  test('GATED: no understanding → no_understanding; understanding present but unconfirmed → not_confirmed; nothing persisted OR SPENT', async () => {
+    // ACBP-API-008. The counter is here for the same reason it is in the authz test below: hoisting the paid call
+    // above this gate would leave both statuses, and the "nothing persisted" assertion, exactly as they are — the
+    // generation result would simply go unused. The account would be charged to be told it has no confirmed
+    // understanding, and no assertion in this file could tell. Cheap to prevent, invisible once shipped.
+    let paidCalls = 0;
     const gw = gatewayWith({ kind: 'respond', output: optionsOutput([option(), option(), option()]) });
+    const counted: typeof gw = (request, options) => {
+      paidCalls += 1;
+      return gw(request, options);
+    };
     // No understanding document at all.
-    expect((await generateStrategyOptions(product, base(), { gateway: gw })).status).toBe('no_understanding');
+    expect((await generateStrategyOptions(product, base(), { gateway: counted })).status).toBe('no_understanding');
     // Understanding present but NOT confirmed → strategy is blocked.
     await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, false);
-    expect((await generateStrategyOptions(product, base(), { gateway: gw })).status).toBe('not_confirmed');
+    expect((await generateStrategyOptions(product, base(), { gateway: counted })).status).toBe('not_confirmed');
     expect(await gensFor(w.companyA1)).toHaveLength(0);
+    expect(paidCalls, 'a precondition refusal reached the paid provider first').toBe(0);
   });
 
   test('complete generation from a CONFIRMED understanding: one immutable generation + 16-field options + audit + metered usage', async () => {
@@ -178,6 +188,36 @@ describe.skipIf(!hasTestDatabase)('strategy option generation (real PostgreSQL, 
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };
     expect((await generateStrategyOptions(product, nonMember, { gateway: gw })).status).toBe('forbidden');
     expect((await getLatestStrategyGeneration(product, nonMember)).status).toBe('forbidden');
+    expect(await gensFor(w.companyA1)).toHaveLength(0);
+  });
+
+  test('MONEY: a viewer and a non-member are refused BEFORE the provider is called, not merely refused', async () => {
+    // ACBP-API-008. This test exists because a mutation survived hosted CI run 31982475683: the FIRST of this use
+    // case's two authorization checks was weakened from `strategy:generate` (owner) to `strategy:read`
+    // (owner|viewer) and the entire suite still passed. Nothing was wrong with the other assertions — a viewer
+    // still received `forbidden`, because the SECOND check, inside the persist transaction, still refused them.
+    // What changed invisibly is that the paid provider call at step 2 now happened first.
+    //
+    // "Nothing was persisted" and "nothing was spent" are different claims, and every existing assertion here
+    // proves only the first. A caller who is refused must never have cost the account money, so the counter is
+    // the assertion and the returned status is the supporting detail, rather than the other way round.
+    await seedUnderstanding(w.accountA, w.companyA1, w.aOwner, true);
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof gatewayWith> => {
+      const inner = gatewayWith({ kind: 'respond', output: optionsOutput(distinctOptions(3)) });
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
+    const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 };
+    expect((await generateStrategyOptions(product, viewer, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+
+    const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 };
+    expect((await generateStrategyOptions(product, nonMember, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
     expect(await gensFor(w.companyA1)).toHaveLength(0);
   });
 

@@ -82,12 +82,33 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
   const tasksFor = async () => (await sql<{ id: string; state: string; title: string; task_type: string | null; priority: number | null; milestone_id: string | null }>`select id, state, title, task_type, priority, milestone_id from tasks where company_id = ${w.companyA1}::uuid order by priority`.execute(owner.kysely)).rows;
   const taskAudits = async () => (await sql<{ n: number }>`select count(*)::int as n from audit_events where name = 'task.created'`.execute(owner.kysely)).rows[0]!.n;
 
-  test('THE GATE: no decision, a REJECT decision, and no roadmap each block planning with nothing persisted', async () => {
-    expect((await generateTasks(product, base(), { gateway: okGateway() })).status).toBe('no_decision');
+  /**
+   * ACBP-API-008 — a counting gateway, because "nothing persisted" does not mean "nothing spent".
+   *
+   * The gate test below asserted only that no task rows appeared. Hoisting the paid call above the decision gate
+   * would leave both statuses and that row count untouched, while charging the account to be told it has no
+   * decision. The counter is the claim; the status is the supporting detail.
+   */
+  const countedGateway = (): { readonly gateway: ReturnType<typeof okGateway>; calls: () => number } => {
+    const inner = okGateway();
+    let calls = 0;
+    return {
+      gateway: (request, options) => {
+        calls += 1;
+        return inner(request, options);
+      },
+      calls: () => calls,
+    };
+  };
+
+  test('THE GATE: no decision, a REJECT decision, and no roadmap each block planning with nothing persisted OR SPENT', async () => {
+    const gw = countedGateway();
+    expect((await generateTasks(product, base(), { gateway: gw.gateway })).status).toBe('no_decision');
     await seedChain(null);
     await seedRejectDecision();
-    expect((await generateTasks(product, base(), { gateway: okGateway() })).status).toBe('decision_rejected');
+    expect((await generateTasks(product, base(), { gateway: gw.gateway })).status).toBe('decision_rejected');
     expect(await tasksFor()).toHaveLength(0);
+    expect(gw.calls(), 'a planning precondition refusal reached the paid provider first').toBe(0);
   });
 
   test('no_roadmap: a decision without a roadmap has no milestones to trace tasks to (ROAD-001 / M4 exit)', async () => {
@@ -243,9 +264,25 @@ describe.skipIf(!hasTestDatabase)('task generation + steering (real PostgreSQL, 
   test('authz: a viewer is REFUSED (PM ruling 2026-08-14); a non-member is forbidden', async () => {
     // NARROWED by ACBP-API-004: `task:generate` is owner-only. "They are only DRAFTS" was the strongest argument
     // for keeping viewers here, and it still loses — a draft costs the same metered model call as anything else.
+    //
+    // AND THE `forbidden` ON ITS OWN IS NOT ENOUGH (ACBP-API-008). Two authorization checks guard this path — one
+    // before the model call, one inside the persist transaction — so weakening only the first still returns
+    // `forbidden` from the second, with the paid call already made. "The drafts were not saved" is not the same
+    // statement as "the account was not charged", and only the counter below can tell them apart.
     await seedChain('whole_plan');
-    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
-    expect((await generateTasks(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 }, { gateway: okGateway() })).status).toBe('forbidden');
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof okGateway> => {
+      const inner = okGateway();
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
+    expect((await generateTasks(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1 }, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+    expect((await generateTasks(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1 }, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
   });
 
   test('repeat planning appends and CONTINUES the rank rather than restating 0 (append-only, CDR-040 §8-G7)', async () => {

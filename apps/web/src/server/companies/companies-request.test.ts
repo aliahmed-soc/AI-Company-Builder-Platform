@@ -1,6 +1,9 @@
 // ACBP-P1-010 — unit tests for the authenticated companies request use cases (injected deps; no Clerk/DB).
 import { describe, test, expect } from 'vitest';
 import { DECISION_ROOM_QUEUES, okSection, type DecisionRoomView } from '@acbp/contracts';
+// ACBP-API-008 slice 3b: the factory core throws from when no model provider is configured. Imported rather than
+// re-created, so this suite tests the CONTRACT between core's thrower and the web layer's recogniser.
+import { modelGatewayNotConfiguredError } from '@acbp/core';
 import type { VerifiedIdentityDeps } from '../auth/verified-identity.js';
 import {
   createCompanyForRequest,
@@ -20,6 +23,10 @@ import {
   listApprovalInboxForRequest,
   editRoadmapForRequest,
   deleteTaskForRequest,
+  generateStrategyForRequest,
+  recommendStrategyForRequest,
+  generateRoadmapForRequest,
+  generateTasksForRequest,
   getTaskRunForRequest,
   listTaskRunsForRequest,
   recordStrategySelectionForRequest,
@@ -39,6 +46,7 @@ import {
   getMemoryForRequest,
   deleteMemoryForRequest,
   type CompanyRuntime,
+  type CompaniesRequestResult,
 } from './companies-request.js';
 
 function identityDeps(opts: { userId?: string | null; email?: string; verified?: boolean } = {}): VerifiedIdentityDeps {
@@ -73,6 +81,17 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     deleteTask: () => Promise.reject(new Error('deleteTask was called without being stubbed')),
     getTaskRun: () => Promise.reject(new Error('getTaskRun was called without being stubbed')),
     listTaskRuns: () => Promise.reject(new Error('listTaskRuns was called without being stubbed')),
+    // ACBP-API-008 slice 3b — THE FOUR METERED SURFACES. The unstubbed default rejects like every other, but the
+    // stake is higher here: a fake that resolved `undefined` would let a test claim a generate path works while
+    // the real one spends money, and these are the only four methods on this runtime that can.
+    // CDR-092 §15: the fake is an admitted authenticated user. Default ALLOWED so existing mapping
+    // tests keep testing mapping. Tests that need a refusal stub `forbidden` explicitly — that is
+    // the whole point of the new ordering tests below.
+    authorizeMeteredGenerate: () => Promise.resolve('allowed' as const),
+    generateStrategyOptions: () => Promise.reject(new Error('generateStrategyOptions was called without being stubbed')),
+    recommendStrategy: () => Promise.reject(new Error('recommendStrategy was called without being stubbed')),
+    generateRoadmap: () => Promise.reject(new Error('generateRoadmap was called without being stubbed')),
+    generateTasks: () => Promise.reject(new Error('generateTasks was called without being stubbed')),
     resolveInternalUser: () => Promise.resolve({ status: 'active', userId: 'u1' }),
     ensurePersonalAccount: () => Promise.resolve({ accountId: 'acc_1', created: false }),
     createCompany: () => Promise.resolve({ status: 'ok', companyId: 'co_1', companyStatus: 'draft', creationMode: 'own_idea' }),
@@ -868,5 +887,312 @@ describe('CDR-087 — strategy read and decision recording (request layer)', () 
         await expect((runtime as unknown as Record<string, () => Promise<unknown>>)[method]!()).rejects.toThrow(method);
       },
     );
+  });
+});
+
+/**
+ * ACBP-API-008 slice 3b — the four routes that spend real money (CDR-092).
+ *
+ * Everything else in this file guards a read or a database write. These four cause a PAID provider call, so the
+ * question each test below asks is not "is the answer shaped right" but "can money leave when it should not".
+ *
+ * CDR-092 §11 records why the enforcement proof lives HERE rather than in an AST check: a route can branch on
+ * the limiter's outcome and still call the use case in both arms, satisfying any structural matcher while the
+ * spend happens anyway. The property that actually matters is behavioural and is asserted directly — when the
+ * ceiling refuses, the metered method is NEVER INVOKED. `neverCalled` below is the whole guard.
+ */
+describe('ACBP-API-008 slice 3b — the four metered generate surfaces (request layer)', () => {
+  const GENERATION = { sentinel: 'generation' } as unknown as never;
+  const RECOMMENDATION = { sentinel: 'recommendation' } as unknown as never;
+  const ROADMAP = { sentinel: 'roadmap' } as unknown as never;
+  const TASKS = [{ sentinel: 'task' }] as unknown as never;
+
+  const OK_TASKS = { status: 'ok', tasks: TASKS, partial: false, tasksMissingType: 0, milestonesOmitted: 0, tasksMissingRationale: 0, memoryItemsConsidered: 4 } as const;
+
+  type Deps = { readonly runtime: CompanyRuntime; readonly identity: VerifiedIdentityDeps };
+
+  /**
+   * One row per metered surface. Driving all four from one table is deliberate: every assertion below then runs
+   * against every metered surface, so a guard proven for `strategy:generate` is proven for the other three too.
+   *
+   * WHAT THE COUNT ASSERTION AT THE END OF THIS BLOCK IS NOT. It used to be described here as what makes a fifth
+   * generate route fail rather than pass silently. It cannot be: `METERED` is a literal in this file, so a fifth
+   * route changes nothing about it and the count still sees four. It can only fail if somebody edits this table,
+   * which means they already remembered — the assurance was circular, and a comment that hands the next reader a
+   * guarantee that does not exist is worse than no comment. The check that actually enumerates is
+   * `tools/check-generate-route-coverage.mjs`, which walks the filesystem and additionally fails on any request
+   * function that reaches a paid runtime method without the ceiling. The count stays as a cheap guard against
+   * someone deleting a row from this table.
+   */
+  const METERED: readonly {
+    readonly label: string;
+    readonly method: 'generateStrategyOptions' | 'recommendStrategy' | 'generateRoadmap' | 'generateTasks';
+    readonly ok: Partial<CompanyRuntime>;
+    readonly okStatus: string;
+    readonly call: (deps: Deps) => Promise<CompaniesRequestResult>;
+  }[] = [
+    {
+      label: 'strategy:generate',
+      method: 'generateStrategyOptions',
+      ok: { generateStrategyOptions: () => Promise.resolve({ status: 'ok', generation: GENERATION }) },
+      okStatus: 'strategy_generated',
+      call: (deps) => generateStrategyForRequest('co_1', deps),
+    },
+    {
+      label: 'strategy:recommend',
+      method: 'recommendStrategy',
+      ok: { recommendStrategy: () => Promise.resolve({ status: 'ok', recommendation: RECOMMENDATION }) },
+      okStatus: 'strategy_recommended',
+      call: (deps) => recommendStrategyForRequest('co_1', { generationId: 'gen_1' }, deps),
+    },
+    {
+      label: 'roadmap:generate',
+      method: 'generateRoadmap',
+      ok: { generateRoadmap: () => Promise.resolve({ status: 'ok', roadmap: ROADMAP }) },
+      okStatus: 'roadmap_generated',
+      call: (deps) => generateRoadmapForRequest('co_1', deps),
+    },
+    {
+      label: 'task:generate',
+      method: 'generateTasks',
+      ok: { generateTasks: () => Promise.resolve(OK_TASKS) },
+      okStatus: 'tasks_generated',
+      call: (deps) => generateTasksForRequest('co_1', deps),
+    },
+  ];
+
+  /** A stub for the metered method that FAILS THE TEST if it is ever reached. */
+  function neverCalled(method: string): Partial<CompanyRuntime> {
+    const boom = (): Promise<never> => Promise.reject(new Error(`SPENT MONEY: ${method} was invoked after the ceiling refused`));
+    return { [method]: boom };
+  }
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — a FORBIDDEN caller leaves the company bucket untouched',
+    async (_label, m) => {
+      // CDR-092 §15. A test that FAILS if the bucket moves: company is counted, authorize returns
+      // forbidden, and any company-scoped consume reddens. Session/account must still appear —
+      // those scopes are the stranger's volume control, and this test is also the verification
+      // that they apply to a non-member request.
+      const seen: { scope: string; key: string }[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => Promise.resolve('forbidden' as const),
+        checkRequestLimit: (scopeKind: string, scopeKey: string) => {
+          seen.push({ scope: scopeKind, key: scopeKey });
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...neverCalled(m.method),
+      });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe('forbidden');
+      expect(seen, 'the account ceiling must still bind a refused caller').toContainEqual({ scope: 'account', key: 'acc_1' });
+      expect(
+        seen.filter((s) => s.scope === 'company'),
+        'a forbidden request that moved the company bucket is the drain this ruling closed',
+      ).toEqual([]);
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an authorized owner still debits the company bucket',
+    async (_label, m) => {
+      // The other direction: a reorder that exempts everyone would make the forbidden test pass
+      // and silently uncap legitimate traffic. This fails if company is missing from `seen`.
+      const seen: { scope: string; key: string }[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => Promise.resolve('allowed' as const),
+        checkRequestLimit: (scopeKind: string, scopeKey: string) => {
+          seen.push({ scope: scopeKind, key: scopeKey });
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...m.ok,
+      });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe(m.okStatus);
+      expect(seen).toContainEqual({ scope: 'account', key: 'acc_1' });
+      expect(seen).toContainEqual({ scope: 'company', key: 'co_1' });
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an unauthenticated caller never reaches authorize or the company bucket',
+    async (_label, m) => {
+      const seen: string[] = [];
+      const runtime = fakeRuntime({
+        authorizeMeteredGenerate: () => {
+          seen.push('authorize');
+          return Promise.resolve('allowed' as const);
+        },
+        checkRequestLimit: (scopeKind: string) => {
+          seen.push(scopeKind);
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...neverCalled(m.method),
+      });
+      const r = await m.call({ runtime, identity: identityDeps({ userId: null }) });
+      expect(r.status).toBe('unauthenticated');
+      expect(seen).toEqual([]);
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — a THROTTLED company ceiling refuses BEFORE the model is reached',
+    async (_label, m) => {
+      // The guard CDR-092 §6.2 names: "a limiter that is called but whose result is ignored is the exact shape of
+      // ACBP-P6-010's shipped-but-unread spend ceiling". Ignoring the outcome here reaches `boom` and reddens.
+      const runtime = fakeRuntime({
+        checkRequestLimit: (scopeKind: string) =>
+          Promise.resolve(scopeKind === 'company' ? ({ kind: 'throttled', retryAfterSeconds: 12 } as const) : ({ kind: 'allowed' } as const)),
+        ...neverCalled(m.method),
+      } as Partial<CompanyRuntime>);
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe('rate_limited');
+      if (r.status !== 'rate_limited') return;
+      expect(r.retryAfterSeconds).toBe(12);
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an UNREADABLE bucket fails CLOSED, and still never reaches the model',
+    async (_label, m) => {
+      // CDR-092 §2: the limiter reports `unavailable` rather than lying about WHY. Fail-open here would mean an
+      // unreadable bucket becomes unlimited paid calls — the worst direction for this particular guard to fail.
+      const runtime = fakeRuntime({
+        checkRequestLimit: (scopeKind: string) => Promise.resolve(scopeKind === 'company' ? ({ kind: 'unavailable' } as const) : ({ kind: 'allowed' } as const)),
+        ...neverCalled(m.method),
+      });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe('unavailable');
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))('%s — the happy path maps to its own arm', async (_label, m) => {
+    const r = await m.call({ runtime: fakeRuntime(m.ok), identity: identityDeps() });
+    expect(r.status).toBe(m.okStatus);
+  });
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — the COMPANY ceiling is keyed on the company, not the account',
+    async (_label, m) => {
+      // A company-scoped ceiling keyed on the account id would throttle a founder's second company because their
+      // first one was busy, and would let one company consume the ceiling of another. The key is the distinguishing
+      // fact of this scope, so it is asserted rather than assumed.
+      const seen: { scope: string; key: string }[] = [];
+      const runtime = fakeRuntime({
+        checkRequestLimit: (scopeKind: string, scopeKey: string) => {
+          seen.push({ scope: scopeKind, key: scopeKey });
+          return Promise.resolve({ kind: 'allowed' } as const);
+        },
+        ...m.ok,
+      });
+      await m.call({ runtime, identity: identityDeps() });
+      expect(seen, 'the account ceiling must still apply — the company one is IN ADDITION, not INSTEAD').toContainEqual({ scope: 'account', key: 'acc_1' });
+      expect(seen).toContainEqual({ scope: 'company', key: 'co_1' });
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))('%s — a core `forbidden` is forwarded as an opaque refusal', async (_label, m) => {
+    // The request layer makes NO authorization decision (CDR-088 §1; CDR-092 §11). What it must not do is absorb
+    // one: a forbidden that arrived as a 200 would be a viewer spending an owner's budget.
+    const runtime = fakeRuntime({ [m.method]: () => Promise.resolve({ status: 'forbidden' }) });
+    const r = await m.call({ runtime, identity: identityDeps() });
+    expect(r.status).toBe('forbidden');
+  });
+
+  test('the metered table still has its four rows — a deleted row fails here', () => {
+    // Guards the table above against a row being dropped, which would silently stop testing a live surface. It
+    // does NOT notice a fifth route: see the note on METERED for why that claim was wrong, and
+    // tools/check-generate-route-coverage.mjs for the check that does walk the filesystem.
+    expect(METERED).toHaveLength(4);
+  });
+
+  describe('each surface keeps its own refusal vocabulary — collapsing them destroys the next move', () => {
+    test('strategy:generate — five arms stay distinct', async () => {
+      const seen: string[] = [];
+      for (const arm of ['forbidden', 'no_understanding', 'not_confirmed', 'stale_understanding', 'generation_failed'] as const) {
+        const runtime = fakeRuntime({ generateStrategyOptions: () => Promise.resolve({ status: arm } as never) });
+        seen.push((await generateStrategyForRequest('co_1', { runtime, identity: identityDeps() })).status);
+      }
+      expect(seen).toEqual(['forbidden', 'no_understanding', 'not_confirmed', 'stale_understanding', 'generation_failed']);
+      expect(new Set(seen).size).toBe(5);
+    });
+
+    test('strategy:recommend — a missing generation is not_found, a failed model is not', async () => {
+      const seen: string[] = [];
+      for (const arm of ['forbidden', 'not_found', 'recommendation_failed'] as const) {
+        const runtime = fakeRuntime({ recommendStrategy: () => Promise.resolve({ status: arm } as never) });
+        seen.push((await recommendStrategyForRequest('co_1', { generationId: 'gen_1' }, { runtime, identity: identityDeps() })).status);
+      }
+      expect(seen).toEqual(['forbidden', 'not_found', 'recommendation_failed']);
+    });
+
+    test('strategy:recommend — a NULL recommendation is a success, not an absence', async () => {
+      // The core arm is `recommendation: StrategyRecommendationDTO | null`. Mapping null to 404 would tell the
+      // caller the generation does not exist, which is a different and false statement.
+      const runtime = fakeRuntime({ recommendStrategy: () => Promise.resolve({ status: 'ok', recommendation: null }) });
+      const r = await recommendStrategyForRequest('co_1', { generationId: 'gen_1' }, { runtime, identity: identityDeps() });
+      expect(r.status).toBe('strategy_recommended');
+      if (r.status !== 'strategy_recommended') return;
+      expect(r.recommendation).toBeNull();
+    });
+
+    test('roadmap:generate — five arms stay distinct', async () => {
+      const seen: string[] = [];
+      for (const arm of ['forbidden', 'no_decision', 'decision_rejected', 'stale_decision', 'generation_failed'] as const) {
+        const runtime = fakeRuntime({ generateRoadmap: () => Promise.resolve({ status: arm } as never) });
+        seen.push((await generateRoadmapForRequest('co_1', { runtime, identity: identityDeps() })).status);
+      }
+      expect(seen).toEqual(['forbidden', 'no_decision', 'decision_rejected', 'stale_decision', 'generation_failed']);
+      expect(new Set(seen).size).toBe(5);
+    });
+
+    test('task:generate — all EIGHT planning arms stay distinct', async () => {
+      const arms = ['forbidden', 'no_decision', 'decision_rejected', 'no_roadmap', 'no_milestones_in_scope', 'stale_decision', 'stale_roadmap', 'generation_failed'] as const;
+      const seen: string[] = [];
+      for (const arm of arms) {
+        const runtime = fakeRuntime({ generateTasks: () => Promise.resolve({ status: arm } as never) });
+        seen.push((await generateTasksForRequest('co_1', { runtime, identity: identityDeps() })).status);
+      }
+      expect(new Set(seen).size, 'eight refusals, eight answers — "planning failure is visible with reason"').toBe(8);
+    });
+
+    test('task:generate — a PARTIAL plan reports its shortfall rather than presenting as complete', async () => {
+      // ADR-019/TASK-002 forbid inventing a task type, so a shortfall is reported. Dropping these counters at the
+      // request layer would restore exactly the fabricated-completeness the domain refuses to produce.
+      const runtime = fakeRuntime({ generateTasks: () => Promise.resolve({ ...OK_TASKS, partial: true, tasksMissingType: 2, milestonesOmitted: 1, tasksMissingRationale: 3 }) });
+      const r = await generateTasksForRequest('co_1', { runtime, identity: identityDeps() });
+      expect(r.status).toBe('tasks_generated');
+      if (r.status !== 'tasks_generated') return;
+      expect({ partial: r.partial, missingType: r.tasksMissingType, omitted: r.milestonesOmitted, missingRationale: r.tasksMissingRationale }).toEqual({
+        partial: true,
+        missingType: 2,
+        omitted: 1,
+        missingRationale: 3,
+      });
+    });
+  });
+
+  test.each(METERED.map((m) => [m.label, m] as const))(
+    '%s — an unconfigured model gateway is a bounded 503, and never names the credential',
+    async (_label, m) => {
+      // CDR-092 §9 has the runtime THROW when no provider is configured. Unmapped, that throw becomes the generic
+      // 500 — indistinguishable from a bug, on the one failure an operator can actually fix.
+      //
+      // The rejection is built with CORE'S OWN factory rather than a hand-written Error carrying the right text.
+      // A string literal here would keep passing after core changed how it signals this, which is the difference
+      // between testing the contract and testing my copy of it.
+      const runtime = fakeRuntime({ [m.method]: () => Promise.reject(modelGatewayNotConfiguredError()) });
+      const r = await m.call({ runtime, identity: identityDeps() });
+      expect(r.status).toBe('unavailable');
+      expect(JSON.stringify(r), 'the thrown text names an environment variable — it must not travel').not.toContain('ANTHROPIC_API_KEY');
+      expect(JSON.stringify(r)).not.toContain('MODEL_GATEWAY_NOT_CONFIGURED');
+    },
+  );
+
+  test.each(METERED.map((m) => [m.label, m] as const))('%s — any OTHER throw stays a 500, and is not disguised as unavailable', async (_label, m) => {
+    // The catch above must recognise ONE condition, not swallow the class. A bug that reported itself as 503
+    // would read as "the platform is briefly down" forever, and nobody would look for it.
+    const runtime = fakeRuntime({ [m.method]: () => Promise.reject(new TypeError('genuine defect')) });
+    await expect(m.call({ runtime, identity: identityDeps() })).rejects.toThrow('genuine defect');
   });
 });

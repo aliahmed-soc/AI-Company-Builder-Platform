@@ -33,6 +33,29 @@ export const REQUEST_LIMIT_DEFAULTS = {
    * would widen a ruled limit under cover of symmetry with the session rule above.
    */
   accountPerMinute: 300,
+  /**
+   * ⚠️ PROVISIONAL — Per company on the METERED GENERATE routes: 5 req/min (CDR-091 §2.3; CDR-092 §2.1).
+   *
+   * **This number has never been calibrated against anything.** It is one of three places the provisional status
+   * is recorded (the others: CDR-092 §2.1, and a PROJECT-STATE entry); a session that changes it is expected to
+   * clear all three in the same commit. See also the 60s/90s timeouts, unmeasured for the same reason — no live
+   * model call has ever completed from this repository.
+   *
+   * WHY IT IS TWO ORDERS OF MAGNITUDE BELOW `accountPerMinute`, AND WHY THAT IS A SHAPE NOT A MEASUREMENT: every
+   * request on these four routes causes a paid provider call. The read-sized ceilings above bound request
+   * frequency against a database; applying anything near 300 to a paid call would be a spend hazard wearing a
+   * rate limit's clothing. CDR-090 §3.3 flagged exactly that trap — "the guard passes either way, which is the
+   * trap: coverage is not calibration." Single digits is the deliberately conservative side of an unknown; what
+   * nobody yet knows is how often a founder legitimately wants to regenerate, or what one generation costs.
+   *
+   * NOT THE SPEND CAP. NFR-015's ceiling bounds MONEY per company per day and month from `usage_events`. This
+   * bounds request FREQUENCY. They share no key, window, unit or storage — one request can spend an unbounded
+   * amount and a thousand can spend none.
+   *
+   * No burst: a burst allowance on a paid call is a licence to spend the whole minute's budget at once, which is
+   * the opposite of what this ceiling is for. Capacity therefore equals the rate, as with `accountPerMinute`.
+   */
+  companyPerMinute: 5,
 } as const;
 
 export type RequestLimitDefaults = typeof REQUEST_LIMIT_DEFAULTS;

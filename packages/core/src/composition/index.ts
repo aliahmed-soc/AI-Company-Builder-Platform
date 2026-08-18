@@ -7,6 +7,15 @@ export {
   type CallModelOptions,
   type BoundModelGateway,
 } from './model-gateway.js';
+// The LIVE Anthropic gateway (ACBP-API-006; CDR-091). `createModelGateway` above is provider-agnostic and takes
+// whatever provider it is handed; this one supplies the real, paid provider and its price table.
+export {
+  createAnthropicGateway,
+  estimateAnthropicCostMicros,
+  OPUS_5_INPUT_MICROS_PER_TOKEN,
+  OPUS_5_OUTPUT_MICROS_PER_TOKEN,
+  type AnthropicGatewayConfig,
+} from './anthropic-gateway.js';
 export { interviewOutputValidator } from './interview-gateway.js';
 export { understandingOutputValidator } from './understanding-gateway.js';
 export { strategyOutputValidator, strategyRecommendationValidator } from './strategy-gateway.js';

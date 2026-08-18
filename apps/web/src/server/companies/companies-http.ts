@@ -69,6 +69,31 @@ export async function parseRenameCompanyBody(request: HttpRequest): Promise<Pars
   return { ok: true, input: { name: r.obj['name'], description: r.obj['description'] } };
 }
 
+/**
+ * Parse the recommend body → { generationId } (a non-empty string; core decides whether it names anything).
+ *
+ * ⚠️ THE ONLY BODY ON A METERED ROUTE, which is why it is here and not a local `parseBody` in the route file.
+ * The four routes beside it (`roadmap/edit`, `decisions`, `strategy/selection`, `tasks/{id}/delete`) each read
+ * their body with a bare `request.json()` — no size cap, no content-type check — and `strategy/recommend`
+ * originally followed them. Following a convention is not a reason when the convention is the defect: there is
+ * no global body cap in `apps/web`, so a bare `request.json()` lets an UNAUTHENTICATED caller make the server
+ * buffer and parse an arbitrarily large payload, and this is the one route of the four that spends money.
+ *
+ * `readJsonObject` already owns the 16 KiB cap (rejecting an over-large declared `Content-Length` before reading
+ * a byte, and independently counting streamed bytes) and the 415. This adds only the shape check.
+ *
+ * The blank/non-string refusal is deliberate and is NOT an authorization decision: an id that cannot name a
+ * generation is refused before it consumes a rate-limit token, while whether a well-formed id names a generation
+ * the caller may REACH stays core's ruling and returns `not_found` (CDR-088 §1).
+ */
+export async function parseRecommendBody(request: HttpRequest): Promise<Parsed<{ generationId: string }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  const generationId = r.obj['generationId'];
+  if (typeof generationId !== 'string' || generationId.trim() === '') return { ok: false, status: 400 };
+  return { ok: true, input: { generationId } };
+}
+
 /** Parse an answer-submission body → { status, content } (raw values; the domain validates). */
 export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ status: unknown; content: unknown }>> {
   const r = await readJsonObject(request);
@@ -173,6 +198,66 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       return jsonResponse(200, { selection: result.selection });
     case 'decision_recorded':
       return jsonResponse(200, { decision: result.decision });
+    // ── ACBP-API-008 slice 3b — the metered generate answers (CDR-092) ────────────────────────────────────────
+    // 200 and not 201, on the same reasoning as the two above: none of these creates a resource at a new URL a
+    // client could then GET. Each is read back through the surface it belongs to — GET strategy, GET roadmap,
+    // GET tasks — so a 201 would promise a Location that does not exist.
+    case 'strategy_generated':
+      return jsonResponse(200, { generation: result.generation });
+    case 'strategy_recommended':
+      return jsonResponse(200, { recommendation: result.recommendation });
+    case 'roadmap_generated':
+      return jsonResponse(200, { roadmap: result.roadmap });
+    // An explicit ALLOWLIST, never `...result`. Spreading would publish `status` today and whatever core's ok
+    // arm gains tomorrow — the exact defect the approvals inbox allowlist exists to prevent (CDR-088 §2.1c).
+    case 'tasks_generated':
+      return jsonResponse(200, {
+        tasks: result.tasks,
+        partial: result.partial,
+        tasksMissingType: result.tasksMissingType,
+        milestonesOmitted: result.milestonesOmitted,
+        tasksMissingRationale: result.tasksMissingRationale,
+        memoryItemsConsidered: result.memoryItemsConsidered,
+      });
+    // The eight state conflicts. All 409 — well-formed, authorized, and refused by the company's current state —
+    // and each keeps its OWN code because the next move differs for every one of them. A single generic 409
+    // would leave a founder guessing which of eight things to do.
+    case 'no_understanding':
+      return jsonResponse(409, { error: 'no_understanding' });
+    case 'not_confirmed':
+      return jsonResponse(409, { error: 'not_confirmed' });
+    case 'stale_understanding':
+      return jsonResponse(409, { error: 'stale_understanding' });
+    case 'no_decision':
+      return jsonResponse(409, { error: 'no_decision' });
+    case 'stale_decision':
+      return jsonResponse(409, { error: 'stale_decision' });
+    case 'no_roadmap':
+      return jsonResponse(409, { error: 'no_roadmap' });
+    case 'no_milestones_in_scope':
+      return jsonResponse(409, { error: 'no_milestones_in_scope' });
+    case 'stale_roadmap':
+      return jsonResponse(409, { error: 'stale_roadmap' });
+    // 502, deliberately not 503 and not 500: an UPSTREAM provider call failed or returned something unusable.
+    // 503 would say this platform is down while it is answering every other route fine; 500 would blame a defect
+    // here. Nothing was persisted either way — no phantom options, no phantom tasks. No provider detail travels.
+    case 'generation_failed':
+      return jsonResponse(502, { error: 'generation_failed' });
+    case 'recommendation_failed':
+      return jsonResponse(502, { error: 'recommendation_failed' });
+    /**
+     * 402, and deliberately WITHOUT `Retry-After` (CDR-092 §4).
+     *
+     * The header's absence is the second signal, readable without parsing a body: 429 says wait and retry, 402
+     * says retrying cannot help until a human tops the account up. An automated client handed 429 for an
+     * exhausted budget would retry forever against a wall.
+     *
+     * ⚠️ CDR-092 §10 — UNREACHABLE TODAY. Nothing on the generate paths debits credit, so no code path returns
+     * this status. The mapping is correct and the trigger does not exist; ACBP-API-009 is the wiring. This must
+     * not be reported as a working budget control.
+     */
+    case 'budget_exhausted':
+      return jsonResponse(402, { error: 'budget_exhausted' });
     case 'renamed':
       return jsonResponse(200, result.version !== undefined ? { changed: result.changed, version: result.version } : { changed: result.changed });
     case 'transitioned':
@@ -260,10 +345,15 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     case 'email_unverified':
       return jsonResponse(403, { error: 'email_unverified' });
     case 'rate_limited':
-      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-082). 429 with `Retry-After`, and the body carries the
-      // SAME opaque envelope as every other refusal — no bucket balance, no limit value, no scope name. A
-      // response that told a caller which ceiling they hit and how much of it remains is a measurement tool for
-      // finding the cheapest way to stay just under it.
+      // CDR-008 §8's request ceiling (ACBP-P7-013; CDR-082). 429 with `Retry-After`, and the BODY carries the
+      // same opaque envelope as every other refusal — no bucket balance, no limit value, no scope name.
+      //
+      // The HEADER is a different matter, and an earlier version of this comment claimed otherwise. Its value is
+      // computed from the refusing rule's refill rate, so its magnitude differs per scope — roughly 12s for the
+      // company ceiling against 1s for the session and account ones — and `60 / retryAfter` recovers the
+      // configured per-minute rate. That disclosure is unavoidable while the retry advice is honest, and honest
+      // advice is worth more than hiding a rate an attacker can measure by timing anyway. Stated plainly rather
+      // than claimed away: the body is opaque, the header is truthful.
       return rateLimitedResponse(result.retryAfterSeconds);
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));

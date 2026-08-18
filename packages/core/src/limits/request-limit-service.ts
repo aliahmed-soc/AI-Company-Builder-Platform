@@ -48,9 +48,27 @@ const SESSION_RULE: RateLimitRule = rateLimitRule({
 });
 const ACCOUNT_RULE: RateLimitRule = rateLimitRule({ perMinute: REQUEST_LIMIT_DEFAULTS.accountPerMinute });
 
+/**
+ * ⚠️ PROVISIONAL — the per-company ceiling for the metered generate routes (ACBP-API-008; CDR-091 §2.3).
+ *
+ * The number lives in `@acbp/config` and is unmeasured; see its comment for why 5 rather than something near
+ * `accountPerMinute`, and CDR-092 §2.1 / PROJECT-STATE for the other two places that status is recorded.
+ *
+ * NO BURST, deliberately and unlike the session rule: a burst allowance on a route that spends real money per
+ * request permits the whole minute's budget to leave at once, which is precisely what this ceiling exists to
+ * prevent. Capacity equals rate, as with the account rule.
+ */
+const COMPANY_RULE: RateLimitRule = rateLimitRule({ perMinute: REQUEST_LIMIT_DEFAULTS.companyPerMinute });
+
+/**
+ * `Record<RateLimitScopeKind, …>` is exhaustive BY TYPE: adding a scope kind without adding its rule here is a
+ * compile error, not a request that silently finds no ceiling. That is why this is a Record and not a lookup
+ * with a default.
+ */
 const RULES: Readonly<Record<RateLimitScopeKind, RateLimitRule>> = {
   session: SESSION_RULE,
   account: ACCOUNT_RULE,
+  company: COMPANY_RULE,
 };
 
 export interface RequestLimitOptions {

@@ -36,7 +36,14 @@ import type { DatabaseSchema } from './schema.js';
 export type RateLimitExecutor = Kysely<DatabaseSchema>;
 
 /** The two keys CDR-008 §8 rules. A third would be a value decision, not a code change. */
-export type RateLimitScopeKind = 'session' | 'account';
+/**
+ * The scope keys the bucket table admits. MUST stay in step with the CHECK constraint on
+ * `api_rate_limit_buckets.scope_kind` (migration 0055, widened by 0056) - a value here that the constraint
+ * refuses is a runtime write failure, not a type error.
+ *
+ * `company` was added by ACBP-API-008 for the metered generate routes (CDR-091 section 2.3).
+ */
+export type RateLimitScopeKind = 'session' | 'account' | 'company';
 
 export interface ConsumeBucketParams {
   readonly scopeKind: RateLimitScopeKind;

@@ -229,4 +229,43 @@ describe.skipIf(!hasTestDatabase)('api_rate_limit_buckets (real PostgreSQL, rest
       expect(rows.rows[0]!.n).toBe('2');
     });
   });
+
+  // ── THE 'company' SCOPE (ACBP-API-008; migration 0056; CDR-092 §2) ───────────────────────────────────────────
+  describe("the 'company' scope kind", () => {
+    const rule = () => ({ capacityMilli: SESSION.capacityMilli, refillMilliPerSecond: SESSION.refillMilliPerSecond, costMilli: MILLI, at: at(0) });
+
+    test('a company bucket can be consumed — the widened CHECK constraint admits it', async () => {
+      const outcome = await consumeBucket(app.kysely, { scopeKind: 'company', scopeKey: 'company_alpha', ...rule() });
+      expect(outcome.allowed).toBe(true);
+
+      const rows = await sql<{ scope_kind: string; scope_key_hash: string }>`
+        select scope_kind, scope_key_hash from public.api_rate_limit_buckets`.execute(su.kysely);
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.scope_kind).toBe('company');
+      // The company id is a tenant identifier; the same digest discipline as the other kinds applies to it.
+      expect(rows.rows[0]!.scope_key_hash).toBe(bucketKeyHash('company', 'company_alpha'));
+      expect(rows.rows[0]!.scope_key_hash).not.toContain('company_alpha');
+    });
+
+    // THE ONE THAT MATTERS. Migration 0056 could have satisfied "admit company" by DROPPING the constraint
+    // outright, and every positive test above would still pass. This is the assertion that distinguishes a
+    // widened constraint from an absent one — without it the suite cannot tell a scoped namespace from an open
+    // one, and an attacker-supplied or typo'd scope would create buckets no rule governs.
+    test('the constraint still REFUSES an unknown scope kind — 0056 widened it, it did not drop it', async () => {
+      await expect(
+        sql`insert into public.api_rate_limit_buckets (scope_key_hash, scope_kind, tokens_milli, updated_at)
+            values (${'f'.repeat(64)}, 'not_a_real_scope', 1000, now())`.execute(su.kysely),
+      ).rejects.toMatchObject({ code: '23514' }); // check_violation
+    });
+
+    test('company, session and account keys with the SAME string are three separate buckets', async () => {
+      const shared = 'collide';
+      await consumeBucket(app.kysely, { scopeKind: 'session', scopeKey: shared, ...rule() });
+      await consumeBucket(app.kysely, { scopeKind: 'account', scopeKey: shared, ...rule() });
+      await consumeBucket(app.kysely, { scopeKind: 'company', scopeKey: shared, ...rule() });
+      const rows = await sql<{ n: string }>`select count(*)::text as n from public.api_rate_limit_buckets`.execute(su.kysely);
+      // A company id colliding with a session id must not let one spend the other's ceiling.
+      expect(rows.rows[0]!.n).toBe('3');
+    });
+  });
 });

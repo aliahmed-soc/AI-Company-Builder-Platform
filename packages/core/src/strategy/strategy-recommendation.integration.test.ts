@@ -98,9 +98,20 @@ describe.skipIf(!hasTestDatabase)('strategy recommendation (real PostgreSQL, res
     expect(await recsFor(genA)).toHaveLength(0);
   });
 
-  test('not_found: recommending over a generation id that is absent / invisible', async () => {
+  test('not_found: recommending over a generation id that is absent / invisible — and nothing is SPENT looking', async () => {
     const foreign = (await sql<{ id: string }>`select gen_random_uuid() as id`.execute(owner.kysely)).rows[0]!.id;
-    expect((await recommendStrategy(product, { ...base(), generationId: foreign }, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('not_found');
+    // ACBP-API-008. The counter matters more here than on the other three gates: this is the one refusal a caller
+    // can trigger with an id they invented, so a paid call before the lookup would let anyone spend an account's
+    // money by guessing UUIDs. `not_found` alone cannot tell the difference between refusing cheaply and
+    // refusing after paying.
+    let paidCalls = 0;
+    const inner = gatewayWith({ kind: 'respond', output: recOutput() });
+    const counted: typeof inner = (request, options) => {
+      paidCalls += 1;
+      return inner(request, options);
+    };
+    expect((await recommendStrategy(product, { ...base(), generationId: foreign }, { gateway: counted })).status).toBe('not_found');
+    expect(paidCalls, 'an unknown generation id reached the paid provider before the lookup refused it').toBe(0);
   });
 
   test('authz: a viewer is REFUSED (PM ruling 2026-08-14); a non-member is forbidden', async () => {
@@ -113,10 +124,28 @@ describe.skipIf(!hasTestDatabase)('strategy recommendation (real PostgreSQL, res
     //
     // It is also the test that corrected me: I claimed the narrowing broke nothing, having read a LOCAL run where
     // this suite is skipIf-gated and skipped. Hosted CI ran it and disagreed. Skipped is not green.
+    //
+    // THE `forbidden` ON ITS OWN IS NOT ENOUGH, and this is the ACBP-API-008 addition. There are two
+    // authorization checks on this path: one before the model call and one inside the persist transaction. Weaken
+    // only the FIRST and the caller still receives `forbidden` from the second — while the paid provider call has
+    // already happened in between. Every assertion that reads the returned status alone is satisfied by that
+    // world, so the counter below is the part that can tell the two apart.
+    let paidCalls = 0;
+    const counted = (): ReturnType<typeof gatewayWith> => {
+      const inner = gatewayWith({ kind: 'respond', output: recOutput() });
+      return (request, options) => {
+        paidCalls += 1;
+        return inner(request, options);
+      };
+    };
+
     const viewer = { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
-    expect((await recommendStrategy(product, viewer, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
+    expect((await recommendStrategy(product, viewer, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a VIEWER reached the paid provider before being refused').toBe(0);
+
     const nonMember = { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, generationId: genA };
-    expect((await recommendStrategy(product, nonMember, { gateway: gatewayWith({ kind: 'respond', output: recOutput() }) })).status).toBe('forbidden');
+    expect((await recommendStrategy(product, nonMember, { gateway: counted() })).status).toBe('forbidden');
+    expect(paidCalls, 'a NON-MEMBER reached the paid provider before being refused').toBe(0);
   });
 
   test('append-only / latest-wins: a second recommendation is a new row and the read surfaces the latest', async () => {

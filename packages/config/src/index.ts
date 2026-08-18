@@ -135,7 +135,10 @@ export class ConfigValidationError extends Error {
 
 // ---- shared zod building blocks --------------------------------------------------------
 type EnvRecord = Record<string, string | undefined>;
-const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'DATABASE_APP_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY', 'CLERK_WEBHOOK_SIGNING_SECRET']);
+// ANTHROPIC_API_KEY joins this set in the SAME commit that introduces it (ACBP-API-006; CDR-091 §4). Membership
+// here is what makes a value redacted in config errors and diagnostics; a provider credential added to the schema
+// but not to this set would be a key that leaks through the one surface built to describe misconfiguration.
+const SECRET_FIELDS = new Set(['INFISICAL_CLIENT_SECRET', 'DATABASE_URL', 'DATABASE_APP_URL', 'CLERK_SECRET_KEY', 'CLERK_JWT_KEY', 'CLERK_WEBHOOK_SIGNING_SECRET', 'ANTHROPIC_API_KEY']);
 
 const appEnv = z.enum(['development', 'test', 'staging', 'production']);
 const emptyToUndef = (v: unknown): unknown => (v === '' ? undefined : v);
@@ -397,6 +400,41 @@ export function parseClerkConfig(env: EnvRecord): ClerkConfig {
 /** Parse Clerk webhook configuration (ACBP-P1-002). The signing secret is redacted in errors. */
 export function parseClerkWebhookConfig(env: EnvRecord): ClerkWebhookConfig {
   const r = clerkWebhookSchema.safeParse(env);
+  if (!r.success) throw toError(r.error);
+  return r.data;
+}
+
+/**
+ * Validated MODEL-PROVIDER configuration (ACBP-API-006; CDR-091 §4).
+ *
+ * Kept separate from every other config the way `ClerkWebhookConfig` is: it loads only on the composition path
+ * that builds a paid model gateway, so a deployment that never generates does not have to hold a provider key.
+ */
+export interface ModelProviderConfig {
+  /** Server-only Anthropic API key. {@link Secret}-wrapped; revealed only when constructing the SDK client. */
+  readonly apiKey: Secret;
+  /** The configuration-bound model id (ADR-019: model selection is config, never derived at runtime). */
+  readonly modelId: string;
+}
+
+const modelProviderSchema = z
+  .object({
+    // No format assertion beyond non-empty. A prefix check would encode today's key shape into config validation
+    // and reject a perfectly valid future key format — an outage caused by a guess about someone else's namespace.
+    ANTHROPIC_API_KEY: requiredString,
+    ANTHROPIC_MODEL_ID: z.preprocess((v) => (v === '' || v === undefined ? 'claude-opus-5' : v), z.string().min(1)),
+  })
+  .transform((o) => ({ apiKey: new Secret(o.ANTHROPIC_API_KEY), modelId: o.ANTHROPIC_MODEL_ID }));
+
+/**
+ * Parse model-provider configuration. The API key is redacted in validation errors (it is in `SECRET_FIELDS`).
+ *
+ * THROWS when the key is absent — deliberately, and at STARTUP rather than on the first paid call (CDR-090 §1-G3,
+ * CDR-091 §4). A gateway that constructed itself without a credential would fail once per request, at the moment a
+ * founder was waiting for a generation, instead of once at boot where an operator can see it.
+ */
+export function parseModelProviderConfig(env: EnvRecord): ModelProviderConfig {
+  const r = modelProviderSchema.safeParse(env);
   if (!r.success) throw toError(r.error);
   return r.data;
 }
