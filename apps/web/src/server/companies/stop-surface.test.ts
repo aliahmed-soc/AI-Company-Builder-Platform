@@ -155,7 +155,7 @@ function stopDeps(stub: Partial<Record<'activateStop' | 'readStopState', (params
           firstName: null,
           lastName: null,
         }),
-    } as never,
+    },
   };
 }
 

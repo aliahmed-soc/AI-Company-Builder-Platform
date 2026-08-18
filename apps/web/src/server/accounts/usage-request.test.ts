@@ -41,7 +41,7 @@ function deps(readResult: unknown, spy?: (params: unknown) => void): UsageReques
             firstName: null,
             lastName: null,
           }),
-      } as never,
+      },
       // The PROVIDER id is `clerk_1`; the INTERNAL id is `usr_internal`. They are deliberately different here so
       // the assertions below can tell which one core actually receives — a surface that forwarded the provider id
       // would still look plausible if both were spelled the same.
