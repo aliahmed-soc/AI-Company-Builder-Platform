@@ -21,7 +21,11 @@ export default defineConfig({
     // adversarial tests that drive apps/web route handlers against a real database. Such a test must import
     // both layers, which the dependency-boundary rule (rightly) forbids inside apps/ or packages/; the
     // checker scans apps/ + packages/ only, so a repo-level test creates no production dependency edge.
-    include: ['apps/**/*.test.{ts,mts}', 'packages/**/*.test.{ts,mts}', 'tools/**/*.test.{ts,mts,mjs}', 'tests/**/*.test.{ts,mts}'],
+    // .tsx IS INCLUDED FOR apps/** ONLY (ACBP-FE-019). A rendered-component test must be a .tsx file, and
+    // the default environment: 'node' below stays: each such file opts IN with a @vitest-environment jsdom
+    // docblock, so the 4000+ node-environment tests keep their current runtime and isolation. Widening the
+    // GLOBAL environment to jsdom instead would have made every existing suite pay for a DOM none of them uses.
+    include: ['apps/**/*.test.{ts,mts,tsx}', 'packages/**/*.test.{ts,mts}', 'tools/**/*.test.{ts,mts,mjs}', 'tests/**/*.test.{ts,mts}'],
     exclude: ['**/node_modules/**', '**/dist/**', '**/build/**'],
     environment: 'node',
     globals: false,
