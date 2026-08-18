@@ -1342,3 +1342,36 @@
   overflow-wrap: anywhere;
 }
 .cs-ap-preview:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
+
+/* ── ACBP-FE-015: task execution ───────────────────────────────────────────────────────────────────────────
+ * A run's phase is carried by the badge WORD; these tints reinforce it and never replace it. The five states
+ * are the contract's (RUN_STATES), plus `unknown` for a value this platform does not define — which is set
+ * apart rather than left looking like the calm default. */
+.cs-tk-runs { display: grid; gap: var(--s-3); list-style: none; padding: 0; }
+.cs-tk-run {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-3);
+  background: var(--c-surface-2);
+  display: grid;
+  gap: var(--s-2);
+  border-inline-start: 3px solid var(--c-border);
+}
+.cs-tk-run[data-phase='active'] { border-inline-start-color: var(--c-primary); }
+.cs-tk-run[data-phase='succeeded'] { border-inline-start-color: var(--c-success); }
+.cs-tk-run[data-phase='failed'] { border-inline-start-color: var(--c-danger); }
+.cs-tk-run[data-phase='cancelled'] { border-inline-start-color: var(--c-text-faint); }
+.cs-tk-run[data-phase='waiting'] { border-inline-start-color: var(--c-warning); }
+.cs-tk-run[data-phase='unknown'] { border-inline-start-style: dashed; border-inline-start-color: var(--c-text-faint); }
+.cs-tk-run-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); min-width: 0; }
+.cs-tk-phase--active { background: var(--c-primary-soft); color: var(--c-primary); }
+.cs-tk-phase--succeeded { background: var(--c-success-soft); color: var(--c-success); }
+.cs-tk-phase--failed { background: var(--c-danger-soft); color: var(--c-danger); }
+.cs-tk-phase--cancelled { background: var(--c-surface-3); color: var(--c-text-dim); }
+.cs-tk-phase--waiting { background: var(--c-warning-soft); color: var(--c-warning); }
+.cs-tk-phase--unknown { background: transparent; color: var(--c-text-faint); border: 1px dashed var(--c-text-faint); }
+/* A stale heartbeat and a pending stop are OBSERVATIONS the founder should notice, not verdicts. Warning
+   tone, never danger — the server has not ruled. */
+.cs-tk-stale, .cs-tk-stop { color: var(--c-warning); }
+.cs-tk-failed { color: var(--c-danger); }
+.cs-tk-failure { border-inline-start: 3px solid var(--c-danger); }

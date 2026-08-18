@@ -54,7 +54,7 @@ export default async function RoadmapPage({ params }: { params: Promise<{ compan
           empty, and this page never guesses which.
         </p>
       </div>
-      <RoadmapScreen roadmap={toRoadmapView(roadmapResult.roadmap)} board={board} boardRefusalStatus={boardRefusalStatus} />
+      <RoadmapScreen roadmap={toRoadmapView(roadmapResult.roadmap)} board={board} boardRefusalStatus={boardRefusalStatus} companyId={companyId} />
     </>
   );
 }
