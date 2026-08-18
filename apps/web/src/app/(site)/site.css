@@ -1,0 +1,38 @@
+/* ACBP-FE-003 — the auth surfaces' frame.
+ *
+ * Scoped to the `(site)` group and deliberately SMALL. Clerk's component brings its own styling, and this
+ * file does not try to restyle its internals: overriding another product's DOM from outside is how a UI
+ * breaks silently on their next release. What is styled here is the frame around it — the page ground, a
+ * centred column and a heading — so the surface belongs to the product instead of floating on a blank page.
+ *
+ * SINGLE COLUMN AT ALL WIDTHS, per the row. There is no breakpoint that introduces a second column, so
+ * there is no width at which that criterion could regress; the max-width simply stops the column growing.
+ */
+.cs-auth {
+  min-height: 100vh;
+  display: grid;
+  place-items: start center;
+  padding: var(--s-6, 2rem) var(--s-4, 1rem);
+  background: var(--c-bg, #0e1220);
+  color: var(--c-text, #e6ebf7);
+}
+.cs-auth-frame {
+  width: 100%;
+  max-width: 26rem;
+  display: grid;
+  gap: var(--s-4, 1rem);
+  justify-items: center;
+}
+.cs-auth-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cs-auth-note {
+  margin: 0;
+  color: var(--c-text-dim, #9aa7c7);
+  font-size: 0.86rem;
+}
+.cs-auth-note a { color: var(--c-primary, #4c8dff); }
+.cs-auth-note a:focus-visible { outline: 2px solid var(--c-primary, #4c8dff); outline-offset: 2px; }
