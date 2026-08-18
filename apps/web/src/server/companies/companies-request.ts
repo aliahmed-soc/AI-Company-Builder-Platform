@@ -13,6 +13,9 @@ import type { PublicErrorEnvelope, ActivityPage, DecisionRoomView, PortfolioPage
 import type { ReadDecisionRoomResult } from '@acbp/core';
 import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransitionResult, GetActivityResult, GetPortfolioResult, GetProvisioningResult, ResumeProvisioningResult, CompanyView, InternalUserReconciliation, ProvisionResult, StartInterviewResult, InterviewTransitionResult, GetInterviewResult, RecordAnswerResult, GetSessionQaResult, CreateMemoryItemResult, ListMemoryItemsResult, EditMemoryItemResult, GetMemoryItemResult, DeleteMemoryItemResult, LatestStrategyResult, LatestRoadmapResult, RoadmapReadParams, RoadmapGenerationOptions, GetTaskBoardResult, GetTaskBoardParams, TaskBoardOptions, GetTaskDetailResult, GetTaskDetailParams, TaskOptions, ArtifactDTO, PersistArtifactOptions, ReadLineageResult, ReadLineageParams, ReadLineageOptions, ListApprovalInboxParams, ListApprovalInboxResult, ApprovalServiceOptions, EditRoadmapParams, EditRoadmapResult, RoadmapEditOptions, GetTaskRunParams, GetTaskRunResult, ListTaskRunsParams, ListTaskRunsResult, RunReadOptions, DeleteTaskParams, DeleteTaskResult, RecordStrategyDecisionResult, RecordDecisionResult, StrategyReadParams, StrategyGenerationOptions, RecordStrategyDecisionParams, RecordStrategyDecisionDeps, RecordDecisionParams, RecordDecisionDeps, GenerateStrategyParams, GenerateStrategyResult, RecommendStrategyParams, RecommendStrategyResult, StrategyRecommendationOptions, GenerateRoadmapParams, GenerateRoadmapResult, GenerateTasksParams, GenerateTasksResult, TaskPlanningOptions } from '@acbp/core';
 
+// ACBP-API-011 — the emergency stop (ADMIN-001; CDR-072). Types DERIVED from core, never hand-copied.
+import type { ActivateStopParams, ActivateStopResult, ReadStopStateResult, StopRefusalReason, StopServiceOptions } from '@acbp/core';
+
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
   | { readonly status: 'email_unverified' }
@@ -123,7 +126,29 @@ export type CompaniesRequestResult =
    * return it: the mapping is real, the trigger is not. Wiring `preflightRun`/`reserveCredit`/`settleRun` is
    * ACBP-API-009, kept separate because a money path deserves more review than an HTTP-wiring slice.
    */
-  | { readonly status: 'budget_exhausted' };
+  | { readonly status: 'budget_exhausted' }
+  // ── ACBP-API-011 — THE EMERGENCY STOP (ADMIN-001; CDR-072) ───────────────────────────────────────────────────
+  //
+  // Payload types DERIVED from core's results, as everywhere else here. The HTTP layer still publishes an explicit
+  // allowlist rather than spreading them (CDR-088 §2.1c, the approvals lesson).
+  //
+  // TWO SURFACES ONLY — raise and read. There is no `stop_cleared` arm and no held-work arm, by owner ruling
+  // 2026-08-19: clearing opens ADMIN-002's mandatory review, the review takes an id no exported read can produce,
+  // and adding that read is a domain addition rather than exposure. Those arms are not stubbed out here, because a
+  // union arm with no producer is the shape CDR-092 §10 had to disclose in prose to stop it reading as working.
+  | { readonly status: 'stop_state'; readonly stopState: StopStateView }
+  | { readonly status: 'stop_activated'; readonly stop: Omit<Extract<ActivateStopResult, { status: 'ok' }>, 'status'> }
+  /**
+   * ONE arm carrying the CLOSED reason, not eleven arms — and the reason is what decides the HTTP status
+   * (`toCompaniesResponse`), because the eleven do not share one.
+   *
+   * The reason TRAVELS, on the `control_unavailable` precedent: `STOP_REFUSAL_REASONS` is a closed union precisely
+   * so a caller can switch exhaustively on "why not", and flattening it to a bare 400 would undo that. On the one
+   * control whose failure mode is an operator who believes the platform is halted when it is not (CDR-072 §0), a
+   * refusal that does not say WHICH refusal is close to no refusal at all: "you cannot stop this" reads as "it is
+   * already stopped" to anyone in a hurry.
+   */
+  | { readonly status: 'stop_refused'; readonly reason: StopRefusalReason };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -190,6 +215,10 @@ export interface CompanyRuntime {
   recommendStrategy(params: RecommendStrategyParams, options?: StrategyRecommendationOptions): Promise<RecommendStrategyResult>;
   generateRoadmap(params: GenerateRoadmapParams, options?: RoadmapGenerationOptions): Promise<GenerateRoadmapResult>;
   generateTasks(params: GenerateTasksParams, options?: TaskPlanningOptions): Promise<GenerateTasksResult>;
+  // ACBP-API-011 — the emergency stop. REQUIRED, like every surface above. An optional method here would be one a
+  // runtime could omit and still typecheck, on the single control that must never be quietly absent.
+  activateStop(params: ActivateStopParams, options?: StopServiceOptions): Promise<ActivateStopResult>;
+  readStopState(params: { userId: string; accountId: string; companyId: string }, options?: StopServiceOptions): Promise<ReadStopStateResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -1252,5 +1281,125 @@ export async function generateTasksForRequest(companyId: string, deps: Companies
       return { status: 'stale_roadmap' };
     case 'generation_failed':
       return { status: 'generation_failed' };
+  }
+}
+
+// ── ACBP-API-011 — THE EMERGENCY STOP (ADMIN-001; CDR-072) ──────────────────────────────────────────────────────
+//
+// NO AUTHORIZATION CHECK LIVES IN THIS LAYER OR IN THE ROUTES, on the rule these surfaces have followed since
+// CDR-087 §1: `@acbp/core` decides from the company role resolved against an active membership, and a second place
+// answering the same question is the defect ACBP-P6-002 paid to remove. `stop:activate` is owner-only and
+// `stop:read` is viewer-visible; both rulings live in the authz policy, not here.
+//
+// ⚠️ THE STOP IS NOT METERED, AND MUST NOT BE. `resolveMeteredContext` guards the four generate paths against a
+// company ceiling; wiring it here would mean an operator whose company had exhausted its bucket could be REFUSED
+// THE HALT. A control that stops working under load is not an emergency control. The session and account ceilings
+// still apply — they are resolved by `resolveActorWithAccount` for every surface in this file and are about abuse,
+// not about spend.
+//
+// ⚠️ NO `clearStopForRequest`, AND THE ASYMMETRY IS DELIBERATE (owner ruling 2026-08-19). A stop raised through
+// this surface CANNOT BE LIFTED THROUGH THE API in this release. Clearing opens ADMIN-002's mandatory
+// confirm-or-discard review, that review takes a `heldWorkId`, and NO exported core read produces one — so shipping
+// `clearStop` alone would hand an operator a lift button that silently skips the review canon requires. Closing the
+// loop needs a held-work list read, which is a DOMAIN ADDITION rather than exposure. Recorded here rather than
+// worked around, because someone reaching for the missing function should find the reason:
+// docs/agent/TICKET-held-work-review-surface.md.
+
+/**
+ * The view of stop state this layer publishes.
+ *
+ * AN ALLOWLIST, not a forward of core's result. `activatedAt` is a `Date`, which does not survive JSON as anything
+ * a client can use, and `scope`/`targetId` come from the row rather than from a DTO core already redacted.
+ */
+export interface StopStateView {
+  readonly activeStops: readonly {
+    readonly stopId: string;
+    readonly scope: string;
+    readonly targetId: string | null;
+    /** ISO-8601. NOT NULL on every row (migration 0050). */
+    readonly activatedAt: string;
+    readonly heldQueueCompleteness: string;
+  }[];
+  readonly scopes: Extract<ReadStopStateResult, { status: 'ok' }>['scopes'];
+  readonly heldQueueCaveat: string;
+}
+
+/**
+ * What is halted here, and which scopes can halt anything (`stop:read`, enforced in `@acbp/core`).
+ *
+ * `heldQueueCaveat` AND `heldQueueCompleteness` ARE FORWARDED, NOT DROPPED, and that is the load-bearing part of
+ * this function. Core's own comment says both are *"SUPPLIED, NOT ENFORCED — a surface can ignore this field
+ * entirely and nothing in the codebase will notice"*. This is the first surface that could ignore them. An operator
+ * reading a queue that looks exhaustive and is not is CDR-072 §0's failure arriving through a read model, so they
+ * travel on the wire and `stop-surface.test.ts` pins that they do.
+ */
+export async function getStopStateForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.readStopState({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return {
+        status: 'stop_state',
+        stopState: {
+          activeStops: r.activeStops.map((s) => ({
+            stopId: s.stopId,
+            scope: s.scope,
+            targetId: s.targetId,
+            // NEVER THROWS — `toIsoOrRaw` runs across every active stop, and one unreadable timestamp must not turn
+            // the halt screen into a 500. The screen that cannot render its own stops is the worst 500 here.
+            activatedAt: toIsoOrRaw(s.activatedAt),
+            heldQueueCompleteness: s.heldQueueCompleteness,
+          })),
+          scopes: r.scopes,
+          heldQueueCaveat: r.heldQueueCaveat,
+        },
+      };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * Raise an emergency stop (ADMIN-001; `stop:activate` → OWNER ONLY, enforced in `@acbp/core`).
+ *
+ * `scope`, `targetId` and `reason` are forwarded RAW. Refusing a bad scope is core's job — `ActivateStopParams`
+ * types `scope` as `unknown` precisely so, and re-checking it here would create the second authority CDR-087 §1
+ * forbids for authorization and the same drift risk for validation. Two of the seven scopes are refused BY NAME as
+ * unenforceable (`capability`, `integration`), and a boundary that pre-filtered them would silently change which
+ * refusal an operator sees.
+ *
+ * THE THREE COUNTS TRAVEL TOGETHER AND MEAN DIFFERENT THINGS. `heldCount` is what the stop interrupted,
+ * `pausedCount` is what actually transitioned `running → paused`, `stopRequestedCount` is how many live runs were
+ * asked to halt at their next checkpoint. They legitimately differ, and publishing only one would let a surface
+ * report a halt that is larger than what happened.
+ */
+export async function activateStopForRequest(
+  companyId: string,
+  input: { scope: unknown; targetId?: unknown; reason?: unknown },
+  deps: CompaniesRequestDeps = {},
+): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.activateStop({
+    userId: ctx.userId,
+    accountId: ctx.accountId,
+    companyId,
+    scope: input.scope,
+    // Normalized to the shape core expects WITHOUT interpreting it: a non-string target becomes absent rather than
+    // being coerced to `"[object Object]"`, which core would refuse as `target_not_found` — read by an operator as
+    // "your task is gone" instead of "you sent the wrong kind of thing".
+    targetId: typeof input.targetId === 'string' ? input.targetId : null,
+    reason: typeof input.reason === 'string' ? input.reason : null,
+  });
+  switch (r.status) {
+    case 'ok':
+      return { status: 'stop_activated', stop: { stopId: r.stopId, scope: r.scope, heldCount: r.heldCount, pausedCount: r.pausedCount, stopRequestedCount: r.stopRequestedCount } };
+    case 'refused':
+      return { status: 'stop_refused', reason: r.reason };
+    case 'forbidden':
+      return { status: 'forbidden' };
   }
 }
