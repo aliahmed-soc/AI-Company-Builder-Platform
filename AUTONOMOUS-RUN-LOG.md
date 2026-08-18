@@ -2981,3 +2981,57 @@ gate, and the harness is deliberately not in CI.
 says so. It matters because it is the sentence a future reader would use to argue `phase: 'not_started'` is
 reachable; it is not, and only two of the six session states occur in practice. Deliberately left for its own
 ticket rather than edited from a frontend slice.
+
+
+### MERGE MARKER — ACBP-FE-012 is on `main` (appended 2026-08-18)
+
+| Ticket | Squash SHA | PR | Exact-head CI |
+| --- | --- | --- | --- |
+| **ACBP-FE-012** — Decision Room queues | **`ac5ddd6`** | #133 | `32126593976` on `19864a7` — 297 files / **4442** tests, zero skips |
+
+`main` stood still at `bed0a70` from the CI run through the merge, so the green covered the merged tree.
+
+### The row's requirement had a trap in the word "disconnect"
+
+This stream **always ends**: a bounded five-minute lifetime and a terminal `closed` event on every exit the
+server controls. Ending is the NORMAL case, not a fault. The server's own comment gives the motive — "the
+room went quiet" must never be how a founder learns their access changed. So five endings get five outcomes:
+routine expiry reconnects; `unauthorized` **stops**, because the stream re-authorizes every tick and
+retrying would hammer an endpoint that keeps refusing; `unavailable` polls; a refusal-to-open is a refusal,
+not a loss; and an ending with no terminal event is the genuine transport fault.
+
+### The review found a permanent silent freeze — the exact outcome the row forbids
+
+Keying the transport effect on `stream.mode` meant a SECOND `max_lifetime` produced
+`reconnecting → reconnecting`: the handler closed the socket, the dependency string was unchanged so the
+effect never re-ran, no replacement opened, and polling stayed inert because it requires `mode === 'polling'`.
+The badge would have read "reconnecting" forever while nothing was connected. The same dependency also tore
+down HEALTHY connections on their first event. Fixed with an explicit `connectionEpoch`; mutation-proved.
+
+**The banned word was on screen.** Three files declare "live" banned because the channel is `poll_backed` —
+and the badge rendered `stream.mode` verbatim. The test named as the enforcement only inspected
+`describeStream`, never anything the panel rendered. That is the third consecutive ticket where a guarantee
+was asserted in prose with nothing actually enforcing it.
+
+**A dead listener I caught before the review, which it then confirmed independently:** the server writes its
+heartbeat as an SSE *comment*, and EventSource ignores comments entirely; its only named events are `room`
+and `closed`, and `message` fires only for an event with no name. The listener could never run, and the
+comment calling it "the closest observable signal" named an enforcement that did not exist.
+
+### Deliberate departure from the row, and an owed test
+
+**Queues do NOT collapse to tabs on mobile.** Tabs would hide nine of ten queues behind a control, and the
+whole point of this screen is seeing at a glance which queues did *not* report. They stack instead.
+
+**No test exercises the EventSource wiring.** Every fix is proved at the reducer, where the logic lives, but
+the panel has no test file — so "closing the source suppresses the browser's auto-retry" is enforced by one
+line and asserted by nothing. A DOM-level test is impossible here: no DOM harness exists in any
+`package.json`.
+
+### Board state, corrected
+
+Marking FE-012 Done exposed that **FE-010 was still `Planned` on `main`** — its marker PR (#132) had been
+opened and never merged, so a "9 Done" count stated earlier in this session was wrong. #132 is merged as
+`ff9738f`. The FE board now reads **9 Done, 4 Planned, 6 Blocked-API**, and of the four Planned, FE-008 and
+FE-009 are effectively blocked (verified zero HTTP wiring) and FE-019 is a ruling rather than a screen —
+leaving **FE-003 as the only buildable screen on the current API**.
