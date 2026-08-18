@@ -1,5 +1,23 @@
 # Handover — what it takes to finish ACBP-FE-013 and ACBP-FE-014
 
+> **CLOSED 2026-08-19. Everything below was ACTED ON and is kept as the record of what was done, not as
+> outstanding work.** The routes reached `main` with `c908c7c` (via PR #147, which took the branch, merged
+> `main` into it and targeted `main` directly — PR #111 was closed as superseded). FE-013's generate and
+> recommend controls landed in `982b3be`; FE-014's roadmap generate control in `6eaf0bf`. Every "generation is
+> unreachable" paragraph named in §4 was deleted in the same commit as the button it described.
+>
+> **The one prediction below that proved wrong, recorded because being wrong in writing is the point of
+> writing it down:** §2.3 expected a hard conflict in `companies-request.ts`. It auto-merged cleanly, along
+> with both its test files. The real conflicts were `package.json` (two blocks, each side having added a
+> DIFFERENT checker — the union was taken, because dropping either would have silently disabled a guard),
+> `pnpm-lock.yaml` (regenerated, not hand-merged) and the run log.
+>
+> **Still true and still owed:** the live model gateway came to `main` with this stack, and PR #107 proposes a
+> hard gate requiring owner presence for every live model call. With generate buttons now wired, that is a
+> live question rather than a theoretical one. And nothing here has been exercised against a real generation —
+> the controls, the six precondition refusals and the ceiling handling are unit-tested and green, but the
+> first real click is the first real test.
+
 Written 2026-08-18 with `main` at `f4fa754`. The frontend backlog is **15 Done / 4 Blocked-API / 0 Planned**;
 every row that could be built without a new backend route has been built. This note exists because the last
 frontend gap is **one merge away, and that merge is not the one it looks like.**
