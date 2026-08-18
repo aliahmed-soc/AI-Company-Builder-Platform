@@ -125,7 +125,10 @@ describe('an edited roadmap is not a generated one', () => {
   it('says an edit gave no reason rather than going quiet', () => {
     const view = toRoadmapView(roadmap({ origin: 'edited', editReason: null }));
     expect(view.origin).toBe('edited');
-    expect(view.originNote.toLowerCase()).toContain('no reason');
+    // `originNote` is nullable because the EMPTY view has none. Asserted rather than cast away: if a real
+    // roadmap ever produced a null note, that is the defect this line should catch, not hide.
+    expect(view.originNote).not.toBeNull();
+    expect((view.originNote ?? '').toLowerCase()).toContain('no reason');
   });
 
   it('reports that this version replaced an earlier one', () => {

@@ -148,7 +148,26 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
+      {/* ACBP-FE-014. Company-scoped like the others.
+
+          The copy promises the roadmap and the board, and deliberately does NOT promise you can generate a
+          roadmap: `generateRoadmap` reaches no HTTP route on this build. `POST /roadmap/edit` does exist, but
+          it is the versioned EDIT rather than generation, and it is outside this row's scope. */}
+      <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-plan-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-plan-t">
+            Plan
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">The roadmap this company is working to — its goals and milestones — and the tasks currently on its board, including the parts of the board this version cannot yet fill.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/roadmap`}>
+            Open the plan
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
           </h2>
