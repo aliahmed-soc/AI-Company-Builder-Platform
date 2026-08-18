@@ -33,6 +33,7 @@ import type { StrategyGenerationDTO, StrategyOptionFields, StrategyPhaseScope, S
 import { fieldCellsFor, toStrategyView, type OptionView, type StrategyView } from './strategy-view';
 import { buildDecisionRequest } from './decision-request';
 import { networkFailure, outcomeFor, type Outcome } from './decision-outcome';
+import { generateNetworkFailure, generateOutcomeFor, type GenerateOutcome, type GenerateVerb } from './generate-outcome';
 
 const MODE_LABEL: Readonly<Record<StrategySelectionMode, string>> = {
   select: 'Choose one option as it stands',
@@ -78,6 +79,7 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
   const [outcome, setOutcome] = useState<{ source: OutcomeSource; result: Outcome } | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [readError, setReadError] = useState<string | null>(null);
+  const [genOutcome, setGenOutcome] = useState<GenerateOutcome | null>(null);
 
   const view: StrategyView = useMemo(() => toStrategyView(generation), [generation]);
   const base = `/api/companies/${encodeURIComponent(companyId)}`;
@@ -204,6 +206,45 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
     }
   }, [base, view.generationId, view.selection?.selectionId, rationale, readError, reread]);
 
+  /*
+   * GENERATE and RECOMMEND. Both are metered against a per-company ceiling and both are owner-only, and the
+   * ceiling is debited only AFTER that authorization (ACBP-API-008 `2046c69`) — so a refused caller has spent
+   * nothing, and `generate-outcome.ts` is careful never to imply otherwise.
+   *
+   * `strategy/generate` takes NO body: everything it needs (the confirmed understanding, the approved phase)
+   * the domain reads for itself, and a body here would be a second, forgeable source for facts the server
+   * already owns. `strategy/recommend` takes exactly one field, the generation to recommend over.
+   */
+  const generate = useCallback(
+    async (what: GenerateVerb): Promise<void> => {
+      setGenOutcome(null);
+      setBusy(true);
+      try {
+        const url = what === 'strategy' ? `${base}/strategy/generate` : `${base}/strategy/recommend`;
+        const init: RequestInit =
+          what === 'strategy'
+            ? { method: 'POST', headers: { accept: 'application/json' } }
+            : { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: JSON.stringify({ generationId: view.generationId }) };
+        const res = await fetch(url, init);
+        let body: unknown = null;
+        try {
+          body = await res.json();
+        } catch {
+          /* the status decides */
+        }
+        const result = generateOutcomeFor(res.status, body, res.headers.get('retry-after'), what);
+        setGenOutcome(result);
+        // Re-read on success AND on unknown: a 500 can fail either side of the write, so looking is the only
+        // way to find out what actually exists.
+        if (result.produced === true || result.produced === null) await reread();
+      } catch {
+        setGenOutcome(generateNetworkFailure(what));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [base, view.generationId, reread],
+  );
   if (view.state === 'nothing_generated') {
     return (
       <section className="cs-card" aria-labelledby="cs-st-empty-h">
@@ -214,9 +255,17 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
         </div>
         <p className="cs-empty">{view.headline}</p>
         <p className="cs-help">
-          Generating them is a model-driven step that this console cannot start yet: no HTTP route reaches it, so there is deliberately no button here rather than one that would do nothing. Generation runs from the
-          server side for now, and this page will show the options as soon as a generation exists.
+          Generating options is a model-driven step. It is metered against a per-company ceiling, and it reads the CONFIRMED understanding — so if the interview has not produced one, or it has not been confirmed, the
+          server will say which of those applies rather than failing vaguely.
         </p>
+        <div className="cs-control-row">
+          <button type="button" className="cs-btn cs-btn--primary" onClick={() => void generate('strategy')} disabled={busy}>
+            {busy ? 'Generating…' : 'Generate strategy options'}
+          </button>
+        </div>
+        <div aria-live="polite" className="cs-outcome-region">
+          {genOutcome === null ? null : <GenerateBlock outcome={genOutcome} />}
+        </div>
       </section>
     );
   }
@@ -231,7 +280,7 @@ export function StrategyPanel({ companyId, initialGeneration }: { companyId: str
   return (
     <>
       <StrategyCaveats view={view} />
-      <RecommendationCard view={view} />
+      <RecommendationCard view={view} onRecommend={() => void generate('recommendation')} busy={busy} genOutcome={genOutcome} />
       <ComparisonCard view={view} />
       <DecisionRecordCard view={view} />
 
@@ -436,7 +485,7 @@ function StrategyCaveats({ view }: { view: StrategyView }): React.JSX.Element | 
   );
 }
 
-function RecommendationCard({ view }: { view: StrategyView }): React.JSX.Element {
+function RecommendationCard({ view, onRecommend, busy, genOutcome }: { view: StrategyView; onRecommend: () => void; busy: boolean; genOutcome: GenerateOutcome | null }): React.JSX.Element {
   const rec = view.recommendation;
   // The recommendation names an option BY ID; the badge shows the option's own position. If the id resolves
   // to nothing in this generation, "option 0" would be a number no option has — so it says so instead.
@@ -456,6 +505,16 @@ function RecommendationCard({ view }: { view: StrategyView }): React.JSX.Element
         )}
       </div>
       <p className="cs-help">{view.recommendationNote}</p>
+      {/* ASKING IS A SEPARATE, METERED CALL. It never selects anything — the decision below stays the owner's,
+          which is why the button says "ask for" rather than "get". */}
+      <div className="cs-control-row">
+        <button type="button" className="cs-btn" onClick={onRecommend} disabled={busy}>
+          {busy ? 'Asking…' : rec === null ? 'Ask for a recommendation' : 'Ask again'}
+        </button>
+      </div>
+      <div aria-live="polite" className="cs-outcome-region">
+        {genOutcome === null ? null : <GenerateBlock outcome={genOutcome} />}
+      </div>
       {rec === null ? null : (
         <>
           <p className="cs-item-body">{rec.rationale}</p>
@@ -615,5 +674,14 @@ function ChosenFields({ fields }: { fields: StrategyOptionFields }): React.JSX.E
         ))}
       </dl>
     </details>
+  );
+}
+
+/** One outcome block for the generate/recommend controls. Same vocabulary as the decision outcomes. */
+function GenerateBlock({ outcome }: { outcome: GenerateOutcome }): React.JSX.Element {
+  return (
+    <div className={`cs-control-outcome cs-control-outcome--${outcome.kind}`} data-kind={outcome.kind}>
+      <strong>{outcome.title}</strong> <span>{outcome.detail}</span>
+    </div>
   );
 }
