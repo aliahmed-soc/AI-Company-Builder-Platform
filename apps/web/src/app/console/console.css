@@ -15,65 +15,16 @@
  * than left contradicting the code.
  */
 
-:root {
-  /* ── Ground and surfaces ─────────────────────────────────────────────────────────────────────────────── */
-  --c-bg: #0e1220;
-  --c-surface: #131a2e;
-  --c-surface-2: #1a2340;
-  --c-surface-3: #212c4e;
-  --c-border: #263154;
-  --c-border-soft: #1e2743;
-
-  /* ── Text ────────────────────────────────────────────────────────────────────────────────────────────── */
-  --c-text: #e6ebf7;
-  --c-text-dim: #9aa7c7;
-  --c-text-faint: #6c7999;
-
-  /* ── Brand + accents (Berry's saturated presets, tuned for a dark ground) ─────────────────────────────── */
-  --c-primary: #4c8dff;
-  --c-primary-soft: rgba(76, 141, 255, 0.14);
-  --c-secondary: #9575ff;
-  --c-secondary-soft: rgba(149, 117, 255, 0.14);
-  --c-success: #24d19b;
-  --c-success-soft: rgba(36, 209, 155, 0.14);
-  --c-warning: #ffc14d;
-  --c-warning-soft: rgba(255, 193, 77, 0.14);
-  --c-danger: #ff5c72;
-  --c-danger-soft: rgba(255, 92, 114, 0.14);
-
-  /* ── Shape and depth ─────────────────────────────────────────────────────────────────────────────────── */
-  --r-card: 14px;
-  --r-control: 10px;
-  --r-pill: 999px;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
-  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.3), 0 18px 40px -18px rgba(0, 0, 0, 0.7);
-
-  /* ── Rhythm ──────────────────────────────────────────────────────────────────────────────────────────── */
-  --s-1: 0.25rem;
-  --s-2: 0.5rem;
-  --s-3: 0.75rem;
-  --s-4: 1rem;
-  --s-5: 1.5rem;
-  --s-6: 2rem;
-  --sidebar-w: 254px;
-  --topbar-h: 64px;
-
-  /* Motion. Every duration flows through these, so the reduced-motion block below can zero them all at once. */
-  --t-fast: 140ms;
-  --t-base: 240ms;
-  --t-slow: 460ms;
-  --ease: cubic-bezier(0.4, 0, 0.2, 1);
-}
+/* THE TOKENS MOVED TO `app/globals.css` (ACBP-FE-003 review). They were declared here, but this file is
+ * imported by `app/console/layout.tsx` ONLY — so on `/sign-in` and `/sign-up`, a different route group, not
+ * one of them existed, so every `var()` in `site.css` silently fell through to a colour literal. The
+ * dark-first invariant stated above is unchanged; it is now declared one layer up, where every route group
+ * reaches it. Nothing here redeclares a token — a second copy is the drift the invariant is about. */
 
 /* ── ACCESSIBILITY: honour prefers-reduced-motion globally ───────────────────────────────────────────────
- * Not per-animation. Zeroing the duration tokens and disabling the entrance animations here means a component
- * added later cannot forget to opt in — the default is already correct for a reader who asked for stillness. */
+ * The duration-token zeroing moved to globals.css with the tokens. What stays here are the entrance
+ * animations this file declares, cancelled beside the rules that create them. */
 @media (prefers-reduced-motion: reduce) {
-  :root {
-    --t-fast: 0ms;
-    --t-base: 0ms;
-    --t-slow: 0ms;
-  }
   .cs-rise,
   .cs-stat {
     animation: none !important;
