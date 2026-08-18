@@ -97,7 +97,23 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 2 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">
+      {/* ACBP-FE-010. Company-scoped, so it is reached from here rather than the sidebar, for the same
+          reason the interview and provisioning screens are. */}
+      <section className="cs-card cs-rise" style={{ '--i': 2 } as React.CSSProperties} aria-labelledby="cs-memory-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-memory-t">
+            Memory
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">The memory items stored for this company, with where each came from and the versions the server still lists.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/memory`}>
+            Open the memory browser
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 3 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume

@@ -211,4 +211,97 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database �
     const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
     expect(row.deleted_at).toBeNull();
   });
+
+  /*
+   * PATCH had NO route-level coverage before ACBP-FE-010, and the file read as though it did: the itemRoute
+   * type declares PATCH and GET, but a search for `itemRoute.<VERB>(` across apps/web returned only DELETE
+   * calls. The type was the only thing asserting PATCH existed. These tests exercise the verb the memory
+   * browser's edit control actually calls.
+   */
+  const patch = (companyId: string, memoryItemId: string, body: unknown, init?: { contentType?: string | null; query?: string }) => {
+    const headers: Record<string, string> = {};
+    const ct = init?.contentType === undefined ? 'application/json' : init.contentType;
+    if (ct !== null) headers['content-type'] = ct;
+    return itemRoute.PATCH(new Request(`https://app.test/api/companies/${companyId}/memory/${memoryItemId}${init?.query ?? ''}`, { method: 'PATCH', headers, body: typeof body === 'string' ? body : JSON.stringify(body) }), {
+      params: Promise.resolve({ companyId, memoryItemId }),
+    });
+  };
+
+  test('PATCH supersedes rather than mutates: a NEW id is returned, the original text survives, and provenance becomes user_edit', async () => {
+    const id = await createOwned();
+    await signInAs(w.aOwner);
+    const res = await patch(w.companyA1, id, { type: 'user_fact', content: 'corrected text', confidence: null });
+    expect(res.status).toBe(200);
+    const edited = (await res.json()) as { item: { memoryItemId: string; content: string; sourceType: string } };
+
+    // THE RETURNED ID DIFFERS FROM THE ONE EDITED. The memory browser depends on this being normal rather
+    // than an error, so it is pinned here at the route rather than only in a client-side unit test.
+    expect(edited.item.memoryItemId).not.toBe(id);
+    expect(edited.item.content).toBe('corrected text');
+    // An edit REWRITES provenance — the corrected version reports itself as authored by the user.
+    expect(edited.item.sourceType).toBe('user_edit');
+
+    // The ORIGINAL row is untouched apart from its forward pointer: content is never overwritten in place,
+    // which is what makes the browser's version history real rather than cosmetic.
+    const old = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(old.content).toBe('deletable');
+    expect(old.superseded_by).toBe(edited.item.memoryItemId);
+    expect(old.deleted_at).toBeNull();
+  });
+
+  test('PATCH refuses a superseded target with a bare 409, and refuses a viewer with 403', async () => {
+    const id = await createOwned();
+    await signInAs(w.aOwner);
+    expect((await patch(w.companyA1, id, { type: 'user_fact', content: 'v2', confidence: null })).status).toBe(200);
+
+    // Editing the now-superseded original: only the current version is mutable.
+    const stale = await patch(w.companyA1, id, { type: 'user_fact', content: 'v3', confidence: null });
+    expect(stale.status).toBe(409);
+    // The conflict names no cause — the memory browser's copy is written against exactly this.
+    expect(Object.keys((await stale.json()) as Record<string, unknown>)).toEqual(['error']);
+
+    const fresh = await createOwned();
+    await signInAs(w.aViewer);
+    expect((await patch(w.companyA1, fresh, { type: 'user_fact', content: 'nope', confidence: null })).status).toBe(403);
+  });
+
+  test('PATCH bounds its inputs: query param, wrong content type, unreadable body, and a domain validation envelope', async () => {
+    const id = await createOwned();
+    await signInAs(w.aOwner);
+
+    // Any query parameter is refused before the body is read.
+    expect((await patch(w.companyA1, id, { type: 'user_fact', content: 'x', confidence: null }, { query: '?x=1' })).status).toBe(400);
+    // Content type is checked BEFORE a byte of body is read.
+    expect((await patch(w.companyA1, id, { type: 'user_fact', content: 'x', confidence: null }, { contentType: 'text/plain' })).status).toBe(415);
+    expect((await patch(w.companyA1, id, { type: 'user_fact', content: 'x', confidence: null }, { contentType: null })).status).toBe(415);
+    // An unreadable body is a ROUTE-level 400 whose `error` is a STRING.
+    const unreadable = await patch(w.companyA1, id, 'not json at all');
+    expect(unreadable.status).toBe(400);
+    expect(typeof ((await unreadable.json()) as { error: unknown }).error).toBe('string');
+
+    // A DOMAIN validation failure is a 400 whose `error` is an OBJECT carrying the server's own sentence.
+    // The memory browser renders that sentence verbatim, so its shape is pinned here.
+    const invalid = await patch(w.companyA1, id, { type: 'not_a_type', content: 'x', confidence: null });
+    expect(invalid.status).toBe(400);
+    const envelope = (await invalid.json()) as { error: { message?: unknown; code?: unknown } };
+    expect(typeof envelope.error).toBe('object');
+    expect(typeof envelope.error.message).toBe('string');
+
+    // Nothing above wrote anything: the item is still current and still its original text.
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.content).toBe('deletable');
+    expect(row.superseded_by).toBeNull();
+  });
+
+  test('PATCH denies a foreign tenant with forged owner claims and leaks nothing', async () => {
+    const id = await createOwned();
+    await signInAs(w.outsider);
+    setForgedClaims({ accountId: w.accountA, companyId: w.companyA1 });
+    const res = await patch(w.companyA1, id, { type: 'user_fact', content: 'stolen', confidence: null });
+    expect([403, 404]).toContain(res.status);
+    const text = await res.text();
+    for (const secret of ['deletable', w.accountA, w.aOwner]) expect(text).not.toContain(secret);
+    const row = await owner.kysely.selectFrom('memory_items').selectAll().where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.superseded_by).toBeNull();
+  });
 });
