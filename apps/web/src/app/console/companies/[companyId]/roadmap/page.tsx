@@ -13,11 +13,11 @@
  * all ("AN EMPTY BOARD IS STILL A BOARD" — the route's own header), so a company that has planned nothing
  * gets an ordinary empty screen rather than a 404.
  *
- * WHAT THIS SCREEN CANNOT DO: `generateRoadmap` reaches no HTTP route — verified by enumerating all 36
- * `route.ts` files, not by a glob, since a bracketed segment like `[companyId]` is read as a character class
- * and silently matches nothing. So there is no "generate the roadmap" button. `POST /roadmap/edit` DOES
- * exist, but it is the versioned edit rather than generation and is out of this row's scope; shipping a
- * half-wired editor would be worse than shipping none.
+ * GENERATION IS REACHABLE AS OF ACBP-API-008 (`c908c7c`), and the copy that said otherwise went with the
+ * button. `POST /roadmap/generate` is metered against a per-company ceiling and reads the recorded strategy
+ * decision for itself, so the control is real and `roadmap-generate-control.tsx` is the only client code on
+ * this screen. `POST /roadmap/edit` still exists and is still OUT OF SCOPE here — it is the versioned EDIT
+ * rather than generation, and shipping a half-wired editor would be worse than shipping none.
  */
 import { getRoadmapForRequest, getTaskBoardForRequest } from '@/server/companies/companies-request';
 import { RoadmapRefusal } from './roadmap-refusal';
