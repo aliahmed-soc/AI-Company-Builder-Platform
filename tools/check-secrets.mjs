@@ -71,7 +71,18 @@ const ENV_SCAN_SKIP = new Set(['node_modules', '.git', '.next', '.claude']);
 
 const PATTERNS = [
   { id: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
-  { id: 'openai-key', re: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/ },
+  /**
+   * Anthropic (ACBP-API-011, 2026-08-19). Listed BEFORE `openai-key` and carved out of it below.
+   *
+   * A real `sk-ant-…` key already matched `openai-key`, because `sk-` followed by 20+ of `[A-Za-z0-9_-]` covers
+   * `ant-api03-…` too. So the gate would have FAILED on one — correctly — while naming the wrong vendor, and an
+   * operator triaging "openai-key in your repo" for an Anthropic credential wastes the minutes that matter most.
+   * A finding has to name the thing to revoke.
+   */
+  { id: 'anthropic-key', re: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
+  // The negative lookahead hands `sk-ant-…` to the rule above rather than double-reporting one line as two
+  // findings. Every other `sk-…` shape is still caught here exactly as before.
+  { id: 'openai-key', re: /\bsk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{20,}\b/ },
   { id: 'clerk-secret-key', re: /\bsk_(?:live|test)_[A-Za-z0-9]{20,}\b/ },
   { id: 'github-token', re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
   { id: 'aws-access-key-id', re: /\bAKIA[0-9A-Z]{16}\b/ },
@@ -150,13 +161,58 @@ function isScannable(fileAbs) {
   return true;
 }
 
+/**
+ * Every FILE sitting at the repository root that git would actually commit (ACBP-API-011, 2026-08-19).
+ *
+ * ⚠️ THIS REPLACES A FIVE-NAME ALLOWLIST, AND THE GAP IT LEFT WAS REACHED IN PRACTICE. `ROOT_CONFIG_FILES` named
+ * `package.json`, `pnpm-workspace.yaml`, two tsconfigs and the eslint config. The content scan otherwise covered
+ * `apps/ packages/ tools/ .github/` — so a root-level file with any OTHER name was scanned by nothing at all.
+ *
+ * A real Anthropic API key was pasted into `API Key.txt` at this repository's root while wiring the model
+ * provider. It was untracked, un-ignored, and therefore one `git add -A` from being committed and pushed — and
+ * this gate, the one control whose entire job is to catch that, reported `✔ secret scan passed` while the file
+ * sat beside the files it was reading. It was not committed, but nothing here is why.
+ *
+ * The rule is now "the root is covered by default", matching the ACBP-P7-007 fix one level up: that slice
+ * replaced a known-extensions allowlist with "scan everything unless the extension is known-binary", after a
+ * newly-added extension turned out to be silently unscanned. Same defect, same shape, one directory higher.
+ *
+ * GIT-IGNORED FILES ARE SKIPPED, on the reasoning `isGitIgnored` already documents for the `.env` walk: a file
+ * git will not commit is not a repository leak. That is what keeps `.env` and a now-ignored `API Key.txt` out of
+ * the report while still covering everything a real commit would sweep in. It also means an ignore rule and this
+ * scan are complements, not substitutes — the ignore rule protects the names somebody predicted, this covers the
+ * ones nobody did.
+ */
+function rootLevelFiles() {
+  const out = [];
+  for (const name of readdirSync(ROOT)) {
+    const p = join(ROOT, name);
+    let st;
+    try {
+      st = statSync(p);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    if (isGitIgnored(p)) continue;
+    out.push(p);
+  }
+  return out;
+}
+
 const findings = [];
 let scannedCount = 0;
 
-// 1) Content scan of implementation + root config
+// 1) Content scan of implementation + EVERY committable root-level file
 const contentFiles = [
-  ...CONTENT_SCAN_DIRS.flatMap((d) => walk(join(ROOT, d))),
-  ...ROOT_CONFIG_FILES.map((f) => join(ROOT, f)).filter((p) => existsSync(p)),
+  ...new Set([
+    ...CONTENT_SCAN_DIRS.flatMap((d) => walk(join(ROOT, d))),
+    ...rootLevelFiles(),
+    // Kept as an unconditional floor rather than deleted: if one of these were ever ignored, or `rootLevelFiles`
+    // regressed, the five files most likely to carry a pasted credential would still be read. A guard that can
+    // quietly narrow itself is the failure this whole function exists to correct.
+    ...ROOT_CONFIG_FILES.map((f) => join(ROOT, f)).filter((p) => existsSync(p)),
+  ]),
 ];
 for (const fileAbs of contentFiles) {
   if (!isScannable(fileAbs)) continue;
@@ -223,6 +279,7 @@ for (const entry of stale) {
   const A = (n) => 'A'.repeat(n);
   const probes = {
     'pem-private-key': `-----BEGIN RSA ${'PRIVATE'} KEY-----`,
+    'anthropic-key': `sk${'-'}ant-api03-${A(24)}`,
     'openai-key': `sk${'-'}proj-${A(24)}`,
     'clerk-secret-key': `sk${'_'}live_${A(24)}`,
     'github-token': `ghp${'_'}${A(36)}`,
@@ -260,7 +317,7 @@ if (JSON_MODE) {
 }
 if (findings.length === 0) {
   console.log(
-    `✔ secret scan passed (0 findings; ${scannedCount} files scanned in apps/, packages/, tools/, .github/, root config; ` +
+    `✔ secret scan passed (0 findings; ${scannedCount} files scanned in apps/, packages/, tools/, .github/, every committable root file; ` +
       `.env prohibition repo-wide; ${ALLOW.size} allowlist entr${ALLOW.size === 1 ? 'y' : 'ies'}, all still in use. Self-test passed).`,
   );
   process.exit(0);

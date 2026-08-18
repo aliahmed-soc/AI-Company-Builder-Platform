@@ -12,6 +12,27 @@ cookies/
 secrets/
 credentials/
 
+# Ad-hoc credential scratch files (ACBP-API-011, 2026-08-19).
+#
+# A real Anthropic key was pasted into a root-level `API Key.txt` while wiring the model provider. It was never
+# committed — but only because nobody ran `git add -A` in the window it existed. Nothing was stopping them:
+# the file was untracked and UN-IGNORED, and `check-secrets.mjs` could not see it either, because its content
+# scan covers `apps/ packages/ tools/ .github/` plus five NAMED root config files, and an arbitrary root-level
+# `.txt` is in neither set.
+#
+# `*.key` above already covers `foo.key`; it does NOT cover the way a human actually saves one — a `.txt` on the
+# desktop or at the repo root, named in plain English. These patterns cover that. The scanner gap is closed
+# separately, in `tools/check-secrets.mjs`, because an ignore rule only protects the names it predicted.
+*[Kk]ey.txt
+*[Kk]eys.txt
+*[Ss]ecret.txt
+*[Ss]ecrets.txt
+*[Tt]oken.txt
+*[Cc]redentials.txt
+API*.txt
+api-key*
+apikey*
+
 # Dependencies and build output (no app exists yet; guard for the future)
 node_modules/
 dist/
