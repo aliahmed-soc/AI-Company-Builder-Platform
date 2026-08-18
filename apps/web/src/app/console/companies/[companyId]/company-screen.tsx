@@ -167,7 +167,25 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
+      {/* ACBP-FE-016. Company-scoped like the others.
+
+          The copy promises a view of what is waiting and deliberately does NOT promise you can decide: no
+          route accepts an approval decision, so the screen ships no control and says so at the top. */}
+      <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-approvals-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-approvals-t">
+            Approvals
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">Actions the platform has prepared and will not take without a human decision, with the payload it would send and the risk, reversibility and estimated cost recorded for each.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/approvals`}>
+            Open the approvals inbox
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 7 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
           </h2>

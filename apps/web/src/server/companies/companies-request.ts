@@ -812,7 +812,38 @@ export async function listTaskRunsForRequest(companyId: string, taskId: string, 
  *   echoing tenant ids back is how they end up in client logs and URLs.
  * - `run_id` — an internal execution id the caller cannot read anyway; there is no run-read route (ACBP-API-003).
  * - `policy_id`, `policy_version` — evaluation-point machinery, not a decision the approver makes.
+ *
+ * `expires_at` AND `created_at` WERE ABSENT AND SHOULD NOT HAVE BEEN (added by ACBP-FE-016). Both are NOT NULL
+ * on every row — migration 0048 backfills `expires_at` and then sets NOT NULL with no default, so every request
+ * states its own expiry — and the inbox screen has to answer "is this still worth deciding, and how long has it
+ * been waiting?". Their absence was not a redaction decision; the list above names six columns and gave a reason
+ * for each, and these two were simply not among them. A screen built on that silence concluded the read "carries
+ * no timestamp of any kind" and told approvers it could not tell them whether an entry had expired — a false
+ * limitation manufactured from an unexamined omission.
+ *
+ * NEITHER IS SENSITIVE: no tenant id, no actor id, no payload. They are serialized as ISO strings because
+ * `Date` does not survive JSON, and a client receiving `{}` where a date was expected is worse than one
+ * receiving a string it can parse.
+ *
+ * STILL ABSENT, and now for a stated reason rather than by omission: `status`, `decided_at`, `superseded_at`,
+ * `superseded_by_request_id`, `revoked_at`, `revoked_by_user_id`, `consumed_at`, `consumed_by_call_id` — this
+ * read is `listPending`, which filters `status = 'pending'` and whose CHECK constraint guarantees a pending row
+ * has none of those set. Sending them would be sending a column of constants.
  */
+/**
+ * A timestamp column as an ISO string, or the raw value when it cannot be read.
+ *
+ * DELIBERATELY TOTAL. `new Date(v).toISOString()` throws RangeError on an unparseable value, and the caller
+ * maps it across every row of the inbox — so ONE odd row would fail the whole read and the screen would show a
+ * 500 instead of an inbox. Both columns are NOT NULL, so this should not arise; "should not" is not an
+ * enforcer, and the blast radius of being wrong is the entire page rather than one card. The client has an
+ * `unreadable` state that refuses to treat such a value as still valid.
+ */
+function toIsoOrRaw(value: unknown): string {
+  const at = new Date(value as string | number | Date);
+  return Number.isNaN(at.getTime()) ? String(value) : at.toISOString();
+}
+
 export interface ApprovalInboxItem {
   readonly approvalRequestId: string;
   readonly action: string;
@@ -825,6 +856,10 @@ export interface ApprovalInboxItem {
   readonly estimatedCostCredits: number;
   readonly toolId: string;
   readonly toolVersion: number;
+  /** ISO-8601. NOT NULL on every row (migration 0048). */
+  readonly expiresAt: string;
+  /** ISO-8601. The server orders the inbox by this, newest first. */
+  readonly createdAt: string;
 }
 
 /**
@@ -853,6 +888,13 @@ export async function listApprovalInboxForRequest(companyId: string, deps: Compa
           estimatedCostCredits: row.estimated_cost_credits,
           toolId: row.tool_id,
           toolVersion: row.tool_version,
+          // ISO strings: Date does not survive JSON, and a client receiving {} where a date was expected is
+          // worse than one receiving a string it can parse.
+          //
+          // NEVER THROWS — see toIsoOrRaw. This runs inside a .map over the whole inbox, so a single
+          // unreadable timestamp must not turn the entire screen into a 500.
+          expiresAt: toIsoOrRaw(row.expires_at),
+          createdAt: toIsoOrRaw(row.created_at),
         })),
       };
     case 'forbidden':
