@@ -12,6 +12,7 @@
 // denies, redirects or restricts. Enforcement lives at the boundary (`src/proxy.ts`) and in each route's
 // `resolveVerifiedIdentity()`, neither of which reads anything a layout rendered.
 import type { ReactNode } from 'react';
+import './site.css';
 import { SignInButton, SignUpButton, UserButton } from '@clerk/nextjs';
 import { auth } from '@clerk/nextjs/server';
 
