@@ -1,7 +1,13 @@
 /*
- * ACBP-FE-003 — the sign-up surface. See the sign-in page for why three of this row's criteria are
- * Clerk's to meet rather than this file's: the component owns its inputs, its labels, its validation and
- * its errors, and the app is never in the credential exchange.
+ * ACBP-FE-003 — the sign-up surface. See the sign-in page for why TWO of this row's criteria are Clerk's to
+ * meet rather than this file's: the component owns its inputs, its labels, its validation and its errors, and
+ * the app is never in the credential exchange. (The sign-in page also records why a third "disclosure" was
+ * removed as false — the social-provider line is the row's *Explicit exclusions* cell, not a criterion, and
+ * `appearance` can in fact reach those elements from code.)
+ *
+ * NO SIGN-IN LINK IS RENDERED HERE, for the same reason as on the sign-in page: Clerk's card footer already
+ * carries one and the `(site)` header carries `<SignInButton />` for the signed-out visitor this page always
+ * serves.
  */
 import { SignUp } from '@clerk/nextjs';
 
@@ -16,9 +22,6 @@ export default function SignUpPage(): React.JSX.Element {
       <div className="cs-auth-frame">
         <h1 className="cs-auth-title">Create an account</h1>
         <SignUp />
-        <p className="cs-auth-note">
-          Already have one? <a href="/sign-in">Sign in</a>.
-        </p>
       </div>
     </main>
   );

@@ -1,6 +1,87 @@
-/* ACBP-P1-001 — minimal base styles (no CSS framework; ADR-023 adopts none). System font stack. */
+/* ACBP-P1-001 — minimal base styles (no CSS framework; ADR-023 adopts none). System font stack.
+ *
+ * THE DESIGN TOKENS LIVE HERE, NOT IN console.css, AND THAT MOVE IS LOAD-BEARING (ACBP-FE-003 review).
+ * console.css declared them and stated the invariant they exist for — "Every colour is a token on :root …
+ * Adding light later means redefining these same tokens inside one selector; no component rule needs to
+ * change, because no component rule names a colour literal."
+ *
+ * But console.css is imported by `app/console/layout.tsx` ONLY, so on `/sign-in` and `/sign-up` — a different
+ * route group — not one of those tokens existed. `site.css` referenced six of them and every reference fell
+ * through to a hardcoded literal in its `var()` fallback. That rendered correctly and looked like a token
+ * system while being the exact thing the invariant forbids: the auth pages would have stayed dark when the
+ * owner's light theme flipped the console, and the `var()` syntax would have made that look impossible.
+ *
+ * This file is imported by the ROOT layout, so tokens declared here reach every route group. The fix is the
+ * MOVE, not a second copy — two declarations of one token is the drift the invariant exists to prevent.
+ */
+
 :root {
   color-scheme: light dark;
+
+  /* ── Ground and surfaces ─────────────────────────────────────────────────────────────────────────────── */
+  --c-bg: #0e1220;
+  --c-surface: #131a2e;
+  --c-surface-2: #1a2340;
+  --c-surface-3: #212c4e;
+  --c-border: #263154;
+  --c-border-soft: #1e2743;
+
+  /* ── Text ────────────────────────────────────────────────────────────────────────────────────────────── */
+  --c-text: #e6ebf7;
+  --c-text-dim: #9aa7c7;
+  --c-text-faint: #6c7999;
+
+  /* ── Brand + accents (Berry's saturated presets, tuned for a dark ground) ─────────────────────────────── */
+  --c-primary: #4c8dff;
+  --c-primary-soft: rgba(76, 141, 255, 0.14);
+  --c-secondary: #9575ff;
+  --c-secondary-soft: rgba(149, 117, 255, 0.14);
+  --c-success: #24d19b;
+  --c-success-soft: rgba(36, 209, 155, 0.14);
+  --c-warning: #ffc14d;
+  --c-warning-soft: rgba(255, 193, 77, 0.14);
+  --c-danger: #ff5c72;
+  --c-danger-soft: rgba(255, 92, 114, 0.14);
+
+  /* ── Shape and depth ─────────────────────────────────────────────────────────────────────────────────── */
+  --r-card: 14px;
+  --r-control: 10px;
+  --r-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.3), 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+
+  /* ── Rhythm ──────────────────────────────────────────────────────────────────────────────────────────── */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --sidebar-w: 254px;
+  --topbar-h: 64px;
+
+  /* The `(site)` header's height. A TOKEN rather than a literal because two rules must agree on it: the header
+   * itself below, and any full-height `(site)` main that subtracts it to avoid overflowing the viewport. Two
+   * hand-written copies of one measurement is how a page ends up exactly one scrollbar too tall. */
+  --site-header-h: 3.5rem;
+
+  /* Motion. Every duration flows through these, so the reduced-motion block below can zero them all at once. */
+  --t-fast: 140ms;
+  --t-base: 240ms;
+  --t-slow: 460ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── ACCESSIBILITY: honour prefers-reduced-motion globally ───────────────────────────────────────────────
+ * Zeroing the duration TOKENS lives with the tokens, so a route group that never imports console.css still
+ * gets stillness for free. The console's own entrance-animation resets stay in console.css, beside the
+ * animations they cancel. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+    --t-slow: 0ms;
+  }
 }
 
 body {
@@ -9,6 +90,10 @@ body {
   line-height: 1.5;
 }
 
+/* A READABLE PROSE COLUMN BY DEFAULT, which every full-bleed screen must opt OUT of explicitly. The console
+ * (`.cs-content`) and the auth frame (`.cs-auth`) each do so in their own file — and this default is WHY they
+ * have to. The ACBP-FE-003 review found the auth page painting its dark ground as a 640px stripe under a
+ * full-width header because it had not. */
 main {
   max-width: 40rem;
   margin: 0 auto;
@@ -19,6 +104,8 @@ header {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  min-height: var(--site-header-h);
+  box-sizing: border-box;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid rgba(128, 128, 128, 0.3);
 }
