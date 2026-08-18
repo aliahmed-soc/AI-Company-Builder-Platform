@@ -1286,3 +1286,45 @@
 .cs-plan-bucket--empty { border-style: solid; }
 .cs-plan-goal--active { color: var(--c-text); }
 .cs-plan-goal--achieved { color: var(--c-text-dim); }
+
+/* ── ACBP-FE-016: the approvals inbox ──────────────────────────────────────────────────────────────────────
+ * One card per waiting action. The risk badge is tinted, but the RAW WORD is always inside it — the column is
+ * free text, so a tint can never be the only thing carrying the severity. */
+.cs-ap-list { display: grid; gap: var(--s-4); list-style: none; padding: 0; }
+.cs-ap-item {
+  border: 1px solid var(--c-border-soft);
+  border-radius: var(--r-control);
+  padding: var(--s-4);
+  background: var(--c-surface-2);
+  display: grid;
+  gap: var(--s-3);
+  /* The left edge repeats the risk, so a scan down the list groups by severity without reading each badge. */
+  border-inline-start: 3px solid var(--c-border);
+}
+.cs-ap-item[data-risk='high'] { border-inline-start-color: var(--c-warning); }
+.cs-ap-item[data-risk='critical'] { border-inline-start-color: var(--c-danger); }
+/* An UNKNOWN risk is marked as unknown, never left looking like the calm default. */
+.cs-ap-item[data-risk='unknown'] { border-inline-start-style: dashed; border-inline-start-color: var(--c-text-faint); }
+.cs-ap-item-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
+.cs-ap-risk--low { background: var(--c-success-soft); color: var(--c-success); }
+.cs-ap-risk--medium { background: var(--c-primary-soft); color: var(--c-primary); }
+.cs-ap-risk--high { background: var(--c-warning-soft); color: var(--c-warning); }
+.cs-ap-risk--critical { background: var(--c-danger-soft); color: var(--c-danger); }
+.cs-ap-risk--unknown { background: transparent; color: var(--c-text-faint); border: 1px dashed var(--c-text-faint); }
+/* The server's own rendering of the payload. Monospace and scrollable IN ITS OWN BOX, so a long line never
+   makes the page scroll sideways, and focusable so a keyboard can reach the scroll. */
+.cs-ap-preview {
+  margin: 0;
+  padding: var(--s-3);
+  border-radius: var(--r-control);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cs-ap-preview:focus-visible { outline: 2px solid var(--c-primary); outline-offset: 2px; }
