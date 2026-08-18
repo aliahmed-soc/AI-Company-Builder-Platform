@@ -166,11 +166,49 @@ closed, `ACBP_TEST_DATABASE_URL` unset), so **that suite SKIPS here and a skip i
 
 Owed on the exact head, at zero skips:
 
-1. The real-PG stop suite runs rather than skips.
+1. ~~The real-PG stop suite runs rather than skips.~~ **MET.** CI run `32193687297` on head `c86b5a3` completed
+   **success at 316/316 test files with no skip segment** — the real-PG suites ran. Local skips were an artefact of
+   an unreachable local database, not of the code.
 2. The `stop:activate` check deleted from `activateStop` reddens `stop-service.integration.test.ts:122`, with the
    `AssertionError` quoted — the owner's applied-verified bar for the viewer/non-member row.
 3. Seeded invisibility for both new reads, to the CDR-093 standard: a foreign account's rollup and a foreign
    company's stop must be proven invisible with the foreign row actually **seeded**, not absent. Disclosed-as-
    unproven is an interim state and not a merge state.
 
-Until 1–3 are green on the exact SHA, this ticket is not done, and no part of §5 should be read as covering them.
+**Owner ruling 2026-08-19: 2 and 3 land BEFORE this PR merges.** The stop route is full-bar, and
+disclosed-as-unproven is an interim state, not a merge state. Nothing in §5 covers either.
+
+---
+
+## §7 — The "visible at startup" claim was the ruling's intent, not the behaviour
+
+Two comments asserted that a missing or unparseable `ANTHROPIC_API_KEY` is surfaced **at startup**:
+
+- `apps/web/src/server/webhooks/clerk-runtime.ts` — *"Parsed HERE, at composition, so a missing or unparseable
+  ANTHROPIC_API_KEY is visible at startup — the property CDR-090 §1-G3 asked for."*
+- `packages/config/src/index.ts` — *"THROWS when the key is absent — deliberately, and at STARTUP rather than on
+  the first paid call."*
+
+**CDR-090 §1-G3 did ask for startup visibility, and the code does not deliver it.** `getClerkIdentityRuntime` is a
+lazy module singleton, every consumer outside the Clerk webhook route reaches it through a request-scoped
+`await import('../webhooks/clerk-runtime.js')`, and there is **no `instrumentation.ts` anywhere under `apps/web`**
+(enumerated, not globbed). Nothing runs the parse at boot, so `model_provider.not_configured` fires on the FIRST
+REQUEST that touches the runtime.
+
+The consequence is operational and small but real: starting the dev server tells an operator nothing about whether
+the key is usable, and a misconfiguration surfaces at the first generate attempt.
+
+**Both comments are corrected in this ticket** to describe first-request firing and to separate the two claims that
+were being conflated. `parseModelProviderConfig` throwing unconditionally is a guarantee it makes and keeps; "an
+operator sees it at boot" is a guarantee nothing currently makes, and it belongs to the composition path rather
+than to the parser.
+
+**Whether an instrumentation hook should restore true startup visibility is OPEN and deliberately NOT built here**
+(owner ruling 2026-08-19). Filed as **ACBP-API-012** in `docs/implementation/API-BACKLOG.csv`, with the acceptance
+bar written as *a test proves it, not a comment asserting it* — because this row exists precisely because prose
+claimed a property the code did not have. No scaffolding toward it exists in this branch.
+
+This is the third time on this programme that a comment has stated an intended property as an achieved one
+(ACBP-P6-007's stop scopes, ACBP-P7-002's company pause, and now this). The pattern is not a documentation
+problem: a claim that cannot be pointed at an enforcer is a claim that will be believed until something expensive
+disproves it.

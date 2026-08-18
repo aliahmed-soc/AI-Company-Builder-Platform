@@ -429,9 +429,20 @@ const modelProviderSchema = z
 /**
  * Parse model-provider configuration. The API key is redacted in validation errors (it is in `SECRET_FIELDS`).
  *
- * THROWS when the key is absent — deliberately, and at STARTUP rather than on the first paid call (CDR-090 §1-G3,
- * CDR-091 §4). A gateway that constructed itself without a credential would fail once per request, at the moment a
- * founder was waiting for a generation, instead of once at boot where an operator can see it.
+ * THROWS when the key is absent, deliberately — so a gateway can never construct itself without a credential and
+ * then fail once per request, at the moment a founder is waiting for a generation (CDR-090 §1-G3, CDR-091 §4).
+ * That much this function delivers on its own: the throw is unconditional and immediate.
+ *
+ * ⚠️ IT DOES NOT MAKE THE FAILURE VISIBLE "AT STARTUP", AND AN EARLIER VERSION OF THIS COMMENT CLAIMED IT DID.
+ * The claim was about a property of the CALLER, not of this function, and the caller does not have it: the only
+ * production call site is `apps/web/src/server/webhooks/clerk-runtime.ts`, which is a lazy singleton reached
+ * exclusively through request-scoped dynamic imports, with no Next `instrumentation` hook anywhere in the app. The
+ * throw therefore lands on the FIRST REQUEST that touches the runtime, not at boot.
+ *
+ * The distinction matters to whoever reads this next: "throws rather than degrading" is a guarantee this function
+ * makes and keeps. "An operator sees it at boot" is a guarantee nothing currently makes. Restoring the second is
+ * OPEN (owner ruling 2026-08-19; backlog row + CDR-094 §7) and is a change to the composition path, not to this
+ * parser.
  */
 export function parseModelProviderConfig(env: EnvRecord): ModelProviderConfig {
   const r = modelProviderSchema.safeParse(env);
