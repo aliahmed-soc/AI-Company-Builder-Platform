@@ -14,7 +14,30 @@
  *         generic envelope (the body never reached the domain — that is our bug, not the founder's).
  */
 import { describe, expect, it } from 'vitest';
-import { outcomeFor } from './decision-outcome';
+import { networkFailure, outcomeFor } from './decision-outcome';
+
+describe('a request that never reached the server is not a response', () => {
+  it('does not claim the server answered', () => {
+    // `fetch` rejecting means no HTTP exchange completed. Routing that through `outcomeFor(0, …)` produced
+    // "The server answered with status 0" — a statement about a server that said nothing at all.
+    const r = networkFailure('selection');
+    expect(r.kind).toBe('unreachable');
+    expect(r.detail.toLowerCase()).not.toContain('answered');
+    expect(r.detail).not.toContain('status 0');
+  });
+
+  it('cannot know whether anything was written, and says so', () => {
+    // The request may have been received and committed with only the RESPONSE lost. "Nothing was saved"
+    // would be a guarantee this screen has no basis for.
+    expect(networkFailure('selection').persisted).toBeNull();
+    expect(networkFailure('decision').persisted).toBeNull();
+  });
+
+  it('tells the founder to reload rather than to re-submit', () => {
+    // Re-submitting is the dangerous guess: a selection is immutable and a second one is a second record.
+    expect(networkFailure('decision').detail.toLowerCase()).toContain('reload');
+  });
+});
 
 describe('the success arms', () => {
   it('reads a recorded selection', () => {

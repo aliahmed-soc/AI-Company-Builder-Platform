@@ -30,6 +30,8 @@
 
 export type OutcomeKind =
   | 'recorded'
+  /** The request never completed an HTTP exchange — see {@link networkFailure}. NOT a response. */
+  | 'unreachable'
   | 'invalid'
   | 'client_defect'
   | 'forbidden'
@@ -67,6 +69,27 @@ function parseRetryAfter(header: string | null): number | null {
 }
 
 const NOTHING_SAVED = 'Nothing was saved, so your choice is unchanged.';
+
+/**
+ * `fetch` itself rejected: DNS, offline, a dropped socket. NO HTTP EXCHANGE COMPLETED, so there is no status
+ * to interpret and this is not an arm of {@link outcomeFor}.
+ *
+ * It exists because routing this through `outcomeFor(0, …)` rendered "The server answered with status 0" — a
+ * sentence about a server that said nothing at all, and a status code that does not exist. The distinction
+ * matters for what the founder should DO: the request may have been received and committed with only the
+ * RESPONSE lost, so `persisted` is unknown, and the safe move is to reload and look rather than to re-submit.
+ * Re-submitting is the dangerous guess here — a selection is immutable, so a second one is a second record.
+ */
+export function networkFailure(verb: DecisionVerb): Outcome {
+  const noun = verb === 'selection' ? 'choice' : 'decision';
+  return {
+    kind: 'unreachable',
+    title: 'The request did not reach the server',
+    detail: `The connection failed before any reply came back, so this page cannot tell whether your ${noun} was recorded. Reload to see the current state — do not submit again, because if the first request did arrive a second one would be recorded separately.`,
+    persisted: null,
+    retryAfterSeconds: null,
+  };
+}
 
 function errorCodeOf(body: unknown): string | null {
   if (typeof body !== 'object' || body === null) return null;

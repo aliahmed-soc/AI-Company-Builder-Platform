@@ -128,7 +128,27 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 4 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
+      {/* ACBP-FE-013. Company-scoped like the others.
+
+          The copy promises the options and the decision, and deliberately does NOT promise you can generate
+          them: `generateStrategyOptions` and `recommendStrategy` reach no HTTP route on this build, so the
+          strategy screen ships no button for either and says why in its empty state. Promising generation
+          here would move that lie one screen earlier. */}
+      <section className="cs-card cs-rise" style={{ '--i': 4 } as React.CSSProperties} aria-labelledby="cs-strategy-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-strategy-t">
+            Strategy
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">The strategy options generated for this company compared field by field, the advisory recommendation over them, and the decision you record.</p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/strategy`}>
+            Open the strategy
+          </a>
+        </p>
+      </section>
+
+      <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
           </h2>
