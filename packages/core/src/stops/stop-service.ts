@@ -113,9 +113,9 @@ export async function activateStop(client: DatabaseClient, params: ActivateStopP
     client,
     { userId: params.userId, requestedAccountId: params.accountId, requestedCompanyId: params.companyId },
     async (scope, role): Promise<ActivateStopResult> => {
-      // MUTATION PROBE - ACBP-API-011 owed item 2. DO NOT MERGE.
-      // The stop:activate owner-only check is DELETED here on purpose, to prove the real-PostgreSQL viewer
-      // refusal test is load-bearing rather than passing for some other reason.
+      if (checkAuthorization(role, 'stop:read', { accountId: params.accountId, actorId: params.userId }, opts(options)).kind === 'deny') {
+        return { status: 'forbidden' };
+      }
 
       // ── every refusal below happens BEFORE the first write, so a typed result is safe here (§1-G8) ──
       if (!isStopScope(params.scope)) return { status: 'refused', reason: 'not_a_scope' };
