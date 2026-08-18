@@ -537,6 +537,12 @@
    a focusable element and does not add it here makes the sentence false and ships a control that can be
    reached by keyboard with no visible focus. FE-005 added four.
 
+   ACBP-FE-010 ADDED TWO FOCUSABLES AND BOTH ARE ACCOUNTED FOR HERE, not left to be discovered: the edit
+   form's <select> carries .cs-input, so the rule below already matches it, and the table's scroll
+   container is focusable by 	abIndex and has its own .cs-table-scroll:focus-visible rule in the FE-010
+   block at the end of this file. Naming them here keeps the sentence above true from THIS block alone,
+   which is where a reader checks it.
+
    ACBP-FE-007 ADDED NO NEW SELECTOR, AND THAT WAS CHECKED RATHER THAN ASSUMED. Its focusables are the answer
    textarea (carrying `cs-input cs-textarea`, so the `.cs-input` and `.cs-textarea` rules below both match),
    the start/pause/resume/save/skip buttons, and the "Open the interview" anchor added to the company screen
@@ -728,7 +734,8 @@
 .cs-control-outcome--done,
 .cs-control-outcome--ok,
 .cs-control-outcome--saved,
-.cs-control-outcome--unchanged { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
+.cs-control-outcome--unchanged,
+.cs-control-outcome--deleted { border-color: rgba(36, 209, 155, 0.42); color: #9ff0d5; }
 
 /* danger: refused, or the founder's data is not stored. `overwritten_by_other` is here deliberately — it is
    a 200, but it means the answer was LOST, and it must not look like the success it arrived as. */
@@ -1063,9 +1070,14 @@
   overflow-wrap: anywhere;
   line-height: 1.6;
 }
-/* A superseded row is dimmed AND says "replaced" in its version cell — the badge is the real signal, since
-   opacity alone is not something every reader can perceive. */
-.cs-table tbody tr[data-lifecycle='superseded'] { opacity: 0.72; }
+/* A superseded row is marked by its "replaced" badge — a TEXT signal, which is the only one every reader
+   gets. It is deliberately NOT dimmed with opacity: opacity multiplies the contrast of every descendant,
+   and these rows always carry the dimmest text on the screen (.cs-control-why and .cs-table-ref, both
+   --c-text-dim at under 0.85rem). Measured, a 0.72 layer drops them from about 5.6:1 to near 4.0:1 —
+   under the 4.5:1 AA floor — so the styling that marked the state also made the state's own explanation
+   harder to read. The left border carries the visual cue instead, at full text contrast. */
+.cs-table tbody tr[data-lifecycle='superseded'] > * { border-left: 0; }
+.cs-table tbody tr[data-lifecycle='superseded'] th[scope='row'] { border-left: 3px solid var(--c-border); padding-left: calc(var(--s-3) - 3px); }
 .cs-table-ref {
   display: block;
   margin-top: var(--s-1);
@@ -1089,6 +1101,9 @@
   max-width: 62ch;
 }
 .cs-dialog--danger { border-color: rgba(255, 92, 114, 0.42); }
+/* The item the confirmation is about, quoted back. These forms sit in flow BELOW the table, so without
+   this a founder could be reading a destructive confirmation with its subject scrolled off screen. */
+.cs-dialog-target { border-left: 3px solid var(--c-border); padding-left: var(--s-3); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cs-dialog .cs-refusal-detail { margin: 0; }
 
 @media (max-width: 640px) {

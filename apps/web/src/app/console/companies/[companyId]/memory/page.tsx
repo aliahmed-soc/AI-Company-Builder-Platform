@@ -25,7 +25,7 @@ import { MemoryPanel } from './memory-panel';
 
 export const metadata = {
   title: 'Memory — AI Company Builder',
-  description: 'Everything the platform has stored about this company, with its provenance, versions and controls.',
+  description: 'The memory items this company has stored, with their provenance and versions.',
 };
 
 export const dynamic = 'force-dynamic';
@@ -54,11 +54,13 @@ export default async function MemoryPage({ params }: { params: Promise<{ company
       <div>
         <h1 className="cs-h1">Memory</h1>
         <p className="cs-sub">
-          Everything the platform has stored about this company, with where each item came from. Editing keeps the previous version rather than overwriting it, so this list is the whole record and not just its
-          current state.
+          The memory items the server returns for this company, with where each came from. Editing keeps the previous version rather than overwriting it, so replaced versions stay listed alongside current
+          ones. Deleted items are not listed, and the list is capped, so it is not a complete archive.
         </p>
       </div>
-      <MemoryPanel companyId={companyId} role={role} initialItems={items} listRefusal={listRefusal} capped={capped} />
+      {/* `pageSize` is passed rather than imported by the panel: the panel is a client module, and pulling
+          @acbp/core across that boundary would drag the server composition graph with it. */}
+      <MemoryPanel companyId={companyId} role={role} initialItems={items} listRefusal={listRefusal} capped={capped} pageSize={MEMORY_LIST_DEFAULT_LIMIT} />
     </>
   );
 }

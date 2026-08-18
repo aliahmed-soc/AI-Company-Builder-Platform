@@ -86,6 +86,16 @@ describe('toMemoryView — the version chain is derived, and only forward pointe
     expect(rows.find((r) => r.memoryItemId === 'v1')?.previousVersionId).toBeNull();
   });
 
+  it('works in the order the SERVER actually sends — newest first', () => {
+    // Every other chain fixture here lists the old version first, which cannot distinguish "inverted the
+    // pointer" from "took the preceding array element". The repository orders `created_at desc, id desc`,
+    // so production sends the reverse of those fixtures; an implementation that quietly relied on array
+    // position would pass every other test in this file and fail in production only.
+    const rows = toMemoryView([item({ memoryItemId: 'v2' }), item({ memoryItemId: 'v1', supersededBy: 'v2' })], 'owner', false).rows;
+    expect(rows.find((r) => r.memoryItemId === 'v2')?.previousVersionId).toBe('v1');
+    expect(rows.find((r) => r.memoryItemId === 'v1')?.previousVersionId).toBeNull();
+  });
+
   it('marks an item superseded from the pointer, not from position', () => {
     const rows = toMemoryView([item({ memoryItemId: 'v1', supersededBy: 'v2' }), item({ memoryItemId: 'v2' })], 'owner', false).rows;
     expect(rows.find((r) => r.memoryItemId === 'v1')?.lifecycle).toBe('superseded');
@@ -143,6 +153,25 @@ describe('describeMemory — the polite sentence', () => {
   it('is identical for identical input, which is what stops it re-announcing', () => {
     const items = [item({ memoryItemId: 'm1' })];
     expect(describeMemory(toMemoryView(items, 'owner', false))).toBe(describeMemory(toMemoryView(items, 'owner', false)));
+  });
+
+  it('CHANGES when the state changes — the half that stability alone does not prove', () => {
+    // Purity makes the region quiet; it is distinctness that makes it speak. A constant function would pass
+    // the stability test above and announce nothing for the rest of the session, so the four states are
+    // asserted to produce four different sentences.
+    const sentences = [
+      describeMemory(toMemoryView(null, 'owner', false)),
+      describeMemory(toMemoryView([], 'owner', false)),
+      describeMemory(toMemoryView([item({ memoryItemId: 'm1' })], 'owner', false)),
+      describeMemory(toMemoryView([item({ memoryItemId: 'm1' })], 'owner', true)),
+    ];
+    expect(new Set(sentences).size).toBe(4);
+  });
+
+  it('does not claim to be showing everything stored, because deleted items are never listed', () => {
+    const sentence = describeMemory(toMemoryView([item({ memoryItemId: 'm1' })], 'owner', false));
+    expect(sentence).not.toContain('all ');
+    expect(sentence.toLowerCase()).toContain('deleted items are not listed');
   });
 
   it('never says the platform has learned nothing when the list is empty', () => {

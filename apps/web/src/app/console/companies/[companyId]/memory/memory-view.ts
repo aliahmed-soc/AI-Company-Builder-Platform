@@ -68,7 +68,9 @@ export interface MemoryView {
   readonly totalShown: number;
 }
 
-const OWNER_ONLY_REASON = 'Editing and deleting memory items is limited to the account owner. You can read every item here, and the server enforces this regardless of what this page shows.';
+// The gate is the caller's role IN THIS COMPANY, not an account-level role: memory:edit and memory:delete
+// are checked against the company-membership role, and only company:create uses the account role.
+const OWNER_ONLY_REASON = 'Editing and deleting memory items is limited to a company owner. You can read every item here, and the server enforces this regardless of what this page shows.';
 const SUPERSEDED_REASON = 'This is an earlier version, kept for the record. Only the current version can be edited or deleted, and the server refuses anything else.';
 const UNKNOWN_ROLE_REASON = 'This page could not establish your role for this company, so it does not offer controls it cannot promise the server will accept.';
 
@@ -152,6 +154,6 @@ export function describeMemory(view: MemoryView): string {
     default:
       return view.capped
         ? `Showing the newest ${String(view.totalShown)} memory items. The server sends no total, so there may be more that are not listed.`
-        : `Showing all ${String(view.totalShown)} memory items stored for this company.`;
+        : `Showing the ${String(view.totalShown)} memory items the server returned. Deleted items are not listed.`;
   }
 }

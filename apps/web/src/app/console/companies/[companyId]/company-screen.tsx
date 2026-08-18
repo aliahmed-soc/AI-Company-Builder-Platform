@@ -105,7 +105,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
             Memory
           </h2>
         </div>
-        <p className="cs-refusal-detail">Everything the platform has stored about this company, with where each item came from and every version it has had.</p>
+        <p className="cs-refusal-detail">The memory items stored for this company, with where each came from and the versions the server still lists.</p>
         <p className="cs-control">
           <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/memory`}>
             Open the memory browser

@@ -29,8 +29,9 @@
  *   either, because a deleted item answers 404 rather than reporting itself deleted. The copy therefore
  *   says the state changed and asks for a reload, which is true in all three cases.
  *
- * DELETE HAS NO 413 OR 415 ARM. It sends no body, so neither status is reachable; a branch for them would
- * handle something the server cannot send. They fall through to the honest default.
+ * DELETE REFUSES TO EXPLAIN A 413 OR 415. It sends no body, so neither is reachable, and the shared
+ * refusal text for them would describe a request payload this verb never has. They are intercepted and
+ * answered with the honest unknown-status default rather than borrowing copy about a size limit.
  */
 import type { MemoryItemDTO } from '@acbp/contracts';
 
@@ -104,8 +105,18 @@ function asItem(value: unknown): MemoryItemDTO | null {
   return looksRight ? (value as unknown as MemoryItemDTO) : null;
 }
 
-/** Every refusal shared by all three verbs. `noun` names what did not happen, so each arm can say it. */
-function refusalFor(status: number, body: string, retryAfterHeader: string | null, noun: string): Refusal {
+/**
+ * Every refusal shared by all three verbs. `noun` names what did not happen, so each arm can say it.
+ *
+ * `mutating` distinguishes the WRITE verbs from the read, because two arms genuinely differ between them
+ * and the first version let the write's copy leak onto the list:
+ *   - 403: edit and delete are owner-only, but `memory:read` is owner+viewer, so "limited to a company
+ *     owner" is never why a LIST was refused. Saying it there sends a founder to check a permission that
+ *     was not the problem.
+ *   - 404: on an item write this can mean the item is gone; the list has no item to be missing, so its
+ *     only 404 comes from actor resolution finding no internal user record.
+ */
+function refusalFor(status: number, body: string, retryAfterHeader: string | null, noun: string, mutating: boolean): Refusal {
   const code = errorCode(body);
   switch (status) {
     case 400: {
@@ -127,9 +138,19 @@ function refusalFor(status: number, body: string, retryAfterHeader: string | nul
     case 403:
       return code === 'email_unverified'
         ? { kind: 'email_unverified', detail: `Your email address is not verified, so ${noun}. The platform requires a verified primary address first.` }
-        : { kind: 'forbidden', detail: `The server refused this and ${noun}. Editing and deleting are limited to the account owner, and several other situations produce an identical refusal — the response does not say which applied.` };
+        : {
+            kind: 'forbidden',
+            detail: mutating
+              ? `The server refused this and ${noun}. Editing and deleting are limited to a company owner, and several other situations produce an identical refusal — the response does not say which applied.`
+              : `The server refused this read and ${noun}. Several situations produce an identical refusal — the company may not exist, or it may exist and not be yours — and the response does not say which applied.`,
+          };
     case 404:
-      return { kind: 'not_found', detail: `The server found nothing at that address, so ${noun}. A deleted item also answers this way, so the item may simply be gone. Reload the list to see what is there.` };
+      return {
+        kind: 'not_found',
+        detail: mutating
+          ? `The server found nothing at that address, so ${noun}. A deleted item also answers this way, so the item may simply be gone. Reload the list to see what is there.`
+          : `The server found nothing at that address, so ${noun}. On this read that usually means this sign-in has no internal user record yet rather than that the company is missing. Reloading in a moment often resolves it.`,
+      };
     case 409:
       // Names no cause on purpose. See the header.
       return { kind: 'conflict', detail: `The server refused because this item's state has changed, and ${noun}. It does not say which change — the item may have been deleted, replaced by a newer version, or altered by another request at the same moment. Reload the list.` };
@@ -157,7 +178,7 @@ export function interpretListResponse(status: number, body: string, retryAfterHe
     const items = raw.map(asItem).filter((i): i is MemoryItemDTO => i !== null);
     return { kind: 'items', items, detail: 'The list below is what the server returned.' };
   }
-  return refusalFor(status, body, retryAfterHeader, 'nothing could be listed');
+  return refusalFor(status, body, retryAfterHeader, 'nothing could be listed', false);
 }
 
 export function interpretEditResponse(status: number, body: string, retryAfterHeader: string | null): EditOutcome {
@@ -169,7 +190,7 @@ export function interpretEditResponse(status: number, body: string, retryAfterHe
     // The id differs from the one edited, and that is correct — see the header.
     return { kind: 'saved', item, detail: 'Saved as a new version. The previous version is kept and stays visible in the list.' };
   }
-  return refusalFor(status, body, retryAfterHeader, 'nothing was changed');
+  return refusalFor(status, body, retryAfterHeader, 'nothing was changed', true);
 }
 
 export function interpretDeleteResponse(status: number, body: string, retryAfterHeader: string | null): DeleteOutcome {
@@ -178,11 +199,14 @@ export function interpretDeleteResponse(status: number, body: string, retryAfter
     if (typeof id !== 'string' || id === '') {
       return { kind: 'error', detail: 'The server answered but did not name the item it removed. Reload the list to see what is actually stored.' };
     }
-    return { kind: 'deleted', memoryItemId: id, detail: 'Removed from this browser. The record is retained for the audit trail and still appears in your data export.' };
+    // Does NOT mention a data export: the stored row does survive there, but no route or screen in this
+    // build lets a founder obtain one, so offering it as reassurance would point at a door that does not
+    // open. What is claimed here is only what the founder can verify from this screen.
+    return { kind: 'deleted', memoryItemId: id, detail: 'Removed from this browser. The record itself is retained for the platform’s audit trail, and it will no longer be used as context for anything generated from now on.' };
   }
   // 413 and 415 are unreachable on a bodiless DELETE and fall through to the default (see the header).
   if (status === 413 || status === 415) {
     return { kind: 'error', detail: `The server answered with a status this screen does not handle: ${String(status)}. Nothing has been assumed about whether the item was removed — reload the list to see the current state.` };
   }
-  return refusalFor(status, body, retryAfterHeader, 'nothing was removed');
+  return refusalFor(status, body, retryAfterHeader, 'nothing was removed', true);
 }

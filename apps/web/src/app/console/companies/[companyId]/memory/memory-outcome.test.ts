@@ -59,9 +59,18 @@ describe('interpretListResponse', () => {
     expect(interpretListResponse(status, JSON.stringify({ error: 'x' }), null).kind).toBe(kind);
   });
 
-  it('reads a real Retry-After and treats an empty one as absent', () => {
-    expect(interpretListResponse(429, '{}', '30')).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: 30 });
-    expect(interpretListResponse(429, '{}', '')).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: null });
+  it.each([
+    ['30', 30],
+    ['', null],
+    ['   ', null],
+    ['soon', null],
+    ['-5', null],
+    ['Infinity', null],
+  ])('parses a Retry-After of %j as %s', (header, expected) => {
+    // Each rejected form is a different guard: the empty-string check (Number('') is 0, not NaN), the trim
+    // that makes whitespace behave like empty, Number.isFinite for text and Infinity, and the >= 0 bound
+    // for a negative. Testing only '30' and '' left three of them unexercised.
+    expect(interpretListResponse(429, '{}', header)).toMatchObject({ kind: 'rate_limited', retryAfterSeconds: expected });
   });
 });
 

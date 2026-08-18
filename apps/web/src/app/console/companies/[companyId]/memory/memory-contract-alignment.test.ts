@@ -99,16 +99,20 @@ describe('ACBP-FE-010 — the list read', () => {
 });
 
 describe('ACBP-FE-010 — the edit write', () => {
-  test('THE RETURNED ID DIFFERS FROM THE ONE EDITED, and that is a success', async () => {
-    // Editing supersedes rather than mutates, so the 200 describes the NEW row. This is the fact most
-    // likely to be mistaken for a bug by anyone reading the response without reading the repository.
+  test('the responder passes the edited item through unchanged, so the interpreter reads what was sent', async () => {
+    // SCOPED HONESTLY. An earlier version of this test asserted `memoryItemId !== 'm_old'` and called that
+    // proof of supersede-and-create. It proved nothing: the DTO is hand-built here, no request is ever
+    // addressed to 'm_old', and `toCompaniesResponse` for the memory_edited arm is a pass-through that has
+    // no notion of a requested id. Supersede-and-create is a DOMAIN behaviour, and it is pinned where it
+    // actually happens — the real-PG PATCH test in memory-routes.integration.test.ts, which sends a real
+    // request to a real id and asserts the returned id differs from it.
     const { status, body, retryAfter } = await throughServer({ status: 'memory_edited', item: dto({ memoryItemId: 'm_new', sourceType: 'user_edit' }) });
     expect(status).toBe(200);
     const out = interpretEditResponse(status, body, retryAfter);
     expect(out.kind).toBe('saved');
     if (out.kind !== 'saved') throw new Error('unreachable');
     expect(out.item.memoryItemId).toBe('m_new');
-    expect(out.item.memoryItemId).not.toBe('m_old');
+    expect(out.item.sourceType).toBe('user_edit');
   });
 
   test('the real validation envelope delivers the server sentence verbatim', async () => {

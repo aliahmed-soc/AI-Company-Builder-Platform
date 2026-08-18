@@ -22,8 +22,8 @@ const COPY: Readonly<Record<string, { title: string; detail: string }>> = {
       'The server refused the read. Several situations produce an identical refusal here — the company may not exist, or it may exist and not be yours — and the response deliberately does not distinguish them, so that an address bar cannot be used to discover which companies exist.',
   },
   not_found: {
-    title: 'This sign-in has no platform user record yet',
-    detail: 'You are authenticated, but no internal user has been created for you — usually a provisioning step that has not landed. Reloading in a moment often resolves it.',
+    title: 'The server found nothing at that address',
+    detail: 'This usually means no internal user record exists for this sign-in yet — a provisioning step that has not landed, which reloading in a moment often resolves. The same response also covers a company this sign-in cannot resolve, and the server does not say which applied.',
   },
   unavailable: {
     title: 'Something this page depends on is down',
