@@ -77,6 +77,11 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     listRunArtifacts: () => Promise.reject(new Error('listRunArtifacts was called without being stubbed')),
     readArtifactLineage: () => Promise.reject(new Error('readArtifactLineage was called without being stubbed')),
     listApprovalInbox: () => Promise.reject(new Error('listApprovalInbox was called without being stubbed')),
+    // ACBP-API-011 — the emergency stop. Same reject-with-the-method-name default: a stop test that forgets to stub
+    // fails saying so, rather than passing on a silent undefined. On this surface a fake that quietly returned
+    // `ok` would be a test asserting the platform halted when nothing did.
+    activateStop: () => Promise.reject(new Error('activateStop was called without being stubbed')),
+    readStopState: () => Promise.reject(new Error('readStopState was called without being stubbed')),
     editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
     deleteTask: () => Promise.reject(new Error('deleteTask was called without being stubbed')),
     getTaskRun: () => Promise.reject(new Error('getTaskRun was called without being stubbed')),

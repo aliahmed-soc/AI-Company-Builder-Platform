@@ -22,10 +22,27 @@ export function getClerkIdentityRuntime(): ClerkIdentityRuntime {
     // absent, the read-through provider call fails safe (unavailable) inside the adapter.
     const expectedInstanceId = clerkWebhookConfig.expectedInstanceId ?? '';
     // ── MODEL PROVIDER CONFIG (ACBP-API-008; CDR-092 §9 — owner ruling 2026-08-15) ──────────────────────────
-    // Parsed HERE, at composition, so a missing or unparseable ANTHROPIC_API_KEY is visible at startup — the
-    // property CDR-090 §1-G3 asked for. The failure is NON-FATAL, and that is the refinement: this runtime
-    // serves every route in the application, so a fatal model misconfiguration would take down the 32 routes
-    // that never touch a model along with the 4 that do.
+    //
+    // ⚠️ THIS DOES NOT FIRE AT STARTUP, AND AN EARLIER VERSION OF THIS COMMENT SAID IT DID. It claimed a missing
+    // or unparseable ANTHROPIC_API_KEY is "visible at startup — the property CDR-090 §1-G3 asked for". That was
+    // the RULING'S INTENT stated as though it were the behaviour, which is the failure this codebase keeps
+    // correcting in prose rather than in code.
+    //
+    // What actually happens: `getClerkIdentityRuntime` is a LAZY module singleton, and every consumer reaches it
+    // through a request-scoped `await import('../webhooks/clerk-runtime.js')`. There is no Next `instrumentation`
+    // hook anywhere in `apps/web` (checked; none exists), so nothing runs this at boot. The
+    // `model_provider.not_configured` line below therefore appears on the FIRST REQUEST that touches the runtime.
+    //
+    // The practical consequence, which is the reason this is worth correcting: starting the dev server tells an
+    // operator NOTHING about whether the key is usable. A misconfiguration surfaces at the first generate attempt
+    // — later than CDR-090 §1-G3 wanted, and later than the old comment promised.
+    //
+    // Whether an `instrumentation.ts` should restore true startup visibility is OPEN and deliberately not built
+    // here (owner ruling 2026-08-19; see the backlog row and CDR-094 §7).
+    //
+    // The failure is NON-FATAL, and that part was always accurate: this runtime serves every route in the
+    // application, so a fatal model misconfiguration would take down the 32 routes that never touch a model along
+    // with the 4 that do.
     //
     // ERROR level, not warn: for any deployment meant to generate, this is a real misconfiguration, and warn is
     // where such lines go to be filtered out. The record carries the FACT of absence and its consequence —

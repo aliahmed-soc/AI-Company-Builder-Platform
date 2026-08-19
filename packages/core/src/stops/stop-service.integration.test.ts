@@ -130,6 +130,48 @@ describe.skipIf(!hasTestDatabase)('emergency-stop controller (real PostgreSQL, r
     expect(await heldRows()).toHaveLength(0);
   });
 
+  /**
+   * ACBP-API-011 owed item 3 (owner ruling 2026-08-19) — SEEDED invisibility, to the CDR-093 standard.
+   *
+   * `readStopState` is now reachable over HTTP (`GET /api/companies/{companyId}/stops`), so "account A cannot see
+   * account B's halt" stopped being an internal property and became a wire guarantee.
+   *
+   * ⚠️ THE SEEDING IS THE WHOLE POINT. A test that asserts A's read is empty while NO foreign stop exists proves
+   * nothing at all — it passes identically against a correct implementation, a broken one, and an empty database.
+   * CDR-093 was written because three CDR-088 matrix blocks disclosed exactly that gap. So here B's stop is really
+   * created, its existence is asserted on the connection that can see everything, and only then is it required to
+   * be absent from A's view.
+   *
+   * The POSITIVE CONTROL is the second half of the same idea: A raises its own stop first, so a read that returned
+   * nothing to anybody — a broken query, a wrong scope, a swallowed error — fails this test instead of passing it.
+   */
+  test('SEEDED INVISIBILITY: account B\'s stop EXISTS and is still absent from account A\'s read', async () => {
+    // Positive control: A's own stop, through the real use case.
+    const aStop = await activateStop(product, { ...asOwner(), scope: 'account_wide' });
+    expect(aStop.status, "A's own stop must be created or the positive control below is vacuous").toBe('ok');
+    const aStopId = (aStop as { status: 'ok'; stopId: string }).stopId;
+
+    // THE FOREIGN ROW, raised by B's own owner through the same use case — a genuine stop, not a hand-built row.
+    const bStop = await activateStop(product, { userId: w.bOwner, accountId: w.accountB, companyId: w.companyB1, scope: 'account_wide' });
+    expect(bStop.status, 'the foreign stop must actually exist, or invisibility is unfalsifiable').toBe('ok');
+    const bStopId = (bStop as { status: 'ok'; stopId: string }).stopId;
+
+    // BOTH ROWS ARE ON DISK. Asserted on the OWNER connection, pinned to the specific ids, BEFORE the read below.
+    const onDisk = (await stopRows()).map((s) => s.id);
+    expect(onDisk, 'both stops must be persisted before invisibility means anything').toEqual(expect.arrayContaining([aStopId, bStopId]));
+
+    // The read, through the RESTRICTED product client, as A's owner — the same path the route takes.
+    const read = await readStopState(product, asOwner());
+    expect(read.status).toBe('ok');
+    if (read.status !== 'ok') return;
+    const visible = read.activeStops.map((s) => s.stopId);
+
+    expect(visible, "A must see its OWN stop, or the negative assertion below passes for the wrong reason").toContain(aStopId);
+    expect(visible, "account B's stop must never surface inside account A's read").not.toContain(bStopId);
+    // And nothing of B's leaks through another field — the whole payload is searched, not just the id list.
+    expect(JSON.stringify(read), "no part of B's stop may appear anywhere in A's payload").not.toContain(bStopId);
+  });
+
   // ── REFUSALS, EACH BEFORE THE FIRST WRITE (§1-G8) ────────────────────────────────────────────────────────
 
   test.each([

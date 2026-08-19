@@ -5,6 +5,7 @@
 // same opaque 403 regardless of cause (not a member vs not allowed) — no oracle.
 import { isJsonContentType, genericErrorBody } from '../webhooks/http.js';
 import { readLimitedRawBody, type RawBodyRequest } from '../webhooks/raw-body.js';
+import type { StopRefusalReason } from '@acbp/core';
 import type { CompaniesRequestResult } from './companies-request.js';
 
 export const MAX_COMPANIES_BODY_BYTES = 16 * 1024;
@@ -94,6 +95,26 @@ export async function parseRecommendBody(request: HttpRequest): Promise<Parsed<{
   return { ok: true, input: { generationId } };
 }
 
+/**
+ * ACBP-API-011 — parse an activate-stop body → { scope, targetId, reason } (RAW values; the domain validates).
+ *
+ * THE SHARED BOUNDED PARSER, not a bare `request.json()`, and the reasoning is `parseRecommendBody`'s applied to a
+ * different kind of cost. There is no global body cap in `apps/web`, so a bare parse lets a caller make the server
+ * buffer and parse an arbitrarily large payload before anything has authorized them. `parseRecommendBody` took this
+ * treatment because it was the one route that spends money; this is the one route that HALTS THE PLATFORM, and an
+ * unbounded read in front of an emergency control is the same defect with a worse consequence.
+ *
+ * NO SHAPE CHECK ON `scope`, DELIBERATELY — unlike `parseRecommendBody`, which refuses a blank `generationId`.
+ * `activateStop` types `scope` as `unknown` because refusing a bad scope is ITS job: two of the seven scopes are
+ * refused BY NAME as unenforceable, and a boundary that pre-filtered them would replace a specific, actionable
+ * refusal with a generic 400. Every key is forwarded exactly as received.
+ */
+export async function parseActivateStopBody(request: HttpRequest): Promise<Parsed<{ scope: unknown; targetId: unknown; reason: unknown }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  return { ok: true, input: { scope: r.obj['scope'], targetId: r.obj['targetId'], reason: r.obj['reason'] } };
+}
+
 /** Parse an answer-submission body → { status, content } (raw values; the domain validates). */
 export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ status: unknown; content: unknown }>> {
   const r = await readJsonObject(request);
@@ -134,6 +155,44 @@ export async function respondToCompaniesRequest(run: () => Promise<CompaniesRequ
     return jsonResponse(500, genericErrorBody(500));
   }
 }
+
+/**
+ * ACBP-API-011 — which HTTP status each stop refusal deserves (CDR-072).
+ *
+ * `STOP_REFUSAL_REASONS` is ONE closed union spanning THREE different kinds of "no", so a single status for all
+ * eleven would be wrong for at least eight of them:
+ *
+ *   400 — the request itself is malformed. A scope that is not a scope, a scope that cannot be enforced, a target
+ *         supplied where none is allowed or missing where one is required, or a `company` stop naming a company
+ *         other than its own. Sending it again unchanged cannot succeed.
+ *   404 — the thing named does not exist HERE. Under RLS a foreign tenant's row is invisible rather than denied, so
+ *         "not yours" and "not there" are genuinely the same answer and no oracle is created by saying so.
+ *   409 — well-formed, authorized, and refused by current state. `already_active` means the halt you asked for is
+ *         ALREADY IN FORCE, which is the one refusal an operator must never read as a failure to stop.
+ *
+ * EXHAUSTIVE BY CONSTRUCTION: the `Record<StopRefusalReason, number>` makes a reason added to core without a status
+ * here a COMPILE error, rather than a silent fall-through to some default that would be wrong for it.
+ *
+ * ⚠️ FOUR OF THE ELEVEN HAVE NO PRODUCER ON THIS RELEASE'S ROUTES, disclosed rather than quietly mapped (the
+ * CDR-092 §10 discipline). `not_found`, `not_active`, `already_reviewed` and `stop_still_active` are raised only by
+ * `clearStop` and `reviewHeldWork`, and neither is routed (owner ruling 2026-08-19). Their mappings are correct and
+ * currently unreachable; that is a different statement from "the clear path is covered", and nothing here should be
+ * read as evidence that it is. They are mapped anyway because the Record must be total for the compile-time
+ * exhaustiveness above to hold.
+ */
+const STOP_REFUSAL_STATUS: Readonly<Record<StopRefusalReason, number>> = {
+  not_a_scope: 400,
+  scope_not_enforceable: 400,
+  target_required: 400,
+  target_not_allowed: 400,
+  target_must_be_own_company: 400,
+  target_not_found: 404,
+  not_found: 404,
+  already_active: 409,
+  not_active: 409,
+  already_reviewed: 409,
+  stop_still_active: 409,
+};
 
 /** Map a bounded companies result to a safe HTTP response. */
 export function toCompaniesResponse(result: CompaniesRequestResult): Response {
@@ -355,6 +414,26 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
       // advice is worth more than hiding a rate an attacker can measure by timing anyway. Stated plainly rather
       // than claimed away: the body is opaque, the header is truthful.
       return rateLimitedResponse(result.retryAfterSeconds);
+    // ── ACBP-API-011 — the emergency stop (CDR-072) ───────────────────────────────────────────────────────────
+    case 'stop_state':
+      return jsonResponse(200, { stopState: result.stopState });
+    // 200 and not 201 on the same reasoning as the generate answers above: a stop is read back through GET
+    // /stops, not at a new URL a client could follow, so a 201 would promise a Location that does not exist.
+    //
+    // An explicit ALLOWLIST, never `...result.stop`. The three counts are named because they MEAN different things
+    // — interrupted, paused, asked-to-halt — and a spread would publish whatever core's ok arm gains tomorrow.
+    case 'stop_activated':
+      return jsonResponse(200, {
+        stopId: result.stop.stopId,
+        scope: result.stop.scope,
+        heldCount: result.stop.heldCount,
+        pausedCount: result.stop.pausedCount,
+        stopRequestedCount: result.stop.stopRequestedCount,
+      });
+    // The status comes from the REASON (see STOP_REFUSAL_STATUS) because the eleven reasons do not share one, and
+    // the reason itself travels so a caller can tell "already halted" from "that is not a scope".
+    case 'stop_refused':
+      return jsonResponse(STOP_REFUSAL_STATUS[result.reason], { error: 'stop_refused', reason: result.reason });
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));
   }

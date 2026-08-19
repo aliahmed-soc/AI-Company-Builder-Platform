@@ -97,6 +97,23 @@ import {
   type AuthorizeMeteredGenerateOptions,
   type AuthorizeMeteredGenerateResult,
 } from '../authz/authorize-metered-generate.js';
+// ── ACBP-API-011 — the emergency stop and the usage rollup, reachable at last ────────────────────────────────────
+// Both modules shipped complete and routeless. `packages/core/src/stops/index.ts` says so about itself in a comment
+// written after an independent review found every stop use case called by nothing; `packages/core/src/usage/index.ts`
+// says `rebuildAccountUsageRollup` is *"deliberately reachable from NO API route"* and that stays true — only the
+// READ is surfaced here, because who may trigger a rebuild is an open owner question (CDR-073 §3.2) with no
+// `usage:rebuild` action to authorize against. Adding the rebuild would be answering it.
+// TWO of the four stop use cases, by owner ruling 2026-08-19. `clearStop` and `reviewHeldWork` are NOT bound here:
+// the review takes a `heldWorkId` no exported read can produce, which makes closing that loop a domain addition
+// rather than exposure, and it is filed as its own ticket. Binding `clearStop` alone would be scaffolding toward a
+// surface that is deliberately not being built yet.
+import { activateStop, readStopState, type ActivateStopParams, type ActivateStopResult, type ReadStopStateResult, type StopServiceOptions } from '../stops/stop-service.js';
+import {
+  readAccountUsageRollup,
+  type ReadAccountUsageRollupParams,
+  type ReadAccountUsageRollupResult,
+  type RebuildAccountUsageRollupOptions,
+} from '../usage/usage-rollup-service.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -287,6 +304,25 @@ export interface ClerkIdentityRuntime {
   recommendStrategy(params: RecommendStrategyParams, options?: StrategyRecommendationOptions): Promise<RecommendStrategyResult>;
   generateRoadmap(params: GenerateRoadmapParams, options?: RoadmapGenerationOptions): Promise<GenerateRoadmapResult>;
   generateTasks(params: GenerateTasksParams, options?: TaskPlanningOptions): Promise<GenerateTasksResult>;
+  // ── ACBP-API-011 — the emergency stop (ADMIN-001; CDR-072) ───────────────────────────────────────────────────
+  // Required members, like every surface above: an optional method is one a runtime can omit and still typecheck,
+  // and on the one control whose purpose is to be un-bypassable that omission would be invisible until it mattered.
+  //
+  // ⚠️ RAISING IS REACHABLE HERE AND CLEARING IS NOT, WHICH IS A KNOWN AND DELIBERATE ASYMMETRY (owner ruling
+  // 2026-08-19). A stop activated through the API cannot be lifted through the API in this release. That is a real
+  // operational consequence, not an oversight, and it is recorded on the follow-on ticket rather than softened
+  // here — see docs/agent/TICKET-held-work-review-surface.md.
+  activateStop(params: ActivateStopParams, options?: StopServiceOptions): Promise<ActivateStopResult>;
+  readStopState(params: { userId: string; accountId: string; companyId: string }, options?: StopServiceOptions): Promise<ReadStopStateResult>;
+  /**
+   * ACBP-API-011 — the account usage PROJECTION (CDR-073; trust-critical #14).
+   *
+   * THE READ ONLY. `rebuildAccountUsageRollup` and `reconcileAccountUsageRollup` are deliberately absent: both
+   * RETURN account figures and WRITE, and who may trigger them is CDR-073 §3.2's open owner question. Nothing here
+   * may authorize a billing, limit or entitlement decision — when this disagrees with the ledger, the ledger is
+   * right and this row is a bug.
+   */
+  readAccountUsageRollup(params: ReadAccountUsageRollupParams, options?: RebuildAccountUsageRollupOptions): Promise<ReadAccountUsageRollupResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -542,6 +578,16 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     adminReadCompanyOverview(params, options) {
       return adminReadCompanyOverview(client, params, options ?? {});
+    },
+    // ── ACBP-API-011 — stop + usage, bound the same way as everything above ────────────────────────────────
+    activateStop(params, options) {
+      return activateStop(client, params, options ?? {});
+    },
+    readStopState(params, options) {
+      return readStopState(client, params, options ?? {});
+    },
+    readAccountUsageRollup(params, options) {
+      return readAccountUsageRollup(client, params, options ?? {});
     },
     async close() {
       if (ownsClient) await closeDatabase(client);

@@ -3130,3 +3130,37 @@ opened and never merged, so a "9 Done" count stated earlier in this session was 
 `ff9738f`. The FE board now reads **9 Done, 4 Planned, 6 Blocked-API**, and of the four Planned, FE-008 and
 FE-009 are effectively blocked (verified zero HTTP wiring) and FE-019 is a ruling rather than a screen —
 leaving **FE-003 as the only buildable screen on the current API**.
+
+---
+
+## 2026-08-19 — Next.js loads env per project directory, and a repo-root `.env` reaches no app workspace
+
+**Class lesson, recorded so no future session rediscovers it through a 500.**
+
+`next dev` loads `.env`, `.env.local` and friends from the **project directory it runs in** — for this repo
+that is `apps/web`, because `dev` resolves to `next dev` inside that workspace. A `.env` at the monorepo root
+is never read by the web app, no matter how correct its contents are. This is not a pnpm-workspace quirk or a
+misconfiguration; it is how Next resolves dotenv files, and it applies to every app workspace in any monorepo.
+
+The failure is easy to misread because it does not present as a missing-file error. `apps/web` had **no env
+file at all**, so `getClerkIdentityRuntime()` threw `ConfigValidationError: CLERK_WEBHOOK_SIGNING_SECRET:
+invalid (redacted)` and `/console/companies` returned a 500 — while `/console` kept rendering fine, because
+that screen is entirely mock data and never touches the runtime. One page up, one page down, same server:
+the shape of the symptom pointed at the *page* rather than at configuration. Two sessions in a row read that
+500 as a database problem, and it never was one: `loadClerkWebhookConfig()` runs at `clerk-runtime.ts:16`,
+**before** `loadClerkConfig()` and `loadAppDatabaseConfig()`, so the first missing variable wins and the stack
+trace names only it. Read the whole load order before concluding which dependency is absent.
+
+The fix is `apps/web/.env.local` (git-ignored via the root `.gitignore:3` `.env.*` pattern, which matches at
+any depth). Three things had to be true together, and any one missing reproduces the same 500: the Clerk
+publishable and secret keys — Clerk 7.5.20's **keyless dev mode** provisions a real temporary instance and
+writes them to `apps/web/.clerk/.tmp/keyless.json`, so the app boots with no dashboard signup at all; a
+`CLERK_WEBHOOK_SIGNING_SECRET`, which locally is a clearly-labelled **placeholder** — it exists only to
+satisfy startup validation, no webhook is delivered locally, and a real one would correctly fail signature
+verification; and `DATABASE_APP_URL` pointing at the **restricted `acbp_app` role** (never the owner
+connection — CDR-013), which additionally required applying all 56 migrations to `acbp_dev` and giving that
+role a login password, since the local provisioner creates only `acbp_dev`.
+
+**The generalisation worth keeping:** when a config value must reach a Next app, put it in that app's own
+directory and verify by request, not by inspecting the root. And when a validated-config loader throws, the
+variable it names is the *first* one it checked, not necessarily the only one missing.

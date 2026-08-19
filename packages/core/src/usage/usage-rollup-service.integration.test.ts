@@ -14,7 +14,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import { closeDatabase, migrateToLatest, type DatabaseClient } from '@acbp/database';
-import { rebuildAccountUsageRollup } from './usage-rollup-service.js';
+import { rebuildAccountUsageRollup, readAccountUsageRollup } from './usage-rollup-service.js';
 import { hasTestDatabase, createSeedClient, createAppClient, enableAppLogin, disableAppLogin } from '../tenancy/rls-integration-support.js';
 
 const ALL = ['approval_decisions', 'emergency_stops', 'held_work', 'approval_requests', 'usage_corrections', 'api_rate_limit_buckets', 'account_usage_rollups', 'usage_events', 'planning_run_inputs', 'planning_runs', 'task_review_flags', 'policy_evaluations', 'policies', 'artifact_revisions', 'artifacts', 'credit_transactions', 'worker_runs', 'company_worker_states', 'worker_definitions', 'tool_definitions', 'job_checkpoints', 'jobs', 'tool_calls', 'task_runs', 'task_deletions', 'task_dependencies', 'tasks', 'milestones', 'goals', 'roadmaps', 'decisions', 'strategy_selections', 'strategy_recommendations', 'strategy_options', 'strategy_generations', 'understanding_confirmation_events', 'understanding_item_reviews', 'understanding_items', 'understanding_documents', 'memory_items', 'interview_answers', 'interview_questions', 'interview_sessions', 'platform_admins', 'provisioning_steps', 'company_workspace_areas', 'activity_events', 'company_memberships', 'company_profiles', 'companies', 'audit_events', 'memberships', 'account_profiles', 'accounts', 'identity_webhook_receipts', 'users'] as const;
@@ -250,5 +250,55 @@ describe.skipIf(!hasTestDatabase)('account usage rollup determinism (real Postgr
     }
     const rows = await sql<{ n: string }>`select count(*)::text as n from account_usage_rollups`.execute(seed.kysely);
     expect(rows.rows[0]!.n).toBe('0');
+  });
+
+  /**
+   * ACBP-API-011 owed item 3 (owner ruling 2026-08-19) — SEEDED invisibility, to the CDR-093 standard.
+   *
+   * `readAccountUsageRollup` is now reachable over HTTP (`GET /api/account/usage`), and this is the read where
+   * getting it wrong is worst: a rollup spans the account's companies BY DESIGN, so RLS cannot narrow it and the
+   * authorization is the only thing standing between a caller and another account's total spend. That is the
+   * `readCreditLedger` review-pass-1 HIGH restated as a route.
+   *
+   * ⚠️ SEEDED, NOT ABSENT. Account B's rollup is really computed and really stored, and its existence is asserted
+   * on the superuser connection BEFORE account A's owner is refused it. Asserting a refusal against an account
+   * with no rollup would pass identically whether the authorization works or not.
+   *
+   * The POSITIVE CONTROL is A reading its OWN rollup successfully in the same test: without it, a read that
+   * refused everybody — a broken scope, a swallowed error — would satisfy the negative and look like security.
+   */
+  describe('seeded cross-account invisibility of the rollup read (ACBP-API-011)', () => {
+    test("account B's rollup EXISTS and account A's owner still cannot read it", async () => {
+      // B's ledger and B's stored projection, built by B's OWN owner through the real use case.
+      await seedEvent(accountB, companyB1, IN_PERIOD, { input: 911, output: 811, cost: 7111 });
+      const bBuilt = await rebuild(outsider, accountB);
+      expect(bBuilt.status, "B's rollup must be built, or the refusal below is unfalsifiable").toBe('ok');
+
+      // A's own ledger and projection — the positive control.
+      await seedEvent(accountA, companyA1, IN_PERIOD, { input: 100, output: 50, cost: 1000 });
+      expect((await rebuild(ownerBoth, accountA)).status).toBe('ok');
+
+      // BOTH ROWS ARE ON DISK, pinned by account id, before anything is read back.
+      const stored = await sql<{ account_id: string }>`select account_id from account_usage_rollups order by account_id`.execute(seed.kysely);
+      const accounts = stored.rows.map((s) => s.account_id);
+      expect(accounts, 'both rollups must be persisted before invisibility means anything').toEqual(expect.arrayContaining([accountA, accountB]));
+
+      // POSITIVE CONTROL: A's owner reads A's own rollup and gets A's real figures.
+      const own = await readAccountUsageRollup(app, { userId: ownerBoth, accountId: accountA, periodStart: PERIOD });
+      expect(own.status, "A's owner must be able to read A's own rollup, or the negative below is vacuous").toBe('ok');
+      if (own.status !== 'ok') return;
+      expect(own.figures).toEqual({ eventCount: 1, inputTokens: 100, outputTokens: 50, estimatedCostMicros: 1000 });
+
+      // THE NEGATIVE: the same caller asking for account B, whose rollup demonstrably exists.
+      const foreign = await readAccountUsageRollup(app, { userId: ownerBoth, accountId: accountB, periodStart: PERIOD });
+      expect(foreign.status, "A's owner must not read B's rollup").not.toBe('ok');
+
+      // NOT ONE OF B's FIGURES TRAVELS, whatever arm came back. Searched over the whole serialized result rather
+      // than a field this test happens to know about — a leak through an unexpected field is still a leak.
+      const body = JSON.stringify(foreign);
+      for (const secret of ['911', '811', '7111']) {
+        expect(body, `B's figure ${secret} must not appear in the refusal handed to A`).not.toContain(secret);
+      }
+    });
   });
 });
