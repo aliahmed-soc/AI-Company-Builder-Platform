@@ -44,30 +44,56 @@ const ROOT = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
  * metered route named something else escapes — which is why `EXPECTED_MINIMUM` below is a floor on the count
  * and the four known routes are named explicitly in `EXPECTED_ROUTES`.
  */
-const METERED_DIR_NAMES = new Set(['generate', 'recommend']);
+const METERED_DIR_NAMES = new Set(['generate', 'recommend', 'evaluate', 'assumption']);
 
-/** The four that exist today. A missing one fails: renaming a money route must never quietly shrink this set. */
+/** The six that exist today. A missing one fails: renaming a money route must never quietly shrink this set. */
 const EXPECTED_ROUTES = [
   'apps/web/src/app/api/companies/[companyId]/strategy/generate/route.ts',
   'apps/web/src/app/api/companies/[companyId]/strategy/recommend/route.ts',
   'apps/web/src/app/api/companies/[companyId]/roadmap/generate/route.ts',
   'apps/web/src/app/api/companies/[companyId]/tasks/generate/route.ts',
+  // ACBP-API-013 — the interview pair. Both spend money per call, and neither sits in a `generate` directory,
+  // which is precisely the escape the `METERED_RUNTIME_METHODS` rule below was written to close.
+  'apps/web/src/app/api/companies/[companyId]/interview/questions/[questionId]/evaluate/route.ts',
+  'apps/web/src/app/api/companies/[companyId]/interview/questions/[questionId]/assumption/route.ts',
 ];
 
 /**
  * The floor. CDR-092 §7.5: "a checker that discovers zero generate routes and reports success is the exact
  * artefact the standing rule warns about". This is the assertion that makes an empty walk loud.
  */
-const EXPECTED_MINIMUM = 4;
+const EXPECTED_MINIMUM = 6;
 
-/** The helper every metered request function must go through, and what it must itself contain. */
-const METERED_HELPER = 'resolveMeteredContext';
+/**
+ * The helpers a metered request function may go through, each paired with the authorization call it must make
+ * BEFORE debiting the company bucket.
+ *
+ * ⚠️ THERE IS MORE THAN ONE BECAUSE THE POSTURES DIFFER, NOT BECAUSE THE RULE DOES. `resolveMeteredContext`
+ * gates the four generate routes on `authorizeMeteredGenerate`, which is closed to four OWNER-ONLY actions.
+ * Answering an interview question is not owner-only — `evaluateAnswer` inherits `interview:read` and
+ * `memory:write`, both owner+viewer — so a member-level sibling exists. Widening the owner-only set instead
+ * would have been the cheaper edit and the wrong one: it would have silently granted viewers the four generate
+ * actions to make two interview routes work. Every helper here owes the SAME ceiling guarantees below.
+ */
+const METERED_HELPERS = [
+  { name: 'resolveMeteredContext', authz: 'authorizeMeteredGenerate' },
+  { name: 'resolveMeteredParticipateSession', authz: 'authorizeMeteredParticipate' },
+];
+
+/** What every metered helper must itself contain, over and above its own authorization call. */
 const HELPER_REQUIREMENTS = [
-  { needle: 'authorizeMeteredGenerate', why: 'the company bucket is consumed only after owner-only authz (CDR-092 §15)' },
   { needle: "checkRequestLimit('company'", why: 'the per-company ceiling must actually be consumed' },
   { needle: "limit.kind === 'throttled'", why: 'a throttled ceiling must be recognised' },
   { needle: "limit.kind === 'unavailable'", why: 'an unreadable bucket must fail CLOSED, not fall through' },
 ];
+
+/** Does this function body reach the paid path through one of the verified ceilings? */
+function goesThroughMeteredHelper(body) {
+  return METERED_HELPERS.some((h) => body.includes(`${h.name}(`));
+}
+
+/** The names only, for messages that have to tell a reader what the acceptable options were. */
+const METERED_HELPER_NAMES = METERED_HELPERS.map((h) => h.name).join(' or ');
 
 /** The non-metered resolver. Its presence inside a metered function means the ceiling was skipped. */
 const UNMETERED_HELPER = 'resolveActorWithAccount';
@@ -86,7 +112,18 @@ const UNMETERED_HELPER = 'resolveActorWithAccount';
  * load-bearing assumption. `steerTaskPlanning` is listed although nothing exposes it yet: it already spends
  * money through the same gateway, and the point is to catch the route that exposes it.
  */
-const METERED_RUNTIME_METHODS = ['generateStrategyOptions', 'recommendStrategy', 'generateRoadmap', 'generateTasks', 'steerTaskPlanning'];
+const METERED_RUNTIME_METHODS = [
+  'generateStrategyOptions',
+  'recommendStrategy',
+  'generateRoadmap',
+  'generateTasks',
+  'steerTaskPlanning',
+  // ACBP-API-013. Both reach the model gateway: `evaluateAnswer` classifies an answer (DISC-003/004) and
+  // `suggestAssumptionForSkip` composes an `ai_assumption` (DISC-005). Listed here rather than relying on the
+  // directory names above, because this is the rule that survives someone renaming the route.
+  'evaluateAnswer',
+  'suggestAssumptionForSkip',
+];
 
 /** Every HTTP method Next.js will route. All of them are examined, not just POST. */
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -223,9 +260,16 @@ function selfTest() {
   const sample = ['export async function alpha(x) {', "  const ctx = await resolveMeteredContext(a, b, c);", '  return ctx;', '}', '', 'export function beta() {', '  return 1;', '}', ''].join('\n');
   const alpha = functionBody(sample, 'alpha');
   const problems = [];
-  if (alpha === null || !alpha.includes(METERED_HELPER)) problems.push('functionBody did not extract a body containing its own text');
+  if (alpha === null || !alpha.includes(METERED_HELPERS[0].name)) problems.push('functionBody did not extract a body containing its own text');
   if (alpha !== null && alpha.includes('beta')) problems.push('functionBody ran past the closing brace into the next function');
   if (functionBody(sample, 'gamma') !== null) problems.push('functionBody invented a body for a function that does not exist');
+  // `goesThroughMeteredHelper` must recognise EVERY helper, not just the first. A version that only ever matched
+  // `METERED_HELPERS[0]` would report the two interview routes as uncovered — and, worse, a future third helper
+  // silently as well.
+  for (const h of METERED_HELPERS) {
+    if (!goesThroughMeteredHelper(`  const c = await ${h.name}(a, b);`)) problems.push(`goesThroughMeteredHelper did not recognise ${h.name}`);
+  }
+  if (goesThroughMeteredHelper('  const c = await resolveActorWithAccount(a, b);')) problems.push('goesThroughMeteredHelper accepted the UNMETERED resolver');
   if (requestFunctionsOf("import { a, type B, c as d } from '@/server/companies/companies-request';").join(',') !== 'a,B,c') {
     problems.push('requestFunctionsOf did not parse a mixed import clause');
   }
@@ -260,19 +304,26 @@ export function check(root = ROOT) {
 
   // The helper itself, first. Everything below leans on it, so a checker that verified the routes reach a
   // helper that no longer enforces anything would be measuring a pipe with nothing in it.
-  const helperBody = functionBody(requestSource, METERED_HELPER);
-  if (helperBody === null) {
-    failures.push(`${METERED_HELPER} is not a top-level function in ${rel(requestModule)} — every metered route depends on it.`);
-  } else {
+  for (const helper of METERED_HELPERS) {
+    const helperBody = functionBody(requestSource, helper.name);
+    if (helperBody === null) {
+      // A VANISHED HELPER IS A FAILURE, NOT A SKIP. If this were `continue`, deleting a helper would delete the
+      // only thing that checks it, and the routes below would then fail for a reason nobody could read.
+      failures.push(`${helper.name} is not a top-level function in ${rel(requestModule)} — the metered routes that use it depend on it.`);
+      continue;
+    }
     for (const { needle, why } of HELPER_REQUIREMENTS) {
-      if (!helperBody.includes(needle)) failures.push(`${METERED_HELPER} no longer contains \`${needle}\` — ${why}.`);
+      if (!helperBody.includes(needle)) failures.push(`${helper.name} no longer contains \`${needle}\` — ${why}.`);
+    }
+    if (!helperBody.includes(helper.authz)) {
+      failures.push(`${helper.name} no longer calls ${helper.authz} — the company bucket would be consumed with no authorization in front of it (CDR-092 §15).`);
     }
     // CDR-092 §15: presence is not order. A helper that authorizes after debiting still drains the bucket
     // on a 403. The authorize call must appear BEFORE the company consume.
-    const authzAt = helperBody.indexOf('authorizeMeteredGenerate');
+    const authzAt = helperBody.indexOf(helper.authz);
     const debitAt = helperBody.indexOf("checkRequestLimit('company'");
     if (authzAt !== -1 && debitAt !== -1 && authzAt > debitAt) {
-      failures.push(`${METERED_HELPER} consults authorizeMeteredGenerate AFTER debiting the company bucket — that is the drain CDR-092 §15 closed.`);
+      failures.push(`${helper.name} consults ${helper.authz} AFTER debiting the company bucket — that is the drain CDR-092 §15 closed.`);
     }
   }
 
@@ -285,9 +336,9 @@ export function check(root = ROOT) {
     const body = functionBody(requestSource, name);
     if (body === null) continue;
     const paid = METERED_RUNTIME_METHODS.filter((m) => body.includes(`.${m}(`));
-    if (paid.length > 0 && !body.includes(`${METERED_HELPER}(`)) {
+    if (paid.length > 0 && !goesThroughMeteredHelper(body)) {
       failures.push(
-        `${rel(requestModule)}\n    ${name} calls the paid method(s) ${paid.join(', ')} without going through ${METERED_HELPER}.\n` +
+        `${rel(requestModule)}\n    ${name} calls the paid method(s) ${paid.join(', ')} without going through ${METERED_HELPER_NAMES}.\n` +
           `    A money call with no per-company ceiling in front of it, whatever the route above it is named.`,
       );
     }
@@ -316,8 +367,8 @@ export function check(root = ROOT) {
         continue;
       }
       let ok = true;
-      if (!body.includes(`${METERED_HELPER}(`)) {
-        failures.push(`${key}\n    ${name} does not call ${METERED_HELPER} — a paid call with no per-company ceiling in front of it.`);
+      if (!goesThroughMeteredHelper(body)) {
+        failures.push(`${key}\n    ${name} calls neither ${METERED_HELPER_NAMES} — a paid call with no per-company ceiling in front of it.`);
         ok = false;
       }
       if (body.includes(`${UNMETERED_HELPER}(`)) {

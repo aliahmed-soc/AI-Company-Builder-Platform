@@ -114,6 +114,23 @@ import {
   type ReadAccountUsageRollupResult,
   type RebuildAccountUsageRollupOptions,
 } from '../usage/usage-rollup-service.js';
+// ── ACBP-API-013 — the understanding read and the two metered interview use cases ────────────────────────────────
+// `readCurrentUnderstanding` is the read the understanding module shipped without (see its file header — added on
+// an explicit owner ruling). `evaluateAnswer` and `suggestAssumptionForSkip` were already built and exported from
+// `discovery/index.ts` and reached NO route and NO runtime — the same exported-but-unreachable shape the stop
+// controller had, which is why ACBP-FE-008 sat blocked on a capability that already existed.
+import { readCurrentUnderstanding, type ReadUnderstandingParams, type ReadUnderstandingResult } from '../understanding/understanding-read.js';
+import type { UnderstandingReviewOptions } from '../understanding/understanding-review.js';
+import {
+  evaluateAnswer,
+  suggestAssumptionForSkip,
+  type EvaluateAnswerParams,
+  type EvaluateAnswerResult,
+  type SuggestAssumptionParams,
+  type SuggestAssumptionResult,
+  type OrchestrationOptions,
+} from '../discovery/orchestration.js';
+import { authorizeMeteredParticipate, type AuthorizeMeteredParticipateParams } from '../authz/authorize-metered-generate.js';
 import type { AccountContextResolution } from '@acbp/contracts';
 
 /** Company id + acting user + account, the shared identity of a company-scoped request. */
@@ -323,6 +340,19 @@ export interface ClerkIdentityRuntime {
    * right and this row is a bug.
    */
   readAccountUsageRollup(params: ReadAccountUsageRollupParams, options?: RebuildAccountUsageRollupOptions): Promise<ReadAccountUsageRollupResult>;
+  // ── ACBP-API-013 — understanding read + the metered interview pair (DISC-003/005/006) ────────────────────────
+  // Required members, like every surface above.
+  readCurrentUnderstanding(params: ReadUnderstandingParams, options?: UnderstandingReviewOptions): Promise<ReadUnderstandingResult>;
+  /**
+   * MEMBER-level metered gate, deliberately distinct from `authorizeMeteredGenerate`. Answering an interview
+   * question is an owner+viewer action that nevertheless spends money, so the owner-only gate would refuse every
+   * viewer mid-interview — see `authorize-metered-generate.ts` for why the two are split rather than merged.
+   */
+  authorizeMeteredParticipate(params: AuthorizeMeteredParticipateParams, options?: AuthorizeMeteredGenerateOptions): Promise<AuthorizeMeteredGenerateResult>;
+  // These two SPEND REAL MONEY per call, like the four generate members above. Each throws
+  // `MODEL_GATEWAY_NOT_CONFIGURED` when no provider is configured: never a silent no-op, never a fabricated verdict.
+  evaluateAnswer(params: EvaluateAnswerParams, options?: OrchestrationOptions): Promise<EvaluateAnswerResult>;
+  suggestAssumptionForSkip(params: SuggestAssumptionParams, options?: OrchestrationOptions): Promise<SuggestAssumptionResult>;
   /** Close the owned database client (no-op when a client was injected). */
   close(): Promise<void>;
 }
@@ -585,6 +615,22 @@ export function createClerkIdentityRuntime(config: ClerkIdentityRuntimeConfig, d
     },
     readStopState(params, options) {
       return readStopState(client, params, options ?? {});
+    },
+    // ── ACBP-API-013 ────────────────────────────────────────────────────────────────────────────────────────
+    readCurrentUnderstanding(params, options) {
+      return readCurrentUnderstanding(client, params, options ?? {});
+    },
+    authorizeMeteredParticipate(params, options) {
+      return authorizeMeteredParticipate(client, params, options ?? {});
+    },
+    // `lazyGateway` is passed the same way the four generate members do, and for the same reason: building the
+    // gateway here rather than at composition keeps a deployment without a model key able to serve every other
+    // route. Reached only when an interview call is actually made.
+    async evaluateAnswer(params, options) {
+      return evaluateAnswer(client, params, { gateway: lazyGateway }, options ?? {});
+    },
+    async suggestAssumptionForSkip(params, options) {
+      return suggestAssumptionForSkip(client, params, { gateway: lazyGateway }, options ?? {});
     },
     readAccountUsageRollup(params, options) {
       return readAccountUsageRollup(client, params, options ?? {});

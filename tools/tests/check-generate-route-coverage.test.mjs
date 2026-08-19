@@ -13,25 +13,30 @@ import { check, functionBody, requestFunctionsOf, isMeteredRoute, listRouteFiles
 
 const SCRIPT = join(process.cwd(), 'tools', 'check-generate-route-coverage.mjs');
 
-const ROUTE_DIRS = [
-  ['companies', '[companyId]', 'strategy', 'generate'],
-  ['companies', '[companyId]', 'strategy', 'recommend'],
-  ['companies', '[companyId]', 'roadmap', 'generate'],
-  ['companies', '[companyId]', 'tasks', 'generate'],
+/**
+ * The metered routes the fixture models, mirroring the real repository's SIX.
+ *
+ * ⚠️ THE TWO INTERVIEW ROWS ARE NOT DECORATION. They are the reason the fixture is keyed on an explicit `key`
+ * rather than on path segments: their directories nest two levels deeper than the generate routes, and they reach
+ * the ceiling through a DIFFERENT helper. A fixture that modelled only the generate shape would let a checker
+ * regression that broke the member-level helper pass every case here.
+ */
+const ROUTE_DEFS = [
+  { parts: ['companies', '[companyId]', 'strategy', 'generate'], key: 'strategy/generate', fn: 'generateStrategyForRequest', helper: 'resolveMeteredContext' },
+  { parts: ['companies', '[companyId]', 'strategy', 'recommend'], key: 'strategy/recommend', fn: 'recommendStrategyForRequest', helper: 'resolveMeteredContext' },
+  { parts: ['companies', '[companyId]', 'roadmap', 'generate'], key: 'roadmap/generate', fn: 'generateRoadmapForRequest', helper: 'resolveMeteredContext' },
+  { parts: ['companies', '[companyId]', 'tasks', 'generate'], key: 'tasks/generate', fn: 'generateTasksForRequest', helper: 'resolveMeteredContext' },
+  { parts: ['companies', '[companyId]', 'interview', 'questions', '[questionId]', 'evaluate'], key: 'interview/evaluate', fn: 'evaluateAnswerForRequest', helper: 'resolveMeteredParticipateSession' },
+  { parts: ['companies', '[companyId]', 'interview', 'questions', '[questionId]', 'assumption'], key: 'interview/assumption', fn: 'suggestAssumptionForRequest', helper: 'resolveMeteredParticipateSession' },
 ];
-const FN_FOR = {
-  'strategy/generate': 'generateStrategyForRequest',
-  'strategy/recommend': 'recommendStrategyForRequest',
-  'roadmap/generate': 'generateRoadmapForRequest',
-  'tasks/generate': 'generateTasksForRequest',
-};
 
-/** A request-layer function in the compliant shape. */
-function meteredFunction(name) {
+/** A request-layer function in the compliant shape, through whichever ceiling its posture uses. */
+function meteredFunction(name, helperName = 'resolveMeteredContext') {
+  const call = helperName === 'resolveMeteredContext' ? `${helperName}(deps, runtime, companyId)` : `${helperName}(companyId, deps)`;
   return [
     `export async function ${name}(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {`,
     '  const runtime = await runtimeOf(deps);',
-    '  const ctx = await resolveMeteredContext(deps, runtime, companyId);',
+    `  const ctx = await ${call};`,
     "  if ('kind' in ctx) return ctx.result;",
     '  const call = await callMetered(() => runtime.doIt({ companyId }));',
     '  if (!call.ok) return call.refusal;',
@@ -41,7 +46,31 @@ function meteredFunction(name) {
   ].join('\n');
 }
 
-/** The compliant helper. */
+/**
+ * The MEMBER-level ceiling, always present and deliberately NOT overridable.
+ *
+ * The gutting cases below replace `helper()` to prove the checker notices a broken ceiling. If they replaced this
+ * one too, each of those cases would fail for two reasons at once and a regression in either helper would be
+ * indistinguishable from a regression in the other.
+ */
+function participateHelper() {
+  return [
+    'async function resolveMeteredParticipateSession(companyId, deps) {',
+    '  const runtime = await runtimeOf(deps);',
+    '  const ctx = await resolveActorWithAccount(deps, runtime);',
+    "  if ('kind' in ctx) return ctx;",
+    '  const authz = await runtime.authorizeMeteredParticipate({ userId: ctx.userId, companyId, action: to });',
+    "  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };",
+    "  const limit = await runtime.checkRequestLimit('company', companyId);",
+    "  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };",
+    "  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
+    '  return ctx;',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/** The compliant OWNER-ONLY helper. */
 function helper() {
   return [
     'async function resolveMeteredContext(deps, runtime, companyId, action) {',
@@ -67,17 +96,21 @@ let root;
 /** Build a compliant tree. Every failing case below starts here and breaks exactly one thing. */
 function buildRepo(overrides = {}) {
   const apiDir = join(root, 'apps', 'web', 'src', 'app', 'api');
-  for (const parts of ROUTE_DIRS) {
-    const dir = join(apiDir, ...parts);
+  for (const def of ROUTE_DEFS) {
+    const dir = join(apiDir, ...def.parts);
     mkdirSync(dir, { recursive: true });
-    const key = `${parts[2]}/${parts[3]}`;
-    writeFileSync(join(dir, 'route.ts'), overrides.routes?.[key] ?? routeSource(FN_FOR[key]), 'utf8');
+    writeFileSync(join(dir, 'route.ts'), overrides.routes?.[def.key] ?? routeSource(def.fn), 'utf8');
   }
   const serverDir = join(root, 'apps', 'web', 'src', 'server', 'companies');
   mkdirSync(serverDir, { recursive: true });
   const body =
     overrides.requestModule ??
-    [overrides.helper ?? helper(), ...Object.values(FN_FOR).map((n) => overrides.functions?.[n] ?? meteredFunction(n)), overrides.extraFunctions ?? ''].join('\n');
+    [
+      overrides.helper ?? helper(),
+      participateHelper(),
+      ...ROUTE_DEFS.map((d) => overrides.functions?.[d.fn] ?? meteredFunction(d.fn, d.helper)),
+      overrides.extraFunctions ?? '',
+    ].join('\n');
   writeFileSync(join(serverDir, 'companies-request.ts'), body, 'utf8');
 }
 
@@ -128,7 +161,7 @@ describe('a compliant repository', () => {
     const r = check(root);
     expect(r.failures).toEqual([]);
     expect(r.code).toBe(0);
-    expect(r.covered).toHaveLength(4);
+    expect(r.covered).toHaveLength(6);
   });
 });
 
@@ -159,7 +192,7 @@ describe('the four probes that were run against the real repository', () => {
     const r = check(root);
     expect(r.code).toBe(1);
     const text = r.failures.join('\n');
-    expect(text).toContain('discovered 3 metered route(s), expected at least 4');
+    expect(text).toContain('discovered 5 metered route(s), expected at least 6');
     expect(text).toContain('strategy/generate/route.ts was not discovered');
   });
 
@@ -271,7 +304,7 @@ describe('the six bypasses an adversarial review actually demonstrated', () => {
     buildRepo({ functions: { generateStrategyForRequest: commented } });
     const r = check(root);
     expect(r.code).toBe(1);
-    expect(r.failures.join('\n')).toContain('does not call resolveMeteredContext');
+    expect(r.failures.join('\n')).toContain('calls neither resolveMeteredContext or resolveMeteredParticipateSession');
   });
 
   test('BYPASS 3 — importing the compliant function without CALLING it fails', () => {
@@ -370,6 +403,65 @@ describe('the six bypasses an adversarial review actually demonstrated', () => {
     const r = check(root);
     expect(r.code).toBe(1);
     expect(r.failures.join('\n')).toContain('AFTER debiting the company bucket');
+  });
+});
+
+/**
+ * ACBP-API-013 added a SECOND metered helper, and with it the way this checker could quietly stop checking half of
+ * what it covers. Every case above gutted `resolveMeteredContext`; none of them could have noticed if the new
+ * helper's requirements were never evaluated at all. These three watch the member-level ceiling fail.
+ */
+describe('the MEMBER-level ceiling is checked, not just the owner-only one', () => {
+  /** A request module whose participate helper is whatever the case supplies. */
+  function withParticipateHelper(body) {
+    return [helper(), body, ...ROUTE_DEFS.map((d) => meteredFunction(d.fn, d.helper))].join('\n');
+  }
+
+  test('a participate helper that debits BEFORE authorizing fails on order, exactly as the generate one does', () => {
+    const swapped = [
+      'async function resolveMeteredParticipateSession(companyId, deps) {',
+      '  const ctx = await resolveActorWithAccount(deps, runtimeOf(deps));',
+      "  if ('kind' in ctx) return ctx;",
+      "  const limit = await runtime.checkRequestLimit('company', companyId);",
+      "  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: 1 } };",
+      "  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
+      '  const authz = await runtime.authorizeMeteredParticipate({ userId: ctx.userId, companyId });',
+      "  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };",
+      '  return ctx;',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ requestModule: withParticipateHelper(swapped) });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('resolveMeteredParticipateSession consults authorizeMeteredParticipate AFTER debiting the company bucket');
+  });
+
+  test('a participate helper that stopped authorizing at all fails — a debit with nothing in front of it', () => {
+    const noAuthz = [
+      'async function resolveMeteredParticipateSession(companyId, deps) {',
+      '  const ctx = await resolveActorWithAccount(deps, runtimeOf(deps));',
+      "  if ('kind' in ctx) return ctx;",
+      "  const limit = await runtime.checkRequestLimit('company', companyId);",
+      "  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: 1 } };",
+      "  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };",
+      '  return ctx;',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ requestModule: withParticipateHelper(noAuthz) });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('no longer calls authorizeMeteredParticipate');
+  });
+
+  test('a VANISHED participate helper fails rather than being skipped — absence is not compliance', () => {
+    // The `continue` this replaced would have been the quiet death: delete the helper and the only thing that
+    // checks it disappears with it.
+    buildRepo({ requestModule: withParticipateHelper('') });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('resolveMeteredParticipateSession is not a top-level function');
   });
 });
 

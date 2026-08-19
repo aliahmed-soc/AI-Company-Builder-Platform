@@ -82,6 +82,14 @@ function fakeRuntime(overrides: Partial<CompanyRuntime> = {}): CompanyRuntime {
     // `ok` would be a test asserting the platform halted when nothing did.
     activateStop: () => Promise.reject(new Error('activateStop was called without being stubbed')),
     readStopState: () => Promise.reject(new Error('readStopState was called without being stubbed')),
+    // ACBP-API-013 — the understanding read and the metered interview pair. Same reject-with-the-method-name
+    // default: a test that reaches one of these without stubbing fails saying which, rather than passing on a
+    // silent undefined. `authorizeMeteredParticipate` defaults to REJECTING rather than to 'allowed', because a
+    // fake that quietly authorized would let every metered test pass while production debited on a refusal.
+    readCurrentUnderstanding: () => Promise.reject(new Error('readCurrentUnderstanding was called without being stubbed')),
+    authorizeMeteredParticipate: () => Promise.reject(new Error('authorizeMeteredParticipate was called without being stubbed')),
+    evaluateAnswer: () => Promise.reject(new Error('evaluateAnswer was called without being stubbed')),
+    suggestAssumptionForSkip: () => Promise.reject(new Error('suggestAssumptionForSkip was called without being stubbed')),
     editRoadmap: () => Promise.reject(new Error('editRoadmap was called without being stubbed')),
     deleteTask: () => Promise.reject(new Error('deleteTask was called without being stubbed')),
     getTaskRun: () => Promise.reject(new Error('getTaskRun was called without being stubbed')),

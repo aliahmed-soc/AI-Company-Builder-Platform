@@ -163,7 +163,12 @@ export async function generateUnderstanding(client: DatabaseClient, params: Gene
   return run.kind === 'ran' ? run.value : { status: 'forbidden' };
 }
 
-function toDocumentDTO(row: UnderstandingDocumentRow, sections: readonly UnderstandingSection[], items: readonly UnderstandingItemDTO[]): UnderstandingDocumentDTO {
+/**
+ * EXPORTED so the read (`understanding-read.ts`) maps a stored row to the DTO through THIS function rather than a
+ * second copy of it (ACBP-API-013). Two mappings of one row is how a field silently means different things on the
+ * generate response and the read response — the drift the derived-payload convention exists to prevent.
+ */
+export function toDocumentDTO(row: UnderstandingDocumentRow, sections: readonly UnderstandingSection[], items: readonly UnderstandingItemDTO[]): UnderstandingDocumentDTO {
   return {
     documentId: row.id,
     version: row.version,
