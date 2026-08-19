@@ -153,10 +153,13 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
 
       {/* ACBP-FE-013. Company-scoped like the others.
 
-          The copy promises the options and the decision, and deliberately does NOT promise you can generate
-          them: `generateStrategyOptions` and `recommendStrategy` reach no HTTP route on this build, so the
-          strategy screen ships no button for either and says why in its empty state. Promising generation
-          here would move that lie one screen earlier. */}
+          GENERATION IS REACHABLE AS OF ACBP-API-008 (`c908c7c`), AND THIS COMMENT USED TO SAY THE OPPOSITE.
+          `generateStrategyOptions` and `recommendStrategy` now have metered POST routes — `strategy/generate`
+          and `strategy/recommend`, both behind the per-company ceiling — and the strategy screen ships a real
+          control for each: "Generate strategy options" in the empty state, "Ask for a recommendation" on the
+          recommendation card. The claim that neither reached a route was therefore false, and so was the
+          claim that followed from it. The copy below summarises what the screen HOLDS rather than listing its
+          controls, which is why it names the options, the recommendation and the decision and stops there. */}
       <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-strategy-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-strategy-t">
@@ -173,9 +176,12 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
 
       {/* ACBP-FE-014. Company-scoped like the others.
 
-          The copy promises the roadmap and the board, and deliberately does NOT promise you can generate a
-          roadmap: `generateRoadmap` reaches no HTTP route on this build. `POST /roadmap/edit` does exist, but
-          it is the versioned EDIT rather than generation, and it is outside this row's scope. */}
+          GENERATION IS REACHABLE AS OF ACBP-API-008 (`c908c7c`), AND THIS COMMENT USED TO SAY THE OPPOSITE.
+          `POST /roadmap/generate` is metered against the per-company ceiling and gated on a positive strategy
+          decision, and the plan screen ships the control for it (`roadmap-generate-control.tsx`).
+          `POST /roadmap/edit` does exist and is still outside this row's scope — it is the versioned EDIT
+          rather than generation. The copy's "parts of the board this version cannot yet fill" is about the
+          board buckets whose counts this version cannot compute, not about generation, and remains true. */}
       <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-plan-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-plan-t">

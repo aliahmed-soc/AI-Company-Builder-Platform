@@ -1,11 +1,11 @@
 /*
  * ACBP-FE-014 — the plan screen: the roadmap above, the task board below.
  *
- * ENTIRELY A SERVER COMPONENT, and that is a decision rather than an omission. This slice has NO writes: the
- * roadmap read and the board read are both safe methods, `generateRoadmap` reaches no HTTP route, and the
- * versioned edit (`POST /roadmap/edit`) is a separate concern this row does not cover. With nothing to
- * mutate there is no state to hold, so there is no client bundle at all — the previous console screens are
- * client components only because they submit something.
+ * A SERVER COMPONENT AROUND ONE CLIENT ISLAND, and this paragraph used to claim there was no island at all.
+ * The roadmap read and the board read are both safe methods and every ruling below is pure, so this file
+ * holds no state of its own — but `generateRoadmap` DOES reach an HTTP route as of ACBP-API-008 (`c908c7c`),
+ * and `RoadmapGenerateControl` is the `'use client'` component that POSTs to it. The versioned edit
+ * (`POST /roadmap/edit`) remains a separate concern this row does not cover.
  *
  * PURE OVER THE TWO VIEWS. Every ruling lives in `roadmap-view.ts` and `board-view.ts`, which are tested;
  * this file only arranges what they produced.
