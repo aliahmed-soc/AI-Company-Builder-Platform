@@ -3206,3 +3206,108 @@ Hyper-V firewall blocks the WSL address, and opening it is a system-security cha
 1,704 real-PostgreSQL tests therefore skip locally, silently, while the suite reports a clean exit 0. Hosted
 CI at zero skips is not a formality on this repository; on this ticket it was the only thing that ran the
 code at all.
+
+---
+
+## The console plan badge — 2026-08-20
+
+**A UI element asserted a commercial fact that has no entity behind it, and it did so in the LAYOUT, which is
+what made it more than cosmetic.**
+
+The console top bar rendered `<span className="cs-badge cs-badge--muted">{MOCK_COMPANY.plan}</span>` — the word
+"Growth". Removed, with the absence asserted in `apps/web/src/app/console/layout.test.tsx`.
+
+### The verification, because the premise was checked rather than believed
+
+The task arrived asserting "there is no plan entity anywhere in this platform" and instructing that this be
+verified first. It was, and the sweep found **one thing the assertion missed**, which is the reason to record
+it rather than just say "confirmed":
+
+`accounts.plan_state` exists — migration 0003, `text NOT NULL DEFAULT 'free'`. It is not a plan entity and it
+does not rescue the badge, for four reasons that had to be checked separately: its only CHECK is
+`char_length(plan_state) > 0`, so it carries **no vocabulary at all**; it is written by nothing but its own
+default (`provisioning.ts`: *"the only value in P1-003"*); no contract type, route or authorization action
+reads it; and the `'pro'` values that appear in the RLS suites are arbitrary mutable strings proving tenant
+isolation, not a domain vocabulary. So the nearest thing to a source for that badge says **`free`**, not
+`Growth` — the badge was not merely unsourced, it contradicted the one plan-shaped datum the schema holds.
+
+Everything else the task asserted held: no `plans` / `subscriptions` / `entitlements` table across all 56
+migrations, no plan or tier type in `@acbp/contracts`, no route, no authz action. (`billing:read` is in the
+authz vocabulary but gates the CREDIT LEDGER — a different thing, and worth naming so the next reader does not
+mistake it for entitlement plumbing.) `'Growth'` occurred **exactly once** in the repository and nothing read
+it. BILL-001 is Post-MVP with D-02 open; CDR-092 §10 records that nothing debits a balance yet.
+
+### Removed, not labelled — and the second reason is the one that generalises
+
+Option (b) was to keep the badge and mark it visibly a placeholder. Rejected on two grounds.
+
+**One: a placeholder still asserts the category.** Marking "Growth" provisional says this platform HAS plans
+and merely has not filled one in. It does not. The failure mode is not a wrong VALUE of a real field; it is a
+real-looking field for an entity that does not exist. That distinction is exactly why the company NAME stays
+and the plan went: `companies.name` is a real column, so "Northwind Coffee" is a placeholder value for
+something the database can hold, while a plan was a placeholder for nothing.
+
+**Two: reach.** The overview page carries a visible mock-data banner. The layout does not and cannot usefully
+— it wraps every console screen, including the ones rendering real database rows, so a claim in the chrome
+inherits the credibility of whatever it happens to sit above.
+
+An independent corroboration landed mid-session: **ACBP-FE-018 merged as `2acea99` (PR #155) while this work
+was in progress**, and its usage screen reached the same conclusion for the same reason on a different
+element — it rejected a disabled "Manage plan" button because that *"would imply a billing system exists and
+is merely switched off"*, and states in prose that *"no plan or price exists"*. That sentence now renders
+directly beneath the top bar, so from `2acea99` until this change the contradiction was live on `main`, not
+hypothetical. This work was rebased onto that merge; the two changes touch the same two files in different
+hunks and rebased clean.
+
+**A third reason, procedural:** option (b) would have required inventing a visual placeholder treatment —
+a design decision under the owner's standing FRONTEND/UI gate. Deleting an element that states something false
+is not a design direction; drawing a new one is. The cheaper option was also the only ungated one.
+
+### THE TEST THAT PASSED FOR THE WRONG REASON, CAUGHT BEFORE IT SHIPPED
+
+This is the entry worth reading, and it is AGENTS.md §3 catching its own author in real time.
+
+The vocabulary guard was written as `expect(header.textContent).not.toMatch(/\b(plan|tier|...|growth|...)\b/i)`
+and **passed on the first run, against the badge that was still on screen**. DOM `textContent` concatenates
+sibling elements with no separator, so the header came back as one run — `...Northwind CoffeeGrowth...` — and
+`\bgrowth\b` requires a word boundary before the `G` that two adjacent letters do not provide. The check could
+not have failed no matter what the badge said.
+
+It was only visible because the run was read test-by-test rather than as a count: two guards went red and this
+one went green, and a guard written specifically for the defect that is green while the defect is present is a
+contradiction, not a pass. Fixed by walking text NODES and joining with a space, plus a `toMatch(/\bCoffee\b/)`
+sanity line so a future failure is legibly about vocabulary rather than about parsing. It then failed on the
+real markup exactly as it should have from the start.
+
+**The generalisation:** `textContent` is not the string a reader sees — it is the string with every boundary
+between elements deleted. Any assertion that depends on word boundaries, word counts or adjacency must not be
+built on it. And more broadly: when a new guard passes on the FIRST run, before the fix, that is not
+reassurance that the code was already fine — it is the signal to go find out why it cannot fail.
+
+### Evidence
+
+- **TDD**: guards written first; three of four red on the unmodified tree with real `AssertionError`s (the
+  fourth is the positive control, green by design — a layout rendering nothing would satisfy every negative
+  assertion here, so the name and initials are asserted before anything is denied).
+- **Mutation-proved both ways**, each break read back from disk before running and each file confirmed
+  byte-identical by `sha256sum` afterwards: restoring `plan: 'Growth'` to `MOCK_COMPANY` kills the field guard
+  AND turns `tsc` red with `TS2578: Unused '@ts-expect-error' directive` — which also proves, rather than
+  assumes, that `tsc` covers `.test.tsx` under `apps/web`; restoring the badge span kills both the
+  rendered-badge guard and the vocabulary guard.
+- `pnpm run check:static` — **exit 0** (typecheck, lint, all structural checks, 300/300 boundary tests).
+- `pnpm run test` — **exit 0, 3250 passed / 1710 skipped**. The skips are the real-PostgreSQL suites; local
+  Postgres is unreachable here for the reason the 2026-08-19 entry above records. **Hosted zero-skip CI on the
+  exact head is still owed** and is the authoritative evidence; this local run is not a substitute for it.
+
+### Classification and scope
+
+**Defect fix, not a design decision — no CDR.** The decision it does make (remove rather than label) is
+recorded here and above the constant in `mock-data.ts`. No backlog row exists or was created: this is a
+correction to ACBP-FE-002's shell, not a new slice.
+
+**Deliberately NOT fixed, and flagged rather than folded in:** `MOCK_COMPANY.name` and `.initials`
+("Northwind Coffee" / "NC") are still invented, still in the layout, and therefore still render above
+real-data screens with no banner. They are a lesser problem for the reason given above — placeholder values of
+a real column rather than a fabricated entity — but "lesser" is not "fine", and wiring the chip to the company
+the user is actually looking at is a real piece of work with its own scope. It is named here so it is not
+mistaken for having been considered and accepted.

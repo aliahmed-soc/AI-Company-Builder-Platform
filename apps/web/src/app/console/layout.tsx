@@ -16,6 +16,13 @@
  * same will be true of most items below — they are company-scoped destinations, not console-wide ones.
  *
  * THE EMERGENCY STOP CONTROL IS A VISUAL PLACEHOLDER (see the button's own comment). ACBP-FE-017 is Blocked-API.
+ *
+ * NOTHING IN THIS LAYOUT MAY STATE A COMMERCIAL FACT, and one thing here did until 2026-08-20: a badge reading
+ * "Growth", from `MOCK_COMPANY.plan`. No plan entity exists anywhere in this platform — the evidence sweep is
+ * recorded above that constant in `mock-data.ts`. What makes the layout specifically the wrong place for such a
+ * claim is REACH: the overview page states it is mock data in a banner, but this file wraps every console
+ * screen, including the ones rendering real database rows, and a claim in the chrome inherits the credibility
+ * of whatever it sits above. That is why the badge was deleted rather than labelled.
  */
 import type { ReactNode } from 'react';
 import './console.css';
@@ -127,7 +134,7 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
                 {MOCK_COMPANY.initials}
               </span>
               <span>{MOCK_COMPANY.name}</span>
-              <span className="cs-badge cs-badge--muted">{MOCK_COMPANY.plan}</span>
+              {/* No plan badge. `mock-data.ts` carries the evidence; `layout.test.tsx` keeps it gone. */}
             </div>
             <span className="cs-spacer" />
             {/*
