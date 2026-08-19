@@ -1387,3 +1387,59 @@
 .cs-control-outcome--blocked_precondition strong { color: var(--c-primary); }
 .cs-control-outcome--model_failed { border-inline-start-color: var(--c-warning); }
 .cs-control-outcome--model_failed strong { color: var(--c-warning); }
+
+/* ── Understanding document + adaptive interview feedback (ACBP-FE-008 / ACBP-FE-009) ─────────────────────
+   NOTHING BELOW IS LOAD-BEARING FOR MEANING. Every distinction these screens draw is carried by words in the
+   markup; the rules here only tint what the text already says. Removing this whole block leaves both screens
+   readable and correct, which is the property the two rows' accessibility lines ask for. */
+
+/* Heading levels below .cs-h1, which was the only one defined. */
+.cs-h2 { margin: 0; font-size: 1.15rem; letter-spacing: -0.01em; }
+.cs-h3 { margin: 0; font-size: 0.95rem; font-weight: 650; }
+.cs-meta { margin: var(--s-1) 0 0; font-size: 0.78rem; color: var(--c-text-dim); }
+.cs-empty-title { margin: 0 0 var(--s-2); font-size: 1rem; font-weight: 650; }
+
+/* THE READING-WIDTH CAP ACBP-FE-009 REQUIRES. A measure this long is what makes a document of classified
+   claims scannable; without it the items run the full width of a desktop window and stop being readable. */
+.cs-doc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  max-width: 68ch;
+}
+
+.cs-warning {
+  margin: var(--s-3) 0 0;
+  padding: var(--s-3);
+  border: 1px solid var(--c-border-soft);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-card);
+  font-size: 0.85rem;
+}
+
+.cs-understanding-head-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+.cs-understanding-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+.cs-understanding-items { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-3); }
+.cs-understanding-item { padding-top: var(--s-3); border-top: 1px solid var(--c-border-soft); }
+.cs-understanding-item:first-child { padding-top: 0; border-top: 0; }
+.cs-understanding-item-content { margin: 0; }
+.cs-understanding-section[data-gap='true'] { opacity: 0.75; }
+
+/* The label is the confidence. The bar repeats it and is aria-hidden, so it never carries anything alone. */
+.cs-confidence-label { margin: var(--s-1) 0 0; font-size: 0.8rem; color: var(--c-text-dim); }
+.cs-confidence-bar { margin-top: var(--s-1); height: 4px; border-radius: var(--r-pill); background: var(--c-border-soft); overflow: hidden; }
+.cs-confidence-bar-fill { height: 100%; background: var(--primary); }
+
+/* The paid actions, set apart from the free ones above them. */
+.cs-control-row--metered { margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--c-border-soft); flex-wrap: wrap; }
+
+/* Verdict + assumption feedback. `data-kind` tints; the label sentence says which it is. */
+.cs-verdict { margin-top: var(--s-2); padding: var(--s-3); border: 1px solid var(--c-border-soft); border-left: 3px solid var(--c-border-soft); border-radius: var(--r-card); }
+.cs-verdict[data-kind='reask'], .cs-verdict[data-kind='contradiction'] { border-left-color: var(--danger); }
+.cs-verdict[data-kind='clear'], .cs-verdict[data-kind='assumed'] { border-left-color: var(--primary); }
+.cs-verdict-label { margin: 0; font-weight: 650; font-size: 0.9rem; }
+.cs-verdict-detail { margin: var(--s-2) 0 0; font-size: 0.85rem; color: var(--c-text-dim); }
+.cs-chip { display: inline-flex; align-items: center; padding: 0.22rem 0.6rem; border-radius: var(--r-pill); border: 1px solid var(--c-border-soft); font-size: 0.75rem; font-weight: 650; }
+
+/* The SERVER's words, kept visually distinct from this console's copy — two different voices. */
+.cs-server-words { margin: var(--s-3) 0 0; padding-left: var(--s-3); border-left: 2px solid var(--c-border-soft); font-style: italic; }

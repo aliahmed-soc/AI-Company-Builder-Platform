@@ -155,7 +155,9 @@ describe.skipIf(!hasTestDatabase)('reading the current understanding (real Postg
     // Company A2 is a real company the caller may read; it simply has not been through discovery yet. A refusal or
     // an error here is how a founder's first visit turns into an error page.
     const r = await readCurrentUnderstanding(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA2 });
-    expect(r).toEqual({ status: 'ok', document: null, confirmed: false });
+    // `toEqual` on the WHOLE result rather than field-by-field: it is what catches a field added later that
+    // nobody remembered to consider here — which is exactly how this assertion earned its `superseded: false`.
+    expect(r).toEqual({ status: 'ok', document: null, confirmed: false, superseded: false });
   });
 
   test('the CURRENT version wins: a later version supersedes its predecessor', async () => {
