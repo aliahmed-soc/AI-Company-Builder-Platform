@@ -169,14 +169,60 @@ Owed on the exact head, at zero skips:
 1. ~~The real-PG stop suite runs rather than skips.~~ **MET.** CI run `32193687297` on head `c86b5a3` completed
    **success at 316/316 test files with no skip segment** — the real-PG suites ran. Local skips were an artefact of
    an unreachable local database, not of the code.
-2. The `stop:activate` check deleted from `activateStop` reddens `stop-service.integration.test.ts:122`, with the
-   `AssertionError` quoted — the owner's applied-verified bar for the viewer/non-member row.
-3. Seeded invisibility for both new reads, to the CDR-093 standard: a foreign account's rollup and a foreign
-   company's stop must be proven invisible with the foreign row actually **seeded**, not absent. Disclosed-as-
-   unproven is an interim state and not a merge state.
+2. ~~The `stop:activate` check reddens the viewer test.~~ **MET — see §6.1.**
+3. ~~Seeded invisibility for both new reads.~~ **MET.** Run `32197980520` on `6122d7e`: success, **316/316 test
+   files, no skip segment**. Both proofs executed, verified by count delta rather than by the log line that
+   produced the claim — `usage-rollup-service.integration.test.ts` went **11 → 12** tests and
+   `stop-service.integration.test.ts` **35 → 36**, both files green. (Vitest prints per-test lines only for slow
+   tests, so the usage proof's absence from the log was not evidence either way; the delta is.)
 
-**Owner ruling 2026-08-19: 2 and 3 land BEFORE this PR merges.** The stop route is full-bar, and
-disclosed-as-unproven is an interim state, not a merge state. Nothing in §5 covers either.
+**Owner ruling 2026-08-19: 2 and 3 land BEFORE this PR merges.** Both now have hosted, zero-skip evidence.
+
+### §6.1 — The applied authz mutation, and the two runs that proved nothing first
+
+**THE PROOF.** Probe branch `p8-mut-api011-stop-authz` (`9f8a426`), run **32199539213**, real PostgreSQL:
+
+```
+AssertionError: expected { status: 'ok', …(5) } to deeply equal { status: 'forbidden' }
+- Expected
++ Received
+  {
+-   "status": "forbidden",
++   "heldCount": 2,
++   "pausedCount": 1,
++   "scope": "account_wide",
++   "status": "ok",
++   "stopId": "043fb786-cc04-4800-9c4c-42545266858d",
++   "stopRequestedCount": 1,
+  }
+ ❯ packages/core/src/stops/stop-service.integration.test.ts:124:79
+```
+
+Read the RECEIVED side rather than the status alone: with the check weakened, a **viewer halted the platform**. A
+real stop row exists, 2 tasks were held, 1 was transitioned `running → paused`, and 1 live run was asked to
+safe-stop. The refusal is the only thing between a viewer and that, and nothing in the route or request layer
+duplicates it (CDR-087 §1).
+
+**THE MUTATION SHAPE MATTERS, and the first attempt got it wrong.** `'stop:activate'` → `'stop:read'`, not a
+deletion — because `stop:activate` maps to `['owner']` and `stop:read` to `['owner','viewer']`
+(`packages/contracts/src/authz/authz.ts:404`, `:410`), so a viewer passes a check that must refuse them, while
+`role` stays referenced.
+
+**TWO EARLIER RUNS PROVED NOTHING AND ARE RECORDED RATHER THAN QUIETLY REPLACED:**
+
+| Run | Result | Why it was not evidence |
+|---|---|---|
+| `32197163447` (`3154b34`) | failure | The check was DELETED, making `role` unused: `115:19 error 'role' is defined but never used`. Lint runs before tests in the aggregate gate, so the suite never executed. **Zero AssertionError lines.** |
+| `32198073763` (`9f8a426`) | cancelled | `ci.yml:32` sets `concurrency: group: ci-…-${{ github.ref }}` with `cancel-in-progress: true`. Lint was clean, but the run never finished. |
+
+Both would have been reported as "the probe went red" by anything that reads the conclusion instead of the log.
+A `cancelled` run reports `status: completed`, and `gh run watch --exit-status` returns 1 for a cancel exactly as
+it does for a genuine failure. **This is the third time on this programme that a red exit code was mistaken for
+evidence** — the standing rule is to quote the `AssertionError` line, never the count, the test name, or the exit
+code, and it was re-learned here rather than applied.
+
+The probe branch is KEPT, not deleted, on the ACBP-P7-008 precedent: the branch is what makes the run id
+reproducible, and each probe branch IS a run id's evidence. It must never be merged.
 
 ---
 
