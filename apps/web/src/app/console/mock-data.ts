@@ -6,8 +6,19 @@
  *
  * WHY MOCK RATHER THAN WIRED, stated so the next reader does not treat this file as a stub to be "finished":
  * the slice is scoped to the LOOK. Wiring the overview means the approvals inbox (FE-016), emergency stop
- * (FE-017) and usage display (FE-018) — all three are `Blocked-API` in FRONTEND-BACKLOG.csv, and the credit
- * figure specifically has no backend to read (CDR-092 §10: nothing debits a company's balance yet).
+ * (FE-017) and usage display (FE-018).
+ *
+ * ⚠️ CORRECTED 2026-08-19 (ACBP-FE-018). That sentence used to end "— all three are `Blocked-API` in
+ * FRONTEND-BACKLOG.csv", which is no longer true of two of them: FE-016 is Done and FE-018 shipped a real
+ * `/console/usage` screen in this change. Only FE-017 is still Blocked-API.
+ *
+ * WHAT HAS NOT CHANGED IS THE PART THAT MATTERS HERE: the CREDIT figure below still has no backend to read
+ * (CDR-092 §10 — nothing debits a company's balance yet), and building FE-018 did NOT supply one.
+ * `USAGE_ROLLUP_LANES` carries eventCount, inputTokens, outputTokens and estimatedCostMicros — there is no
+ * credits lane, no allowance and no balance anywhere in the usage contract, because the commercial formula is an
+ * open decision. So `MOCK_STATS`' "credits remaining of a monthly allowance" cannot be wired from the usage read
+ * and must not be: the real screen at `/console/usage` deliberately shows provider-cost micro-units and says in
+ * as many words that no billing, plan or balance exists.
  *
  * Every export is prefixed `MOCK_` so a call site cannot use one without the reader seeing what it is, and the
  * rendered page carries a visible banner saying the same thing to whoever is looking at the screen rather than

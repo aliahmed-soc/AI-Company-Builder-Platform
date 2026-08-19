@@ -1443,3 +1443,26 @@
 
 /* The SERVER's words, kept visually distinct from this console's copy — two different voices. */
 .cs-server-words { margin: var(--s-3) 0 0; padding-left: var(--s-3); border-left: 2px solid var(--c-border-soft); font-style: italic; }
+
+/* ── Usage screen (ACBP-FE-018) ────────────────────────────────────────────────────────────────────────────
+   Reuses .cs-stats / .cs-stat from the overview rather than reinventing a card, with ONE override that matters:
+   .cs-stat-value is 1.9rem/700, sized for a bare numeral like "12". Every value on this screen carries its unit
+   in the text ("48,300 tokens", "$0.47 estimated (US dollars)"), which at that size wraps into an unreadable
+   headline. Nothing below is load-bearing for meaning — strip this block and the screen still reads correctly. */
+
+.cs-usage { display: flex; flex-direction: column; gap: var(--s-4); }
+
+.cs-usage-head-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+.cs-usage-headline { margin: var(--s-3) 0 0; font-size: 1.05rem; font-weight: 600; }
+
+/* The unit-carrying value: readable at a glance without pretending to be a dashboard number. */
+.cs-usage-value { font-size: 1.15rem; font-weight: 650; letter-spacing: -0.01em; line-height: 1.35; }
+.cs-usage-stat[data-figure='estimatedCost'] .cs-usage-value { font-size: 1.05rem; }
+
+/* The two lifecycle states. `data-state` only tints what the badge text already says. */
+.cs-badge--computed { background: var(--c-primary-soft); color: #a9c8ff; }
+.cs-badge--never_computed { background: var(--c-surface-2); color: var(--c-text-dim); }
+
+/* Both trailing cards are statements rather than controls, and are set back from the figures accordingly. */
+.cs-usage-note, .cs-usage-billing { border-left: 3px solid var(--c-border-soft); }
+.cs-usage-note .cs-sub + .cs-sub, .cs-usage-billing .cs-sub + .cs-sub { margin-top: var(--s-3); }

@@ -35,6 +35,15 @@ export const metadata = {
 const NAV_BUILT = [
   { href: '/console', label: 'Overview', icon: '▤' },
   { href: '/console/companies', label: 'Companies', icon: '◱' },
+  /*
+   * ACBP-FE-018. Promoted OUT of the Operate group below, keeping its icon so it is recognisably the same
+   * destination that was listed as planned.
+   *
+   * It belongs in the GLOBAL nav where the other built screens do not, and the header above says why: those are
+   * company-scoped destinations with no company to resolve from here. Usage is account-scoped — the rollup spans
+   * every company in the account — so `/console/usage` resolves with nothing further to supply.
+   */
+  { href: '/console/usage', label: 'Usage', icon: '◧' },
 ];
 
 const NAV_PLANNED: ReadonlyArray<{ group: string; items: ReadonlyArray<{ label: string; icon: string }> }> = [
@@ -60,7 +69,8 @@ const NAV_PLANNED: ReadonlyArray<{ group: string; items: ReadonlyArray<{ label: 
       { label: 'Decision Room', icon: '⚖' },
       { label: 'Approvals', icon: '⚑' },
       { label: 'Activity', icon: '≡' },
-      { label: 'Usage', icon: '◧' },
+      // 'Usage' moved to NAV_BUILT (ACBP-FE-018). Listing it in both places would render it twice — once as a
+      // link and once as an inert item claiming it is not built.
     ],
   },
 ];
