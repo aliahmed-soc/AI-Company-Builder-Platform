@@ -1412,7 +1412,7 @@
   margin: var(--s-3) 0 0;
   padding: var(--s-3);
   border: 1px solid var(--c-border-soft);
-  border-left: 3px solid var(--danger);
+  border-left: 3px solid var(--c-danger);
   border-radius: var(--r-card);
   font-size: 0.85rem;
 }
@@ -1428,15 +1428,15 @@
 /* The label is the confidence. The bar repeats it and is aria-hidden, so it never carries anything alone. */
 .cs-confidence-label { margin: var(--s-1) 0 0; font-size: 0.8rem; color: var(--c-text-dim); }
 .cs-confidence-bar { margin-top: var(--s-1); height: 4px; border-radius: var(--r-pill); background: var(--c-border-soft); overflow: hidden; }
-.cs-confidence-bar-fill { height: 100%; background: var(--primary); }
+.cs-confidence-bar-fill { height: 100%; background: var(--c-primary); }
 
 /* The paid actions, set apart from the free ones above them. */
 .cs-control-row--metered { margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--c-border-soft); flex-wrap: wrap; }
 
 /* Verdict + assumption feedback. `data-kind` tints; the label sentence says which it is. */
 .cs-verdict { margin-top: var(--s-2); padding: var(--s-3); border: 1px solid var(--c-border-soft); border-left: 3px solid var(--c-border-soft); border-radius: var(--r-card); }
-.cs-verdict[data-kind='reask'], .cs-verdict[data-kind='contradiction'] { border-left-color: var(--danger); }
-.cs-verdict[data-kind='clear'], .cs-verdict[data-kind='assumed'] { border-left-color: var(--primary); }
+.cs-verdict[data-kind='reask'], .cs-verdict[data-kind='contradiction'] { border-left-color: var(--c-danger); }
+.cs-verdict[data-kind='clear'], .cs-verdict[data-kind='assumed'] { border-left-color: var(--c-primary); }
 .cs-verdict-label { margin: 0; font-weight: 650; font-size: 0.9rem; }
 .cs-verdict-detail { margin: var(--s-2) 0 0; font-size: 0.85rem; color: var(--c-text-dim); }
 .cs-chip { display: inline-flex; align-items: center; padding: 0.22rem 0.6rem; border-radius: var(--r-pill); border: 1px solid var(--c-border-soft); font-size: 0.75rem; font-weight: 650; }

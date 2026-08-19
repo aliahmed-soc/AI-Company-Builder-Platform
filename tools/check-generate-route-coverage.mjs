@@ -251,8 +251,151 @@ export function functionBody(source, name) {
   const start = source.search(new RegExp(`^(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\b`, 'm'));
   if (start === -1) return null;
   const rest = source.slice(start);
-  const end = rest.search(/^\}/m);
-  return end === -1 ? null : rest.slice(0, end + 1);
+  /*
+   * FINDING THE BODY'S OPENING BRACE NEEDS BOTH SIGNALS, and using either alone is a bug this file has now had.
+   *
+   * `rest.indexOf('{')` is WRONG: a signature's own type annotation contains braces —
+   *     async function resolveMeteredParticipateSession(...): Promise<{ userId: string; ... } | Early> {
+   * so the first `{` belongs to the RETURN TYPE, and matching it yields a two-line "body" in which every needle
+   * is missing. That produced 26 false failures against the real repository.
+   *
+   * A column-0 `}` alone is also wrong — that was the original bug, broken by any template literal.
+   *
+   * So: take the first `{` whose MATCHING brace lands in column 0. Type annotations close inline; a top-level
+   * function's body closes at the start of a line, in this prettier-formatted repository. Brace matching skips
+   * string and template literals, so a JSON-shaped prompt no longer ends the function early.
+   */
+  for (let open = rest.indexOf('{'); open !== -1; open = rest.indexOf('{', open + 1)) {
+    const end = matchingBrace(rest, open);
+    if (end === -1) return null;
+    if (end === 0 || rest[end - 1] === '\n') return rest.slice(0, end + 1);
+  }
+  return null;
+}
+
+/**
+ * Index of the `}` that closes the `{` at `open`, skipping braces inside string and template literals.
+ *
+ * ⚠️ THIS REPLACED A ONE-LINE `rest.search(/^\}/m)` THAT AN ADVERSARIAL REVIEW BROKE, and the break was not
+ * theoretical. That version ended a function at the first `}` in column 0 — which any template literal supplies
+ * the moment it contains a JSON-shaped prompt:
+ *
+ *     const prompt = `Reply as JSON:
+ *     {
+ *       "summary": "..."
+ *     }`;
+ *
+ * The extracted body then stopped mid-literal, the paid `runtime.*` call fell OUTSIDE it, and the paid-method
+ * rule found nothing to complain about. A tree that should have failed returned `code = 0, failures = 0`. A
+ * model-calling request function containing a JSON prompt is not an exotic shape — it is the likeliest shape.
+ *
+ * `stripComments` runs before this, so comments cannot contain a brace by the time we get here; string and
+ * template literals are deliberately PRESERVED (the needles contain quotes), so they must be skipped here.
+ * Template substitutions nest, so `${` pushes back into code.
+ */
+export function matchingBrace(source, open) {
+  let depth = 0;
+  let i = open;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === "'" || c === '"') {
+      const q = endOfQuoted(source, i, c);
+      if (q === -1) return -1;
+      i = q + 1;
+      continue;
+    }
+    if (c === '`') {
+      // `endOfTemplate` returns the index just PAST the closing backtick, substitutions included.
+      const t = endOfTemplate(source, i);
+      if (t === -1) return -1;
+      i = t;
+      continue;
+    }
+    if (c === '{') depth += 1;
+    else if (c === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/** Index of the closing quote for the literal opening at `start`, honouring backslash escapes. */
+function endOfQuoted(source, start, quote) {
+  for (let i = start + 1; i < source.length; i += 1) {
+    if (source[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    if (source[i] === quote) return i;
+    // An unterminated single-quoted string cannot span a newline in valid source; bail rather than run to EOF.
+    if (source[i] === '\n') return -1;
+  }
+  return -1;
+}
+
+/**
+ * Skip a template literal, INCLUDING its `${ ... }` substitutions, and return the index just past its closing
+ * backtick. Substitutions may themselves contain braces, strings and nested templates.
+ */
+function endOfTemplate(source, start) {
+  let i = start + 1;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === '`') return i + 1;
+    if (c === '$' && source[i + 1] === '{') {
+      // Walk the substitution as code until its brace balances.
+      let depth = 1;
+      i += 2;
+      while (i < source.length && depth > 0) {
+        const s = source[i];
+        if (s === '\\') {
+          i += 2;
+          continue;
+        }
+        if (s === "'" || s === '"') {
+          const q = endOfQuoted(source, i, s);
+          if (q === -1) return -1;
+          i = q + 1;
+          continue;
+        }
+        if (s === '`') {
+          const t = endOfTemplate(source, i);
+          if (t === -1) return -1;
+          i = t;
+          continue;
+        }
+        if (s === '{') depth += 1;
+        else if (s === '}') depth -= 1;
+        i += 1;
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Every top-level `function` declared in the request module, whatever it is called.
+ *
+ * SEPARATE FROM `requestFunctionNames` ON PURPOSE. That one keys on the `*ForRequest` convention, which is right
+ * for matching a route's imports — a route importing something else has not been checked and is reported as such.
+ * It is WRONG for the paid-method rule: an adversarial review showed that a one-word rename of a money-spending
+ * function put it outside the convention and therefore outside the sweep entirely, with `code = 0`. The rule that
+ * asks "does anything here call a paid method without a ceiling" must look at everything, not at a naming habit.
+ */
+export function topLevelFunctionNames(source) {
+  const names = [];
+  const re = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)\b/gm;
+  let m;
+  while ((m = re.exec(source)) !== null) names.push(m[1]);
+  return names;
 }
 
 /** Self-test: the extractor must actually extract, or every verdict below is vacuous. */
@@ -332,9 +475,16 @@ export function check(root = ROOT) {
    * method must go through the ceiling — whatever route, if any, sits above it. This is what catches the metered
    * route named something the convention below has never heard of.
    */
-  for (const name of requestFunctionNames(requestSource)) {
+  for (const name of topLevelFunctionNames(requestSource)) {
     const body = functionBody(requestSource, name);
-    if (body === null) continue;
+    if (body === null) {
+      // UNREADABLE IS NOT SAFE. This was a bare `continue`, so a function the extractor could not delimit was
+      // silently exempted from the only rule that does not depend on a naming convention — and the extractor
+      // could be defeated by a template literal. The file says "unchecked is not the same as safe" elsewhere;
+      // it now says it here too.
+      failures.push(`${rel(requestModule)}\n    ${name} could not be read as a top-level function, so it has NOT been checked for paid calls — and unchecked is not the same as safe.`);
+      continue;
+    }
     const paid = METERED_RUNTIME_METHODS.filter((m) => body.includes(`.${m}(`));
     if (paid.length > 0 && !goesThroughMeteredHelper(body)) {
       failures.push(

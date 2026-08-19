@@ -174,3 +174,133 @@ Stated plainly, because the difference is the whole point of the evidence standa
 - The two rendered rows still depend on a browser-based check for their layout
   acceptance lines; §7 records them as unproven rather than counting the jsdom
   assertions as evidence.
+
+---
+
+## 9. Adversarial review, and the four defects it found
+
+Six independent lenses examined this change (authorization/metering, the `superseded` predicate, the widened
+guard, the HTTP boundary, whether the new tests bite, and prose truthfulness). Every finding was then attacked by
+a skeptic instructed to refute it and to default to refuted when uncertain.
+
+**25 findings raised. 21 refuted. 4 survived** — and the fixes are in this branch.
+
+Nothing that survived was a tenancy, privilege or cross-tenant defect. The authorize-then-debit invariant held,
+the G9 null-carrying 200 held, the DTOs were named field by field, and no reviewer found a path by which one
+tenant could reach another's data. What survived were two violations of this repository's own standing rules, one
+spend-before-validate gap, and one guard-hardening item.
+
+### 9.1 The money gate had no test that could fail (§the "guard coverage is the defect" rule)
+
+`authorizeMeteredParticipate` — the member-level gate both new paid routes depend on — was never invoked by any
+test. Every reference in a test file was a **stub**. Replacing its entire body with `return 'allowed';` left the
+whole suite green, while an authenticated non-member could pass the gate and debit another company's paid-call
+ceiling before core refused. That is the CDR-092 §15 drain with nothing able to catch it.
+
+The gate was introduced in §2 of this document as the careful alternative to widening the owner-only set, and it
+shipped with less test coverage than the thing it was careful about.
+
+Fixed by mirroring the sibling's two suites. The integration half now asserts the claim the split was **made**
+for and that had never been written down: **a viewer is ALLOWED `interview:participate`** (verified against
+`authz.ts:289`, `['owner','viewer']`), while the same viewer is **forbidden** `strategy:generate` — the two
+results asserted side by side, on the same caller and company, so the split is shown to have narrowed rather than
+widened.
+
+### 9.2 Four CSS custom properties that do not exist
+
+`console.css` referenced `var(--danger)` and `var(--primary)`. The defined tokens are `--c-danger` and
+`--c-primary`; every other rule in the file uses those names.
+
+CSS fails silently. An unresolvable `var()` makes the whole declaration invalid at computed-value time, so
+`border-left: 3px solid var(--danger)` does not lose its colour — it loses the **border**, because
+`border-left-style` unsets to `none`. The confidence bar's `background` unset to transparent and rendered
+nothing. Two `data-kind` tints collapsed to the same near-white. Meanwhile the comments directly above them
+asserted that the tint distinguishes the states and that the bar repeats the number — so this was a prose defect
+as well as a visual one.
+
+**It shipped past a manual check I ran, and the check was wrong**: I grepped for `--danger:` as a substring,
+which also matches `--c-danger:`, so an undefined token reported as defined. That is the same substring-matching
+class of error as the `[companyId]` bracket trap already recorded in this repository.
+
+Fixed, and the **class** is closed rather than the instance: `tools/check-css-tokens.mjs` now fails the static
+gate when any `var()` without a fallback resolves to nothing. Nothing else in this repository reads CSS —
+typecheck, lint, the secret scan and 4,930 tests all pass over a stylesheet whose colours do not exist, and jsdom
+applies no stylesheet, so no rendered test could have caught it either. The checker was watched to fail on the
+exact original defect before being trusted:
+
+```
+apps/web/src/app/console/console.css:1431
+    var(--primary) resolves to nothing, so the whole declaration is invalid at computed-value time.
+    A shorthand (border, background) loses more than its colour — it unsets the property.
+    Did you mean: --c-primary?
+```
+
+Its own self-test asserts the substring bug directly: `--c-danger:` must NOT be read as defining `--danger`.
+
+### 9.3 The paid route validated after it spent
+
+`parseEvaluateAnswerBody` bounded `answerText` only by the 16 KiB body cap, never against `ANSWER_CONTENT_MAX`.
+An over-long answer therefore passed every free check, consumed the per-company ceiling, was sent verbatim to the
+provider, was **billed**, and was only then refused — by `createMemoryItem`, on `MEMORY_CONTENT_MAX`, and only on
+a `clear` verdict. The same text could never have been stored as an answer either, so the model was being asked
+to judge something the platform had already decided it would not keep. The console gates its own control on the
+same constant, so this was reachable only from a non-console client.
+
+Fixed in **core**, before the gateway call, rather than in the parser — `companies-http.ts`'s own header assigns
+field validation to the domain, and a parser-level cap would have been a second definition of the bound. The rule
+is **imported**: `validateAnswerSubmission` is the exact predicate `recordInterviewAnswer` applies to the same
+text, so the two cannot drift.
+
+The test asserts **the gateway is never called**, not merely that the result is `validation` — a bound placed
+after the model call would satisfy the second and none of the point. A companion case asserts an answer exactly
+at the limit is still evaluated, so the fix cannot silently narrow what a founder may say.
+
+### 9.4 The widened guard could still be walked past — twice
+
+Both escapes were **demonstrated**, not hypothesised, and both produced `code = 0, failures = 0` on trees that
+should have failed. That is the worst output a guard can give: not a missed defect but an affirmative all-clear.
+
+1. **`functionBody` ended a function at the first column-0 `}`.** Any template literal supplies one the moment it
+   contains a JSON-shaped prompt — which is the likeliest shape in a function that talks to a model. The paid
+   call then fell outside the extracted body and the paid-method rule found nothing to complain about.
+2. **The paid-method sweep enumerated only `*ForRequest` names.** A one-word rename removed a money-spending
+   function from the only rule that does not depend on a naming convention.
+
+Fixed with a brace-matching scanner that skips string and template literals (including nested `${}`
+substitutions), a `topLevelFunctionNames` sweep that ignores the naming convention entirely, and by making an
+unreadable function a **failure** rather than the bare `continue` it was — "could not check" reported as "fine",
+in the exact rule that catches renamed money routes.
+
+⚠️ **The first fix was itself wrong and CI-adjacent testing caught it.** Matching the first `{` picked up the
+brace inside a *return type* — `Promise<{ userId: string; ... } | Early>` — yielding a two-line body in which
+every needle was missing, and producing **26 false failures** against the real repository. The extractor now uses
+both signals: brace matching for correctness inside literals, and a column-0 closing brace to identify which
+opening brace begins the body. All four cases are pinned as regression tests.
+
+### 9.5 What the review says is still unproven
+
+Recorded here rather than left to be rediscovered:
+
+- **No `route.ts` handler in this application has any test.** Zero test files under `apps/web/src` import a route
+  module. For the three new routes that means the query-parameter guards, the 413 path, `maxDuration`, and the
+  `context.params` binding are unexercised — including a guard with no failing test, by this repo's own rule.
+- **The FE-008 wiring is untested**; only its pure helpers are. `interview-panel.tsx` has no test file, so the
+  two paid `fetch` calls, the re-entrancy guards and the control gating are reachable only in a real browser.
+- **No live provider has ever run from this repository**, so every claim about actual verdicts is asserted rather
+  than measured — including the documented fail-open that returns `clear` on a gateway *error*, which is
+  indistinguishable on the wire from a real `clear`.
+- **`toDocumentDTO` reuse is unasserted**: no test compares the read path's output against the generate path's
+  for the same row, which is the reuse the export was made for.
+
+### 9.6 The open product question the review surfaced
+
+**"Check this answer" is a write, and it is repeatable.** On a `clear` verdict, `evaluateAnswer` creates a
+`user_fact` memory item — before, and independently of, the founder pressing "Save answer". `memory_items` has no
+uniqueness on `source_ref`, and the control re-enables as soon as the request settles. A founder who checks, edits
+the wording, checks again, then saves can leave several `user_fact` rows for one question, none superseding the
+others, all feeding the understanding document FE-009 renders.
+
+The mechanism is pre-existing P2-005 code. What is new is that this branch is the first thing to make it
+reachable and to put a button on it. **This is an owner decision, not an engineering one**, and it is flagged
+rather than changed: the button's copy already says the answer was recorded, but "Check this answer" reads like a
+dry run and it is not one.

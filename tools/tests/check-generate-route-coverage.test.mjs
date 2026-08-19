@@ -411,6 +411,93 @@ describe('the six bypasses an adversarial review actually demonstrated', () => {
  * what it covers. Every case above gutted `resolveMeteredContext`; none of them could have noticed if the new
  * helper's requirements were never evaluated at all. These three watch the member-level ceiling fail.
  */
+/**
+ * Two holes an adversarial review DEMONSTRATED against this checker after ACBP-API-013 widened it. Both produced
+ * `code = 0, failures = 0` on trees that should have failed, which is the worst possible output for a guard: not a
+ * missed defect but an affirmative all-clear.
+ */
+describe('the two escapes an adversarial review demonstrated', () => {
+  test('ESCAPE 1 — a template literal with a column-0 brace no longer truncates the function', () => {
+    /*
+     * The old extractor ended a function at the first `}` in column 0. A JSON-shaped prompt supplies one, and a
+     * request function that talks to a model is exactly where a JSON prompt lives. The paid call then fell
+     * OUTSIDE the extracted body and the paid-method rule found nothing.
+     *
+     * Prettier does not reformat template-literal contents, so this shape survives the repository's formatter.
+     */
+    const withPrompt = [
+      'export async function composeBriefForRequest(companyId: string, deps = {}) {',
+      '  const prompt = `Reply as JSON:',
+      '{',
+      '  "summary": "..."',
+      '}',
+      '`;',
+      '  const runtime = await runtimeOf(deps);',
+      '  const ctx = await resolveActorWithAccount(deps, runtime);',
+      "  if ('kind' in ctx) return ctx.result;",
+      '  return runtime.generateStrategyOptions({ companyId, prompt });',
+      '}',
+      '',
+    ].join('\n');
+
+    // The extractor must now reach the last line of the function.
+    expect(functionBody(withPrompt, 'composeBriefForRequest')).toContain('generateStrategyOptions');
+
+    buildRepo({ extraFunctions: withPrompt });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    const text = r.failures.join('\n');
+    expect(text).toContain('composeBriefForRequest');
+    expect(text).toContain('generateStrategyOptions');
+  });
+
+  test('ESCAPE 2 — a paid function RENAMED out of the *ForRequest convention is still swept', () => {
+    // The paid-method rule used to enumerate only `*ForRequest` names, so a one-word rename removed a
+    // money-spending function from the only rule that does not depend on a naming convention.
+    const renamed = [
+      'export async function composeBrief(companyId: string, deps = {}) {',
+      '  const runtime = await runtimeOf(deps);',
+      '  const ctx = await resolveActorWithAccount(deps, runtime);',
+      "  if ('kind' in ctx) return ctx.result;",
+      '  return runtime.generateRoadmap({ companyId });',
+      '}',
+      '',
+    ].join('\n');
+    buildRepo({ extraFunctions: renamed });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('composeBrief');
+  });
+
+  test('a function the extractor CANNOT read is reported, not skipped', () => {
+    // This was a bare `continue` — "could not check" reported as "fine", in the one rule that catches renamed
+    // money routes. The file says "unchecked is not the same as safe" about a different loop; now it is true of
+    // this one too.
+    const unterminated = ['export async function brokenForRequest(companyId) {', '  const runtime = await runtimeOf({});', '  return runtime.generateTasks({ companyId });', ''].join('\n');
+    buildRepo({ extraFunctions: unterminated });
+    const r = check(root);
+    expect(r.code).toBe(1);
+    expect(r.failures.join('\n')).toContain('could not be read as a top-level function');
+  });
+
+  test('a RETURN TYPE containing braces does not truncate the body', () => {
+    // The fix for ESCAPE 1 initially broke this: `Promise<{ userId: string } | Early>` puts a brace in the
+    // signature, and matching THAT one yields a two-line body in which every needle is missing. It produced 26
+    // false failures against the real repository before the column-0 disambiguator was added.
+    const typed = [
+      'async function resolveThing(companyId: string): Promise<{ userId: string; accountId: string } | Early> {',
+      '  const limit = await runtime.checkRequestLimit(\'company\', companyId);',
+      '  return limit;',
+      '}',
+      '',
+    ].join('\n');
+    const body = functionBody(typed, 'resolveThing');
+    expect(body).not.toBeNull();
+    expect(body).toContain("checkRequestLimit('company'");
+    expect(body).toContain('return limit;');
+  });
+});
+
 describe('the MEMBER-level ceiling is checked, not just the owner-only one', () => {
   /** A request module whose participate helper is whatever the case supplies. */
   function withParticipateHelper(body) {
