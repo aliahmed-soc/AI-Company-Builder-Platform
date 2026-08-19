@@ -3164,3 +3164,45 @@ role a login password, since the local provisioner creates only `acbp_dev`.
 **The generalisation worth keeping:** when a config value must reach a Next app, put it in that app's own
 directory and verify by request, not by inspecting the root. And when a validated-config loader throws, the
 variable it names is the *first* one it checked, not necessarily the only one missing.
+
+---
+
+## ACBP-API-013 / ACBP-FE-008 / ACBP-FE-009 — 2026-08-19
+
+Full record in `docs/implementation/config-decisions/CDR-095-understanding-read-and-interview-verdicts.md`.
+
+**Class lesson: a CHECK-constrained column will accept an invented value from a fixture right up until the
+database sees it, and by then the diagnosis is eight lines away from the cause.**
+
+A new real-PostgreSQL suite seeded an understanding item with `item_class: 'risk'`. There is no such class —
+the closed six live in `UNDERSTANDING_CLASSES` and migration 0019 enforces them with
+`understanding_items_class_valid`. Every one of the eight tests in the file went red, all of them in
+`beforeEach`, with a single underlying error:
+
+```
+error: new row for relation "understanding_items" violates check constraint "understanding_items_class_valid"
+```
+
+Three things are worth keeping from it.
+
+**One:** all-tests-in-a-file-red is the *fixture-threw* signature, and it means none of them tested anything.
+Reading the failure list as eight problems wastes the whole diagnosis; it is one problem, in the setup.
+
+**Two:** the durable fix is the TYPE, not the string. The fixture helper took `readonly [string, string, number]`,
+so `'risk'` compiled. It now takes `readonly [UnderstandingClass, string, number]`, which makes an invented
+class a compile error in the editor rather than a red CI run nine minutes later. Any fixture writing to a
+CHECK-constrained column should take the imported union, never `string` — the constraint already exists, and
+the only question is how late you find out you violated it.
+
+**Three, and this is the part that generalises past fixtures:** the SAME widening exists in the read path.
+`UnderstandingSectionDTO` types both `class` and `status` as `string`, not as their closed unions. Code
+consuming that DTO must narrow defensively — an unrecognised class is counted and reported rather than
+rendered under an invented heading or silently dropped, and an unrecognised status falls back to the
+deny-by-default reading rather than to a confident one. A DTO that widens a closed vocabulary to `string` is
+an invitation to trust it; check the migration's CHECK before mapping any string column, in both directions.
+
+**Why local runs could not have caught this.** Local PostgreSQL is unreachable from Windows here — the
+Hyper-V firewall blocks the WSL address, and opening it is a system-security change and an owner action. All
+1,704 real-PostgreSQL tests therefore skip locally, silently, while the suite reports a clean exit 0. Hosted
+CI at zero skips is not a formality on this repository; on this ticket it was the only thing that ran the
+code at all.
