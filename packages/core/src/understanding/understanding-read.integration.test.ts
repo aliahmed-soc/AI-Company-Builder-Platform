@@ -10,6 +10,7 @@
 // Skips when ACBP_TEST_DATABASE_URL is unset. ⚠️ A SKIP IS NOT A PASS: hosted CI is what makes this evidence.
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
+import type { UnderstandingClass } from '@acbp/contracts';
 import type { DatabaseClient } from '@acbp/database';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
@@ -55,13 +56,31 @@ describe.skipIf(!hasTestDatabase)('reading the current understanding (real Postg
     ]);
     // Company B1 — a SEPARATE TENANT with REAL, distinctive content. The invisibility proof is worthless against an
     // empty tenant: an empty result would then be indistinguishable from working isolation.
+    // B's classes are deliberately ones A has NONE of, so "A cannot see B" is provable by class as well as by
+    // content — and both are drawn from the imported vocabulary rather than invented.
     await seedDocument(w.accountB, w.companyB1, w.bOwner, 1, 0.95, [
-      ['fact', `${B_TENANT_MARKER} — B sells industrial fasteners.`, 0.99],
-      ['risk', `${B_TENANT_MARKER} — B has a single-supplier dependency.`, 0.9],
+      ['constraint', `${B_TENANT_MARKER} — B may only ship within one region.`, 0.99],
+      ['research_finding', `${B_TENANT_MARKER} — B has a single-supplier dependency.`, 0.9],
     ]);
   });
 
-  async function seedDocument(accountId: string, companyId: string, userId: string, version: number, confidence: number, items: readonly (readonly [string, string, number])[]): Promise<string> {
+  /*
+   * ⚠️ THE CLASS IS TYPED `UnderstandingClass`, NOT `string`, AND THAT IS A FIX RATHER THAN A STYLE CHOICE.
+   * The first version of this fixture seeded an item class of `risk`, which does not exist. `understanding_items`
+   * has a CHECK constraint over the closed six (`understanding_items_class_valid`, migration 0019), so every
+   * test in this file went red in `beforeEach` with
+   *     error: new row for relation "understanding_items" violates check constraint "understanding_items_class_valid"
+   * and none of them tested anything. Typing the parameter to the imported union makes an invented class a
+   * COMPILE error instead of eight runtime failures whose real cause is one line up in the setup.
+   */
+  async function seedDocument(
+    accountId: string,
+    companyId: string,
+    userId: string,
+    version: number,
+    confidence: number,
+    items: readonly (readonly [UnderstandingClass, string, number])[],
+  ): Promise<string> {
     const docId = (
       await sql<{ id: string }>`insert into understanding_documents (account_id, company_id, version, status, overall_confidence, created_by_user_id) values (${accountId}::uuid, ${companyId}::uuid, ${version}, 'complete', ${confidence}, ${userId}::uuid) returning id`.execute(owner.kysely)
     ).rows[0]!.id;
@@ -114,12 +133,15 @@ describe.skipIf(!hasTestDatabase)('reading the current understanding (real Postg
     //    added later that leaked B content would fail this test without anyone remembering to name it here.
     const mine = await readCurrentUnderstanding(product, asOwner());
     expect(JSON.stringify(mine)).not.toContain(B_TENANT_MARKER);
-    expect(JSON.stringify(mine)).not.toContain('fasteners');
+    expect(JSON.stringify(mine)).not.toContain('single-supplier');
     if (mine.status === 'ok') {
       expect(mine.document!.items).toHaveLength(3);
       expect(mine.document!.items.every((i) => i.content.includes('coffee') || i.content.includes('roastery') || i.content.includes('cafes'))).toBe(true);
-      // B seeded a 'risk' item; A's rollup must not contain that class at all.
-      expect(mine.document!.sections.some((s) => s.class === 'risk')).toBe(false);
+      // B's two classes are ones A established nothing in. `computeSections` always returns all six, so the
+      // assertion is on the COUNT — a section that exists with zero items, never one carrying B's.
+      for (const cls of ['constraint', 'research_finding'] as const) {
+        expect(mine.document!.sections.find((s) => s.class === cls)?.count).toBe(0);
+      }
     }
 
     // 3. The isolation is mutual, and B's own read still works — proving the boundary blocks the crossing rather
