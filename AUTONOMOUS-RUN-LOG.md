@@ -3311,3 +3311,55 @@ real-data screens with no banner. They are a lesser problem for the reason given
 a real column rather than a fabricated entity — but "lesser" is not "fine", and wiring the chip to the company
 the user is actually looking at is a real piece of work with its own scope. It is named here so it is not
 mistaken for having been considered and accepted.
+
+---
+
+## Class lesson, 2026-08-20 — FIVE instances in one session of ONE mistake
+
+Not a ticket. A pattern that appeared five times in a single day's work, in five different
+tools, and cost a shipped visual bug plus four confidently wrong verification results. It is
+recorded here because the individual fixes are all in place and none of them prevents the
+sixth instance.
+
+**THE MISTAKE: matching a NAME inside a LARGER STRING, and trusting the result.**
+
+| # | What was checked | What was matched | The wrong answer |
+| - | ---------------- | ---------------- | ---------------- |
+| 1 | Is CSS token `--danger` defined? | `--danger` as a substring | Matched `--c-danger:`. Reported DEFINED. It was not, and the declaration shipped invalid — a `border-left` shorthand lost the whole border, not just its colour. |
+| 2 | Was the plan badge removed? | `MOCK_COMPANY.plan` | Matched the new COMMENT explaining the removal. Reported STILL PRESENT. It was already gone. |
+| 3 | Four route/claim verifications | `Select-String -Path '...[companyId]...'` | `[...]` is a WILDCARD character class. Every one silently matched nothing and returned empty, which reads identically to "no occurrences". |
+| 4 | Does the header contain "growth"? | `/\bgrowth\b/i` over `textContent` | `textContent` concatenates siblings with no separator: `...Northwind CoffeeGrowth...`. No word boundary before `G`, so the guard could not fail — and it passed against the defect it was written for. |
+| 5 | Do three screens describe the routes correctly? | nothing checked it | Six false sentences survived months of green builds, because NOTHING TYPECHECKS PROSE. |
+
+### What actually caught each one
+
+Never a count, and never the check itself. #1 and #4 were caught by reading a run
+**test-by-test** and noticing a guard was green while its defect was present — a
+contradiction, not a pass. #2 and #3 were caught by opening the file. #5 was caught by a
+person looking at a screen and seeing it disagree with a button next to it.
+
+### The rules worth keeping
+
+1. **A name is not a substring.** Anchor identifier lookups on both sides — `(?<![-\w])` and
+   `(?![-\w])`, or a real parse. `--danger` is a suffix of `--c-danger`; `plan` is a
+   substring of every sentence about plans. `tools/check-css-tokens.mjs` now pins this in
+   its own self-test, because the checker written to catch #1 could have had #1.
+2. **An empty result is two different answers.** "Found nothing" and "could not look" are
+   indistinguishable in almost every search tool, and only one of them is evidence. On
+   Windows, `-Path` with `[` in it is the common way to get the second while believing the
+   first — use `-LiteralPath`, or read the file.
+3. **A guard that is green while its defect is present has failed**, whatever the summary
+   says. Prove a new guard RED against the real defect before trusting it green. Three of
+   the five would have died at that step.
+4. **Prose cannot go stale loudly.** A comment that was true when written stays green
+   forever after the code moves. Typecheck, lint, 5,001 tests and 31 static checkers all
+   passed over three screens telling founders a visible button did not exist. The only
+   defence is that a claim about ANOTHER part of the system gets verified when the comment
+   is written, and names what would falsify it.
+
+### The generalisation
+
+Every one of these is the same shape: **a cheap check that answers the question you meant to
+ask only when nothing unusual is true, and answers confidently when something is.** The
+failure is not the tool. It is treating a fast pattern match as evidence rather than as a
+pointer to something worth opening.
