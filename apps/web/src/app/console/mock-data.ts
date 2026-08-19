@@ -113,4 +113,30 @@ export const MOCK_ACTIVITY: readonly MockActivity[] = [
   { id: 'e6', text: 'Understanding confirmed by owner', time: '09:12', tone: 'success' },
 ];
 
-export const MOCK_COMPANY = { name: 'Northwind Coffee', initials: 'NC', plan: 'Growth' } as const;
+/*
+ * The company chip in the top bar.
+ *
+ * ⚠️ THERE IS NO `plan` FIELD, AND THAT IS THE POINT. This object used to carry `plan: 'Growth'`, which the
+ * console layout rendered as a badge. It was removed 2026-08-20, and the reason is stronger than "it was mock":
+ * every OTHER value here is an invented value of a REAL field — `companies.name` exists, so "Northwind Coffee"
+ * is a placeholder for something the database can actually hold. A plan was an invented ENTITY. Verified before
+ * removing, not assumed:
+ *
+ *   - No `plans`, `subscriptions` or `entitlements` table exists in the 56 migrations.
+ *   - No plan/tier type in `@acbp/contracts`, no route serves one, no authorization action reads one.
+ *     (`billing:read` exists in the authz vocabulary, but it gates the CREDIT LEDGER — a different thing.)
+ *   - `accounts.plan_state` (migration 0003) is the only plan-shaped column in the schema. Its CHECK is
+ *     `char_length(plan_state) > 0` — no vocabulary at all — it is written only by its own `'free'` default
+ *     (`provisioning.ts`: "the only value in P1-003"), and no read path exposes it. So the nearest thing to a
+ *     source for that badge says `free`, not `Growth`.
+ *   - BILL-001 "Subscription plan" is Post-MVP with D-02 still open, and CDR-092 §10 records that nothing
+ *     debits a balance yet.
+ *
+ * The alternative considered was keeping the badge and marking it a placeholder. Rejected: a placeholder still
+ * asserts that this platform HAS plans, and — unlike the overview page's banner — the layout renders above
+ * screens showing real database rows, so the claim would ride along on data that is not mock at all. Marking a
+ * non-existent entity "provisional" makes it look unfinished rather than untrue.
+ *
+ * `apps/web/src/app/console/layout.test.tsx` fails if a `plan` field or a company-chip badge comes back.
+ */
+export const MOCK_COMPANY = { name: 'Northwind Coffee', initials: 'NC' } as const;
