@@ -21,10 +21,16 @@
  * on a state the page itself named, which is the exact thing this console refuses to ship. It is now driven
  * by `decisionCoversLatestSelection`.
  *
- * NO GENERATE AND NO RECOMMEND CONTROL. Neither use case has an HTTP route — see the page's header.
+ * THE GENERATE AND RECOMMEND CONTROLS ARE REAL, AND THIS PARAGRAPH ONCE SAID THEY COULD NOT EXIST. Both use
+ * cases got metered POST routes in ACBP-API-008 (`c908c7c`), so this file POSTs to `strategy/generate` and
+ * `strategy/recommend` and renders the outcome beside the button that caused it — see the page's header.
  *
- * WHAT IS SENT: `content-type: application/json` on both POSTs, because both routes call `request.json()`.
- * The CSRF origin gate in `proxy.ts` covers unsafe methods before the session is established.
+ * WHAT IS SENT: this file issues FOUR POSTs, not the two it once did, and they do not all send the same
+ * headers. `strategy/selection` and `decisions` carry `content-type: application/json` because both routes
+ * read the body with `request.json()`; `strategy/recommend` carries it too, though that route reads through
+ * the shared bounded parser rather than `request.json()` and answers 415 without it; `strategy/generate`
+ * sends NO body and therefore no content-type, because the route takes none. The CSRF origin gate in
+ * `proxy.ts` covers all four as unsafe methods, before the session is established.
  */
 
 import { useCallback, useMemo, useState } from 'react';
