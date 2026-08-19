@@ -194,10 +194,53 @@ function rootLevelFiles() {
       continue;
     }
     if (!st.isFile()) continue;
-    if (isGitIgnored(p)) continue;
+    // Ignored AND untracked — see `isOutOfCommitScope`. Using the ignore rule alone here would skip a root file
+    // that was tracked before a later `.gitignore` rule matched it, and such a file is still committed.
+    if (isOutOfCommitScope(p)) continue;
     out.push(p);
   }
   return out;
+}
+
+/**
+ * Every path git currently TRACKS, as absolute paths. Read once — `git ls-files` per file would be ~900 spawns.
+ *
+ * Needed because "git-ignored" and "not committed" are NOT the same thing: a file that was tracked BEFORE a
+ * `.gitignore` rule matched it stays tracked and still ships in every commit, while `git check-ignore` happily
+ * reports it as ignored. Skipping on the ignore rule alone would therefore hide a real committed credential —
+ * so a file is out of scope only when it is ignored AND untracked.
+ */
+function trackedPaths() {
+  const out = new Set();
+  try {
+    const res = spawnSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    if (res.status !== 0 || typeof res.stdout !== 'string') return out;
+    for (const rel of res.stdout.split('\0')) {
+      if (rel !== '') out.add(join(ROOT, rel));
+    }
+  } catch {
+    /* git unavailable — the caller falls back to scanning everything, which is the safe direction */
+  }
+  return out;
+}
+const TRACKED = trackedPaths();
+
+/**
+ * Is this file outside the "could be committed" set? (ACBP-API-011 follow-up, 2026-08-19.)
+ *
+ * The `.env` walk has applied this reasoning since P0-021 — *"A git-ignored file can never be committed, so it is
+ * out of scope"* — but the CONTENT scan never did, because until now nothing git-ignored lived inside `apps/`,
+ * `packages/`, `tools/` or `.github/`. Wiring `apps/web/.env.local` and Clerk's keyless `apps/web/.clerk/` cache
+ * put two real, correctly-ignored credential files inside a scanned root, and the gate went red on files git will
+ * never publish. A gate that fires on something the developer cannot fix by any action except deleting their local
+ * config is a gate people learn to bypass, which is how a real finding later gets waved through.
+ *
+ * FAIL-OPEN IS DELIBERATE HERE AND BOUNDED: if git is unavailable, `TRACKED` is empty and `isGitIgnored` returns
+ * false, so every file is scanned — noisier, never quieter.
+ */
+function isOutOfCommitScope(fileAbs) {
+  if (TRACKED.has(fileAbs)) return false;
+  return isGitIgnored(fileAbs);
 }
 
 const findings = [];
@@ -215,6 +258,7 @@ const contentFiles = [
   ]),
 ];
 for (const fileAbs of contentFiles) {
+  if (isOutOfCommitScope(fileAbs)) continue;
   if (!isScannable(fileAbs)) continue;
   const rel = relative(ROOT, fileAbs).replace(/\\/g, '/');
   let text;
