@@ -97,9 +97,32 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
+      {/* ACBP-FE-009. Company-scoped, so it is reached from here rather than the sidebar, for the same reason
+          the interview screen is.
+
+          The copy promises a READ and deliberately promises no review controls. `recordUnderstandingReview`,
+          `confirmUnderstanding` and `correctUnderstanding` exist in the platform and reach no HTTP route on
+          this build, so the screen offers no buttons for them and says so — and this card must not promise
+          what the destination cannot do. */}
+      <section className="cs-card cs-rise" style={{ '--i': 2 } as React.CSSProperties} aria-labelledby="cs-understanding-t">
+        <div className="cs-card-h">
+          <h2 className="cs-card-t" id="cs-understanding-t">
+            Understanding
+          </h2>
+        </div>
+        <p className="cs-refusal-detail">
+          What the platform has concluded about this company from the interview — each claim classified by kind, with how well supported it is, and whether the document is still waiting on your confirmation.
+        </p>
+        <p className="cs-control">
+          <a className="cs-btn" href={`/console/companies/${encodeURIComponent(company.companyId)}/understanding`}>
+            Open the understanding
+          </a>
+        </p>
+      </section>
+
       {/* ACBP-FE-010. Company-scoped, so it is reached from here rather than the sidebar, for the same
           reason the interview and provisioning screens are. */}
-      <section className="cs-card cs-rise" style={{ '--i': 2 } as React.CSSProperties} aria-labelledby="cs-memory-t">
+      <section className="cs-card cs-rise" style={{ '--i': 3 } as React.CSSProperties} aria-labelledby="cs-memory-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-memory-t">
             Memory
@@ -114,7 +137,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
       </section>
 
       {/* ACBP-FE-012. Company-scoped like the others. */}
-      <section className="cs-card cs-rise" style={{ '--i': 3 } as React.CSSProperties} aria-labelledby="cs-dr-t">
+      <section className="cs-card cs-rise" style={{ '--i': 4 } as React.CSSProperties} aria-labelledby="cs-dr-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-dr-t">
             Decision Room
@@ -134,7 +157,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
           them: `generateStrategyOptions` and `recommendStrategy` reach no HTTP route on this build, so the
           strategy screen ships no button for either and says why in its empty state. Promising generation
           here would move that lie one screen earlier. */}
-      <section className="cs-card cs-rise" style={{ '--i': 4 } as React.CSSProperties} aria-labelledby="cs-strategy-t">
+      <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-strategy-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-strategy-t">
             Strategy
@@ -153,7 +176,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
           The copy promises the roadmap and the board, and deliberately does NOT promise you can generate a
           roadmap: `generateRoadmap` reaches no HTTP route on this build. `POST /roadmap/edit` does exist, but
           it is the versioned EDIT rather than generation, and it is outside this row's scope. */}
-      <section className="cs-card cs-rise" style={{ '--i': 5 } as React.CSSProperties} aria-labelledby="cs-plan-t">
+      <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-plan-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-plan-t">
             Plan
@@ -171,7 +194,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
 
           The copy promises a view of what is waiting and deliberately does NOT promise you can decide: no
           route accepts an approval decision, so the screen ships no control and says so at the top. */}
-      <section className="cs-card cs-rise" style={{ '--i': 6 } as React.CSSProperties} aria-labelledby="cs-approvals-t">
+      <section className="cs-card cs-rise" style={{ '--i': 7 } as React.CSSProperties} aria-labelledby="cs-approvals-t">
         <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-approvals-t">
             Approvals
@@ -185,7 +208,7 @@ export function CompanyScreen({ view }: { view: CompanyPageView }): React.JSX.El
         </p>
       </section>
 
-      <section className="cs-card cs-rise" style={{ '--i': 7 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
+      <section className="cs-card cs-rise" style={{ '--i': 8 } as React.CSSProperties} aria-labelledby="cs-lifecycle-t">        <div className="cs-card-h">
           <h2 className="cs-card-t" id="cs-lifecycle-t">
             Pause and resume
           </h2>

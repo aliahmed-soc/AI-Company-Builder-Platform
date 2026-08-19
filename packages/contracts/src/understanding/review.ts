@@ -76,3 +76,25 @@ export function isVersionConfirmed(events: readonly ConfirmationEventLike[]): bo
   }
   return confirmed && !corrected;
 }
+
+/**
+ * DISC-008 SUPERSESSION: this version was confirmed, and a correction has since superseded that confirmation.
+ *
+ * ⚠️ THIS IS NOT THE NEGATION OF `isVersionConfirmed`, AND THAT IS THE WHOLE REASON IT EXISTS. The gate above
+ * answers one question — may planning proceed — and answers `false` for two states a reader cannot tell apart: a
+ * version nobody has confirmed yet, and a version that WAS confirmed until a correction re-blocked it. A screen
+ * that shows the second as "not yet confirmed" tells the founder to do something they already did, and hides the
+ * fact that their correction landed.
+ *
+ * It re-derives nothing. `isVersionConfirmed` remains the sole authority on whether planning is unlocked; this
+ * reports the presence of the events themselves, from the same closed vocabulary, so the two cannot disagree.
+ */
+export function isVersionSuperseded(events: readonly ConfirmationEventLike[]): boolean {
+  let confirmed = false;
+  let corrected = false;
+  for (const e of events) {
+    if (e.kind === 'confirmed') confirmed = true;
+    else if (e.kind === 'corrected') corrected = true;
+  }
+  return confirmed && corrected;
+}

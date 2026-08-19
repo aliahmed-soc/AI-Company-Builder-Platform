@@ -36,6 +36,10 @@ import type { AnswerSubmission, InterviewSessionDTO, SessionQADTO } from '@acbp/
 import { ANSWER_CONTENT_MAX } from '@acbp/contracts';
 import { describeInterview, toInterviewView, type QuestionCardView } from './interview-view';
 import { interpretAnswerResponse, type AnswerOutcome } from './answer-outcome';
+// ACBP-FE-008 — the two ADAPTIVE replies. Both routes SPEND MONEY per call, which is why their controls are
+// separate, explicit actions rather than something this panel fires automatically after every save.
+import { interpretEvaluateResponse, interpretAssumptionResponse, type VerdictOutcome, type AssumptionOutcome } from './verdict-outcome';
+import { VerdictFeedback, AssumptionFeedback } from './verdict-feedback';
 import { interpretSessionResponse, type SessionAction, type SessionOutcome } from './session-outcome';
 
 export function InterviewPanel({
@@ -57,6 +61,11 @@ export function InterviewPanel({
   // that fails after a success must not silently discard the last known list, so the two are tracked apart.
   const [busyQuestion, setBusyQuestion] = useState<string | null>(null);
   const [answerOutcome, setAnswerOutcome] = useState<{ questionId: string; outcome: AnswerOutcome } | null>(null);
+  // ACBP-FE-008. Kept SEPARATE from `answerOutcome` rather than widened into it: a verdict is the server's
+  // judgement of an answer, and a save outcome is whether the answer was stored. Both can be showing at once
+  // and they say different things; one slot would silently replace whichever arrived first.
+  const [verdictOutcome, setVerdictOutcome] = useState<{ questionId: string; outcome: VerdictOutcome } | null>(null);
+  const [assumptionOutcome, setAssumptionOutcome] = useState<{ questionId: string; outcome: AssumptionOutcome } | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
   const [sessionOutcome, setSessionOutcome] = useState<SessionOutcome | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
@@ -128,6 +137,68 @@ export function InterviewPanel({
       }
     } catch {
       setAnswerOutcome({ questionId, outcome: { kind: 'error', detail: 'The answer did not reach the server, or the reply was lost. Nothing has been assumed about whether it was saved — the list below is re-read on the next action.' } });
+    } finally {
+      setBusyQuestion(null);
+    }
+  }
+
+  /**
+   * ACBP-FE-008 — ask the SERVER to judge an answer (DISC-003). **This spends money.**
+   *
+   * The verdict is entirely the server's: nothing here inspects `answerText`, which is the row's explicit
+   * exclusion ("no client-side answer scoring"). The text is sent exactly as typed, including text this
+   * screen might think looks vague — deciding that is the whole point of the call.
+   *
+   * NOT FIRED AUTOMATICALLY AFTER A SAVE. It is a paid call against a per-company ceiling, and a panel that
+   * spent one on every keystroke-save would drain that ceiling on the founder's behalf without being asked.
+   */
+  async function checkAnswer(questionId: string, answerText: string): Promise<void> {
+    if (busyQuestion !== null) return;
+    setBusyQuestion(questionId);
+    setVerdictOutcome(null);
+    try {
+      const res = await fetch(`${base}/questions/${encodeURIComponent(questionId)}/evaluate`, {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ answerText }),
+      });
+      const text = await res.text();
+      setVerdictOutcome({ questionId, outcome: interpretEvaluateResponse(res.status, text, res.headers.get('retry-after')) });
+    } catch {
+      setVerdictOutcome({
+        questionId,
+        // NOTHING IS ASSUMED ABOUT THE CHARGE. A request that never returned may or may not have reached the
+        // provider, and claiming either way would be a guess about the founder's money.
+        outcome: { kind: 'error', detail: 'The request did not reach the server, or the reply was lost. Whether it was evaluated is unknown, so nothing is shown about the answer.' },
+      });
+    } finally {
+      setBusyQuestion(null);
+    }
+  }
+
+  /**
+   * ACBP-FE-008 — the "I don't know" path (DISC-005). **This spends money.**
+   *
+   * Distinct from the SKIP button beside it, and deliberately so. Skipping records that no answer was given;
+   * this asks the platform to propose an assumption and store it as an `ai_assumption` — a different kind of
+   * claim from anything the founder said. Merging the two controls would make it impossible to skip a question
+   * without also paying for a guess.
+   */
+  async function suggestAssumption(questionId: string): Promise<void> {
+    if (busyQuestion !== null) return;
+    setBusyQuestion(questionId);
+    setAssumptionOutcome(null);
+    try {
+      // NO BODY. The question is named by the path and the session is the server's; there is nothing to send.
+      const res = await fetch(`${base}/questions/${encodeURIComponent(questionId)}/assumption`, { method: 'POST', headers: { accept: 'application/json' } });
+      const text = await res.text();
+      const outcome = interpretAssumptionResponse(res.status, text, res.headers.get('retry-after'));
+      setAssumptionOutcome({ questionId, outcome });
+      // An assumption that was RECORDED changes what the interview holds, so the list is re-read. "Nothing
+      // assumed" changed nothing and needs no re-read.
+      if (outcome.kind === 'assumed') await readQa();
+    } catch {
+      setAssumptionOutcome({ questionId, outcome: { kind: 'error', detail: 'The request did not reach the server, or the reply was lost. Whether an assumption was recorded is unknown — the list is re-read on the next action.' } });
     } finally {
       setBusyQuestion(null);
     }
@@ -212,8 +283,12 @@ export function InterviewPanel({
                 busy={busyQuestion === q.questionId}
                 anyBusy={busyQuestion !== null}
                 outcome={answerOutcome?.questionId === q.questionId ? answerOutcome.outcome : null}
+                verdict={verdictOutcome?.questionId === q.questionId ? verdictOutcome.outcome : null}
+                assumption={assumptionOutcome?.questionId === q.questionId ? assumptionOutcome.outcome : null}
                 onDraft={(text) => setDrafts((d) => ({ ...d, [q.questionId]: text }))}
                 onSubmit={(submission) => void submitAnswer(q.questionId, submission)}
+                onCheck={(answerText) => void checkAnswer(q.questionId, answerText)}
+                onAssume={() => void suggestAssumption(q.questionId)}
               />
             ))}
           </ol>
@@ -324,8 +399,12 @@ function QuestionCard({
   busy,
   anyBusy,
   outcome,
+  verdict,
+  assumption,
   onDraft,
   onSubmit,
+  onCheck,
+  onAssume,
 }: {
   q: QuestionCardView;
   index: number;
@@ -334,8 +413,12 @@ function QuestionCard({
   busy: boolean;
   anyBusy: boolean;
   outcome: AnswerOutcome | null;
+  verdict: VerdictOutcome | null;
+  assumption: AssumptionOutcome | null;
   onDraft: (text: string) => void;
   onSubmit: (submission: AnswerSubmission) => void;
+  onCheck: (answerText: string) => void;
+  onAssume: () => void;
 }): React.JSX.Element {
   // Ids for the REPEATED elements are derived from the render index: they only need to be unique within the
   // page, and an index is guaranteed to be a valid id fragment, whereas a server id would need sanitizing
@@ -406,6 +489,22 @@ function QuestionCard({
                 I don’t know
               </button>
             </div>
+
+            {/* ACBP-FE-008 — the two ADAPTIVE actions. Separated from the row above and labelled as costing
+                money, because they do: each is one paid model call against this company's ceiling. Neither
+                fires on its own, so a founder never spends without asking. */}
+            <div className="cs-control-row cs-control-row--metered">
+              <button type="button" className="cs-btn" onClick={() => onCheck(draft)} disabled={!canSubmit || anyBusy} aria-busy={busy}>
+                Check this answer
+              </button>
+              <button type="button" className="cs-btn" onClick={onAssume} disabled={anyBusy} aria-busy={busy}>
+                Suggest an assumption instead
+              </button>
+              <p className="cs-help">
+                Both of these ask the model and count against this company’s ceiling for paid calls. “Check this answer” asks the server whether what you have written is clear enough to record — this screen never judges
+                that itself. “Suggest an assumption” asks it to propose something plausible and store it as an assumption rather than as something you said.
+              </p>
+            </div>
           </>
         ) : (
           <div className="cs-question-answered">
@@ -439,6 +538,13 @@ function QuestionCard({
           </div>
         )}
       </div>
+
+      {/* ACBP-FE-008 — "stacks under the question". Both regions are always mounted, for the reason stated
+          above: a live region inserted into the DOM already containing its text is frequently never announced.
+          They are SEPARATE regions because a verdict and an assumption are separate answers to separate
+          actions, and a founder may have asked for both. */}
+      <div aria-live="polite" className="cs-outcome-region">{verdict === null ? null : <VerdictFeedback outcome={verdict} />}</div>
+      <div aria-live="polite" className="cs-outcome-region">{assumption === null ? null : <AssumptionFeedback outcome={assumption} />}</div>
     </li>
   );
 }

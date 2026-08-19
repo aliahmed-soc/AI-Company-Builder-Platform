@@ -115,6 +115,23 @@ export async function parseActivateStopBody(request: HttpRequest): Promise<Parse
   return { ok: true, input: { scope: r.obj['scope'], targetId: r.obj['targetId'], reason: r.obj['reason'] } };
 }
 
+/**
+ * ACBP-API-013 — parse an evaluate-answer body → { answerText } (a non-blank string; core judges the answer).
+ *
+ * THE SHARED BOUNDED PARSER, for `parseRecommendBody`'s reason: there is no global body cap in `apps/web`, and
+ * this route spends money per call. The blank/non-string refusal is a SHAPE check, not a judgement about the
+ * answer — whether the text is vague, contradictory or clear is precisely what the metered call decides, and
+ * pre-judging it here would be the client-side scoring ACBP-FE-008 explicitly forbids. Refusing an empty body
+ * before it consumes a rate-limit token is the only thing this adds.
+ */
+export async function parseEvaluateAnswerBody(request: HttpRequest): Promise<Parsed<{ answerText: string }>> {
+  const r = await readJsonObject(request);
+  if (!r.ok) return { ok: false, status: r.status };
+  const answerText = r.obj['answerText'];
+  if (typeof answerText !== 'string' || answerText.trim() === '') return { ok: false, status: 400 };
+  return { ok: true, input: { answerText } };
+}
+
 /** Parse an answer-submission body → { status, content } (raw values; the domain validates). */
 export async function parseAnswerBody(request: HttpRequest): Promise<Parsed<{ status: unknown; content: unknown }>> {
   const r = await readJsonObject(request);
@@ -434,6 +451,31 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     // the reason itself travels so a caller can tell "already halted" from "that is not a scope".
     case 'stop_refused':
       return jsonResponse(STOP_REFUSAL_STATUS[result.reason], { error: 'stop_refused', reason: result.reason });
+    // ── ACBP-API-013 — the understanding read and the metered interview pair ───────────────────────────────────
+    // 200 carrying a NULL document when the interview has produced none — the G9 rule the strategy and roadmap
+    // reads follow. A 404 here would assert the company has no understanding SURFACE, which is a different and
+    // false statement, and it is how a UI shows an error page on a normal first visit.
+    case 'understanding':
+      // Named field by field, never spread: the allowlist rule from CDR-088 §2.1c. `superseded` is a SEPARATE
+      // field from `confirmed` rather than a derived one, because they answer different questions — see
+      // `readCurrentUnderstanding`.
+      return jsonResponse(200, { document: result.understanding.document, confirmed: result.understanding.confirmed, superseded: result.understanding.superseded });
+    // The verdict discriminator is preserved on the wire, with only that verdict's own payload beside it. A
+    // client switching on `verdict` therefore cannot read a `clarification` off a `clear` answer, because one is
+    // never sent. 200 and not 201: nothing is created at a new URL a client could then GET.
+    case 'answer_evaluated':
+      return jsonResponse(
+        200,
+        result.evaluation.verdict === 'clear'
+          ? { verdict: 'clear', memoryItemId: result.evaluation.memoryItemId }
+          : result.evaluation.verdict === 'vague'
+            ? { verdict: 'vague', clarification: result.evaluation.clarification }
+            : { verdict: 'contradictory', conflict: result.evaluation.conflict },
+      );
+    // `assumption: null` is a SUCCESS — the model declined to propose one (DISC-005). Mapping that to an error
+    // would tell a founder something failed when the honest answer is that nothing could be assumed.
+    case 'assumption_suggested':
+      return jsonResponse(200, { assumption: result.assumption, memoryItemId: result.memoryItemId });
     case 'unauthenticated':
       return jsonResponse(401, genericErrorBody(401));
   }

@@ -10,6 +10,7 @@
 import type { DatabaseClient } from '@acbp/database';
 import type { Logger } from '@acbp/observability';
 import type { ModelGatewayRequest, ModelGatewayResult, QuestionDTO, QuestionSource, SessionQADTO, PublicErrorEnvelope } from '@acbp/contracts';
+import { validateAnswerSubmission } from '@acbp/contracts';
 import { addInterviewQuestion, getSessionQa } from './interview-qa.js';
 import { createMemoryItem } from '../memory/memory-item.js';
 import { buildAnswerQualityRequest, buildAssumptionRequest, buildFollowupsRequest } from './orchestration-requests.js';
@@ -115,6 +116,26 @@ export async function evaluateAnswer(client: DatabaseClient, params: EvaluateAns
   if (qa.status === 'not_found') return { status: 'not_found' };
   const target = qa.qa.items.find((i) => i.question.questionId === params.questionId);
   if (target === undefined) return { status: 'not_found' };
+
+  /*
+   * ⚠️ VALIDATE BEFORE YOU SPEND. This refusal is BEFORE the gateway call, and that ordering is the point.
+   *
+   * An adversarial review on ACBP-API-013 found that an over-long answer passed every free check, consumed the
+   * per-company paid-call ceiling, was sent verbatim to the provider, was BILLED, and was only then refused —
+   * by `createMemoryItem` below, on `MEMORY_CONTENT_MAX`, and only on a `clear` verdict. Text this long could
+   * never have been stored as an answer either (`recordInterviewAnswer` refuses it at `ANSWER_CONTENT_MAX`), so
+   * the model was being asked to judge something the platform had already decided it would not keep.
+   *
+   * THE RULE IS IMPORTED, NOT RESTATED. `validateAnswerSubmission` is the exact predicate `recordInterviewAnswer`
+   * applies to the same text, so this cannot drift into refusing something the answer path would accept, or vice
+   * versa — and the founder gets the identical bounded message either way. A hand-rolled length check here would
+   * have been a second definition of "too long".
+   *
+   * Reachable only from a non-console client — the console gates its own control on the same constant — which is
+   * exactly why it belongs here rather than in a screen.
+   */
+  const bounded = validateAnswerSubmission({ status: 'answered', content: params.answerText });
+  if (!bounded.ok) return { status: 'validation', error: bounded.error };
 
   const priorAnswers = formatPriorAnswers(qa.qa, params.questionId);
   const request = buildAnswerQualityRequest({ accountId: params.accountId, companyId: params.companyId, answer: params.answerText, priorAnswers, ...corr(options) });

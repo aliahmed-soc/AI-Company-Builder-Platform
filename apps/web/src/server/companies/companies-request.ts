@@ -15,6 +15,18 @@ import type { CreateCompanyResult, GetCompanyResult, RenameResult, StatusTransit
 
 // ACBP-API-011 — the emergency stop (ADMIN-001; CDR-072). Types DERIVED from core, never hand-copied.
 import type { ActivateStopParams, ActivateStopResult, ReadStopStateResult, StopRefusalReason, StopServiceOptions } from '@acbp/core';
+// ACBP-API-013 — the understanding read (DISC-006) and the metered interview pair (DISC-003/005).
+import type {
+  ReadUnderstandingParams,
+  ReadUnderstandingResult,
+  UnderstandingReviewOptions,
+  EvaluateAnswerParams,
+  EvaluateAnswerResult,
+  SuggestAssumptionParams,
+  SuggestAssumptionResult,
+  OrchestrationOptions,
+  AuthorizeMeteredParticipateParams,
+} from '@acbp/core';
 
 export type CompaniesRequestResult =
   | { readonly status: 'unauthenticated' }
@@ -148,7 +160,25 @@ export type CompaniesRequestResult =
    * refusal that does not say WHICH refusal is close to no refusal at all: "you cannot stop this" reads as "it is
    * already stopped" to anyone in a hurry.
    */
-  | { readonly status: 'stop_refused'; readonly reason: StopRefusalReason };
+  | { readonly status: 'stop_refused'; readonly reason: StopRefusalReason }
+  // ── ACBP-API-013 — the understanding read and the metered interview pair ─────────────────────────────────────
+  /**
+   * The company's current understanding, or NULL when the interview has produced none.
+   *
+   * NULL IS A SUCCESS carrying null, the same G9 rule the strategy and roadmap reads follow — an absent
+   * understanding is the honest first-visit state, not a 404. `confirmed` travels beside it because the document
+   * alone cannot tell a screen whether planning is unlocked.
+   */
+  | { readonly status: 'understanding'; readonly understanding: Omit<Extract<ReadUnderstandingResult, { status: 'ok' }>, 'status'> }
+  /**
+   * The whole `ok` arm is carried, DISCRIMINATOR INCLUDED, rather than flattened to a verdict string plus loose
+   * fields. `EvaluateAnswerResult`'s ok arm is a three-way union where each verdict carries a DIFFERENT payload
+   * (`clear` → memoryItemId, `vague` → clarification, `contradictory` → conflict). Flattening it would make every
+   * payload optional and let a screen render a clarification for a clear answer.
+   */
+  | { readonly status: 'answer_evaluated'; readonly evaluation: Extract<EvaluateAnswerResult, { status: 'ok' }> }
+  /** `assumption` is null when the model declined to propose one — a success, not a failure (DISC-005). */
+  | { readonly status: 'assumption_suggested'; readonly assumption: string | null; readonly memoryItemId: string | null };
 
 /** The company operations this use case needs (satisfied by the composed @acbp/core runtime). */
 export interface CompanyRuntime {
@@ -219,6 +249,12 @@ export interface CompanyRuntime {
   // runtime could omit and still typecheck, on the single control that must never be quietly absent.
   activateStop(params: ActivateStopParams, options?: StopServiceOptions): Promise<ActivateStopResult>;
   readStopState(params: { userId: string; accountId: string; companyId: string }, options?: StopServiceOptions): Promise<ReadStopStateResult>;
+  // ACBP-API-013. REQUIRED, like every surface above — a fake runtime must declare them or fail to compile.
+  readCurrentUnderstanding(params: ReadUnderstandingParams, options?: UnderstandingReviewOptions): Promise<ReadUnderstandingResult>;
+  /** The MEMBER-level pre-debit gate. Distinct from `authorizeMeteredGenerate` — see core for why they are split. */
+  authorizeMeteredParticipate(params: AuthorizeMeteredParticipateParams): Promise<AuthorizeMeteredGenerateResult>;
+  evaluateAnswer(params: EvaluateAnswerParams, options?: OrchestrationOptions): Promise<EvaluateAnswerResult>;
+  suggestAssumptionForSkip(params: SuggestAssumptionParams, options?: OrchestrationOptions): Promise<SuggestAssumptionResult>;
 }
 
 export interface CompaniesRequestDeps {
@@ -1401,5 +1437,121 @@ export async function activateStopForRequest(
       return { status: 'stop_refused', reason: r.reason };
     case 'forbidden':
       return { status: 'forbidden' };
+  }
+}
+
+// ── ACBP-API-013 — THE UNDERSTANDING READ (DISC-006) AND THE METERED INTERVIEW PAIR (DISC-003/005) ──────────────
+//
+// NO AUTHORIZATION CHECK LIVES IN THIS LAYER OR IN THE ROUTES (CDR-087 §1). `understanding:read` is owner+viewer;
+// the interview pair inherits `interview:read` / `memory:write`, both owner+viewer. Core decides.
+
+/**
+ * The company's current understanding document with its classified items (`understanding:read`, in `@acbp/core`).
+ *
+ * NOT METERED — this is a plain read of stored rows. Only the two interview calls below spend money.
+ *
+ * `confirmed` and `superseded` travel beside the document because the document alone cannot answer the question
+ * the screen is actually asking. Both are computed in core from the SAME confirmation events, through the same
+ * contracts predicates the strategy-unlock gate uses, so this read and the gate cannot disagree.
+ *
+ * They are two fields rather than one because `confirmed: false` covers two states a founder must be able to tell
+ * apart — never confirmed, and confirmed-then-corrected (DISC-008). What this still does NOT carry is GENERATION
+ * staleness; `readCurrentUnderstanding` records why re-deriving that here would be a second authority.
+ */
+export async function getUnderstandingForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx.result;
+  const r = await runtime.readCurrentUnderstanding({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
+  switch (r.status) {
+    case 'ok':
+      return { status: 'understanding', understanding: { document: r.document, confirmed: r.confirmed, superseded: r.superseded } };
+    case 'forbidden':
+      return { status: 'forbidden' };
+  }
+}
+
+/**
+ * Resolve the actor, gate the MEMBER-level metered action, consume the per-company ceiling, then resolve the
+ * session — in that order, and the order is the point.
+ *
+ * `authorizeMeteredParticipate` runs BEFORE the debit, for the reason CDR-092 §15 gives for the generate paths: a
+ * request that fails authorization must not drain the company's ceiling. The session is resolved AFTERWARDS
+ * because it is only needed once the call is going to happen, and resolving it first would spend a query on a
+ * caller who is about to be refused.
+ *
+ * The client never supplies a session id — it is resolved from the company's open interview, exactly as
+ * `resolveActorAccountSession` does for the non-metered answer path.
+ */
+async function resolveMeteredParticipateSession(companyId: string, deps: CompaniesRequestDeps): Promise<{ userId: string; accountId: string; sessionId: string } | Early> {
+  const runtime = await runtimeOf(deps);
+  const ctx = await resolveActorWithAccount(deps, runtime);
+  if ('kind' in ctx) return ctx;
+  const authz = await runtime.authorizeMeteredParticipate({ userId: ctx.userId, accountId: ctx.accountId, companyId, action: 'interview:participate' });
+  if (authz === 'forbidden') return { kind: 'result', result: { status: 'forbidden' } };
+  const limit = await runtime.checkRequestLimit('company', companyId);
+  // An unreadable bucket fails CLOSED, as on the generate paths: the alternative is that a database hiccup
+  // silently uncaps paid interview calls.
+  if (limit.kind === 'throttled') return { kind: 'result', result: { status: 'rate_limited', retryAfterSeconds: limit.retryAfterSeconds } };
+  if (limit.kind === 'unavailable') return { kind: 'result', result: { status: 'unavailable' } };
+  const session = await runtime.getInterviewSession({ userId: ctx.userId, accountId: ctx.accountId, companyId }, { logger: companiesLogger() });
+  switch (session.status) {
+    case 'ok':
+      return { userId: ctx.userId, accountId: ctx.accountId, sessionId: session.session.sessionId };
+    case 'forbidden':
+      return { kind: 'result', result: { status: 'forbidden' } };
+    case 'not_found':
+      return { kind: 'result', result: { status: 'not_found' } };
+  }
+}
+
+/**
+ * Classify an answer as clear / vague / contradictory, and on `clear` store it as a typed memory item
+ * (DISC-003/004; `evaluateAnswer` in `@acbp/core`). **METERED — this spends money per call.**
+ *
+ * THE VERDICT IS THE SERVER'S, AND THAT IS THE WHOLE POINT OF THE ROW. ACBP-FE-008's own acceptance says the UI
+ * must not implement its own heuristic; the screen renders what comes back and never scores an answer itself.
+ */
+export async function evaluateAnswerForRequest(companyId: string, questionId: string, answerText: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const s = await resolveMeteredParticipateSession(companyId, deps);
+  if ('kind' in s) return s.result;
+  const runtime = await runtimeOf(deps);
+  const call = await callMetered(() => runtime.evaluateAnswer({ userId: s.userId, accountId: s.accountId, companyId, sessionId: s.sessionId, questionId, answerText }, {}));
+  if (!call.ok) return call.refusal;
+  const r = call.result;
+  switch (r.status) {
+    case 'ok':
+      return { status: 'answer_evaluated', evaluation: r };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
+    case 'validation':
+      return { status: 'validation', error: r.error };
+  }
+}
+
+/**
+ * Propose a labelled assumption for a question the founder skipped (DISC-005; `suggestAssumptionForSkip`).
+ * **METERED — this spends money per call.**
+ *
+ * A NULL ASSUMPTION IS A SUCCESS. The model declining to propose one is an honest outcome, and the screen must
+ * say so rather than showing an empty assumption card — an invented assumption is exactly what the `ai_assumption`
+ * memory type exists to keep distinguishable from a founder-stated fact.
+ */
+export async function suggestAssumptionForRequest(companyId: string, questionId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
+  const s = await resolveMeteredParticipateSession(companyId, deps);
+  if ('kind' in s) return s.result;
+  const runtime = await runtimeOf(deps);
+  const call = await callMetered(() => runtime.suggestAssumptionForSkip({ userId: s.userId, accountId: s.accountId, companyId, sessionId: s.sessionId, questionId }, {}));
+  if (!call.ok) return call.refusal;
+  const r = call.result;
+  switch (r.status) {
+    case 'ok':
+      return { status: 'assumption_suggested', assumption: r.assumption, memoryItemId: r.memoryItemId };
+    case 'forbidden':
+      return { status: 'forbidden' };
+    case 'not_found':
+      return { status: 'not_found' };
   }
 }

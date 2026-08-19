@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { sql } from 'kysely';
 import type { DatabaseClient } from '@acbp/database';
-import { toModelId } from '@acbp/contracts';
+import { toModelId, ANSWER_CONTENT_MAX } from '@acbp/contracts';
 import { FakeModelProvider, type FakeProviderBehavior } from '@acbp/adapters';
 import { hasTestDatabase, createOwnerFixtureClient, createRestrictedProductClient, enableAppLogin, resetSchema, truncateFixtures, seedTwoTenantWorld, teardown, assertRestrictedRole, type TwoTenantWorld } from '@acbp/test-support';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
@@ -98,6 +98,49 @@ describe.skipIf(!hasTestDatabase)('adaptive orchestration (real PostgreSQL, rest
     expect(mem.items[0]!.type).toBe('user_fact');
     expect(mem.items[0]!.sourceType).toBe('interview_answer');
     expect(mem.items[0]!.content).toContain('coffee shops');
+  });
+
+  test('an OVER-LONG answer is refused BEFORE the gateway is reached — nothing is spent (ACBP-API-013 review)', async () => {
+    /*
+     * VALIDATE BEFORE YOU SPEND. An adversarial review found that an answer longer than ANSWER_CONTENT_MAX passed
+     * every free check, consumed the per-company paid-call ceiling, was sent to the provider, was BILLED, and was
+     * only then refused by createMemoryItem — for text that could never have been stored as an answer either.
+     *
+     * THE ASSERTION IS THAT THE GATEWAY IS NEVER CALLED, not merely that the result is `validation`. A bound
+     * placed after the model call would satisfy the second and none of the point.
+     */
+    const added = await addInterviewQuestion(product, { ...base(), prompt: 'Describe your operation.' });
+    if (added.status !== 'ok') return;
+    let gatewayCalls = 0;
+    const gw = ((request: unknown, options?: unknown) => {
+      gatewayCalls += 1;
+      return gatewayWith({ kind: 'respond', output: '{"verdict":"clear"}' })(request as never, options as never);
+    }) as typeof product extends never ? never : Parameters<typeof evaluateAnswer>[2]['gateway'];
+
+    const r = await evaluateAnswer(product, { ...base(), questionId: added.question.questionId, answerText: 'x'.repeat(ANSWER_CONTENT_MAX + 1) }, { gateway: gw });
+
+    expect(r.status).toBe('validation');
+    expect(gatewayCalls).toBe(0);
+    // And nothing was persisted either — the refusal is total, not partial.
+    const mem = await listMemoryItems(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1 });
+    expect(mem.status === 'ok' && mem.items).toHaveLength(0);
+  });
+
+  test('an answer EXACTLY at the limit is still evaluated — the bound refuses nothing it should accept', async () => {
+    // The other half of an off-by-one. A bound that refused the boundary value would quietly narrow what a
+    // founder may say, and no test of the refusal alone would notice.
+    const added = await addInterviewQuestion(product, { ...base(), prompt: 'Describe your operation briefly.' });
+    if (added.status !== 'ok') return;
+    let gatewayCalls = 0;
+    const inner = gatewayWith({ kind: 'respond', output: '{"verdict":"clear"}' });
+    const gw = ((request: unknown, options?: unknown) => {
+      gatewayCalls += 1;
+      return inner(request as never, options as never);
+    }) as Parameters<typeof evaluateAnswer>[2]['gateway'];
+
+    const r = await evaluateAnswer(product, { ...base(), questionId: added.question.questionId, answerText: 'x'.repeat(ANSWER_CONTENT_MAX) }, { gateway: gw });
+    expect(r.status).toBe('ok');
+    expect(gatewayCalls).toBe(1);
   });
 
   test('vague answer → clarification returned, NO memory written', async () => {

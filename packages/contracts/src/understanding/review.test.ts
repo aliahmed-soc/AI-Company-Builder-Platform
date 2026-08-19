@@ -9,6 +9,7 @@ import {
   validateReviewNote,
   isExpectedVersionCurrent,
   isVersionConfirmed,
+  isVersionSuperseded,
   REVIEW_NOTE_MAX,
   type ConfirmationEventLike,
 } from './review.js';
@@ -92,5 +93,38 @@ describe('isVersionConfirmed (the strategy-unlock gate)', () => {
   });
   test('a correction without a confirmation → not confirmed', () => {
     expect(isVersionConfirmed([ev('corrected')])).toBe(false);
+  });
+});
+
+describe('isVersionSuperseded (the DISC-008 stale state the gate cannot express)', () => {
+  const ev = (kind: 'confirmed' | 'corrected'): ConfirmationEventLike => ({ kind });
+
+  test('confirmed then corrected → superseded', () => {
+    expect(isVersionSuperseded([ev('confirmed'), ev('corrected')])).toBe(true);
+    // Order-independent, like the gate: these are a set of recorded events, not a sequence to replay.
+    expect(isVersionSuperseded([ev('corrected'), ev('confirmed')])).toBe(true);
+  });
+
+  test('never confirmed → NOT superseded, though the gate says false for both', () => {
+    // THE DISTINCTION THIS PREDICATE EXISTS FOR. Both rows below are `isVersionConfirmed === false`; only one of
+    // them is a document whose confirmation was undone. A screen that could not tell them apart would tell a
+    // founder who just corrected their understanding that they had never confirmed it.
+    expect(isVersionSuperseded([])).toBe(false);
+    expect(isVersionConfirmed([])).toBe(false);
+  });
+
+  test('confirmed and still active → NOT superseded', () => {
+    expect(isVersionSuperseded([ev('confirmed')])).toBe(false);
+  });
+
+  test('a correction with no confirmation → NOT superseded (there was nothing to supersede)', () => {
+    expect(isVersionSuperseded([ev('corrected')])).toBe(false);
+  });
+
+  test('the two predicates are never BOTH true — a version cannot be active and superseded at once', () => {
+    const cases: ConfirmationEventLike[][] = [[], [ev('confirmed')], [ev('corrected')], [ev('confirmed'), ev('corrected')]];
+    for (const events of cases) {
+      expect(isVersionConfirmed(events) && isVersionSuperseded(events)).toBe(false);
+    }
   });
 });

@@ -11,6 +11,10 @@ export {
   type UnderstandingSectionDTO,
   type UnderstandingItemDTO,
 } from './understanding-generation.js';
+// ACBP-API-013 — the READ the module shipped without. Four writes and a gate existed; nothing returned the
+// document, so ACBP-FE-009 was Blocked-API. Added on an explicit owner ruling (2026-08-19), unlike the
+// structurally identical `listHeldWork` which was refused on ACBP-API-011 — see the file header.
+export { readCurrentUnderstanding, type ReadUnderstandingParams, type ReadUnderstandingResult } from './understanding-read.js';
 export {
   recordUnderstandingReview,
   confirmUnderstanding,

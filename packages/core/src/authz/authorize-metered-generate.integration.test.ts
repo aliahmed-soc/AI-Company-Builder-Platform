@@ -13,7 +13,7 @@ import type { DatabaseClient } from '@acbp/database';
 import { provisionPersonalAccount } from '../accounts/provisioning.js';
 import { createCompany } from '../company/company-service.js';
 import { pauseCompany } from '../company/company-lifecycle.js';
-import { authorizeMeteredGenerate, METERED_GENERATE_ACTIONS } from './authorize-metered-generate.js';
+import { authorizeMeteredGenerate, METERED_GENERATE_ACTIONS, authorizeMeteredParticipate, METERED_PARTICIPATE_ACTIONS } from './authorize-metered-generate.js';
 
 const SEED_OPS = { provisionPersonalAccount, createCompany, pauseCompany };
 
@@ -55,5 +55,46 @@ describe.skipIf(!hasTestDatabase)('authorizeMeteredGenerate (real PostgreSQL) �
     await expect(
       authorizeMeteredGenerate(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, action }),
     ).resolves.toBe('forbidden');
+  });
+
+  /*
+   * ACBP-API-013 — the MEMBER-level sibling, which an adversarial review found had NO test touching the real
+   * function. Every reference to it in the repository was a stub, so `return 'allowed';` as its entire body kept
+   * the suite green while an authenticated non-member could pass the gate and drain another company's paid-call
+   * ceiling before core refused. Both new money-spending routes depend on this.
+   */
+  describe('authorizeMeteredParticipate — the member-level gate', () => {
+    test.each([...METERED_PARTICIPATE_ACTIONS])('%s — an owner is allowed', async (action) => {
+      await expect(
+        authorizeMeteredParticipate(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA1, action }),
+      ).resolves.toBe('allowed');
+    });
+
+    test.each([...METERED_PARTICIPATE_ACTIONS])('%s — a VIEWER is ALLOWED, which is the entire reason this gate exists', async (action) => {
+      // THE ASSERTION THE SPLIT WAS MADE FOR, and it was previously unwritten. Routing the interview pair through
+      // the owner-only `authorizeMeteredGenerate` would return `forbidden` here and refuse every viewer
+      // mid-interview. If this ever flips to `forbidden`, the split has stopped buying anything and should be
+      // reconsidered rather than worked around.
+      await expect(
+        authorizeMeteredParticipate(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, action }),
+      ).resolves.toBe('allowed');
+    });
+
+    test.each([...METERED_PARTICIPATE_ACTIONS])('%s — a non-member is forbidden', async (action) => {
+      await expect(
+        authorizeMeteredParticipate(product, { userId: w.bOwner, accountId: w.accountA, companyId: w.companyA1, action }),
+      ).resolves.toBe('forbidden');
+    });
+
+    test('a viewer being allowed here does NOT let them through the owner-only gate', async () => {
+      // The two results side by side, on the same caller and the same company. This is what proves the split
+      // narrowed rather than widened: admitting a viewer to participation must not admit them to generation.
+      const [participate, generate] = await Promise.all([
+        authorizeMeteredParticipate(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, action: 'interview:participate' }),
+        authorizeMeteredGenerate(product, { userId: w.aViewer, accountId: w.accountA, companyId: w.companyA1, action: 'strategy:generate' }),
+      ]);
+      expect(participate).toBe('allowed');
+      expect(generate).toBe('forbidden');
+    });
   });
 });
