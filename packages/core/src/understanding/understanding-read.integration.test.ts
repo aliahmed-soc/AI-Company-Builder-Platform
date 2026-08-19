@@ -151,18 +151,38 @@ describe.skipIf(!hasTestDatabase)('reading the current understanding (real Postg
     const gate = () => isCurrentUnderstandingConfirmed(product, asOwner());
     const read = () => readCurrentUnderstanding(product, asOwner());
 
-    expect(await confirmedOf(read())).toBe(false);
+    expect(await flagsOf(read())).toEqual({ confirmed: false, superseded: false });
     expect((await gate()) as unknown).toEqual({ status: 'ok', confirmed: false, version: 1 });
 
     await confirmUnderstanding(product, { ...asOwner(), expectedVersion: 1 });
-    expect(await confirmedOf(read())).toBe(true);
+    expect(await flagsOf(read())).toEqual({ confirmed: true, superseded: false });
     expect((await gate()) as unknown).toEqual({ status: 'ok', confirmed: true, version: 1 });
 
     // DISC-008: a correction supersedes the confirmation. The read must flip with the gate, not lag behind it —
     // a screen still showing "confirmed" while planning is blocked is the drift this shared predicate prevents.
     await correctUnderstanding(product, { ...asOwner(), expectedVersion: 1, correctionRef: 'ref' });
-    expect(await confirmedOf(read())).toBe(false);
+    expect(await flagsOf(read())).toEqual({ confirmed: false, superseded: true });
     expect((await gate()) as unknown).toEqual({ status: 'ok', confirmed: false, version: 1 });
+  });
+
+  test('SUPERSEDED distinguishes a corrected document from one nobody confirmed — against real recorded events', async () => {
+    /*
+     * The unit tests prove the predicate; this proves the two states are actually distinguishable END TO END,
+     * from rows PostgreSQL really holds. Company A1 has never been confirmed and A2 has no document at all, so
+     * both read `confirmed: false` — and neither is stale. Only the corrected one is.
+     */
+    const a1 = await readCurrentUnderstanding(product, asOwner());
+    const a2 = await readCurrentUnderstanding(product, { userId: w.aOwner, accountId: w.accountA, companyId: w.companyA2 });
+    expect(a1.status === 'ok' && a1.confirmed).toBe(false);
+    expect(a1.status === 'ok' && a1.superseded).toBe(false);
+    expect(a2).toEqual({ status: 'ok', document: null, confirmed: false, superseded: false });
+
+    await confirmUnderstanding(product, { ...asOwner(), expectedVersion: 1 });
+    await correctUnderstanding(product, { ...asOwner(), expectedVersion: 1, correctionRef: 'ref' });
+    const corrected = await readCurrentUnderstanding(product, asOwner());
+    expect(corrected.status === 'ok' && corrected.confirmed).toBe(false);
+    // Same `confirmed` value as the never-confirmed read above; a DIFFERENT state, and now the screen can tell.
+    expect(corrected.status === 'ok' && corrected.superseded).toBe(true);
   });
 
   test('the read is READ-ONLY: it writes no rows and emits no audit event', async () => {
@@ -183,9 +203,12 @@ describe.skipIf(!hasTestDatabase)('reading the current understanding (real Postg
     };
   }
 
-  async function confirmedOf(p: ReturnType<typeof readCurrentUnderstanding>): Promise<boolean> {
+  /** Both lifecycle flags together — asserting them as a pair is what stops one silently tracking the other. */
+  async function flagsOf(p: ReturnType<typeof readCurrentUnderstanding>): Promise<{ confirmed: boolean; superseded: boolean }> {
     const r = await p;
+    // A fixture that cannot produce the state under test THROWS rather than returning a value the caller reads
+    // as an answer.
     if (r.status !== 'ok') throw new Error(`expected an ok read, got ${r.status}`);
-    return r.confirmed;
+    return { confirmed: r.confirmed, superseded: r.superseded };
   }
 });

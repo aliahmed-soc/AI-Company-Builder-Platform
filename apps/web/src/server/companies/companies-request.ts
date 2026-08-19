@@ -1450,10 +1450,13 @@ export async function activateStopForRequest(
  *
  * NOT METERED — this is a plain read of stored rows. Only the two interview calls below spend money.
  *
- * `confirmed` travels beside the document because the document alone cannot answer the question the screen is
- * actually asking. It is the SAME predicate the strategy-unlock gate uses, computed in core from the same events,
- * so this read and the gate cannot disagree. What this deliberately does NOT carry is a staleness flag — see
- * `readCurrentUnderstanding` for why re-deriving one here would be a second authority.
+ * `confirmed` and `superseded` travel beside the document because the document alone cannot answer the question
+ * the screen is actually asking. Both are computed in core from the SAME confirmation events, through the same
+ * contracts predicates the strategy-unlock gate uses, so this read and the gate cannot disagree.
+ *
+ * They are two fields rather than one because `confirmed: false` covers two states a founder must be able to tell
+ * apart — never confirmed, and confirmed-then-corrected (DISC-008). What this still does NOT carry is GENERATION
+ * staleness; `readCurrentUnderstanding` records why re-deriving that here would be a second authority.
  */
 export async function getUnderstandingForRequest(companyId: string, deps: CompaniesRequestDeps = {}): Promise<CompaniesRequestResult> {
   const runtime = await runtimeOf(deps);
@@ -1462,7 +1465,7 @@ export async function getUnderstandingForRequest(companyId: string, deps: Compan
   const r = await runtime.readCurrentUnderstanding({ userId: ctx.userId, accountId: ctx.accountId, companyId }, {});
   switch (r.status) {
     case 'ok':
-      return { status: 'understanding', understanding: { document: r.document, confirmed: r.confirmed } };
+      return { status: 'understanding', understanding: { document: r.document, confirmed: r.confirmed, superseded: r.superseded } };
     case 'forbidden':
       return { status: 'forbidden' };
   }

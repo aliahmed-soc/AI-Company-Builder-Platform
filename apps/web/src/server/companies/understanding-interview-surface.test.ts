@@ -61,20 +61,52 @@ describe('an absent understanding is a success, not a 404', () => {
   it('null document maps to 200 carrying null', async () => {
     // The G9 rule. A 404 would assert the company has no understanding SURFACE — a different, false statement,
     // and how a UI shows an error page on a founder's first visit.
-    const res = toCompaniesResponse({ status: 'understanding', understanding: { document: null, confirmed: false } });
+    const res = toCompaniesResponse({ status: 'understanding', understanding: { document: null, confirmed: false, superseded: false } });
     expect(res.status).toBe(200);
-    expect(await bodyOf(res)).toEqual({ document: null, confirmed: false });
+    expect(await bodyOf(res)).toEqual({ document: null, confirmed: false, superseded: false });
   });
 
   it('the request layer forwards core\'s null rather than inventing an empty document', async () => {
-    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: null, confirmed: false }) }));
-    expect(r).toEqual({ status: 'understanding', understanding: { document: null, confirmed: false } });
+    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: null, confirmed: false, superseded: false }) }));
+    expect(r).toEqual({ status: 'understanding', understanding: { document: null, confirmed: false, superseded: false } });
+  });
+});
+
+describe('superseded is carried SEPARATELY from confirmed (DISC-008)', () => {
+  /*
+   * ACBP-FE-009: "the UI shows a stale document as stale". A single `confirmed` boolean cannot support that — it
+   * reads false both for a document nobody has confirmed and for one whose confirmation a correction undid. These
+   * cases pin that the wire keeps them apart, so a screen never tells a founder who just corrected their
+   * understanding that they have not confirmed it yet.
+   */
+  const withFlags = (confirmed: boolean, superseded: boolean) =>
+    toCompaniesResponse({ status: 'understanding', understanding: { document: DOC, confirmed, superseded } });
+
+  it('never confirmed → confirmed false, superseded FALSE', async () => {
+    expect(await bodyOf(withFlags(false, false))).toMatchObject({ confirmed: false, superseded: false });
+  });
+
+  it('confirmed then corrected → confirmed false, superseded TRUE — the same confirmed value, a different state', async () => {
+    expect(await bodyOf(withFlags(false, true))).toMatchObject({ confirmed: false, superseded: true });
+  });
+
+  it('confirmed and active → confirmed true, superseded false', async () => {
+    expect(await bodyOf(withFlags(true, false))).toMatchObject({ confirmed: true, superseded: false });
+  });
+
+  it('the request layer forwards BOTH flags from core rather than deriving either', async () => {
+    // A layer that computed `superseded: !confirmed` would pass every case above except this one.
+    const r = await getUnderstandingForRequest(
+      'co_1',
+      deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: DOC, confirmed: false, superseded: true }) }),
+    );
+    expect(r).toEqual({ status: 'understanding', understanding: { document: DOC, confirmed: false, superseded: true } });
   });
 });
 
 describe('confirmed travels with the document', () => {
   it('a confirmed document reports confirmed on the wire', async () => {
-    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: DOC, confirmed: true }) }));
+    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: DOC, confirmed: true, superseded: false }) }));
     expect(r.status).toBe('understanding');
     const body = await bodyOf(toCompaniesResponse(r));
     expect(body['confirmed']).toBe(true);
@@ -82,7 +114,7 @@ describe('confirmed travels with the document', () => {
   });
 
   it('an UNCONFIRMED document is still returned — the screen decides what to say, the server does not hide it', async () => {
-    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: DOC, confirmed: false }) }));
+    const r = await getUnderstandingForRequest('co_1', deps({ readCurrentUnderstanding: () => Promise.resolve({ status: 'ok', document: DOC, confirmed: false, superseded: false }) }));
     const body = await bodyOf(toCompaniesResponse(r));
     expect(body['confirmed']).toBe(false);
     expect(body['document']).not.toBeNull();

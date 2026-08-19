@@ -456,7 +456,10 @@ export function toCompaniesResponse(result: CompaniesRequestResult): Response {
     // reads follow. A 404 here would assert the company has no understanding SURFACE, which is a different and
     // false statement, and it is how a UI shows an error page on a normal first visit.
     case 'understanding':
-      return jsonResponse(200, { document: result.understanding.document, confirmed: result.understanding.confirmed });
+      // Named field by field, never spread: the allowlist rule from CDR-088 §2.1c. `superseded` is a SEPARATE
+      // field from `confirmed` rather than a derived one, because they answer different questions — see
+      // `readCurrentUnderstanding`.
+      return jsonResponse(200, { document: result.understanding.document, confirmed: result.understanding.confirmed, superseded: result.understanding.superseded });
     // The verdict discriminator is preserved on the wire, with only that verdict's own payload beside it. A
     // client switching on `verdict` therefore cannot read a `clarification` off a `clear` answer, because one is
     // never sent. 200 and not 201: nothing is created at a new URL a client could then GET.
