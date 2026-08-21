@@ -1,14 +1,16 @@
-// ACBP-P2-006 / CDR-024 — the typed-memory ROUTES against a REAL database. Closes the gap the web unit tests
-// (fake runtime) cannot: the real Next route handlers → composed ClerkIdentityRuntime → @acbp/core →
-// @acbp/database → restricted acbp_app under FORCE RLS, with the provider SDK seamed at its edge and forged
-// browser claims present.
+// ACBP-P2-006 / CDR-024 + ACBP-P2-010 / CDR-025 — the typed-memory ROUTES against a REAL database. Closes the gap
+// the web unit tests (fake runtime) cannot: the real Next route handlers → composed ClerkIdentityRuntime →
+// @acbp/core → @acbp/database → restricted acbp_app under FORCE RLS, with the provider SDK seamed at its edge and
+// forged browser claims present.
 //
 // Proves end to end: a company member creates + lists memory on the restricted role; every memory route DENIES
 // a foreign tenant coarsely (403) with a bounded envelope leaking no foreign content/ids EVEN WITH forged
 // owner/admin claims; a request cannot forge account/company/actor (server-scoped); incompatible type/source is
 // a bounded 400 (a generated source cannot become user_fact); the audit event is target-tenant scoped; the
-// response carries no source-tenant data; a malformed companyId is bounded (not a framework 500); a query
-// parameter is a bounded 400; and there is NO supersede/delete verb. Skips when ACBP_TEST_DATABASE_URL is unset.
+// response carries no source-tenant data; a malformed companyId is bounded (not a framework 500); an UNKNOWN query
+// parameter is a bounded 400 (the `type`/`currentOnly` browser filters are accepted); and the COLLECTION route
+// exposes no supersede/delete verb — both live on the ITEM route, whose owner-only soft DELETE is covered below.
+// Skips when ACBP_TEST_DATABASE_URL is unset.
 import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import {
   hasTestDatabase,
@@ -155,7 +157,7 @@ describe.skipIf(!hasTestDatabase)('typed memory routes against a real database �
     expect((await create(w.companyA1, { type: 'ai_assumption', content: 'assumed', sourceType: 'model_generation', sourceRef: 'run:1' })).status).toBe(201);
   });
 
-  test('malformed companyId is a bounded {error} envelope; a query parameter is a bounded 400; no supersede/delete verb', async () => {
+  test('malformed companyId is a bounded {error} envelope; an unknown query parameter is a bounded 400; the collection route has no supersede/delete verb', async () => {
     await signInAs(w.aOwner);
     for (const bad of MALFORMED) {
       const g = await list(bad);

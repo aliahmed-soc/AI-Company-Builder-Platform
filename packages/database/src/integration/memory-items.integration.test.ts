@@ -105,9 +105,10 @@ describe.skipIf(!hasTestDatabase)('memory_items (real PostgreSQL, restricted rol
     await expect(asApp(scope(accountA, companyA1), (k) => sql`insert into memory_items (account_id, company_id, type, content, source_type, source_ref, created_by_user_id) values (${accountB}::uuid, ${companyB1}::uuid, 'user_fact', 'x', 'interview_answer', 'r', ${userU}::uuid)`.execute(k))).rejects.toThrow();
   });
 
-  test('content/type/identity immutable + no DELETE; only superseded_by is updatable (0015 edit=supersede)', async () => {
+  test('content/type/identity immutable + no hard DELETE; superseded_by is updatable (0015 edit=supersede)', async () => {
     const id = await insertItem(accountA, companyA1, 'user_fact', 'interview_answer');
-    // Content/type/source/confirmation/identity stay immutable — the column grant covers only superseded_by.
+    // Content/type/source/confirmation/identity stay immutable — the 0015 grant adds only `superseded_by`; the
+    // 0016 delete columns are covered by the next test.
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set content = 'edited' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set confirmation_state = 'accepted' where id = ${id}::uuid`.execute(k))).rejects.toThrow();
     await expect(asApp(scope(accountA, companyA1), (k) => sql`update memory_items set type = 'constraint' where id = ${id}::uuid`.execute(k))).rejects.toThrow();

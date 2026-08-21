@@ -2305,6 +2305,187 @@ transcript looks the same either way, which is why "I checked" is not the same a
   test, it is not proven — it is merely present.
 
 The rule generalises past testing: it applies to any claim of the form "I checked and it was fine."
+
+---
+
+## 2026-08-15 — three rule documents became one, and a cancelled CI run that was not a bug
+
+**Merged:** PR **#108**, squash **`fffd4de`**, 2026-08-15 22:03 UTC, branch `docs-agents-operating-rules`
+— deleted after the merge, and only after its tree was verified identical to the squash commit. Seven
+files: docs plus one new static check. No migration, no runtime code, no behaviour change.
+
+### What the problem actually was
+
+Standing rules lived in three places — `AGENTS.md`, `CLAUDE.md`, and `.cursor/rules/model-routing.mdc`
+(with a second copy of that last one under `tooling/cursor-rules/`). Not three views of one rule set;
+three rule sets, already disagreeing. The clearest case: `.mdc` §2 and AGENTS.md §10 both defined the
+source-of-truth ladder, and they ranked differently, which is the one kind of conflict a reader cannot
+resolve on their own. The owner ruled that **AGENTS.md §10 governs**, and the `.mdc` now defers to it
+rather than restating it.
+
+`AGENTS.md` is now canonical. `CLAUDE.md` was reduced to a pointer after everything it said that
+AGENTS.md did not was folded in — including the no-`Co-Authored-By`-trailer rule, which this session
+had violated an hour earlier and had to amend out of its own commit. The `.mdc` was narrowed to what is
+genuinely Cursor configuration (identity, routing tiers, Codex handoff mechanics); its §§4-11 had become
+a verbatim second copy of AGENTS.md §§18-24 and were deleted, replaced by a subject → section table.
+
+Four stale paths in AGENTS.md were corrected against where the files actually live
+(`docs/agent/PROJECT-STATE.md`, `AUTONOMOUS-RUN-LOG.md`, `docs/implementation/BACKLOG.csv`,
+`docs/implementation/OWNER-ACTION-PACK.md`). The product-plan pointer names
+`product-specification/README.md` by owner choice, not by inference.
+
+### The one piece that is not documentation
+
+The two `.mdc` copies were required to be byte-identical, and nothing checked it — a requirement enforced
+by memory is a requirement that silently lapses. `tools/check-cursor-rules-sync.mjs` now runs inside
+`check:static`, fails on divergence and names the first differing byte offset, and exits **2** rather
+than 0 when it cannot see either directory, so a deleted target is never mistaken for agreement.
+`tools/tests/check-cursor-rules-sync.test.mjs` covers CRLF-vs-LF, BOM, truncation, orphaned copies and
+missing copies, and the comparator self-tests on every invocation.
+
+### Evidence
+
+| | |
+| --- | --- |
+| **Exact-head** | [`31908244769`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31908244769) on `55b2209`, attempt 2 — success |
+| **Exact-main** | [`31911124672`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31911124672) on `fffd4de` — success, all 11 steps green |
+| **Counts, both runs** | main suite **281 files / 4167 tests**; boundary suite **12 files / 267 tests** |
+| **Skips** | **zero** — no `skipped` segment on any Vitest summary line, behind the DB preflight step that fails the job if the real-PostgreSQL suites would not execute |
+| **New check in the gate** | `cursor-rules-sync check passed (1 rule file(s) byte-identical …). Comparator self-test passed.` |
+
+The boundary suite is reported separately because that is where the new check's regression tests live;
+267 is the count with them included.
+
+### The cancelled run, kept because the number is the point
+
+Attempt 1 of `31908244769` was **cancelled**, not failed: the job hit `timeout-minutes: 20` at 20m18s.
+The aggregate gate had already **passed**, at 19m06s — what died was the production-build step behind
+it. Re-running the same SHA with no code change put the gate at 9m32s. So: a ~2x environmental slowdown
+on the database-bound suites, not a regression, and the re-run is what proves it, since the input was
+byte-identical.
+
+**The headroom number: a healthy job is ~10m45s against a 20-minute cap.** Roughly half the budget is
+spare, which sounds comfortable and is not — one slow machine draw consumes all of it, and the failure
+mode is a *cancellation with a green gate inside it*, which reads like a real failure to anyone who
+does not open the step timings. Nothing was changed in response; the cap was left alone deliberately,
+because raising it hides the variance instead of measuring it. Recorded so the next occurrence is
+diagnosed in a minute rather than debugged for an hour.
+
+### Flagged, not fixed
+
+**ACBP-API-007 (`0d57144`, PR #106) has no DONE line in `PROJECT-STATE.md`, and the entry above this
+one still describes it as "DRAFT, awaiting the owner".** It merged. This is the same class of docs lag
+that a previous window had to correct for P6-007, and by `PROJECT-STATE.md`'s own rule — only the
+topmost ticket without a DONE line above it is in flight — a merged ticket is currently the one reading
+as open. Not fixed here: recording it needs its own exact-main run ID and counts, and this branch's
+approved scope is the #108 merge. It is a five-minute job for whoever picks it up next.
+
+C: 40.1 GB free.---
+
+## 2026-08-17 02:25 UTC — ACBP-API-008 slice 3b finished, and the two things that survived review
+
+Clock checked, not estimated. Same window as the entry above; this branch carries both because the
+session's docs PR is #110.
+
+### What shipped
+
+The four metered generate routes exist, are wired, and are green on their exact head. `strategy/generate`,
+`strategy/recommend`, `roadmap/generate`, `tasks/generate`, each through `resolveMeteredContext` (the
+per-company ceiling on top of session and account) and `callMetered`. Branch `p8-api-008-slice3b`, head
+**`1a1da91`**, PR **#111**, still DRAFT and still stacked on **#107** — merging #111 alone does not land these
+routes on `main`.
+
+| | |
+| --- | --- |
+| **Exact-head CI** | [`31987157294`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/31987157294) on `1a1da91` — success |
+| **Counts** | **285 files / 4,285 tests, zero skips**, behind the DB preflight that fails the job if the real-PostgreSQL suites would not execute |
+| **Boundary suite** | 278/278 locally, including 25 checker regression tests |
+| **Local gate** | `check:static`, `test`, `check` all exit 0; `audit --audit-level high` 1 moderate; `diff --check` clean |
+| **Local skips** | 1,673 — PostgreSQL here listens only inside WSL and is unreachable from the Windows host, so hosted CI is the only evidence for those suites |
+
+Twelve mutations across CDR-092 §12–§14: seven on the guards, one hosted **survivor** and its kill, four on the
+checker's hardening plus one exit-code probe. Every edit read back from disk before the suite ran.
+
+### The survivor is the entry worth reading
+
+`generateStrategyOptions` authorizes twice, and the paid provider call sits between the two checks. Weakening
+only the first (`strategy:generate` → `strategy:read`, run `31982475683`) passed the **entire suite with zero
+skips**, because the observable outcome never changes — the second check still returns `forbidden` and nothing
+is written. The account was simply charged for a generation the caller was never allowed to commission.
+
+*"Nothing was persisted"* and *"nothing was spent"* are different claims, and every assertion in those four
+suites proved only the first. All four now count provider invocations. Re-running the identical mutation
+against the fix killed it (`31983747364`).
+
+The first attempt at that mutation deleted the check outright and went red on `'role' is defined but never
+used` — lint, before a single test ran. A red run that never reached the assertion under examination is not a
+kill; it is the §3 trap in its purest form, and rewriting the mutation to compile cleanly is what exposed the
+real gap.
+
+### Then review found the same defect one test further down the file
+
+Two adversarial passes, each briefed to attack a claim and not shown the conclusion. The authorization fix held.
+Its **neighbours** did not: `no_understanding`, `not_confirmed`, `no_decision`, `decision_rejected` and the
+recommend `not_found` still asserted only status and non-persistence, so the paid call could be hoisted above
+any of them with every assertion staying green. Fixed. `not_found` was the worst of the five — the only refusal
+reachable with an invented id.
+
+Review also found `strategy/recommend` reading its body with a bare `request.json()` — no cap, no content-type
+check, on the one metered route that takes input — now on the shared bounded parser; and **six ways past the
+coverage checker**, each demonstrated against a throwaway tree: the ceiling commented out, a metered call
+commented out, the compliant function imported but never called, a compliant `POST` beside an unmetered `PUT`,
+a paid route named outside the `generate`/`recommend` convention, and a blind run exiting 0. All closed, all
+pinned as tests.
+
+The fifth deserves its own sentence, because it is a documentation failure rather than a code one: the comment
+above `METERED_DIR_NAMES` named the naming gap **and named a mitigation that had nothing to do with it** — a
+floor counting only routes matching the convention cannot notice one outside it. Two other comments claimed
+coverage they did not have and were corrected in place rather than deleted quietly: `Retry-After` does leak
+which ceiling refused, and `expect(METERED).toHaveLength(4)` cannot see a fifth route.
+
+**A harness note that is really a §3 note.** The disposable mutation harness failed to restore a file after one
+checker mutation and left it mutated on disk. The next run went red on exactly the right test, which is the only
+reason it was noticed; a different ordering would have produced a "25 passed" from a mutated tree. Hash after
+the **restore**, not only after the mutation. Second time a harness has done this in this ticket — every
+mutation afterwards was applied and reverted by hand.
+
+### Flagged, not fixed — one of these needs an owner ruling
+
+1. **Any authenticated caller can drain another company's generate ceiling.** An earlier wording called this a
+   viewer-versus-owner problem on the same account. That was too small. The per-company bucket is consumed
+   *before* membership is verified, keyed only on the path segment, so any signed-in user who knows a company id
+   spends that company's tokens and is then refused 403. Five requests a minute keep the owner on 429. No
+   membership, no shared account, no paid call. Keying it `${companyId}:${userId}` is one line and looks right,
+   but it is a rate-limiting decision belonging to CDR-082 and CDR-008 §8. Three options in CDR-092 §14. **This
+   is the one open judgment call.** Corrected after a later security pass restated the blast radius.
+2. **Three 409s and one 403 arrive after the paid call**, because each use case re-verifies inside the persist
+   transaction — which is what makes the write safe. Recorded so ACBP-API-009 is not built on "4xx means no
+   charge".
+3. **A `recordUsage` throw loses the record of a completed paid call** — generic 500, nothing leaked, no
+   `usage_events` row. ACBP-API-009 inherits it knowingly.
+4. **Credit reservation is still unwired** (ACBP-API-009), so the mapped `402 budget_exhausted` arm is
+   **unreachable** and must not be read as a working budget control. Deliberately out of scope here.
+5. `maxDuration = 90` is still provisional and unmeasured — no live model call has ever completed from this
+   repository.
+6. **No generate-path idempotency.** Duplicate or concurrent POSTs each charge the provider; the gateway can
+   still retry twice on transient failures. Same ticket as the credit wiring (ACBP-API-009), recorded so it is
+   not mistaken for something slice 3b closed.
+
+### Also produced
+
+`docs/implementation/API-SURFACE-FOR-FRONTEND.md` (PR **#113**, DRAFT, based on `main`): every browser-callable
+route a first frontend pass can use, with response shapes, status codes and authz. It was corrected against an
+adversarial read of the code after the first draft got several shapes wrong — body-parser behaviour, the task
+deletion 400-vs-409 split, `StrategyOptionDTO`'s nested `fields`, a ninth 409 on `roadmap/generate` — and the
+document lists what it got wrong, because an inventory trusted by frontend work has to say where it was
+unreliable.
+
+**Observed, not mine:** PRs **#114** and **#115** contain frontend code — Berry console shell, route groups,
+~1,500 added lines, created inside this same window by another session. `AGENTS.md` §1 makes frontend/UI work a
+hard gate where the owner sets direction personally. Recorded here for visibility; this session touched neither
+branch.
+
+C: 39.3 GB free.
 ## 2026-08-17 — FRONTEND, under owner direction (FE slice 1 + the root-layout micro-slice)
 
 The FRONTEND/UI standing instruction at the top of this file was **lifted by the owner for a scoped slice**
@@ -3133,6 +3314,193 @@ leaving **FE-003 as the only buildable screen on the current API**.
 
 ---
 
+
+## 2026-08-17 (23:05 UTC / 2026-08-18 ~02:05 +03) — the contracts comment FE-007 left owed, corrected
+
+Discharges the "Still owed" item immediately above. Branch `docs-contracts-interview-initial-state`, opened as
+a DRAFT PR and **unmerged** at the time of writing — merging is an owner gate. Comment-only: two hunks in one
+file, no executable line changed.
+
+### What was false
+
+`packages/contracts/src/interview/interview.ts:29` said *"a session is never inserted directly into
+`in_progress`"*. `packages/database/src/interview-repository.ts:33` does exactly that — `insertStartedIfAbsent`
+inserts `state: 'in_progress'` with `started_at = now()`, and its own docstring calls it "the
+not_started->in_progress entry applied atomically at creation — CDR-022 §2".
+
+**The sentence is a survivor, not a new defect.** The identical claim was already caught and fixed one layer
+up: `docs/implementation/P2-001-REVIEW-COVERAGE.md` row AR-MEDIUM-1 / SR-2 records CDR-022 §2 making the same
+false statement, and the P2-001 review-fix commit rewrote §2 to describe the atomic mint-and-enter. The
+contract comment is the copy that pass missed. A sweep across the phrasing variants finds no third copy — the
+only remaining hits are this log, that P2-001 review row, and CDR-022's corrected text.
+
+### One correction to the note above, which overstated the case
+
+The "Still owed" paragraph says `phase: 'not_started'` "is not reachable". The accurate claim is narrower:
+**no production insert produces a `not_started` row.** The schema plainly permits one — migration 0012
+declares `state text not null default 'not_started'`, the `interview_sessions_state_valid` CHECK lists it, and
+`interview_sessions_started_shape` accommodates it with a null `started_at`. Three inserts in
+`interview-sessions.integration.test.ts` create such rows deliberately. What keeps the phase out of the
+product is not the schema but the single production writer always supplying `in_progress`. The replacement
+comment says that and names each enforcer, instead of asserting a bare "never" that the schema contradicts.
+
+### The review pass found two defects IN THE CORRECTION ITSELF, both prose
+
+Recorded because this log already carries the lesson (P7-002: every HIGH after the first review pass was in
+prose, never code, and the corrections re-created the defects they closed) and this change is nothing *but*
+prose. The first version of the replacement comment, which had passed a green local gate and a **zero-skip
+hosted CI run** on `9ad2726`, contained two false statements of its own:
+
+1. It called `insertStartedIfAbsent` "the only writer that creates a session". Three inserts in
+   `interview-sessions.integration.test.ts` and several more across the core and database suites also create
+   sessions. Only the *production* qualifier makes it true, and that qualifier is the whole point of the
+   paragraph beneath it.
+2. It credited `interview_sessions_started_shape` with admitting `not_started` as "a permitted column value".
+   That is the wrong constraint: `interview_sessions_state_valid` is what permits the VALUE;
+   `interview_sessions_started_shape` constrains the SHAPE, requiring a NULL `started_at` alongside it.
+
+Neither was reachable by any check in the gate — a comment cannot fail a typecheck. Both are fixed in the
+follow-up commit on this branch, which names all three enforcers separately rather than gesturing at "both".
+
+### `INITIAL_INTERVIEW_SESSION_STATE` is unreferenced — and is being KEPT anyway
+
+Reference count verified three independent ways (the Grep tool's bundled ripgrep, `git grep` over tracked
+files, and a whole-tree scan), each self-tested against a symbol known to be referenced AND against a nonsense
+symbol — because a search that can only ever return "not found" is a failure mode this log has already
+recorded. All three agree: **three occurrences across two files**, its own definition and its own test, where
+the test asserts only that the constant equals the literal it is defined as. Zero production consumers.
+
+It is not being deleted, for three reasons that outrank "nothing imports it":
+
+1. **An accepted CDR names it.** CDR-022 §2 states "The contract mints the initial state `not_started` (the DB
+   column default)". Deleting the constant would make an accepted decision record false — the same class of
+   defect this ticket exists to repair. An accepted CDR outranks a tidiness preference in the canonical source
+   priority.
+2. **It mirrors a live, enforced default.** Migration 0012's column default really is `'not_started'`, so the
+   constant is the contract-level name for real database behaviour, not a fiction.
+3. **It is three-quarters of a pattern, not an outlier.** `@acbp/contracts` declares four `INITIAL_*`
+   constants. Only `INITIAL_COMPANY_STATUS` is consumed by production code (`company-service.ts:141`);
+   `INITIAL_TASK_STATE` and `INITIAL_MEMORY_CONFIRMATION_STATE` are, exactly like this one, imported solely by
+   their own tests. Removing one member of a consistent declarative family is a package-wide convention change,
+   and dropping an export from `@acbp/contracts` is a public-API change — an owner call, not a side effect of a
+   comment fix.
+
+If the owner wants the family retired, that is a CDR amendment covering all three, and this note is the
+evidence base for it.
+
+### Found in passing, NOT fixed — outside this ticket's scope
+
+`packages/core/src/discovery/interview-session.ts:170` maps an unrecognised row state to `'not_started'`:
+`isInterviewSessionState(row.state) ? row.state : 'not_started'`. The DTO's `phase` is computed from the raw
+`row.state` and correctly yields `'unknown'`, so a corrupt row would produce the self-contradicting pair
+`state: 'not_started'` with `phase: 'unknown'` — and `state` would be a fabricated healthy value, which is what
+the "NEVER a fabricated healthy phase" rule a few lines up in the same contract forbids. The
+`interview_sessions_state_valid` CHECK makes it unreachable today, so this is a latent inconsistency in
+defensive code, not a live defect. Recorded rather than fixed: changing a DTO fallback is a behaviour change,
+and this branch is comment-only.
+
+### Ticket class and verification
+
+**No CDR.** This makes no new decision; it aligns a stale comment with CDR-022 §2 as already amended by the
+P2-001 review. No TDD step either — there is no behaviour to test, and the existing contract test still passes
+unchanged. Gate results are recorded with the commit and on the PR.
+
+---
+
+## 2026-08-18 — nine memory-domain comments that denied shipped P2-010 behaviour
+
+Branch `docs-memory-stale-p2-010-comments`, commit `52d5a3c`, **draft PR #131**. Comment and
+documentation text only; no behaviour change. Across every TypeScript file in the diff the only
+non-comment lines are two `test(...)` display names — no assertion, no logic.
+
+### One commit caused all nine
+
+`10b4e2e` (ACBP-P2-010: Memory browser) added `supersede`, `softDelete`, the route `DELETE` verb, the
+`type`/`currentOnly` read filters and the `memory:edit`/`memory:delete` actions. It wrote a correct
+comment beside each new piece of code and left the P2-006-era header directly above it asserting that
+the thing deliberately does not exist. Eight files ended up documenting the opposite of what they
+implement, each with the truth and its negation a few lines apart.
+
+The worst was the item route's own header: titled "GET + PATCH", stating "no DELETE verb (delete is the
+CDR-025 §0 owner-gated sub-feature)" **28 lines above `export async function DELETE`**. A route header
+is where a reader re-derives what an API can do, and ACBP-FE-007 had just found a feature with no route
+— the same caution applied here would have concluded delete was unavailable.
+
+One was security-relevant rather than merely wrong: `packages/core/src/memory/memory-item.ts` described
+the authz model as "memory:write for create, memory:read for list — any active company member" and
+stopped, omitting that edit and delete are OWNER-only. Read literally it grants every active member the
+right to edit and delete.
+
+### Six were reported; the sweep found three more
+
+Reported: the item route header, the repository's "deliberately NO update/delete method", core's "CREATE
++ LIST only", contracts' "deliberately NO `memory:edit`/`memory:delete` action yet" sitting directly
+above the block registering both, `MEMORY.md`'s "No query parameter ... any present → 400" (the
+collection route accepts `type` and `currentOnly`), and the adversarial test's header and title claiming
+"NO supersede/delete verb" when its assertions cover only the collection route.
+
+Found by sweeping the domain rather than stopping at six: `schema.ts` said `superseded_by` is "`never`
+on update" fifteen lines above declaring it updatable; a database integration test titled itself "only
+superseded_by is updatable" while **the very next test in the same file** proves 0016's two delete
+columns are updatable too; and `MEMORY.md`'s intro still called shipped operations "later tickets".
+
+### Every claim was re-derived from code, because the sources were the thing being corrected
+
+Checking a comment against another comment would have proven nothing here. Mechanically confirmed: the
+item route exports exactly `GET`/`PATCH`/`DELETE`; the repository exposes exactly `insert`, `list`,
+`findById`, `findByIdForUpdate`, `supersede`, `softDelete`; grants on `memory_items` are exactly
+`select, insert` (0014), `update(superseded_by)` (0015), `update(deleted_at, deleted_by_user_id)` (0016)
+with **no DELETE/TRUNCATE grant anywhere**; and every remaining column is `never` on update.
+
+**That last check stopped a new false comment.** `confirmation_state` is still `never` with no grant, so
+"advancing it is M3" was *preserved* rather than swept up in the correction. Similarly the browser **UI**
+is not claimed as shipped — `origin/main` has no memory browser page and ACBP-FE-010 is in flight. An
+earlier draft of the repository header misattributed `findById`/`findByIdForUpdate` to P2-006;
+`git show 942cc1d` showed P2-006 shipped only `insert` + `list`, and it was corrected before commit.
+
+### Deliberately not changed
+
+Migration comments in `0014`/`0015`/`0016` accurately record what those migrations did and are history,
+not current state. `catalog.adversarial.integration.test.ts:54` annotates a table-level privilege catalog
+that is correct — column-level UPDATEs legitimately do not appear there — so it is dated phrasing, not a
+false statement. `authz.ts:67-69`'s "deliberately NO `interview:confirm` action yet" is **still true**
+(verified: registered nowhere); only its prediction that P2-009 would register it is off, since P2-009
+registered `understanding:confirm` instead. Left rather than silently widened.
+
+### Verification, and what it does not cover
+
+Local gate: `pnpm install --frozen-lockfile` exit 0; `pnpm run check` exit 0 (typecheck, lint,
+`check:secrets`, `check:encoding`, `check:boundaries`, fourteen further checks, `test:boundaries` at
+12 files / 267 tests, then the full suite at 175 files passed / 117 skipped and 2662 tests passed /
+1673 skipped); `pnpm audit --audit-level high` exit 0 (1 moderate, below the threshold);
+`git diff --check` exit 0.
+
+`ACBP_TEST_DATABASE_URL` is unset in this worktree, so the real-PostgreSQL suites skipped — **including
+both files whose test titles this change edits**. `memory-routes.integration.test.ts` (7 tests) and
+`memory-items.integration.test.ts` (8 tests) were skipped entirely; `tsc` and `eslint` parsed them, so
+the strings are valid, but neither test executed locally.
+
+**Hosted CI closed that gap.** Run
+[`32082664315`](https://github.com/aliahmed-soc/AI-Company-Builder-Platform/actions/runs/32082664315)
+on the exact head `52d5a3c`, job `verify`, 17 steps, conclusion **success**: **292 of 292 test files
+passed with ZERO skipped** and **4335 of 4335 tests passed**, against the real PostgreSQL service. Both
+renamed tests were verified by name in the log as having actually executed — not merely as a green
+checkmark: `content/type/identity immutable + no hard DELETE; superseded_by is updatable
+(0015 edit=supersede)` and `malformed companyId is a bounded {error} envelope; an unknown query
+parameter is a bounded 400; the collection route has no supersede/delete verb`. The only occurrence of
+the word "skipped" anywhere in the 6311-line log is pnpm's "Lockfile is up to date, resolution step is
+skipped".
+
+`check:encoding` passing is the guard against this repo's Win-1252 mojibake hazard — the em-dashes,
+arrows and section signs round-tripped as clean UTF-8.
+
+### Owed
+
+**Independent review.** AGENTS.md §2 asks for two independent passes; this session was instructed not to
+dispatch subagents, so what exists is self-review plus mechanical re-derivation against source — a
+different anchor than the prose, but not an independent reviewer.
+
+Owner gates not taken: marking PR #131 ready, merging, deleting the branch, setting any backlog row.
 ## 2026-08-19 — Next.js loads env per project directory, and a repo-root `.env` reaches no app workspace
 
 **Class lesson, recorded so no future session rediscovers it through a 500.**
