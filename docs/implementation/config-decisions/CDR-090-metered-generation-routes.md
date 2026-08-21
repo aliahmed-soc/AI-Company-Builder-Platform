@@ -3,8 +3,22 @@
 **Status:** PARTIAL — settled where it can be settled, **BLOCKED on ACBP-P2-011** for every number that
 needs a real provider to measure. · **Ticket:** ACBP-API-006 · **Base:** `main` at `cf769bc`.
 
-**Number:** 090. 086 is claimed by ACBP-P3-006 on an unmerged branch; 087–089 are the three shipped
-route tickets. `git ls-remote` shows no competing branch.
+> ⚠️ **READ THIS BEFORE §3. LANDED LATE, AND PARTLY SUPERSEDED.**
+>
+> This document was written 2026-08-14 and reached `main` on 2026-08-22 — it sat on the branch
+> `p8-api-006-cdr` with **no pull request tracking it**, while `CDR-091` and `API-BACKLOG.csv` (both merged)
+> cited it as governing. CDR-091's own link to it was broken for eight days.
+>
+> **§3.1–§3.5 are SUPERSEDED by [CDR-091](CDR-091-model-gateway-live-provider.md).** It settled four of the
+> five numbers this document refused to default, and says so in its own header: *"Everything CDR-090 settled
+> (§1 composition, §2 error envelope) stands unchanged."* So §1, §2 and the G-rulings below are LIVE — G3 in
+> particular is what `API-BACKLOG.csv` cites as governing for ACBP-API-012 — and §3 is history.
+>
+> Read §3 as the record of what was deliberately left open and why, not as a list of open questions.
+
+**Number:** 090. 087–089 are the three shipped route tickets. (When written, 086 was "claimed by
+ACBP-P3-006 on an unmerged branch"; that branch merged 2026-08-22 as `dd4d9ae`, so CDR-086 now exists on
+`main` and the two numbers no longer collide.)
 
 ---
 
