@@ -32,14 +32,14 @@ plus database row-level security, with immutable ownership).
 
 ## Threat identifiers
 
-Every test references a stable id from [`threat-inventory.ts`](./threat-inventory.ts) and every failure
+Every test references a stable id from [`threat-inventory.ts`](../../../../test-support/src/tenancy/threat-inventory.ts) and every failure
 title names **threat id + domain + the isolation invariant** — never a bare matrix index. Use
 `threatTitle(id, domain)` to build titles; `threat(id)` throws on an unknown id, so a typo can never produce
 an unmapped test. Classes: `scope` · `authz` · `rls` · `transaction` · `oracle` · `audit` · `admin`.
 
 ## Fixture model
 
-[`two-tenant-harness.ts`](./two-tenant-harness.ts) seeds one deterministic world (no randomness, no timing
+[`two-tenant-harness.ts`](../../../../test-support/src/tenancy/two-tenant-harness.ts) seeds one deterministic world (no randomness, no timing
 dependence):
 
 ```
