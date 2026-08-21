@@ -3,9 +3,18 @@
 Governed by **CDR-024**; requirements **MEM-001** (typed items), **MEM-003** (provenance + company scope),
 UNDER-002 (classes). ADRs: ADR-015 (audit), ADR-007 (tenancy). P2-006 delivers the **typed memory substrate**:
 persist a typed, source-linked memory item and list a company's items. P2-010 has since added the supersede
-(edit) and soft-delete operations plus the browser's read filters — see "Memory browser" below. The browser
-**UI** and advancing `confirmation_state` (confirm) are still later work; context assembly and provenance
-ranking are P2-007; understanding generation and confidence *scoring* are P2-008.
+(edit) and soft-delete operations plus the browser's read filters — see "Memory browser" below.
+
+The browser **UI** SHIPPED with ACBP-FE-010 and lives at `apps/web/src/app/console/companies/[companyId]/memory/`.
+This sentence used to say it was "still later work", which was written before that screen existed and stayed on
+the page after it — the same defect class this document was corrected to remove.
+
+Advancing `confirmation_state` (confirm) IS still absent, and more firmly than "later work" suggests: the column
+is typed `ColumnType<string, string | undefined, never>` in `schema.ts`, so an UPDATE to it is a compile error,
+and `packages/core/src/memory/` exports only create/list/edit/get/delete — there is no confirm use case for a
+route to reach. The screen therefore READS `confirmationState` and cannot change it.
+
+Context assembly and provenance ranking are P2-007; understanding generation and confidence *scoring* are P2-008.
 
 ## The typed item (DATA-ARCHITECTURE §3)
 
