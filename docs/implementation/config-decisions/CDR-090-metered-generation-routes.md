@@ -3,18 +3,23 @@
 **Status:** PARTIAL — settled where it can be settled, **BLOCKED on ACBP-P2-011** for every number that
 needs a real provider to measure. · **Ticket:** ACBP-API-006 · **Base:** `main` at `cf769bc`.
 
-> ⚠️ **READ THIS BEFORE §3. LANDED LATE, AND PARTLY SUPERSEDED.**
+> ⚠️ **READ THIS FIRST. RESCUED LATE, AND OVERTAKEN IN PLACES.**
 >
-> This document was written 2026-08-14 and reached `main` on 2026-08-22 — it sat on the branch
-> `p8-api-006-cdr` with **no pull request tracking it**, while `CDR-091` and `API-BACKLOG.csv` (both merged)
-> cited it as governing. CDR-091's own link to it was broken for eight days.
+> Written 2026-08-14, this sat on the branch `p8-api-006-cdr` that **no pull request ever tracked**, so it
+> did not reach `main` for eight days — while `API-BACKLOG.csv`, `CDR-091`, `CDR-092`, `CDR-094` and five
+> production source files cited it as governing. CDR-091's link to it resolved to nothing that whole time.
+> `tools/check-doc-links.mjs` now fails the build on exactly that.
 >
-> **§3.1–§3.5 are SUPERSEDED by [CDR-091](CDR-091-model-gateway-live-provider.md).** It settled four of the
-> five numbers this document refused to default, and says so in its own header: *"Everything CDR-090 settled
-> (§1 composition, §2 error envelope) stands unchanged."* So §1, §2 and the G-rulings below are LIVE — G3 in
-> particular is what `API-BACKLOG.csv` cites as governing for ACBP-API-012 — and §3 is history.
+> The repository moved underneath it. What is still binding, and what is now history:
 >
-> Read §3 as the record of what was deliberately left open and why, not as a list of open questions.
+> | Section | Standing |
+> | ------- | -------- |
+> | **§1 G1–G3** | **LIVE as rulings.** G3 — absent gateway ⇒ `unavailable`, failing at STARTUP rather than per-request — is what `API-BACKLOG.csv` cites as governing for ACBP-API-012, and what `config/src/index.ts`, `clerk-identity.ts` and `clerk-runtime.ts` cite in their own comments. |
+> | **§1's opening observation** | **HISTORY.** It says a search of the composition layer for `gateway` "returns **zero** matches". True when written, false now: `packages/core/src/composition/` holds **nine** gateway modules, and `clerk-identity.ts` mentions `gateway` on 42 of its own lines. G1 was built the way it predicted. |
+> | **§2** | **LIVE.** The error-envelope contract stands unchanged. |
+> | **§3.1–§3.5** | **SUPERSEDED by [CDR-091](CDR-091-model-gateway-live-provider.md)**, which settled four of the five numbers and says so itself: *"Everything CDR-090 settled (§1 composition, §2 error envelope) stands unchanged."* `rate-limits.ts` still cites §3.3, for its description of the trap rather than as an open question. |
+>
+> Read §3 as the record of what was deliberately left open and why — not as a list of open questions.
 
 **Number:** 090. 087–089 are the three shipped route tickets. (When written, 086 was "claimed by
 ACBP-P3-006 on an unmerged branch"; that branch merged 2026-08-22 as `dd4d9ae`, so CDR-086 now exists on
