@@ -82,9 +82,18 @@ export interface MembershipStore {
   findPendingByAccountAndEmail(accountId: string, invitedEmail: string): Promise<{ readonly id: string } | undefined>;
   insertInvite(v: { readonly accountId: string; readonly invitedEmail: string; readonly role: MemberRole; readonly tokenHash: string; readonly invitedByUserId: string }): Promise<{ readonly id: string }>;
   findInAccount(accountId: string, membershipId: string): Promise<{ readonly id: string; readonly role: MemberRole; readonly status: MembershipStatus } | undefined>;
-  countActiveOwners(accountId: string): Promise<number>;
-  /** Atomically flip an ACTIVE membership to revoked; returns true iff THIS call performed the transition. */
-  revokeMembership(id: string): Promise<boolean>;
+  /**
+   * Atomically revoke a membership (an active member OR a pending invite), refusing to remove the account's
+   * LAST active owner (CDR-011). The owner-count decision and the revoke are one operation so concurrent
+   * revocations of different owners cannot both slip past a stale count and drain the account to zero owners.
+   * Outcomes: `'revoked'` (this call flipped the row to revoked), `'last_owner'` (refused — target is the sole
+   * active owner), `'noop'` (nothing to flip — already revoked, e.g. a concurrent revoke won → idempotent).
+   *
+   * IT REPLACES A PAIR. `countActiveOwners` + `revokeMembership` used to sit here and were removed together:
+   * separately they are a read-then-act sequence, and the seam between them WAS the defect. Re-adding either
+   * one re-opens it, which is why neither survives anywhere in this package.
+   */
+  revokeActiveMembership(accountId: string, id: string): Promise<'revoked' | 'noop' | 'last_owner'>;
   listMembers(accountId: string): Promise<readonly MemberView[]>;
 }
 
@@ -138,16 +147,32 @@ export async function revokeMemberWithStore(
   if (target === undefined) return { status: 'not_found' };
   if (target.status === 'revoked') return { status: 'ok', changed: false }; // idempotent no-op → no new audit
 
-  // Never leave an account without an owner.
-  if (target.role === 'owner' && target.status === 'active' && (await store.countActiveOwners(params.accountId)) <= 1) {
-    return { status: 'last_owner' };
-  }
-  // Conditional active→revoked transition. Under concurrency only the transaction that actually flips the
-  // row returns true; a racing revoke that lost sees `false` → an idempotent no-op with NO new audit.
-  const didRevoke = await store.revokeMembership(target.id);
-  if (!didRevoke) return { status: 'ok', changed: false };
+  // Revoke ATOMICALLY, upholding the last-owner invariant (CDR-011) in one locked operation. Doing the
+  // owner-count check and the flip as separate steps is a read-then-act race: two concurrent revocations
+  // of DIFFERENT active owners could each read "2 owners", both pass, and both flip — draining the account
+  // to zero owners. The store performs the check + flip as a single serialized unit.
+  const outcome = await store.revokeActiveMembership(params.accountId, target.id);
+  if (outcome === 'last_owner') return { status: 'last_owner' };
+
+  /*
+   * ⚠️ THIS ARM IS A REBASE MERGE OF TWO GUARANTEES, AND DROPPING EITHER ONE IS A SILENT REGRESSION.
+   *
+   * ACBP-P1-004 (this fix) replaced a read-then-act `countActiveOwners` + `revokeMembership` pair with the
+   * single locked `revokeActiveMembership` above — that is the race fix.
+   *
+   * ACBP-P1-008 landed on main AFTER this fix was written and gave the same function an audit contract: the
+   * caller returns `changed: true` with the membership's id and role, and the live wrapper writes the durable
+   * audit in the same transaction. Taking this fix's original `return { status: 'ok' }` wholesale would have
+   * deleted that contract, so a revocation would stop being audited and nothing would have failed.
+   *
+   * Both are kept: the atomic outcome DRIVES the audit decision it used to only log.
+   *   'revoked' → this call flipped the row → audit it.
+   *   'noop'    → a concurrent revoke already flipped it → the revocation is idempotently in effect, and the
+   *               call that DID flip it is the one that audits. A second audit here would record two
+   *               revocations of one membership.
+   */
+  if (outcome === 'noop') return { status: 'ok', changed: false };
   options.logger?.info('membership.revoked', { metadata: { accountId: params.accountId, membershipId: target.id, role: target.role } });
-  // `changed: true` + the revoked membership's id/role → the live wrapper writes the durable audit in-tx.
   return { status: 'ok', changed: true, membershipId: target.id, role: target.role };
 }
 
@@ -196,11 +221,8 @@ function liveStore(repo: MembershipRepository): MembershipStore {
       const row = await repo.findById(membershipId);
       return row === undefined || row.account_id !== accountId ? undefined : { id: row.id, role: row.role as MemberRole, status: row.status as MembershipStatus };
     },
-    countActiveOwners(accountId) {
-      return repo.countActiveOwners(accountId);
-    },
-    revokeMembership(id) {
-      return repo.revokeIfActive(id);
+    revokeActiveMembership(accountId, id) {
+      return repo.revokeActiveMembershipPreservingLastOwner(accountId, id);
     },
     async listMembers(accountId) {
       return (await repo.listByAccount(accountId)).map(toMemberView);
