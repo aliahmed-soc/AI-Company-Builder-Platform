@@ -11,7 +11,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { check, citationsIn, definedCdrNumbers, relativeLinksIn } from '../check-doc-links.mjs';
+import { check, citationsIn, definedCdrNumbers, relativeLinksIn, withoutCode } from '../check-doc-links.mjs';
 
 let root;
 
@@ -72,6 +72,25 @@ describe('the extractors themselves', () => {
 
   test('relativeLinksIn handles a link carrying a title attribute', () => {
     expect([...relativeLinksIn('[a](./x.md "the title")')]).toEqual(['./x.md']);
+  });
+
+  test('A LINK INSIDE CODE IS NOT A LINK — the check must not forbid documenting a broken one', () => {
+    // Found by the check failing on this repository's own run-log entry about CDR-090, which quotes the broken
+    // link as inline code. No renderer linkifies a code span, so its target is not required to exist. A checker
+    // that forbade writing this down would make the defect it exists to catch undocumentable.
+    expect(relativeLinksIn('the broken link was `[CDR-090](CDR-090-gone.md)`').size).toBe(0);
+    expect(relativeLinksIn('```md\n[a](./nope.md)\n```\n').size).toBe(0);
+    expect(relativeLinksIn('~~~\n[a](./nope.md)\n~~~\n').size).toBe(0);
+  });
+
+  test('stripping code does not swallow the real links around it', () => {
+    // The other half. A stripper that blanked too much would satisfy the test above while disabling the check.
+    const links = relativeLinksIn('`x` [a](./a.md) `y` [b](./b.md)\n```\n[c](./c.md)\n```\n[d](./d.md)');
+    expect([...links].sort()).toEqual(['./a.md', './b.md', './d.md']);
+  });
+
+  test('withoutCode preserves line count, so offsets stay meaningful', () => {
+    expect(withoutCode('a\n```\nx\ny\n```\nb').split('\n').length).toBe(6);
   });
 });
 

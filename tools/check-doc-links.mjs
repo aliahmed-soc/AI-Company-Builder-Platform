@@ -80,14 +80,34 @@ export function definedCdrNumbers(dir) {
 }
 
 /**
+ * Blank out fenced code blocks and inline code spans, preserving length and newlines.
+ *
+ * WHY THIS IS NOT OPTIONAL. A Markdown link inside backticks is NOT a link -- no renderer linkifies it, so its
+ * target is not required to exist. Documentation that DESCRIBES a broken link (`[CDR-090](CDR-090-...md)` was
+ * broken for eight days) is the obvious case, and it is exactly the case this repository needed to write down.
+ * Without this, the check would forbid documenting the very defect it exists to catch.
+ *
+ * Replacement is space-for-character rather than deletion so offsets and line numbers stay meaningful, and so two
+ * fragments either side of a code span cannot be glued into a match that was never in the source.
+ */
+export function withoutCode(source) {
+  const blank = (m) => m.replace(/[^\n]/g, ' ');
+  return source
+    .replace(/```[\s\S]*?```/g, blank) // fenced
+    .replace(/~~~[\s\S]*?~~~/g, blank) // fenced, alternate marker
+    .replace(/`[^`\n]*`/g, blank); // inline
+}
+
+/**
  * Relative link targets in a Markdown source, as `[text](target)` and `[text](target "title")`.
  *
  * Anchors and external schemes are dropped here rather than at the call site, so a caller cannot forget. A target
- * carrying a `#fragment` keeps only the path -- this check does not resolve heading anchors.
+ * carrying a `#fragment` keeps only the path -- this check does not resolve heading anchors. Code is stripped
+ * first; see `withoutCode`.
  */
 export function relativeLinksIn(source) {
   const out = new Set();
-  for (const m of source.matchAll(/\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+  for (const m of withoutCode(source).matchAll(/\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
     const target = m[1];
     if (EXTERNAL_LINK.test(target)) continue;
     const path = target.split('#')[0];
@@ -218,6 +238,17 @@ function selfTest() {
   if (!links.has('../y.md')) problems.push('relativeLinksIn did not strip a #fragment');
   if (links.has('https://e.com')) problems.push('relativeLinksIn reported an external URL');
   if (links.has('#top')) problems.push('relativeLinksIn reported a bare anchor');
+
+  // A link inside code is not a link. This check must not forbid documenting a broken one.
+  if (relativeLinksIn('the broken link was `[CDR-090](CDR-090-gone.md)`').size !== 0) {
+    problems.push('relativeLinksIn reported a link inside an inline code span');
+  }
+  if (relativeLinksIn('```\n[a](./nope.md)\n```\n').size !== 0) {
+    problems.push('relativeLinksIn reported a link inside a fenced code block');
+  }
+  if (!relativeLinksIn('`code` then [a](./x.md)').has('./x.md')) {
+    problems.push('withoutCode swallowed a real link that followed a code span');
+  }
 
   return problems;
 }
