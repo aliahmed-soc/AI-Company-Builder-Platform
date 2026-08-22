@@ -120,6 +120,19 @@ function addViolation(rule, fromFile, line, spec, detail) {
   violations.push({ rule, file: fromFile, line, spec, detail });
 }
 
+/**
+ * How many files were actually CLASSIFIED and read.
+ *
+ * ⚠️ THIS COUNT EXISTS BECAUSE THE SUCCESS MESSAGE HAD NONE. It said "scanned apps/ + packages/; 0 violations"
+ * whether it read four thousand files or zero, and the loop below does `if (!existsSync(abs)) continue` — so
+ * renaming either workspace directory would have produced a green tick over an empty walk, with nothing in the
+ * output to reveal it. A missing scan root is not agreement.
+ *
+ * Found by sweeping every checker in this repository against the question AGENTS.md §3 now asks: does the guard
+ * actually RUN on the path that matters? Two others answered no.
+ */
+let classifiedFiles = 0;
+
 for (const d of SCAN_DIRS) {
   const abs = join(ROOT, d);
   if (!existsSync(abs)) continue;
@@ -127,6 +140,7 @@ for (const d of SCAN_DIRS) {
     const fileRel = relative(ROOT, fileAbs).replace(/\\/g, '/');
     const src = classifyPath(fileRel);
     if (!src) continue;
+    classifiedFiles++;
     const fromLayer = src.layer;
     const fromIsTest = TEST_FILE_RE.test(fileRel);
     const content = stripComments(readFileSync(fileAbs, 'utf8'));
@@ -231,8 +245,26 @@ for (const c of [...new Set(cycles)]) {
 
 // ---- Report ---------------------------------------------------------------------------
 violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.rule.localeCompare(b.rule));
+
+// THE FLOOR. Far below today's count — it exists to catch a renamed workspace directory or a broken walk, not to
+// freeze the layout. Zero violations over zero files is not a clean tree; it is a blind checker.
+//
+// ⚠️ IT APPLIES ONLY TO THE DEFAULT ROOT, and that limit is deliberate rather than a convenience. The regression
+// suite drives this checker against deliberately tiny fixture trees through `argv[2]` / `ACBP_BOUNDARY_ROOT` —
+// three or four files, on purpose. Applying the floor there failed 33 of its cases the moment it was added, and
+// the honest reading of that is not "lower the floor" but "an explicit root is a caller who knows what they are
+// pointing at". The silent-vacuity risk this guards is the DEFAULT scan quietly finding nothing.
+const EXPECTED_MINIMUM_CLASSIFIED = 200;
+const scanningDefaultRoot = process.argv[2] === undefined && process.env.ACBP_BOUNDARY_ROOT === undefined;
+if (scanningDefaultRoot && classifiedFiles < EXPECTED_MINIMUM_CLASSIFIED) {
+  console.error(`\n✖ dependency-boundary check FAILED — classified only ${String(classifiedFiles)} file(s), expected at least ${String(EXPECTED_MINIMUM_CLASSIFIED)}.`);
+  console.error(`  Scan roots: ${SCAN_DIRS.map((d) => `${d}/`).join(' ')} — one of them is missing, renamed, or the walk is broken.`);
+  console.error('  Every import below would have passed vacuously. A missing scan root is not agreement.\n');
+  process.exit(1);
+}
+
 if (violations.length === 0) {
-  console.log(`✔ dependency-boundary check passed (scanned apps/ + packages/; 0 violations).`);
+  console.log(`✔ dependency-boundary check passed (${String(classifiedFiles)} classified file(s) across ${SCAN_DIRS.map((d) => `${d}/`).join(' + ')}; 0 violations).`);
   process.exit(0);
 }
 console.error(`✖ dependency-boundary check FAILED — ${violations.length} violation(s):\n`);
