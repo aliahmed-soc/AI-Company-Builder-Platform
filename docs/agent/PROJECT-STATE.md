@@ -2,9 +2,20 @@
 
 _Read this first on resume, then continue automatically to "Next executable action". No secrets/PII here._
 
-## CI IS STILL BLOCKED — and six branches were merged anyway, on the owner's explicit authority
+## CI was blocked 2026-07-28 → 07-31 (RESOLVED), and six branches were merged on local verification
 
-**Hosted CI has produced no run since 2026-07-28 12:46 UTC.** The GitHub Actions spending limit was reached; jobs
+> ⚠️ **This heading used to read "CI IS STILL BLOCKED", and had for three weeks after it stopped being true.**
+> The resolution was recorded in this same section on 2026-07-31 — below the heading, where a reader following
+> this file's own instruction to *"read this first on resume"* would meet the false claim before the correction.
+> Hosted CI has been green continuously since — **eight commits landed on `main` on 2026-08-22 alone**, each
+> on a hosted zero-skip run verified on its exact head. (Counted from `git log`, because the first draft of this
+> very sentence said "six" from memory and was wrong.)
+> The historical account below is kept, because it is accurate about the period it describes. Only its opening
+> sentence changed — it said CI "has produced no run since 2026-07-28", an open-ended claim that stayed false
+> forever; it now carries the end date. Everything after that sentence is untouched, including its own
+> present-tense description of a condition that has since ended.
+
+**Hosted CI produced no run between 2026-07-28 12:46 UTC and 2026-07-31.** The GitHub Actions spending limit was reached; jobs
 either fail to start or die in seconds with zero steps executed. Only the owner can clear it — it is a billing
 setting on their account, and payment settings are outside what this agent may touch. The last hosted run was the
 exact-main verification of `bf381e7`.
