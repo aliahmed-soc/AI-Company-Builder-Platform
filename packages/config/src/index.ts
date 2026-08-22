@@ -433,16 +433,20 @@ const modelProviderSchema = z
  * then fail once per request, at the moment a founder is waiting for a generation (CDR-090 §1-G3, CDR-091 §4).
  * That much this function delivers on its own: the throw is unconditional and immediate.
  *
- * ⚠️ IT DOES NOT MAKE THE FAILURE VISIBLE "AT STARTUP", AND AN EARLIER VERSION OF THIS COMMENT CLAIMED IT DID.
- * The claim was about a property of the CALLER, not of this function, and the caller does not have it: the only
- * production call site is `apps/web/src/server/webhooks/clerk-runtime.ts`, which is a lazy singleton reached
- * exclusively through request-scoped dynamic imports, with no Next `instrumentation` hook anywhere in the app. The
- * throw therefore lands on the FIRST REQUEST that touches the runtime, not at boot.
+ * ⚠️ STARTUP VISIBILITY IS A PROPERTY OF THE CALLER, NOT OF THIS FUNCTION — and this comment has been wrong in
+ * both directions about it. An early version claimed this function delivered it, which was a claim about a
+ * caller. A later version said nothing delivered it, which was true when written and is no longer.
  *
- * The distinction matters to whoever reads this next: "throws rather than degrading" is a guarantee this function
- * makes and keeps. "An operator sees it at boot" is a guarantee nothing currently makes. Restoring the second is
- * OPEN (owner ruling 2026-08-19; backlog row + CDR-094 §7) and is a change to the composition path, not to this
- * parser.
+ * What this function guarantees, and keeps: it THROWS rather than degrading, unconditionally and immediately, so
+ * a gateway can never construct itself without a credential and then fail once per request while a founder waits.
+ *
+ * What the CALLERS now guarantee (ACBP-API-012): `apps/web/src/instrumentation.ts` runs at boot, before the first
+ * request, and reports the same condition through
+ * `apps/web/src/server/startup/model-provider-report.ts` — which `clerk-runtime.ts` also uses, so one definition
+ * serves both. An operator starting the server sees `model_provider.not_configured` immediately.
+ *
+ * The two remain separate guarantees deliberately. Anything composing this parser somewhere OTHER than `apps/web`
+ * inherits the throw and does NOT inherit boot-time visibility; that would need its own boot hook.
  */
 export function parseModelProviderConfig(env: EnvRecord): ModelProviderConfig {
   const r = modelProviderSchema.safeParse(env);
