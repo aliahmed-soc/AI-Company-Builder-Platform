@@ -3932,3 +3932,79 @@ Nothing in flight. The next actionable work needs one of: an owner-present live 
 (unblocks P2-011 → P3-006 → P7-012), a deployment target (unblocks P7-003 → P7-004/005 →
 P7-006 → P7-010 → P7-011), or a gate lift on ACBP-FE-017 plus a held-work read.
 `OWNER-ACTION-PACK.md` itemises these.
+
+---
+
+## 2026-08-22 — the §3 rule was applied to the checkers themselves, and three of nineteen were blind
+
+`AGENTS.md` §3 gained a second question earlier the same day: *for every guard, does it
+actually RUN on the path that matters?* It was written from four guards that were green while
+their defect was live. This is what happened when it was turned on the guards themselves.
+
+### Three live holes, all in guards over money paths
+
+| Checker | What it could not see | Now |
+| ------- | --------------------- | --- |
+| `check-rate-limit-coverage` | three of the four ways a route is exported | detector widened; module made import-safe |
+| `check-conflict-targets` | anything at all — it passed on an EMPTY directory | exit 2 on a missing target, exit 1 below a floor |
+| `check-boundaries` | whether it read 906 files or zero | reports the count; floor of 200 on the default root |
+
+**`check-rate-limit-coverage`** matched only `export function GET`. A route exporting
+`export const GET = async () => …`, with no enforcement import at all, left the handler count
+UNCHANGED at 45 and the check exited 0 — not failed, INVISIBLE. Its own zero-handler floor
+could not catch that, because the other 45 routes still matched so the walk never looked
+empty. An unmetered public endpoint would have shipped green on the guard for NFR-010.
+
+**`check-conflict-targets`** printed, in a freshly-created empty directory:
+
+    ✔ conflict-target check: 0 index name(s) known (0 partial); no ON CONFLICT names one. Self-test passed.
+
+A green tick over nothing, with *"Self-test passed"* attached, which made a checker that had
+read zero files read as doubly verified. It also ignored an explicit root, so a test written
+the way every sibling checker's test is written would have measured the runner's own cwd.
+That trap is *why* it had no test: writing one the obvious way produced a vacuous suite.
+
+**`check-boundaries`** said `0 violations` with no count, and skips a missing scan root with
+`continue`. Renaming either workspace directory produced the green tick over an empty walk.
+
+### ⚠️ TWO METHODOLOGICAL ERRORS, WHICH ARE THE PART WORTH KEEPING
+
+**1. "It has a self-test" is not "it is a control", and I used it as one.** After finding the
+first hole I judged `check-conflict-targets` sound BECAUSE it carried a thorough negative
+self-test. It had the worse hole. The two questions are independent:
+
+- *Do the patterns still recognise the defect?* — answered by the self-test.
+- *Did the walk find anything to hand them?* — answered by a FLOOR, which it did not have.
+
+`check-stop-port` is genuinely sound: it has both. `check-conflict-targets` had only the first.
+
+**2. The probe that found the hole then over-reported.** Running every checker against an
+empty directory flagged THREE as vacuous: boundaries, encoding, secrets. Two were artifacts.
+`check-encoding` reported *"1211 scanned"* and `check-secrets` *"950 files scanned"* FROM AN
+EMPTY DIRECTORY — both anchor their root to `import.meta.url`, so the probe never moved it and
+they scanned the real repository correctly. The probe assumed cwd was the injection point for
+every checker. It is not.
+
+Reporting three holes where there was one would have been the same class of error as the
+holes. Both corrections are recorded in the commits rather than quietly fixed.
+
+### What actually found things, and what did not
+
+**Found holes:** running each checker against a hostile fixture — an empty tree, a renamed
+scan root, a route in an export form nobody had tried.
+
+**Produced false conclusions:** reasoning about which checkers looked sound, twice; and a
+filename heuristic (*"has no `*.test.mjs`"*) that flagged five checkers of which four were
+fine and missed `check-boundaries`, which has a test suite and was blind anyway.
+
+### One constraint discovered the hard way
+
+`check-boundaries`'s floor was applied unconditionally at first and **failed 33 of its own
+regression cases immediately** — that suite drives it against deliberately tiny fixture trees
+through `argv`/`ACBP_BOUNDARY_ROOT`. The honest reading of 33 red tests is not "lower the
+floor" but "an explicit root is a caller who knows what they are pointing at". The floor now
+applies to the DEFAULT scan only, which is the case it was written for.
+
+All three fixes are mutation-proven, with each mutation verified to have landed and each file
+restored byte-identical. One mutation attempt did NOT apply and the suite reported 18 passed;
+the mutation script's own guard caught it and aborted rather than recording a false survival.
