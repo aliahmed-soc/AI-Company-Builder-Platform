@@ -3863,6 +3863,33 @@ path, `register` awaited — every link checked, none assumed.
 owner-presence one declared `capture` as an empty array and asserted `toHaveLength(0)`;
 `stubClient`'s capture is `{ params?: … }`, so it held whether or not the client was called.
 
+### Six documents contained their own correction and still led with the false claim
+
+Every stale-claim fix this session had the same shape, and it is worth naming because the
+correction being PRESENT is what made each one survive:
+
+| Where | Said | Reality |
+| ----- | ---- | ------- |
+| `clerk-runtime.ts` | a missing key is "visible at startup" | it fired on the first request |
+| `config/src/index.ts` | boot visibility is a guarantee "nothing currently makes" | true when written; false after API-012 |
+| `CDR-094` | the instrumentation question is OPEN | answered |
+| `FRONTEND-BACKLOG` FE-017 | "Existing APIs used: none" | the stops route landed 2026-08-19 |
+| `OWNER-ACTION-PACK.md` | — | never mentioned P7-003/004/005 AT ALL |
+| **`PROJECT-STATE.md`** | first heading: **"CI IS STILL BLOCKED"** | resolved 2026-07-31 — **three weeks earlier** |
+
+The last one is the sharpest. That file tells its reader on line 2 to *"read this first on
+resume"*, and the resolution was recorded **in the same section, below the heading**, on the day
+it happened. So the document was not missing the truth — it was leading with the falsehood and
+keeping the truth below the fold. A reader following its own instructions met the wrong claim
+first, every time, for three weeks.
+
+**The rule:** a correction placed under a heading does not correct the heading. Fix what a reader
+meets first, or the document keeps asserting the thing you just disproved.
+
+**And it happened to this entry too.** The note added to `PROJECT-STATE.md` said "this session
+merged six PRs" — written from memory, never counted. `git log` says EIGHT commits landed on
+`main` on 2026-08-22. An unverified number inside the correction of an unverified claim.
+
 ### The queue, closed with evidence rather than assertion
 
 | PR | Outcome | Proof |
