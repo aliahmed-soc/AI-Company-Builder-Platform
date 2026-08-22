@@ -62,12 +62,42 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * Which HTTP methods a route module exports, in ANY form Next.js accepts.
+ *
+ * ⚠️ THIS USED TO MATCH ONLY `export function GET`, AND THAT WAS A SILENT HOLE — measured, not theorised.
+ * Dropping a route exporting `export const GET = async () => …` into `apps/web/src/app/api`, with no
+ * enforcement import at all, left the handler count UNCHANGED at 45 and the check exited 0. The route was not
+ * failed; it was INVISIBLE. The zero-handler floor below cannot catch that either, because the other 45 routes
+ * still match, so the walk never looks empty.
+ *
+ * Same shape this repository has now found three times in one week — `check-generate-route-coverage` keyed on a
+ * `*ForRequest` naming convention a one-word rename defeated, and a CSS guard called `--danger` defined because
+ * it is a suffix of `--c-danger`. A detector narrower than the thing it detects does not report a smaller
+ * problem; it reports NO problem.
+ *
+ * Every shape below is a working Next.js route export. Re-exports are included because factoring two similar
+ * endpoints onto one shared handler is exactly how a route comes to be written that way.
+ */
+export function exportedMethods(src) {
+  // Comments stripped first: a commented-out handler is not an export, and `// export function GET` in a note
+  // about this very check would otherwise register as a live route.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return HTTP_METHODS.filter((m) =>
+    [
+      new RegExp(`export\\s+(?:async\\s+)?function\\s+${m}\\b`), // export function GET / export async function GET
+      new RegExp(`export\\s+(?:const|let|var)\\s+${m}\\b`), //      export const GET = …
+      new RegExp(`export\\s*\\{[^}]*\\b${m}\\b[^}]*\\}`), //        export { GET } / export { GET } from './x'
+    ].some((re) => re.test(code)),
+  );
+}
+
 /** Route handlers: `route.ts` files that export at least one HTTP method. */
 function routeHandlers() {
   return walk(APP_DIR)
     .filter((f) => /(^|[\\/])route\.tsx?$/.test(f))
     .map((file) => ({ file, src: readFileSync(file, 'utf8') }))
-    .map((r) => ({ ...r, methods: HTTP_METHODS.filter((m) => new RegExp(`export\\s+(async\\s+)?function\\s+${m}\\b`).test(r.src)) }))
+    .map((r) => ({ ...r, methods: exportedMethods(r.src) }))
     .filter((r) => r.methods.length > 0);
 }
 
@@ -114,6 +144,41 @@ function reachesEnforcement(entry) {
   return false;
 }
 
+/** Self-test: the detector must still DISCRIMINATE, or every verdict below is vacuous. */
+function selfTest() {
+  const seen = (src) => exportedMethods(src).length > 0;
+  return (
+    seen('export async function GET(req) {}') &&
+    seen('export function POST(req) {}') &&
+    seen('export const GET = async () => new Response("x");') && // the form that was INVISIBLE
+    seen('export const POST = handler;') &&
+    seen("export { GET } from './shared.js';") &&
+    seen('const GET = () => {};\nexport { GET };') &&
+    // ...and does NOT fire on non-handlers, or it would flag every file and get deleted rather than fixed.
+    !seen('// export function GET() {}') &&
+    !seen('/* export const POST = x; */') &&
+    !seen('export function getThing() {}') &&
+    !seen('function GET() {}') &&
+    !seen('export const GETTER = 1;')
+  );
+}
+
+/**
+ * Run the check. Only invoked when this file is the entry point.
+ *
+ * ⚠️ THE MAIN-MODULE GUARD IS LOAD-BEARING, and its absence was found by its own regression suite. Without it the
+ * whole scan — and its `process.exit` — ran on IMPORT, so `tools/tests/check-rate-limit-coverage.test.mjs`
+ * reported "no tests" the moment the checker was unhappy: the process died during collection. Worse, while the
+ * repository happened to be clean the suite passed FOR THAT REASON rather than for its assertions. Every other
+ * checker here already guards its entry point; this one did not.
+ */
+function main() {
+  if (!selfTest()) {
+    console.error('✖ rate-limit coverage check FAILED ITS OWN SELF-TEST — the handler detector no longer discriminates.');
+    console.error('  A clean result would be meaningless: routes it cannot see are not failed, they are invisible.');
+    process.exit(2);
+  }
+
 const rel = (f) => relative(ROOT, f).split('\\').join('/');
 const failures = [];
 
@@ -153,3 +218,8 @@ if (failures.length > 0) {
 }
 
 console.log(`✔ rate-limit coverage check passed (${handlers.length - EXEMPT.size} route handler(s) reach the ceiling; ${EXEMPT.size} deliberately exempt).`);
+}
+
+if (import.meta.url.startsWith('file:') && process.argv[1] && import.meta.url.endsWith(process.argv[1].split('\\').join('/').split('/').pop())) {
+  main();
+}
