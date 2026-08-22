@@ -5,10 +5,21 @@
 // `register()` — the function Next.js actually calls at boot — rather than asserting anything about it.
 //
 // ⚠️ WHAT THIS PROVES AND WHAT IT CANNOT. It proves OUR half: `register()` emits the report, importing the
-// module emits nothing, and the file sits at the path with the export name Next requires. It does NOT prove that
-// Next.js calls `register()` at boot — that is the framework's contract, and this repository cannot test another
-// project's scheduler. Stating that boundary is the point; the previous version of this property was believed
-// true precisely because nobody drew it.
+// module emits nothing, and the file sits at the path with the export name Next requires. A unit test cannot
+// prove that a running Next server SCHEDULES the call — this repository does not host another project's runtime.
+//
+// THE FRAMEWORK HALF WAS VERIFIED BY READING NEXT, NOT BY TRUSTING ITS DOCUMENTATION, because "the docs say so"
+// is the same class of evidence as the comment this ticket exists to delete. In next@16.2.11,
+// `dist/server/lib/router-utils/instrumentation-globals.external.js` does:
+//
+//     require(path.join(projectDir, distDir, 'server', `${INSTRUMENTATION_HOOK_FILENAME}.js`))
+//     if (instrumentation?.register) { await instrumentation.register() }
+//
+// and `next build --webpack` was run to confirm it emits `.next/server/instrumentation.js` carrying
+// `model_provider.not_configured` — the same path that expression requires. So the chain is: our source is
+// resolved, compiled to that path, required from that path, and `register` is awaited. Every link is checked;
+// none is assumed. Drawing that boundary is the point, because the previous version of this property was
+// believed true precisely because nobody drew it.
 import { describe, test, expect, vi } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
