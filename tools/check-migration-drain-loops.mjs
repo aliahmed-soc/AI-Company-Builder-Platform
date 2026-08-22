@@ -16,8 +16,8 @@
 // the ticket under review. This makes the coupling fail fast and name itself.
 //
 // DELIBERATELY STATIC: no database, no migrations run. It counts migration files and reads the test sources.
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
 const MIGRATIONS = join(ROOT, 'packages', 'database', 'migrations');
@@ -166,12 +166,25 @@ function selfTest() {
   const failed = cases.filter(([, pass]) => !pass).map(([name]) => name);
   if (failed.length > 0) {
     console.error(`✖ migration-drain-loop SELF-TEST FAILED: ${failed.join('; ')}`);
-    process.exit(1);
+    // EXIT 2, not 1. "This check cannot be trusted" is a different fact from "a loop is too short to reverse
+    // every migration", and the five sibling checkers all say so with 2. This one said 1.
+    console.error('  A clean result would be meaningless. Fix the detectors before trusting a pass.');
+    process.exit(2);
   }
 }
 
 function main() {
   selfTest();
+  // ⚠️ GUARDED. This read was bare, so a tree without the migrations directory died with a raw Node readdir
+  // stack at exit 1 — the SAME code as "a drain loop is too short to reverse them all". Blindness must not
+  // share an exit code with a finding, least of all on a check whose entire subject is that count.
+  if (!existsSync(MIGRATIONS)) {
+    console.error(`\n\u2716 migration-drain-loop check CANNOT SEE ITS TARGET: ${relative(ROOT, MIGRATIONS)} does not exist.`);
+    console.error('  The migration count is what every loop bound is measured against. A missing directory is');
+    console.error('  not agreement — if the migrations moved, move this check with them.\n');
+    process.exit(2);
+  }
+
   const migrationCount = readdirSync(MIGRATIONS).filter((f) => /^\d{4}_.*\.ts$/.test(f)).length;
 
   const loops = [];

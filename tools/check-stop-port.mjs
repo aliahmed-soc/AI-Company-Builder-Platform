@@ -82,6 +82,18 @@ for (const t of stopTablesCreated()) {
   storeLanded.push({ what: `${t.file} creates the "${t.table}" table` });
 }
 
+// ⚠️ GUARDED, BECAUSE AN UNGUARDED READ REPORTED BLINDNESS AS A FINDING. This file already treats a vanished
+// `ToolGates`/`DispatcherOptions` interface as exit 2 — "could not see what it guards" — but the READ itself was
+// bare, so a tree with no `dispatcher.ts` died with a raw Node ENOENT stack and exit 1: the SAME code as a real
+// violation, and with none of this checker's own diagnosis. A caller distinguishing "the port is back" from "the
+// file moved" by exit code alone would have been told the wrong thing.
+if (!existsSync(DISPATCHER)) {
+  console.error(`\n✖ stop-port check CANNOT SEE ITS TARGET: ${relative(ROOT, DISPATCHER).split('\\').join('/')} does not exist.`);
+  console.error('  That file is where the caller-injectable port would live. If the dispatcher moved, move this');
+  console.error('  check with it — do not delete it: it guards an acceptance condition of ACBP-P6-007.\n');
+  process.exit(2);
+}
+
 const dispatcherSource = readFileSync(DISPATCHER, 'utf8');
 const port = stopPortDeclaration(dispatcherSource);
 
