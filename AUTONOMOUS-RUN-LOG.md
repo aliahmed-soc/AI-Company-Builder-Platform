@@ -4076,3 +4076,54 @@ For any guard, three questions, not one:
 2. Did the walk find anything to hand them? — only a FLOOR answers this.
 3. Can a caller tell "I found something" from "I could not look"? — only distinct exit codes
    answer this, and five of nineteen checkers were using one code for both.
+
+---
+
+## 2026-08-22 — the class got a guard, and the guard found three more immediately
+
+The entry above records six blind checkers fixed one at a time. Six instances of one class is
+where the class gets a **guard** rather than a seventh fix, so it got one:
+`tools/tests/checker-hygiene.test.mjs` (`8b310f9`).
+
+It asks every checker two questions against an EMPTY tree:
+
+| Question | Satisfied by |
+| -------- | ------------ |
+| Does it report success over nothing? | a floor, or a "cannot see my target" branch |
+| Does it fail with ITS OWN diagnosis? | not a raw Node stack at exit 1 |
+
+### ⚠️ THREE MORE ON THE FIRST RUN, so the class was NINE of nineteen, not six
+
+| Checker | How it failed |
+| ------- | ------------- |
+| `check-approval-port` | raw ENOENT stack at exit 1 — **the exact hole its sibling `check-stop-port` had**, same shape, same file |
+| `check-reset-lists` | raw ENOENT stack at exit 1 on `schema.ts` |
+| `check-trust-critical-index` | `ERR_MODULE_NOT_FOUND` — least legible of the three, naming an ESM resolver rather than a missing index |
+
+`check-approval-port` is the one worth dwelling on. Its sibling had the identical defect,
+fixed earlier the same day, and **fixing one did not prompt a look at the other.** A guard does
+not have that blind spot; a person working through a list does.
+
+### Two errors in the guard itself, recorded inside it
+
+**It over-reported first.** The assertion matched the word `ENOENT` and flagged
+`check-cursor-rules-sync`, which exits 2 CORRECTLY and deliberately quotes ENOENT in its own
+message — *"ENOENT — no rule file was compared."* A checker's diagnosis may name the errno;
+what it never contains is **stack frames**. The discriminator is now a frame pattern. Matching
+the word would have punished a checker for being informative, which is how a guard earns
+deletion.
+
+**It splits the population rather than assuming one rule fits.** `check-boundaries`,
+`check-encoding` and `check-secrets` anchor their root to `import.meta.url`, so an empty `cwd`
+does not move what they scan — they scan the real repository and pass, correctly. An earlier
+probe reported all three as vacuous; that was the probe's error. The suite now pins those
+three BY NAME with a control asserting they still pass from an unrelated directory, so a
+checker moving between groups is visible rather than silent.
+
+### What this leaves
+
+The tenth instance fails the build. The first nine were each found by hand, one at a time,
+and the ninth was a sibling of the fourth.
+
+The transferable line from the whole sweep, unchanged by this addition: **reading a checker
+never found a defect; running it against a hostile fixture found every one.**
