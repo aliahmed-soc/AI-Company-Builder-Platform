@@ -18,8 +18,8 @@
 // it becomes live.
 //
 // DELIBERATELY STATIC: no database, no migrations run. It reads the migration sources and the repository source.
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
 const MIGRATIONS = join(ROOT, 'packages', 'database', 'migrations');
@@ -99,13 +99,32 @@ function selfTest() {
   ];
   const failed = cases.filter(([, pass]) => !pass).map(([name]) => name);
   if (failed.length > 0) {
+    // EXIT 2, not 1. "This check cannot be trusted" is a different fact from "a violation was found", and the
+    // five sibling checkers all say so with 2. This one said 1, which made a broken detector indistinguishable
+    // from a real billing defect by exit code.
     console.error(`✖ usage-kind-predicate SELF-TEST FAILED: ${failed.join('; ')}`);
-    process.exit(1);
+    console.error('  A clean result would be meaningless. Fix the detectors before trusting a pass.');
+    process.exit(2);
   }
 }
 
 function main() {
   selfTest();
+
+  // ⚠️ GUARDED READS. Both of these were bare, so a tree missing either path died with a raw Node ENOENT/readdir
+  // stack and exit 1 — the SAME code as a real finding, on a check whose finding means the account rollup is
+  // silently recounting already-invoiced periods. Blindness must not wear the costume of a billing defect.
+  for (const [label, path] of [
+    ['the migrations directory', MIGRATIONS],
+    ['the rollup repository', REPOSITORY],
+  ]) {
+    if (existsSync(path)) continue;
+    console.error(`\n✖ usage-kind-predicate check CANNOT SEE ITS TARGET: ${label} is not there:`);
+    console.error(`  ${relative(ROOT, path).split('\\').join('/')}`);
+    console.error('  A missing target is not agreement. If it moved, move this check with it.\n');
+    process.exit(2);
+  }
+
   const files = readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.ts'))
     .sort()
