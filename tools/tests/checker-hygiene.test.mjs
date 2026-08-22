@@ -62,9 +62,28 @@ function isCwdRooted(file) {
 const CWD_ROOTED = CHECKERS.filter(isCwdRooted);
 const ANCHORED = CHECKERS.filter((f) => !isCwdRooted(f));
 
+/**
+ * Per-test budget for the spawning cases, and the spawn budget INSIDE it.
+ *
+ * ⚠️ THE FIRST VERSION HAD THESE INVERTED and it cost a red gate. `testTimeout` is 10s repo-wide; the spawn
+ * carried `timeout: 120_000`. So a slow checker blew the TEST budget first and vitest printed
+ * `Error: Test timed out in 10000ms` with no output from the checker at all — a bare timeout where the
+ * diagnosis should have been. This repository has the rule written down: a helper's wait budget must be
+ * strictly under its test timeout, or the timeout is the only thing you ever learn.
+ *
+ * They are now ordered SPAWN < TEST, so a checker that hangs is reported as a hanging checker.
+ */
+const TEST_BUDGET_MS = 60_000;
+const SPAWN_BUDGET_MS = 45_000;
+
 /** `process.execPath`, never the string 'node' — this repository has a recorded Windows spawn failure from that. */
 function runIn(file, cwd) {
-  const r = spawnSync(process.execPath, [join(TOOLS, file)], { cwd, encoding: 'utf8', timeout: 120_000 });
+  const r = spawnSync(process.execPath, [join(TOOLS, file)], { cwd, encoding: 'utf8', timeout: SPAWN_BUDGET_MS });
+  // A killed spawn returns status null; say so rather than letting `null` flow into an exit-code assertion and
+  // read as some other failure.
+  if (r.error?.code === 'ETIMEDOUT' || (r.status === null && r.signal !== null)) {
+    return { status: 'TIMED_OUT', out: `spawn exceeded ${String(SPAWN_BUDGET_MS)}ms and was killed (signal ${String(r.signal)})` };
+  }
   return { status: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
@@ -79,59 +98,68 @@ describe('the population is split correctly, or every verdict below is about the
   });
 });
 
-describe('a cwd-rooted checker must never report success over an EMPTY tree', () => {
-  // This is the whole rule: zero findings over zero files is not a clean tree, it is a blind checker. Exit 0
-  // there means the checker cannot tell the difference, which is what `check-conflict-targets` did — it printed
-  // a green tick reading "Self-test passed" while having read nothing at all.
+describe('a cwd-rooted checker, asked the same two questions against an EMPTY tree', () => {
+  // ONE spawn per checker, both assertions from the same output.
+  //
+  // ⚠️ THIS USED TO BE TWO BLOCKS AND THEREFORE TWO SPAWNS EACH. With ~40 sequential spawns (`fileParallelism`
+  // is off repo-wide) three of which walk 900-1200 real files, a checker measured at 530ms standalone took 23
+  // SECONDS inside the suite and blew the per-test budget. The second spawn never added information: both
+  // properties are visible in one process's exit code and output.
   test.each(CWD_ROOTED)('%s', (file) => {
     const empty = mkdtempSync(join(tmpdir(), 'acbp-hygiene-'));
+    let r;
     try {
-      const r = runIn(file, empty);
-      expect(
-        r.status,
-        `${file} exited 0 over an empty directory — it reported success having scanned nothing.\n` +
-          `Give it a floor (minimum files) or an exit-2 "cannot see my target" branch.\nIts output was:\n${r.out.slice(0, 400)}`,
-      ).not.toBe(0);
+      r = runIn(file, empty);
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
-  });
+
+    expect(r.status, `${file} hung rather than answering: ${r.out}`).not.toBe('TIMED_OUT');
+
+    // (1) Zero findings over zero files is not a clean tree, it is a blind checker. This is what
+    // `check-conflict-targets` did — a green tick reading "Self-test passed" over nothing at all.
+    expect(
+      r.status,
+      `${file} exited 0 over an empty directory — it reported success having scanned nothing.\n` +
+        `Give it a floor (minimum files) or an exit-2 "cannot see my target" branch.\nIts output was:\n${r.out.slice(0, 400)}`,
+    ).not.toBe(0);
+
+    // (2) Exit 1 means "I found something" in every checker here, and a crash exits 1 too — but a crash carries
+    // a Node stack and a real finding carries the checker's own message.
+    //
+    // THE DISCRIMINATOR IS A STACK FRAME, NOT THE WORD "ENOENT". An earlier version matched `\bENOENT\b` and
+    // flagged `check-cursor-rules-sync`, which exits 2 correctly and QUOTES ENOENT as useful detail. A
+    // diagnosis may name the errno; what it never contains is `\n    at ` frames.
+    expect(
+      r.out,
+      `${file} died with a raw Node stack over an empty tree instead of reporting that it could not see its ` +
+        `target. Guard the read and exit 2.\n${r.out.slice(0, 400)}`,
+    ).not.toMatch(/\n\s+at .+\(node:|\n\s+at node:/);
+  }, TEST_BUDGET_MS);
 });
 
-describe('blindness must not be reported with a raw Node stack', () => {
-  // Exit 1 means "I found something" in every checker here. A crash also exits 1 — but a crash carries a Node
-  // stack, and a real finding carries the checker's own message. Three checkers were crashing: on emergency
-  // stop, on billing, and on migration reversal. A caller could not tell those apart.
-  test.each(CWD_ROOTED)('%s reports its own diagnosis, not a Node stack', (file) => {
-    const empty = mkdtempSync(join(tmpdir(), 'acbp-hygiene-crash-'));
-    try {
-      const r = runIn(file, empty);
-      // ⚠️ THE DISCRIMINATOR IS A STACK FRAME, NOT THE WORD "ENOENT". The first version of this assertion
-      // matched `\bENOENT\b` and flagged `check-cursor-rules-sync`, which exits 2 correctly and QUOTES ENOENT
-      // in its own message as useful detail — "ENOENT — no rule file was compared". A checker's own diagnosis
-      // may name the errno; what it never contains is `\n    at ` frames. Matching the word would have made
-      // this suite punish a checker for being informative, which is how a guard earns deletion.
-      expect(
-        r.out,
-        `${file} died with a raw Node stack over an empty tree instead of reporting that it could not see its ` +
-          `target. Guard the read and exit 2.\n${r.out.slice(0, 400)}`,
-      ).not.toMatch(/\n\s+at .+\(node:|\n\s+at node:/);
-    } finally {
-      rmSync(empty, { recursive: true, force: true });
-    }
+describe('CONTROL — the anchored tools are not exempt, the question simply does not apply', () => {
+  // ⚠️ THIS NO LONGER RE-RUNS THEM, DELIBERATELY. It used to spawn all three against a temp cwd to prove they
+  // still pass — three full walks of 900-1200 files, ~50s added to every static-gate run, to prove something
+  // `check:static` proves a few lines earlier by running each of them on the real repository. Duplicating the
+  // gate's own work inside the gate is cost without evidence.
+  //
+  // What is asserted instead is the REASON the empty-tree question does not apply to them: their root is the
+  // tool's own location, so cwd cannot move what they scan. If one ever switches to `process.cwd()` it joins
+  // CWD_ROOTED above and gets the real behavioural test.
+  test.each(ANCHORED)('%s anchors its root to import.meta.url, so cwd cannot move it', (file) => {
+    const src = readFileSync(join(TOOLS, file), 'utf8');
+    expect(src, `${file} is in the anchored group but does not derive its root from import.meta.url`).toMatch(
+      /^const (?:ROOT|REPO_ROOT)\b[^;]*import\.meta\.url/m,
+    );
   });
-});
 
-describe('CONTROL — the anchored checkers are not broken, they are simply not steerable this way', () => {
-  // Without this the suite could be read as "those three are exempt". They are not exempt; the question does not
-  // apply, and the reason is checkable: they scan the real repository regardless of cwd, so they pass there.
-  test.each(ANCHORED)('%s still passes when run from an unrelated directory', (file) => {
-    const empty = mkdtempSync(join(tmpdir(), 'acbp-hygiene-anchored-'));
-    try {
-      const r = runIn(file, empty);
-      expect(r.status, `${file} is anchored to import.meta.url, so cwd should not affect it`).toBe(0);
-    } finally {
-      rmSync(empty, { recursive: true, force: true });
-    }
+  test('the gate itself is the behavioural proof for these three', () => {
+    // Named so the reasoning above is checkable rather than asserted: check:static runs each of them.
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+    const chain = pkg.scripts['check:static'] ?? '';
+    const names = [...chain.matchAll(/pnpm run ([a-z0-9:-]+)/g)].map((m) => m[1]);
+    const run = names.map((n) => (pkg.scripts[n] ?? '').match(/node tools\/([A-Za-z0-9_\-/.]+\.mjs)/)?.[1]).filter(Boolean);
+    for (const a of ANCHORED) expect(run, `${a} is not run by check:static, so nothing proves it passes`).toContain(a);
   });
 });
