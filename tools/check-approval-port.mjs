@@ -94,6 +94,18 @@ for (const t of approvalTablesCreated()) {
   storeLanded.push({ what: `${t.file} creates the "${t.table}" table` });
 }
 
+// ⚠️ GUARDED. This file already treats a vanished port-host INTERFACE as exit 2 — "cannot see what it guards" —
+// but the READ was bare, so a tree without `dispatcher.ts` died with a raw Node stack at exit 1: the SAME code as
+// a real finding, and with none of this checker's own diagnosis. Its sibling `check-stop-port.mjs` had the
+// identical hole. Found by `tools/tests/checker-hygiene.test.mjs`, which asks every cwd-rooted checker the same
+// question against an empty tree.
+if (!existsSync(DISPATCHER)) {
+  console.error(`\n✖ approval-port check CANNOT SEE ITS TARGET: ${relative(ROOT, DISPATCHER)} does not exist.`);
+  console.error('  That file is where the caller-injectable port would live. If the dispatcher moved, move this');
+  console.error('  check with it — do not delete it: it guards an acceptance condition of ACBP-P6-003.\n');
+  process.exit(2);
+}
+
 const dispatcherSource = readFileSync(DISPATCHER, 'utf8');
 const port = approvalPortDeclaration(dispatcherSource);
 
