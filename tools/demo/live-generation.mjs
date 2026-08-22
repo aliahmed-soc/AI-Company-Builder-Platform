@@ -13,7 +13,7 @@
 // Run:  node tools/demo/live-generation.mjs
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME } from '@acbp/adapters';
+import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME, grantLiveCalls } from '@acbp/adapters';
 import { Secret } from '@acbp/config';
 import { toModelId } from '@acbp/contracts';
 
@@ -102,7 +102,15 @@ COMPANY:
 ${COMPANY_BRIEF}
 `.trim();
 
-const provider = new AnthropicModelProvider({ apiKey: new Secret(apiKey) });
+// ── THE OWNER-PRESENCE GRANT (AGENTS.md §1) ────────────────────────────────────────────────────────────────
+// This script IS the owner-present path: a human runs it deliberately, at a terminal, having just decided to
+// spend money. So it is the one place a grant is legitimately issued — and it is issued for EXACTLY ONE call,
+// because that is exactly how many this script makes. If the script ever grew a retry or a second prompt, the
+// grant would refuse it and the author would have to come back here and say so out loud.
+//
+// Everywhere else — every composed runtime, every route, every test — the default stands, and the default is
+// refusal.
+const provider = new AnthropicModelProvider({ apiKey: new Secret(apiKey), ownerPresence: grantLiveCalls(1) });
 
 console.log(`provider : ${ANTHROPIC_PROVIDER_NAME}`);
 console.log(`model    : ${modelId}`);

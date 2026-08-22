@@ -45,10 +45,15 @@ it). Read those before your first ticket. They are not repeated here.
   every one. This holds regardless of automation level, and holds until
   the credit-reservation ledger is actually wired to the generate routes
   (ACBP-API-009; see CDR-096 for why it cannot ship as written).
-  **This paragraph is currently the only thing enforcing it** — prose an
-  agent can read past. An executable, fail-closed form is being added
-  under the ticket that adopted this rule; when it lands, this bullet
-  names the mechanism instead of admitting it has none.
+  **Enforced in code, not only here.**
+  `packages/adapters/src/model/owner-presence.ts` refuses by default and
+  consumes a single-use grant per call, so an agent that read past this
+  paragraph is still stopped by a throw. The composed runtime
+  (`clerk-identity.ts`) supplies no grant, so a deployed application
+  refuses live calls; `tools/demo/live-generation.mjs`, which a human runs
+  deliberately, grants exactly one. It is a tripwire against an unattended
+  call, NOT a defence against code that grants itself permission — the
+  module says so itself rather than implying more than it delivers.
 
 If the next Ready item needs one of these, **stop**. Don't substitute
 easier work silently, don't lower scope to dodge it, don't guess a
