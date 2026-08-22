@@ -17,16 +17,41 @@
 // SPLITS the population on how each resolves its root and only asks the empty-tree question of those it applies
 // to. Mis-attributing a hole is the same class of error as having one.
 import { describe, test, expect } from 'vitest';
-import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const TOOLS = join(process.cwd(), 'tools');
 
-const CHECKERS = readdirSync(TOOLS)
-  .filter((f) => /^check-.*\.mjs$/.test(f))
-  .sort();
+/**
+ * Every tool the STATIC GATE actually runs, derived from `check:static` — not from a filename glob.
+ *
+ * ⚠️ THIS USED TO GLOB `check-*.mjs`, WHICH IS A NAMING CONVENTION, AND KEYING A GUARD ON A NAMING CONVENTION IS
+ * THE DEFECT THIS REPOSITORY KEEPS FINDING. `check-generate-route-coverage.mjs` swept for `*ForRequest` handlers
+ * and a one-word rename made two paid routes invisible to it. `check-rate-limit-coverage.mjs` matched
+ * `export function GET` and could not see three other ways a route is exported.
+ *
+ * The glob here had the same shape and the same result: `tools/render-scenario-evidence.mjs` runs in
+ * `check:static` and was NOT covered, purely because it is not spelled `check-`. It happens to handle a missing
+ * source correctly (exit 2) — but that was luck, not coverage, and the next tool added under a different name
+ * would have been invisible too.
+ *
+ * Reading the gate answers the question that matters: *what does the build actually run?*
+ */
+function gateTools() {
+  const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+  const chain = pkg.scripts['check:static'] ?? '';
+  const names = [...chain.matchAll(/pnpm run ([a-z0-9:-]+)/g)].map((m) => m[1]);
+  const files = [];
+  for (const n of names) {
+    const m = (pkg.scripts[n] ?? '').match(/node (tools\/[A-Za-z0-9_\-/.]+\.mjs)/);
+    if (m) files.push(m[1].replace(/^tools\//, ''));
+  }
+  return [...new Set(files)].sort();
+}
+
+const CHECKERS = gateTools();
 
 /** Does this checker's root come from `process.cwd()`? Only those can be steered by spawning elsewhere. */
 function isCwdRooted(file) {
