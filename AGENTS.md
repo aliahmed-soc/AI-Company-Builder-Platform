@@ -486,6 +486,44 @@ following proceeds without asking, end to end, in this order:
 7. Verify CI green with zero skips **on the new `main` head**, by the
    same two tests. A merge can produce a head neither parent tested.
 8. **Tree-identity check**, then delete the branch — never before.
+9. **Then sweep for OTHER branches whose PR has since merged, and delete
+   those too.** Not optional, and not "when someone notices": finishing a
+   ticket includes leaving the branch list true. This step exists because
+   it was skipped for months — a sweep on 2026-08-22 found **nine**
+   branches, local and remote, whose PRs had merged as far back as
+   2026-08-07 and which nobody had removed. Owner instruction, same date:
+   *"do this step every time you finish, every time."*
+
+**How to decide what may be deleted — the tests that are wrong, and the
+one that is right.** All three were tried on 2026-08-22 and the first two
+produced wrong answers:
+
+- ❌ **Ancestry** (`git merge-base --is-ancestor`). A squash merge makes
+  the branch head unreachable from `main` by construction, so this says
+  "not merged" about every squash-merged branch. It is not evidence
+  either way.
+- ❌ **File presence** (does `main` have every path the branch has). This
+  called `p8-api-006-model-gateway` deletable when NINE of its files
+  differ in content. Presence is not equality, and §25.2 forbids deleting
+  a branch whose content differs.
+- ✅ **Provenance, then tree-identity.** Did the branch's OWN pull request
+  merge? If yes, compare the branch's tree to that PR's squash commit
+  (`git rev-parse <branch>^{tree}` vs `<mergeCommit>^{tree}`). Equal trees
+  are the content-equality proof step 8 requires.
+
+A branch whose PR was **closed unmerged**, or that has **no PR at all**,
+is the only copy of whatever it holds and is never deleted here — even
+when its work reached `main` some other way, because the branch still
+holds the version that did not. `p1-004-last-owner-race-fix` and
+`p3-006-strategy-eval-area` are both kept for exactly that reason: their
+work merged from rebased branches, and the originals hold the pre-rebase
+text.
+
+⚠️ **A relocation is not divergence.** The first sweep called 24 branches
+divergent because each held
+`apps/web/src/app/{page.tsx,sign-in,sign-up}`, which `main` "lacks" — they
+were MOVED into `app/(site)/` by `c4a714c`. Before treating a missing path
+as unique content, look for where it went.
 
 ### 25.2 Pre-authorized: closing a PR as superseded
 
