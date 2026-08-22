@@ -330,7 +330,7 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
     test('generate REFUSES when no gate was supplied — an omitted gate is a refusing gate, not an absent one', async () => {
       // Constructed WITHOUT `ownerPresence`. If the default were permissive, or if the field were optional at the
       // call site (`this.#ownerPresence?.`), this would resolve instead of throwing.
-      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) as never });
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) });
 
       await expect(p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES })).rejects.toBeInstanceOf(
         LiveCallNotAuthorizedError,
@@ -345,7 +345,7 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       // empty array and asserted `toHaveLength(0)` — which an empty array satisfies whether or not the client was
       // called, so it could not have failed. §3: could a wrong implementation produce this same result? It could.
       const client = stubClient(okReply());
-      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: client as never });
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client });
 
       await p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES }).catch(() => undefined);
 
@@ -356,7 +356,7 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       // "Every time, not just the first time" — the clause that makes this a per-call gate rather than a switch.
       const p = new AnthropicModelProvider({
         apiKey: FAKE_KEY,
-        client: stubClient(okReply()) as never,
+        client: stubClient(okReply()),
         ownerPresence: grantLiveCalls(1),
       });
       const req = { modelId: toModelId('claude-opus-5'), messages: MESSAGES };
@@ -371,7 +371,7 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       const client = stubClient(okReply());
       const p = new AnthropicModelProvider({
         apiKey: FAKE_KEY,
-        client: client as never,
+        client,
         ownerPresence: grantLiveCalls(1),
       });
 
@@ -382,7 +382,7 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
     });
 
     test('SECURITY: the refusal never carries the credential', async () => {
-      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) as never });
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) });
 
       const err = await p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES }).catch((e: unknown) => e);
 
