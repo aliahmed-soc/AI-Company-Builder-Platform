@@ -7,7 +7,9 @@ _Read this first on resume, then continue automatically to "Next executable acti
 > ⚠️ **This heading used to read "CI IS STILL BLOCKED", and had for three weeks after it stopped being true.**
 > The resolution was recorded in this same section on 2026-07-31 — below the heading, where a reader following
 > this file's own instruction to *"read this first on resume"* would meet the false claim before the correction.
-> Hosted CI has been green continuously since; this session alone merged six PRs on hosted zero-skip runs.
+> Hosted CI has been green continuously since — **eight commits landed on `main` on 2026-08-22 alone**, each
+> on a hosted zero-skip run verified on its exact head. (Counted from `git log`, because the first draft of this
+> very sentence said "six" from memory and was wrong.)
 > The historical account below is kept, because it is accurate about the period it describes. Only its opening
 > sentence changed — it said CI "has produced no run since 2026-07-28", an open-ended claim that stayed false
 > forever; it now carries the end date. Everything after that sentence is untouched, including its own
