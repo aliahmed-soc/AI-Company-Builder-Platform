@@ -6,7 +6,7 @@
 // BOUNDARY. `@acbp/core` is the composition layer and MAY import `@acbp/adapters`; it must never import a
 // provider SDK itself. `AnthropicModelProvider` is imported here as an already-built adapter — `@anthropic-ai/sdk`
 // appears nowhere in this package, exactly as `@clerk/backend` does not.
-import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME } from '@acbp/adapters';
+import { AnthropicModelProvider, ANTHROPIC_PROVIDER_NAME, type OwnerPresenceGate } from '@acbp/adapters';
 import { toModelId, type ModelGatewayRequest } from '@acbp/contracts';
 import type { Secret } from '@acbp/config';
 import type { DatabaseClient } from '@acbp/database';
@@ -21,6 +21,17 @@ export interface AnthropicGatewayConfig {
   readonly gateway?: Omit<ModelGatewayCompositionConfig, 'primary' | 'fallback' | 'estimateCost'> & {
     readonly estimateCost?: (input: CostInput) => number;
   };
+  /**
+   * Authorization for live, paid calls (AGENTS.md §1). **Omitted means every live call is refused.**
+   *
+   * THIS IS THE PATH THAT MATTERS. Composing the runtime is what makes spending possible at all, so the default
+   * here decides whether a deployed application can bill the owner by accident. It is refusal: a runtime composed
+   * without an explicit, single-use grant throws on the first generate attempt rather than succeeding quietly.
+   *
+   * The gate is a tripwire against an unattended call, not a defence against code that chooses to grant itself
+   * permission — `owner-presence.ts` says so in its own header rather than implying more than it can deliver.
+   */
+  readonly ownerPresence?: OwnerPresenceGate;
 }
 
 /**
@@ -49,7 +60,12 @@ export function estimateAnthropicCostMicros(input: CostInput): number {
  * appearance of redundancy that the policy forbids using.
  */
 export function createAnthropicGateway(client: DatabaseClient, config: AnthropicGatewayConfig): BoundModelGateway {
-  const provider = new AnthropicModelProvider({ apiKey: config.apiKey });
+  // `ownerPresence` is FORWARDED, never defaulted here. The provider owns the default (refusal), so an omitted
+  // gate stays a refusal; deciding it again at this layer would put the answer in two places that can disagree.
+  const provider = new AnthropicModelProvider({
+    apiKey: config.apiKey,
+    ...(config.ownerPresence !== undefined ? { ownerPresence: config.ownerPresence } : {}),
+  });
   return createModelGateway(client, {
     ...(config.gateway ?? {}),
     primary: {

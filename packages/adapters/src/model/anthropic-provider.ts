@@ -12,6 +12,7 @@
 // `@clerk/backend`. Nothing above this layer may import `@anthropic-ai/sdk`.
 import Anthropic from '@anthropic-ai/sdk';
 import type { Secret } from '@acbp/config';
+import { refuseAllLiveCalls, type OwnerPresenceGate } from './owner-presence.js';
 import {
   PlatformError,
   ErrorCodes,
@@ -83,6 +84,16 @@ export interface AnthropicProviderOptions {
   /** Constructs the client from the resolved options — the seam the maxRetries guard inspects. */
   readonly clientFactory?: (options: Record<string, unknown>) => AnthropicMessagesClient;
   readonly timeoutMs?: number;
+  /**
+   * Authorization for live, paid calls (AGENTS.md §1). **Defaults to refusing everything.**
+   *
+   * DELIBERATELY UNCONDITIONAL — it is not inferred from whether a test seam was supplied. Inferring it would
+   * mean `clientFactory`, which is free to return a real SDK client, silently disabled the gate. That is the
+   * exact shape of the credential-gate bug recorded a few lines below: a gate an unrelated option can step
+   * around is not a gate. Every construction path gets the same answer, and tests say `grantLiveCalls(n)` out
+   * loud, which also makes each of them state how many calls it expects to make.
+   */
+  readonly ownerPresence?: OwnerPresenceGate;
 }
 
 /** Anthropic `stop_reason` → the platform's finish states. An unrecognised reason is an ERROR, never a success. */
@@ -163,9 +174,13 @@ function normalizeSdkError(err: unknown): PlatformError {
 export class AnthropicModelProvider implements ModelProvider {
   readonly #client: AnthropicMessagesClient;
   readonly #timeoutMs: number;
+  readonly #ownerPresence: OwnerPresenceGate;
 
   constructor(options: AnthropicProviderOptions) {
     this.#timeoutMs = options.timeoutMs ?? ANTHROPIC_CLIENT_TIMEOUT_MS;
+    // Fails closed: an omitted gate is a REFUSING gate, never an absent one. Assigning `undefined` here and
+    // reaching for `?.` at the call site would make forgetting to pass a gate the permissive outcome.
+    this.#ownerPresence = options.ownerPresence ?? refuseAllLiveCalls();
 
     // ── THE CREDENTIAL GATE (CDR-091 §5; owner ruling 2026-08-14) ────────────────────────────────────────────
     // OAuth-shaped credentials are REFUSED, not routed. Anthropic restricts them to Claude Code and Claude.ai,
@@ -210,6 +225,13 @@ export class AnthropicModelProvider implements ModelProvider {
   }
 
   async generate(request: ModelProviderRequest, options?: AdapterCallOptions): Promise<ModelProviderResponse> {
+    // ── THE OWNER-PRESENCE GATE (AGENTS.md §1; adopted from PR #109) ─────────────────────────────────────────
+    // FIRST STATEMENT IN THE METHOD, and the position is the point — it must precede prompt assembly, the clock,
+    // and the network, so a refused call costs nothing and cannot half-happen. The authorization is CONSUMED
+    // here, so a second call needs a second grant: "every time, not only the first time" is the rule's own
+    // wording, and a grant that survived its call would turn one human "yes" into an unbounded paid run.
+    this.#ownerPresence.authorizeOneCall({ modelId: String(request.modelId) });
+
     // The Messages API takes the system prompt as a TOP-LEVEL parameter; a `system` role inside `messages` is
     // rejected with a 400. Splitting here rather than at the call site keeps every caller provider-neutral.
     const system = request.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');

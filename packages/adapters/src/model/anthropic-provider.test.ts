@@ -19,6 +19,7 @@ import {
   UnsupportedCredentialError,
   classifyCredential,
 } from './anthropic-provider.js';
+import { LiveCallNotAuthorizedError, grantLiveCalls } from './owner-presence.js';
 
 /**
  * A synthetic key, never a real one — and DELIBERATELY NOT KEY-SHAPED.
@@ -71,8 +72,15 @@ function okReply(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * A provider authorized for EXACTLY ONE live call.
+ *
+ * The grant is explicit rather than defaulted, because the default is refusal (AGENTS.md §1) and every test that
+ * calls `generate` is thereby stating how many calls it expects to make. A test that accidentally called twice
+ * would fail on the second, which is the behaviour under test rather than an obstacle to it.
+ */
 function provider(client: unknown, apiKey: Secret = FAKE_KEY) {
-  return new AnthropicModelProvider({ apiKey, client: client as never });
+  return new AnthropicModelProvider({ apiKey, client: client as never, ownerPresence: grantLiveCalls(1) });
 }
 
 describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
@@ -313,6 +321,73 @@ describe('AnthropicModelProvider — ACBP-API-006 / CDR-091', () => {
       .generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES })
       .catch((e: unknown) => e);
     expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(FAKE_KEY.reveal());
+  });
+
+  // ── THE OWNER-PRESENCE GATE (AGENTS.md §1; adopted from PR #109) ───────────────────────────────────────────
+  // Deleting the `authorizeOneCall` line from `generate` makes every test in this block fail. That is the point
+  // of the block: before it existed, the rule was a paragraph in AGENTS.md and nothing could go red.
+  describe('AGENTS.md §1 — no live call without owner authorization, every time', () => {
+    test('generate REFUSES when no gate was supplied — an omitted gate is a refusing gate, not an absent one', async () => {
+      // Constructed WITHOUT `ownerPresence`. If the default were permissive, or if the field were optional at the
+      // call site (`this.#ownerPresence?.`), this would resolve instead of throwing.
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) as never });
+
+      await expect(p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES })).rejects.toBeInstanceOf(
+        LiveCallNotAuthorizedError,
+      );
+    });
+
+    test('the refusal happens BEFORE the client is touched — a refused call costs nothing', async () => {
+      // A gate that ran after prompt assembly, or after the request left, would still bill. `create` must not
+      // have been reached at all.
+      //
+      // Asserted on the MOCK, not on a capture object. The first version of this test declared `capture` as an
+      // empty array and asserted `toHaveLength(0)` — which an empty array satisfies whether or not the client was
+      // called, so it could not have failed. §3: could a wrong implementation produce this same result? It could.
+      const client = stubClient(okReply());
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: client as never });
+
+      await p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES }).catch(() => undefined);
+
+      expect(client.messages.create, 'the SDK client was called despite the gate refusing').not.toHaveBeenCalled();
+    });
+
+    test('a grant is consumed per call: the FIRST succeeds and the SECOND is refused', async () => {
+      // "Every time, not just the first time" — the clause that makes this a per-call gate rather than a switch.
+      const p = new AnthropicModelProvider({
+        apiKey: FAKE_KEY,
+        client: stubClient(okReply()) as never,
+        ownerPresence: grantLiveCalls(1),
+      });
+      const req = { modelId: toModelId('claude-opus-5'), messages: MESSAGES };
+
+      await expect(p.generate(req)).resolves.toBeDefined();
+      await expect(p.generate(req)).rejects.toBeInstanceOf(LiveCallNotAuthorizedError);
+    });
+
+    test('CONTROL: with a grant, the call really does go through — the refusals above are not vacuous', async () => {
+      // Without this, a provider that refused unconditionally would satisfy every test above while destroying
+      // the product. This is the assertion that makes the gate a gate rather than a wall.
+      const client = stubClient(okReply());
+      const p = new AnthropicModelProvider({
+        apiKey: FAKE_KEY,
+        client: client as never,
+        ownerPresence: grantLiveCalls(1),
+      });
+
+      const res = await p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES });
+
+      expect(res.finishStatus).toBe('completed');
+      expect(client.messages.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('SECURITY: the refusal never carries the credential', async () => {
+      const p = new AnthropicModelProvider({ apiKey: FAKE_KEY, client: stubClient(okReply()) as never });
+
+      const err = await p.generate({ modelId: toModelId('claude-opus-5'), messages: MESSAGES }).catch((e: unknown) => e);
+
+      expect(JSON.stringify(err, Object.getOwnPropertyNames(err))).not.toContain(FAKE_KEY.reveal());
+    });
   });
 
   test('the provider name is bounded and non-secret', () => {
