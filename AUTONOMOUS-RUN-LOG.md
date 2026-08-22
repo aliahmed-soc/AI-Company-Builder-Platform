@@ -4008,3 +4008,71 @@ applies to the DEFAULT scan only, which is the case it was written for.
 All three fixes are mutation-proven, with each mutation verified to have landed and each file
 restored byte-identical. One mutation attempt did NOT apply and the suite reported 18 passed;
 the mutation script's own guard caught it and aborted rather than recording a false survival.
+
+---
+
+## 2026-08-22 — six of nineteen checkers could not see, and reading them never showed it
+
+The §3 guard-reachability sweep continued to its end. Nineteen checkers, **six live defects**,
+all mutation-proven, merged as `824de2a` and `c35d444`.
+
+### The six
+
+| Checker | What it could not do |
+| ------- | -------------------- |
+| `check-rate-limit-coverage` | see three of the four ways a route is exported — an unmetered route passed green |
+| `check-conflict-targets` | tell an empty directory from a clean tree; it also ignored an explicit root |
+| `check-boundaries` | say whether it had read 906 files or none |
+| `check-stop-port` | distinguish blindness from an emergency-stop bypass — both exit 1 |
+| `check-usage-kind-predicate` | distinguish blindness from a BILLING defect — both exit 1 |
+| `check-migration-drain-loops` | distinguish blindness from a migration defect — both exit 1 |
+
+The last three are one defect wearing three coats: an unguarded `readFileSync`/`readdirSync`
+died with a raw Node stack at **exit 1**, which is the code those checkers use for *"I found
+something"*. Their self-test failures were exit 1 too, where all five sibling checkers use 2.
+
+### ⚠️ WHAT FOUND THEM, AND WHAT NEVER DID
+
+**Reading a checker never found a defect. Running it against a hostile fixture always did.**
+
+That is the transferable part. An embedded self-test proves the DETECTORS still match; it
+says nothing about whether anything reached them, or whether the exit codes tell "found" from
+"blind" apart. Two of these had thorough self-tests and were blind anyway — and I used
+"it has a self-test" as a proxy for "it is a control", which is how `check-conflict-targets`
+was cleared on the first pass with the worse hole of the two.
+
+**The suites documented traps they never closed.** The drain-loops floor note said it
+verbatim: *"a missing directory is an uncaught ENOENT — exit 1 with a stack trace… a test
+asserting only `status === 1` would happily accept it."* Accurate, and inert: the suite then
+asserted only exit 0 and exit 1. A comment is not a control.
+
+`check-usage-kind-predicate` went further — two of its tests **asserted the crash as correct
+behaviour**. Fixing the checker turned them red, which is exactly the moment to ask which of
+the two is wrong. Here it was the checker.
+
+### One blind spot recorded rather than fixed
+
+`check-stop-port`'s `stopTablesCreated()` filters `.ts/.mts/.mjs/.js`, so a `.sql` migration
+creating `emergency_stops` would be invisible. There are none today, and a test asserts that.
+The day one appears the test goes red and the checker must be widened rather than relaxed.
+
+### Four of my own errors, kept in the record
+
+1. **I declined the last three suites** as "defense-in-depth, not a live fix." Wrong three
+   times out of three — each held a real defect that only surfaced when the test was written.
+2. **A guard of mine false-positived three times on prose I had written moments earlier** — it
+   matched a cross-reference in a header comment. In a task about substring matching.
+3. **A test that could not run looked like a test that caught something.** The first draft of
+   the drain-loops blindness case spawned `[CHECKER]`, a name that suite does not define (it
+   calls it `SCRIPT`), so the process never started and the assertion read `status -1`.
+4. **A mutation silently failed to apply** and the suite reported 18 passed — a false
+   survival. The mutation script's own guard caught it and aborted.
+
+### The rule this leaves behind
+
+For any guard, three questions, not one:
+
+1. Do the detectors still recognise the defect? — an embedded self-test answers this.
+2. Did the walk find anything to hand them? — only a FLOOR answers this.
+3. Can a caller tell "I found something" from "I could not look"? — only distinct exit codes
+   answer this, and five of nineteen checkers were using one code for both.
