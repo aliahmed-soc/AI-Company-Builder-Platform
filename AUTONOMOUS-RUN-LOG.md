@@ -3731,3 +3731,69 @@ Every one of these is the same shape: **a cheap check that answers the question 
 ask only when nothing unusual is true, and answers confidently when something is.** The
 failure is not the tool. It is treating a fast pattern match as evidence rather than as a
 pointer to something worth opening.
+
+---
+
+## 2026-08-22 — a governing ruling was cited by five production files and existed on no branch anyone tracked
+
+`CDR-090` was written 2026-08-14 on the branch `p8-api-006-cdr`. **No pull request ever
+tracked it.** It never reached `main`. It was found only because an audit of leftover
+branches asked what each one held.
+
+Ten files that DID merge cite it:
+
+| Where | What it relies on |
+| ----- | ----------------- |
+| `packages/config/src/index.ts` | §1-G3 |
+| `packages/config/src/rate-limits.ts` | §3.3 |
+| `packages/core/src/composition/anthropic-gateway.ts` | §1 |
+| `packages/core/src/composition/clerk-identity.ts` | §1-G3 |
+| `apps/web/src/server/webhooks/clerk-runtime.ts` | §1-G3 |
+| `docs/implementation/API-BACKLOG.csv` | row ACBP-API-012, "CDR-090 §1-G3" |
+| `CDR-091`, `CDR-092`, `CDR-094` | CDR-091 both **links** it and supersedes §3.1–§3.5 |
+| `AUTONOMOUS-RUN-LOG.md` | — |
+
+**Five are production source.** §1-G3 is the ruling that an absent or misconfigured
+`ANTHROPIC_API_KEY` must fail at **startup** rather than per-request; three separate files
+cite it to explain why they are written the way they are. None of those citations could be
+followed. CDR-091's relative link `[CDR-090](CDR-090-…md)` rendered as an ordinary link and
+went nowhere for eight days.
+
+### What made it dangerous rather than merely untidy
+
+The document survived on a branch that happened not to be deleted. `git branch -D` would
+have destroyed a ruling five production files and three merged CDRs depend on, and **nothing
+in this repository would have gone red.** Branch cleanup is a routine, encouraged action;
+this session had already deleted eight worktrees and several merged branches.
+
+### Why every gate was green over it
+
+Nothing here had ever read a citation. Typecheck, lint, the secret scan, twenty-one static
+checks and 5,015 tests all pass over a document citing a document that does not exist,
+because a citation is prose and **prose cannot go stale loudly** — the same root cause
+recorded in the 2026-08-20 class lesson two entries above, arriving in a new disguise.
+
+### The guard
+
+`tools/check-doc-links.mjs`, wired into `check:static`. Two questions: every `CDR-NNN`
+cited in any tracked source, doc, CSV, SQL or workflow file has a file; every relative
+Markdown link resolves. It scans **source, not just `docs/`** — 88 distinct CDR numbers are
+cited from TypeScript, and a comment pointing at nothing is the more dangerous half, because
+a reader trusts it and cannot follow it.
+
+Proven RED twice against the real defect before being trusted green: once with CDR-090
+removed, once against two genuinely broken links it found on its first run
+(`packages/core/src/tenancy/adversarial/README.md` pointed at `./threat-inventory.ts` and
+`./two-tenant-harness.ts`; both live in `packages/test-support/src/tenancy/`). That README
+is the map of a 100-test adversarial isolation suite, and its two most-followed links went
+nowhere. Both fixed here.
+
+Current repository: 2,119 citations across 1,203 files all resolve to 96 documents; 15
+relative Markdown links all exist.
+
+### The rule worth keeping
+
+**A branch with no pull request is not tracked work — it is a single copy.** Before deleting
+any branch, ask what merged content cites it. The check now answers that from the other
+direction, which is the reliable one: it does not matter whether anyone remembers the branch
+if `main` can no longer resolve its own citations.
