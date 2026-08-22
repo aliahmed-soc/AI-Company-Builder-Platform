@@ -38,6 +38,17 @@ it). Read those before your first ticket. They are not repeated here.
 - Widening any permission, scope, or default beyond an existing
   **recorded** ruling — a past ruling only covers what it actually
   decided, never a similar-looking new situation
+- **Every live, paid model call — one at a time, every time.** Once
+  `ANTHROPIC_API_KEY` exists in the environment, that is a credential,
+  not a permission. No live call may happen without the owner present
+  and saying "run it" for **that specific call** — not the first one,
+  every one. This holds regardless of automation level, and holds until
+  the credit-reservation ledger is actually wired to the generate routes
+  (ACBP-API-009; see CDR-096 for why it cannot ship as written).
+  **This paragraph is currently the only thing enforcing it** — prose an
+  agent can read past. An executable, fail-closed form is being added
+  under the ticket that adopted this rule; when it lands, this bullet
+  names the mechanism instead of admitting it has none.
 
 If the next Ready item needs one of these, **stop**. Don't substitute
 easier work silently, don't lower scope to dodge it, don't guess a
@@ -89,6 +100,26 @@ This project has been burned by exactly this five separate times:
 Every one of these looked like evidence at the time. None of them were.
 Apply this question to search results, "I confirmed X," measurements,
 and completion claims — not just to test runs.
+
+**And for every guard, ask the second question: does it actually RUN on
+the path that matters?** A guard's existence is not its reachability.
+Verify the caller, not the definition — open the script that invokes it,
+the CI job that runs that script, and the code path the defect would
+actually take. Four separate guards in one week were green while the
+defect they were written for was live:
+
+- a metered-route checker blind to two paid routes, because its
+  directory list predated them
+- a vocabulary guard that passed against a badge still rendering on
+  screen
+- an undefined CSS token reported as defined, because `--danger` is a
+  suffix of `--c-danger`
+- a dataset well-formedness assertion the scorer never called, so one
+  argument bypassed it
+
+None of these were broken. Each was correct code that nothing reached
+with the input that mattered. A guard you have not watched go RED
+against the real defect is a hypothesis, not a control.
 
 ## 4. Money paths always get the full bar
 
@@ -238,7 +269,9 @@ applies to a green checkmark as much as to anything else.
 ## 15. Git and PR policy
 
 - Never commit to `main`. One ticket, one PR. The PR stays DRAFT until
-  the owner authorizes otherwise.
+  the owner authorizes otherwise — **or until §25's standing
+  authorization applies**, which is such an authorization, given once
+  and in advance rather than per PR.
 - Conventional commit messages, and **no `Co-authored-by` trailer**. Some
   tooling appends one automatically; check the committed message and
   strip it before pushing rather than assuming the message you passed is
@@ -268,8 +301,14 @@ an explicit human "STOP".
   authorization, tenant isolation, deletion semantics, the public API, or
   provider strategy
 - Setting a ticket Done, marking a PR ready, merging to `main`, or
-  deleting a branch after merge
-- Starting a different ticket
+  deleting a branch after merge — **except where §25's standing
+  authorization covers it**, which pre-authorizes exactly this sequence
+  for branches built under an existing ruling or ticket, under stated
+  conditions. Marking an **owner-gated backlog row** Done is never
+  covered, and neither is deleting a branch whose content differs from
+  `main`.
+- Starting a different ticket — except continuing to the next Ready,
+  non-gated item, which §25 requires rather than merely permits
 - An unrecoverable blocker, after reasonable diagnosis and one targeted
   fix attempt
 - Anything outside the active ticket's approved scope
@@ -406,3 +445,94 @@ hide a failed test, omit a changed file or a load-bearing assumption,
 present partial work as complete, describe planned work as implemented,
 describe generated output as an executed action, or expose a secret. It
 is part of the deliverable, not optional reporting.
+
+## 25. Standing finalization authorization
+
+Granted by the owner 2026-08-22, in advance and until withdrawn. It
+replaces per-PR permission for mechanical finalization **only**. It
+widens nothing in §1, and §16 still governs everything not named here.
+
+> **On the number.** The owner's grant called this "§16". §16 was
+> already taken by *Owner authorization gates*, is cited 25 times across
+> the repository, and is the very section this one defers to — so
+> renumbering would have broken those citations and inverted the
+> reference. It landed as §25 with §15 and §16 amended to point here.
+> The content is the grant as written.
+
+### 25.1 Pre-authorized: the full finalization sequence
+
+For any branch built under an **existing ruling or ticket**, all of the
+following proceeds without asking, end to end, in this order:
+
+1. Rebase onto current `main`.
+2. Resolve **pure append collisions** — two branches appending to the
+   same file. Place entries by their own dates, never blind-append; a
+   log that stops being a chronology is a corrupted log. Anything that
+   is not a pure append collision is a judgment call (§6).
+3. Open the PR.
+4. Wait for hosted CI on the **exact head SHA**.
+5. Verify green with **zero skips, from the logs, by arithmetic AND by
+   name.** Arithmetic: the parenthesized total equals the passed count
+   (`Tests 5031 passed (5031)`) — a skip prints its own count and breaks
+   that equality. By name: the suites that had to run are present in the
+   log by filename. A conclusion of `success` is not this check; a run
+   that skipped the suite proving the change would also say `success`.
+6. Mark ready; squash-merge.
+7. Verify CI green with zero skips **on the new `main` head**, by the
+   same two tests. A merge can produce a head neither parent tested.
+8. **Tree-identity check**, then delete the branch — never before.
+
+### 25.2 Pre-authorized: closing a PR as superseded
+
+Permitted with a written explanation when **either** is proven:
+
+- its content is **blob-identical** to `main` (`git rev-parse
+  branch:path` equals `main:path`), or
+- its content is **provably contradicted** by `main` — the disagreement
+  named, with the evidence, not asserted.
+
+Compare by `git ls-tree -r --name-only`, never `git diff main...branch`,
+which reports every file as added after a squash merge and will tell you
+a fully-merged branch is unique.
+
+**A branch whose content differs from `main` is NEVER deleted under this
+authorization.** Keep it, and name it in the report. `CDR-090` was cited
+by five production files while existing only on a branch no PR tracked;
+one routine deletion would have destroyed it with nothing going red.
+`tools/check-doc-links.mjs` now fails the build on a citation with no
+document, but it protects `main`, not branches.
+
+**Evidence branches are never merged, closed, or deleted** — including
+every `DO-NOT-MERGE` mutation probe and every `p7-008-probe-*` branch,
+each of which IS a recorded run id's evidence. Label them; leave them.
+
+### 25.3 Cadence
+
+Work the queue to exhaustion every session. Do not stop after one item.
+Do not hold mechanical work for permission. Move to the next Ready,
+non-gated item without checking in between items.
+
+Stop only at a §7 true stop condition, a §1 hard gate, a §16 owner gate,
+or an explicit human "STOP". End every session by writing the **resume
+point** — the next actionable item and what it needs — so the next
+session continues without owner input.
+
+The owner typing **"continue"** is full re-authorization of this
+section.
+
+### 25.4 Explicitly OUTSIDE this authorization
+
+Unchanged, and not softened by anything above:
+
+- Everything in §1, without exception
+- Live model calls — owner present, per call (§1)
+- Spending, credentials, keys, accounts
+- Widening any permission, scope, or authorization action
+- New domain logic added under an exposure ticket — routing an existing
+  use case is exposure; adding a read or a behaviour that core does not
+  have is a domain addition and needs its own gate
+- Marking an **owner-gated** backlog row Done
+- Deleting a branch whose content differs from `main`
+
+If a step in 25.1 would require one of these, the authorization stops at
+that step. It does not extend by proximity.
