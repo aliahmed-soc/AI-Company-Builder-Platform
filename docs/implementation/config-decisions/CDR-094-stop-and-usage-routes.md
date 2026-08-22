@@ -254,6 +254,14 @@ than to the parser.
 bar written as *a test proves it, not a comment asserting it* — because this row exists precisely because prose
 claimed a property the code did not have. No scaffolding toward it exists in this branch.
 
+> **RESOLVED 2026-08-22 by ACBP-API-012.** The paragraph above is left as written because it is an accurate
+> record of what was true when this CDR was accepted. It is no longer current: `apps/web/src/instrumentation.ts`
+> now runs at boot and reports through `apps/web/src/server/startup/model-provider-report.ts`, which
+> `clerk-runtime.ts` shares so the boot line and the composition line have one definition. The acceptance bar was
+> met on its own terms — `instrumentation.test.ts` drives `register()` rather than asserting anything about it,
+> and states the boundary it cannot cross: it proves this repository's half, not that Next.js calls `register()`,
+> which is the framework's contract.
+
 This is the third time on this programme that a comment has stated an intended property as an achieved one
 (ACBP-P6-007's stop scopes, ACBP-P7-002's company pause, and now this). The pattern is not a documentation
 problem: a claim that cannot be pointed at an enforcer is a claim that will be believed until something expensive
