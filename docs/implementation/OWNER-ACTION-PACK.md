@@ -37,6 +37,21 @@ current head. **Rollback.** Delete the staging service; nothing in the repositor
 **Owner time.** ~30–45 minutes. **Unlocks.** P7-006, the staging half of P7-009, and the deployment
 edge in item 3.
 
+> **ALSO BLOCKED HERE, AND PREVIOUSLY UNLISTED: ACBP-P7-003, P7-004 and P7-005.**
+>
+> This pack did not mention the operational dashboards, alerting tiers or runbooks anywhere, so three
+> `Planned` rows read as ordinary un-started work. They are not: P7-003's acceptance is *"All §2 metrics
+> live"*, and `live` needs somewhere to send them.
+>
+> **P7-003, P7-004 and P7-005 need MORE than item 1, so a staging service alone will not unblock them.**
+> Verified in the repository rather than assumed: `@acbp/observability` exports a logger, a redactor and
+> suppression — **no metric primitives at all** — and no exporter of any kind exists (no Prometheus, StatsD
+> or OTLP). So two separate things are missing: an owner-provisioned metrics backend, and engineering work
+> to emit metrics into it. The second cannot be finished before the first, because the acceptance word is
+> `live`.
+>
+> Nothing here is hidden work: P7-004 and P7-005 both depend on P7-003, so all three move together.
+
 ---
 
 ## 2. Paid model provider (blocks ACBP-P2-011 and ACBP-P7-012)

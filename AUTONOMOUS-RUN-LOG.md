@@ -3797,3 +3797,111 @@ relative Markdown links all exist.
 any branch, ask what merged content cites it. The check now answers that from the other
 direction, which is the reliable one: it does not matter whether anyone remembers the branch
 if `main` can no longer resolve its own citations.
+
+---
+
+## 2026-08-22 — a standing authorization, two unenforced rules made executable, and an honest stop
+
+The owner granted a standing finalization authorization (`AGENTS.md` §25) and answered the
+whole open-PR queue in one message. This entry records what that produced and where it
+stopped.
+
+### The charter
+
+| Change | Where |
+| ------ | ----- |
+| Standing finalization authorization | new §25 |
+| Guard REACHABILITY as a second §3 question | §3 |
+| Owner-presence on live model calls, as a hard gate | §1 |
+| Exceptions pointing at §25, with limits stated inline | §15, §16 |
+
+**It landed as §25, not §16 as the grant said.** §16 was already *Owner authorization gates*,
+is cited 25 times, and is the section §25 defers to; a new §16 would have overwritten it or
+renumbered §17–§24 and broken 47 citations. The number moved, the content did not, and §25
+records why in its own text.
+
+**§3's second question** is the week's lesson made permanent: *does the guard actually RUN on
+the path that matters?* Four guards were green while their defect was live — a metered-route
+checker whose directory list predated two paid routes, a vocabulary guard passing against a
+badge still on screen, `var(--danger)` reported defined because it is a suffix of
+`--c-danger`, and a well-formedness assertion the scorer never called. **None were broken.**
+Each was correct code nothing reached with the input that mattered.
+
+### Two rules that existed only as prose now throw
+
+**The money rule (PR #109, merged `07f7f46`).** Six lines said no live, paid model call may
+happen without the owner present and authorizing that specific call. Right, and
+unenforceable. `packages/adapters/src/model/owner-presence.ts` now refuses by default and
+consumes a **single-use** grant per call.
+
+- **Unconditional, not inferred from the test seam.** Gating only the "live" path and
+  detecting it from `client`/`clientFactory` would be wrong: `clientFactory` may RETURN a
+  real SDK client, so an unrelated option would silently disable the gate — the identical
+  shape of the credential-gate bug already recorded in the same file.
+- **It runs where it matters.** `clerk-identity.ts` composes with no grant, so a deployed
+  application refuses live calls. `tools/demo/live-generation.mjs` — run deliberately by a
+  human — grants exactly one, which is exactly how many calls it makes.
+- **Honest about its limit.** A tripwire against an unattended call, NOT a defence against
+  code that grants itself permission. The module says so rather than implying more.
+
+Mutation-proven with the mutation verified to have landed (blob `3ad4708` → `5185442`,
+restored byte-identical): deleting the gate produced `AssertionError: promise resolved
+"{ finishStatus: 'completed', …(5) }" instead of rejecting`.
+
+**Startup visibility (ACBP-API-012).** `CDR-090 §1-G3` ruled that an absent
+`ANTHROPIC_API_KEY` must fail visibly at startup. Two comments claimed it; neither was true,
+because no `instrumentation.ts` existed and the runtime is a lazy singleton. It exists now,
+and the framework half was proven by READING NEXT and BUILDING, never by citing
+documentation — "the docs say so" is the same class of evidence as the comment being deleted.
+`next@16.2.11`'s `instrumentation-globals.external.js` requires
+`join(projectDir, distDir, 'server', INSTRUMENTATION_HOOK_FILENAME + '.js')` and awaits
+`instrumentation.register()`; `next build --webpack` emits exactly that file carrying
+`model_provider.not_configured`. Source resolved, compiled to that path, required from that
+path, `register` awaited — every link checked, none assumed.
+
+**One of the new tests in each change was found vacuous and fixed before merge.** The
+owner-presence one declared `capture` as an empty array and asserted `toHaveLength(0)`;
+`stubClient`'s capture is `{ params?: … }`, so it held whether or not the client was called.
+
+### The queue, closed with evidence rather than assertion
+
+| PR | Outcome | Proof |
+| -- | ------- | ----- |
+| #110 / #129 / #131 | merged `2cef9f0`, closed superseded | entries placed BY DATE, not appended |
+| #163 | merged `aafa4b5` | CDR-090 rescued; doc-link guard added |
+| #164 | merged `50c3dfe` | §25 |
+| #165 | merged `07f7f46` | the owner-presence gate |
+| #166 | merged `ae12c00` | ACBP-API-012 startup visibility |
+| #107 | **closed superseded**, branch KEPT | 15/24 files blob-identical; all 9 differing files main-ahead; `main` fixes an eager-evaluation bug the branch still has |
+| #113 | **closed superseded**, branch KEPT | contradiction arm only — the doc says "thirty-five routes"; `main` has 45, nine added after its compile date, including all four generate routes |
+| #109 | **closed**, adopted, branch KEPT | the rule is §1 and the enforcement is on `main` |
+| #112 | **left open, labelled EVIDENCE** | a live mutation IS the proof the authz guard kills |
+
+No branch whose content differs from `main` was deleted.
+
+### STOPPED — what remains is gated, verified rather than assumed
+
+- **P2-011, P3-006, P7-012** — need live model calls (§1, and now enforced in code)
+- **P7-003/004/005** — "all §2 metrics live" needs metrics that do not exist
+  (`@acbp/observability` is logger + redact + suppression: no metric primitives, no
+  exporter) and live infrastructure to receive them. **No deployment config of any kind
+  exists** — no Dockerfile, compose, vercel, fly, k8s, helm or terraform.
+- **P7-006, P7-010, P7-011** — staging that does not exist, and its dependents
+- **ACBP-API-009** — cannot ship as written (CDR-096: RLS forbids the app role minting
+  credits, so every real balance is 0 and a credit gate would 402 all generation)
+- **ACBP-FE-017** — the stop half IS routed; the held-work half is blocked by a missing core
+  READ, not a missing route (`stops/index.ts:14` — `reviewHeldWork` takes a `heldWorkId` no
+  exported read can produce). Filed as `docs/agent/TICKET-held-work-review-surface.md`.
+  Frontend work is separately a §1 gate.
+
+**One row that looked gated was not, and was built rather than reported as blocked.**
+ACBP-API-012's exclusion note read as a deferral, but its security column said "None" and it
+carried a full acceptance criterion — so it was actionable, and the first draft of this entry
+was wrong to list it as stopped. Read the row, not the summary of the row.
+
+### Resume point
+
+Nothing in flight. The next actionable work needs one of: an owner-present live model call
+(unblocks P2-011 → P3-006 → P7-012), a deployment target (unblocks P7-003 → P7-004/005 →
+P7-006 → P7-010 → P7-011), or a gate lift on ACBP-FE-017 plus a held-work read.
+`OWNER-ACTION-PACK.md` itemises these.
