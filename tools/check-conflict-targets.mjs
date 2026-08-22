@@ -11,10 +11,14 @@
 // The rule is exact and has no false-positive shape: an index name is never a valid `ON CONFLICT ON CONSTRAINT`
 // target, partial or not. Use inference instead — `.onConflict(oc => oc.columns([...]).where(...))` — which matches
 // the index by its columns and predicate.
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 
-const ROOT = process.cwd();
+// An explicit root is accepted so this can be driven against a fixture, the way every sibling checker's test
+// does it. It USED TO IGNORE argv entirely: a test written in the sibling shape — `spawnSync(node, [CHECKER,
+// root])` — would have measured the process's own cwd instead, and reported a confident pass over a directory
+// it never looked at.
+const ROOT = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
 const MIGRATIONS = join(ROOT, 'packages', 'database', 'migrations');
 const SCAN_ROOTS = [join(ROOT, 'packages'), join(ROOT, 'apps'), join(ROOT, 'tests')];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.next', '.turbo']);
@@ -99,6 +103,37 @@ if (violations.length > 0) {
     console.error('  A clean result from this tool would be meaningless. Fix the patterns before trusting a pass.');
     process.exit(2);
   }
+}
+
+// ── 4. THE FLOOR — a clean tree and a blind checker must not look the same ───────────────────────────────────
+// ⚠️ THIS WAS MISSING, AND IT WAS MEASURED. Run in a freshly-created EMPTY directory, this tool printed
+//
+//     ✔ conflict-target check: 0 index name(s) known (0 partial); no ON CONFLICT names one. Self-test passed.
+//
+// and exited 0. A green tick over nothing — with the words "Self-test passed" attached, which made a checker
+// that had looked at zero files read as doubly verified. The self-test above proves the REGEXES still match; it
+// says nothing about whether anything was handed to them.
+//
+// So if `packages/database/migrations` were moved or renamed, this guard would go quiet rather than loud, on the
+// defect whose failure mode is that no credit reservation can ever succeed (42704, D1). `check-css-tokens.mjs`
+// states the rule this file was violating: a walk that finds nothing and reports success is the artefact the
+// standing rule forbids.
+//
+// The floor is deliberately far below today's count (87 index names) — it exists to catch a vanished directory
+// or a broken walk, not to freeze the schema.
+const EXPECTED_MINIMUM_INDEX_NAMES = 20;
+
+if (!existsSync(MIGRATIONS)) {
+  console.error(`\n✖ conflict-target check COULD NOT RUN: the migrations directory is not there: ${relative(ROOT, MIGRATIONS).split('\\').join('/')}`);
+  console.error('  A missing target is not agreement. Point this check at the migrations, or move it with them.\n');
+  process.exit(2);
+}
+
+if (indexNames.size < EXPECTED_MINIMUM_INDEX_NAMES) {
+  console.error(`\n✖ conflict-target check FAILED — found ${String(indexNames.size)} index name(s), expected at least ${String(EXPECTED_MINIMUM_INDEX_NAMES)}.`);
+  console.error('  The walk found almost nothing, so every ON CONFLICT target below would pass vacuously.');
+  console.error('  This is a broken walk or a moved directory, NOT a clean tree.\n');
+  process.exit(1);
 }
 
 const partials = [...indexNames.values()].filter((x) => x.partial).length;
