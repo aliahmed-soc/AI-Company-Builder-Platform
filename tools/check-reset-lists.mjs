@@ -18,7 +18,7 @@
 // SOURCE OF TRUTH is `DatabaseSchema` in packages/database/src/schema.ts: Kysely is generic over that interface, so a
 // table the product can query is a table registered there. Parsing migrations instead would mean modelling creates,
 // drops and renames across the whole history to know what is live now.
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = process.cwd();
@@ -32,6 +32,15 @@ const SCHEMA_FILE = join(ROOT, 'packages', 'database', 'src', 'schema.ts');
  * they are free to.
  */
 function migratedTables() {
+  // ⚠️ GUARDED. This read was bare, so a tree without the schema died with a raw Node stack at exit 1 — the
+    // SAME code this checker uses for a real finding. Found by `tools/tests/checker-hygiene.test.mjs`, which
+    // asks every cwd-rooted checker the same question against an empty tree.
+  if (!existsSync(SCHEMA_FILE)) {
+    console.error(`\n\u2716 reset-list check CANNOT SEE ITS TARGET: ${relative(ROOT, SCHEMA_FILE)} does not exist.`);
+    console.error('  The reset lists are derived from the schema. A missing schema is not agreement.\n');
+    process.exit(2);
+  }
+
   const src = readFileSync(SCHEMA_FILE, 'utf8');
   const start = src.indexOf('export interface DatabaseSchema {');
   if (start === -1) throw new Error('check-reset-lists: could not find `export interface DatabaseSchema` in schema.ts');

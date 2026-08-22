@@ -28,7 +28,7 @@
 // relabel a row `not_covered` to get green, which is the opposite of what this file is for. Honesty is cheap
 // here; overclaiming is what costs.
 import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 // ACBP-P7-008 moved these to a shared library so this checker and `check-failure-scenario-index.mjs` cannot
 // drift apart. Each function's comment records the defect that shaped it — a copied guard is a guard that
@@ -41,8 +41,20 @@ const ROOT = process.argv[2] ? resolve(process.argv[2]) : process.cwd();
 const CANON = join(ROOT, 'docs', 'implementation', 'TEST-AND-VERIFICATION-STRATEGY.md');
 const CANON_HEADING = '## Trust-critical negative tests';
 
+// ⚠️ GUARDED. This is a dynamic import of a file under ROOT, so a tree without it failed with a raw
+// `ERR_MODULE_NOT_FOUND` stack at exit 1 — the SAME code this checker uses for a real finding, and the least
+// legible of the three failure shapes because the message names a resolver, not a missing index. Found by
+// `tools/tests/checker-hygiene.test.mjs`.
+const INDEX_MODULE = join(ROOT, 'tools', 'trust-critical-index.mjs');
+if (!existsSync(INDEX_MODULE)) {
+  console.error(`\n✖ trust-critical-index check CANNOT SEE ITS TARGET: ${relative(ROOT, INDEX_MODULE)} does not exist.`);
+  console.error('  That module IS the index this check compares canon against. Without it there is nothing to');
+  console.error('  compare, which is not the same as agreeing — restore it rather than deleting this check.\n');
+  process.exit(2);
+}
+
 const { TRUST_CRITICAL_INDEX, ANCHOR_CLASSES, STATUSES, MAX_UNPROVEN } = await import(
-  pathToFileURL(join(ROOT, 'tools', 'trust-critical-index.mjs')).href
+  pathToFileURL(INDEX_MODULE).href
 );
 
 // ── 1. Parse the canonical list ──────────────────────────────────────────────────────────────────────────────
