@@ -36,7 +36,7 @@
     "check:scenario-evidence": "node tools/render-scenario-evidence.mjs --check",
     "docs:scenario-evidence": "node tools/render-scenario-evidence.mjs",
     "verify:mutation-runs": "node tools/verify-mutation-runs.mjs",
-"test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs tools/tests/check-trust-critical-index.test.mjs tools/tests/check-secrets.test.mjs tools/tests/check-csv-shape.test.mjs tools/tests/check-cursor-rules-sync.test.mjs tools/tests/check-duplicate-exports.test.mjs tools/tests/test-citation.test.mjs tools/tests/check-failure-scenario-index.test.mjs tools/tests/check-csrf-origin-gate.test.mjs tools/tests/check-generate-route-coverage.test.mjs tools/tests/run-evidence.test.mjs tools/tests/check-doc-links.test.mjs",
+"test:boundaries": "vitest run tools/tests/check-boundaries.test.mjs tools/tests/check-reset-lists.test.mjs tools/tests/check-approval-port.test.mjs tools/tests/check-trust-critical-index.test.mjs tools/tests/check-secrets.test.mjs tools/tests/check-csv-shape.test.mjs tools/tests/check-cursor-rules-sync.test.mjs tools/tests/check-duplicate-exports.test.mjs tools/tests/test-citation.test.mjs tools/tests/check-failure-scenario-index.test.mjs tools/tests/check-csrf-origin-gate.test.mjs tools/tests/check-generate-route-coverage.test.mjs tools/tests/run-evidence.test.mjs tools/tests/check-doc-links.test.mjs tools/tests/check-rate-limit-coverage.test.mjs",
     "test:config": "vitest run packages/config",
     "test:observability": "vitest run packages/observability",
     "test:database": "vitest run packages/database",
